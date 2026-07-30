@@ -73,6 +73,29 @@ That shared plain-Pi path is retained as disconfirming evidence against using an
 Firstmate therefore sets the exact `FM_PI_HARNESS` selection marker on both worker launch paths, while an unmarked Pi-family process remains `pi`.
 Both recorded runtime identities now classify the exact `pi-launcher` foreground command as `alive`.
 
+### OMP lifecycle
+
+The complete tmux role matrix ran on 2026-07-30 against OMP 17.1.8 using separate private tmux sockets, temporary homes, and disposable git worktrees:
+
+```sh
+omp --version
+FM_OMP_PRIMARY_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh
+FM_OMP_TMUX_LIVE_E2E=1 tests/fm-omp-worker-tmux-live-e2e.test.sh
+FM_OMP_SECONDMATE_LIVE_E2E=1 tests/fm-omp-secondmate-live-e2e.test.sh
+```
+
+Observed bounded output:
+
+```text
+omp/17.1.8
+ok - OMP omp/17.1.8 primary E2E proved native discovery, explicit fallback, exact ownership, once-only startup, guarded watcher startup, /new continuity, shutdown, resume, and away-mode delivery
+ok - real tmux OMP worker/scout lifecycle: launch, exact identity, turns, idle/busy steering, interrupt, skill, exit, and resume
+ok - real isolated tmux OMP secondmate launch, idle health, marked replies, exit, same-session resume, context, and duplicate refusal
+```
+
+The runs retained exact `harness=omp`, forwarded the selected model and thinking level, delivered each initial instruction once, and used `/skill:<name>` for the real skill turn.
+Normal `/exit` stopped each OMP process without killing the private tmux server, exact session resume restored prior context, and cleanup removed every generated extension, session, task temp root, worktree, and socket-owned endpoint.
+
 Backend applicability was reviewed across every spawn adapter.
 Tmux needs the exact `pi-launcher`, `pi-signed`, `pi`, and `Pi` process identities for recovery-grade liveness.
 Herdr uses native registered-agent state and needs no process-name branch.
@@ -288,6 +311,40 @@ HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
 
 Observed guarantee: one exact home-local, journal-correlated, one-tab and one-pane childless idle shell was closed after restoration while the exact non-target focus and default fleet session remained unchanged, and a repeat run was a no-op.
 
+### OMP lifecycle
+
+The complete Herdr role matrix ran on 2026-07-30 against OMP 17.1.8 and Herdr 0.7.5 protocol 17 in one guarded non-default lab session.
+The fixture routes every session-scoped production Herdr command through `bin/fm-herdr-lab.sh`, rejects a missing or inexact named-session binding, and requires the helper's default-session tripwire to survive final teardown.
+
+```sh
+omp --version
+herdr --version
+FM_OMP_HERDR_LIVE_E2E=1 \
+  HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+  tests/fm-omp-herdr-live-e2e.test.sh
+FM_OMP_HERDR_EXIT_LIVE_E2E=1 \
+  HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+  tests/fm-omp-herdr-exit-live-e2e.test.sh
+```
+
+Observed bounded output:
+
+```text
+omp/17.1.8
+herdr 0.7.5
+ok - real Herdr OMP role matrix: primary, worker, scout, secondmate, busy steering, normal exits, recovery, duplicate refusal, and guarded teardown
+ok - real Herdr OMP /exit: exact native identity, post-offset normal session_exit, pane absence, and guarded tripwire teardown
+```
+
+The primary loaded the tracked OMP adapter, acquired its home session lock, completed a guarded turn, and kept its watcher live while the other roles ran.
+The worker and scout used production `fm-spawn.sh`, real Treehouse isolation, exact `harness=omp` metadata, generated lifecycle extensions, task-owned native sessions, production `fm-send.sh`, and guarded cleanup of their extensions, task roots, and isolated copies.
+The worker's busy steer was accepted only after the exact post-offset user event carried `steering:true`.
+Each normal `/exit` required a post-offset normal `session_exit`; the focused exit check also required an exact pre-send `agent=omp` plus native-session binding and an independent post-exit `pane get` result of `pane_not_found` rather than relying on server health.
+The secondmate returned a correlated marked reply, exited, recovered the exact retained session, refused a duplicate live launch, and exited again.
+The final run emitted no lifecycle warnings and the guarded teardown preserved the default-session tripwire.
+
+Blocked-state parsing, identical non-steering event rejection, unreadable-state preservation, and unsupported-backend preflight remain deterministic contract tests rather than claims about this live role-matrix run.
+
 ### Composer and operational input
 
 Real captures verified these active distinctions:
@@ -336,6 +393,24 @@ FM_AFK_PI_HERDR_E2E=1 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
 
 Observed guarantees: pending composer input refused injection and raised one alert; idle Pi accepted one marked escalation; the return gate refused ordinary work while a live blocker remained; resolving the blocker allowed the return flow.
 The dedicated Herdr daemon workspace topology is covered by `tests/fm-afk-launch.test.sh` and preserves the captain tab's pane count.
+
+## OMP applicability outside tmux and Herdr
+
+Zellij, Orca, and cmux were inspected on 2026-07-30 without claiming live OMP execution.
+Zellij's submit verifier has only plain content-delta acknowledgement and no ANSI composer or native agent-state signal.
+Orca and cmux use generic bordered composer readers, expose no native OMP state, and already refuse secondmate spawns.
+None can establish OMP's exact busy-steering event, normal-exit event, blocked-state, or recovery contract.
+`fm-spawn.sh` therefore uses an explicit `tmux|herdr` OMP allowlist and rejects all three before backend runtime checks, endpoint creation, metadata, or launch delivery.
+
+```sh
+tests/fm-spawn-dispatch-profile.test.sh
+tests/fm-backend-zellij.test.sh
+tests/fm-backend-orca.test.sh
+tests/fm-backend-cmux.test.sh
+```
+
+The focused OMP refusal cases verify zero endpoint calls and no launch text for every unsupported backend.
+This is source and contract inspection only, not live OMP verification.
 
 ## Zellij
 

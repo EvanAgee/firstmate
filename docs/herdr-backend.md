@@ -181,10 +181,13 @@ Enter, Escape, and Ctrl-C are supported.
 Slash and dollar-prefixed input uses the shared harness-aware settle before the first Enter so a completion popup cannot consume it.
 Text is typed once; only Enter is retried.
 
-On an idle or done native baseline, submit confirmation waits for `working` or `blocked` across a bounded polling window.
-On an already active or unreadable baseline, it falls back to conservative composer clearance.
+On an idle or done native baseline, ordinary submit confirmation waits for `working` or `blocked` across a bounded polling window.
+On an already active or unreadable baseline, ordinary harnesses fall back to conservative composer clearance.
+OMP is stricter: the adapter binds the exact native OMP session path and pre-send byte offset before typing.
+A busy OMP steer sends one Enter and succeeds only after an appended exact-text user message carries native `steering:true`; an identical ordinary user message is not acknowledgement, and missing proof returns unknown without redelivery.
+OMP `/exit` succeeds only after a post-offset normal `session_exit` event, then closes the exact owned Herdr pane and verifies it is absent; it never falls back to a steering acknowledgement.
 A fully unreadable target stops retrying and reports unknown.
-The poll density bounds the residual possibility of an extremely fast complete turn; a missed transition can cause only a redundant Enter on an empty composer, never duplicate message text.
+The poll density bounds the residual possibility of an extremely fast complete turn; a missed ordinary transition can cause only a redundant Enter on an empty composer, never duplicate message text.
 
 `pane read --lines N` can return empty output when N is below the viewport height.
 The capture owner requests at least 200 lines from Herdr and trims locally to the caller's bound.
@@ -198,6 +201,8 @@ A human-blocked permission dialog has no busy banner and still surfaces.
 
 Herdr has no direct cursor-row primitive.
 The adapter locates the bottom-most recognized bordered row, Claude `❯` row, Codex `›` row, or a Pi separator region admitted only when native identity is exactly Pi and state is idle, done, or blocked.
+OMP uses an independent native shape: one status top row and a final input row, with at most eight bounded content rows between them, admitted only when native identity is exactly `omp` and state is idle or done.
+Empty, pending, and multi-line OMP input classify from that structure; a short, stale, malformed, working, blocked, unreadable, or inexact-identity candidate is unknown and cannot authorize injection.
 A working Pi, pending middle row, missing identity, incomplete separator pair, or over-tall candidate remains pending or unknown.
 
 ANSI capture preserves de-emphasized placeholder style.
@@ -223,7 +228,7 @@ This prevents closing the workspace's last tab before a replacement exists.
 
 The generic Herdr agent-liveness probe reuses the same classifier.
 A structurally gone pane becomes `missing`, a restored agent-less shell becomes `dead`, a registered agent becomes `alive`, and an unexpected read becomes `unreadable`.
-Unlike tmux process-name inspection, native registration can classify Pi without guessing from a generic interpreter name.
+Unlike tmux process-name inspection, native registration classifies exact Pi and OMP identities without guessing from a generic interpreter name.
 
 The session-start sweep uses this probe.
 Mid-session secondmate liveness is not implemented because idle secondmates are deliberately exempt from stale-pane escalation and need a separate periodic identity signal.
@@ -246,6 +251,7 @@ There is still one watcher process; the event reader is a bounded child of that 
 The away daemon supports tmux and Herdr supervisor panes only.
 It refuses Zellij, Orca, and cmux as supervisor backends rather than applying the wrong transport.
 For Herdr, target existence, native state, capture, composer state, and verified submit all route through the shared backend dispatcher and the explicit named-session CLI owner.
+The detached launcher preserves the exact supervisor harness and state directory; an OMP primary therefore reaches native session-event acknowledgement, while an unknown Herdr harness identity refuses before typing.
 The pane-independent max-defer alert is configured in [`wedge-alarm.md`](wedge-alarm.md).
 
 Harnesses with native tracked background execution can run the daemon in their terminal.
@@ -272,7 +278,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 
 ## Active limits
 
-- Herdr remains experimental.
+- Herdr remains experimental; OMP 17.1.8 is verified on it, while Zellij, Orca, and cmux carry no OMP compatibility claim.
 - Presentation ordering needs protocol 16 and Python and is best-effort only.
 - Mutable labels can collide; they are never placement or destructive authority.
 - A Firstmate outside Herdr cannot resolve a launcher workspace, so a colliding home label refuses new spawns until the collision is cleared.
@@ -293,6 +299,9 @@ tests/fm-backend-herdr-workspace-per-home-e2e.test.sh
 tests/fm-backend-herdr-launcher-workspace-e2e.test.sh
 tests/fm-backend-herdr-presentation-e2e.test.sh
 tests/fm-backend-herdr-eventwait-smoke.test.sh
+tests/fm-omp-secondmate.test.sh
+FM_OMP_HERDR_LIVE_E2E=1 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh tests/fm-omp-herdr-live-e2e.test.sh
+FM_OMP_HERDR_EXIT_LIVE_E2E=1 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh tests/fm-omp-herdr-exit-live-e2e.test.sh
 tests/fm-herdr-session-cleanup.test.sh
 tests/fm-herdr-session-cleanup-e2e.test.sh
 tests/fm-afk-inject-herdr-e2e.test.sh

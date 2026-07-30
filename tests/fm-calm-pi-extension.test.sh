@@ -364,14 +364,18 @@ test_rendering_and_session_lifecycle() {
   record_pi_version_evidence "$version" "Pi calm compatibility assumptions"
 
   fixture="$TMP_ROOT/renderer"
-  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/node_modules/@earendil-works"
+  mkdir -p "$fixture/home" "$fixture/lib" "$fixture/bin" "$fixture/.pi/extensions/lib" "$fixture/node_modules/@earendil-works"
   cp "$EXT" "$fixture/fm-calm.ts"
   cp "$ASSISTANT_LAYOUT" "$fixture/lib/fm-calm-assistant-layout.ts"
   cp "$OPERATIONAL_USER_LAYOUT" "$fixture/lib/fm-calm-operational-user-layout.ts"
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/lib/fm-operational-input.ts"
-  cp "$WATCH_EXT" "$fixture/fm-primary-pi-watch.ts"
+  cp "$VISIBILITY" "$fixture/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/fm-operational-input.ts"
+  cp "$WATCH_EXT" "$fixture/.pi/extensions/fm-primary-pi-watch.ts"
+  cp "$ROOT/bin/fm-primary-watch-core.ts" "$fixture/bin/fm-primary-watch-core.ts"
+  cp "$ROOT/bin/fm-pi-compatible-runtimes" "$fixture/bin/fm-pi-compatible-runtimes"
   ln -s "$PI_PACKAGE_DIR" "$fixture/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/node_modules/typebox"
@@ -383,7 +387,7 @@ exec "$FM_OPERATIONAL_INPUT_OWNER" "$@"
 SH
   chmod +x "$fixture/operational-input-probe.sh"
 
-  out=$(cd "$fixture" && EXT="$fixture/fm-calm.ts" WATCH_EXT="$fixture/fm-primary-pi-watch.ts" FM_HOME="$fixture/home" FM_OPERATIONAL_INPUT_SCRIPT="$fixture/operational-input-probe.sh" FM_OPERATIONAL_INPUT_OWNER="$OPERATIONAL_INPUT" FM_OPERATIONAL_INPUT_CALLS="$fixture/operational-input-calls" PI_PACKAGE_DIR="$PI_PACKAGE_DIR" node --input-type=module 2>&1 <<'JS'
+  out=$(cd "$fixture" && EXT="$fixture/fm-calm.ts" WATCH_EXT="$fixture/.pi/extensions/fm-primary-pi-watch.ts" FM_HOME="$fixture/home" FM_OPERATIONAL_INPUT_SCRIPT="$fixture/operational-input-probe.sh" FM_OPERATIONAL_INPUT_OWNER="$OPERATIONAL_INPUT" FM_OPERATIONAL_INPUT_CALLS="$fixture/operational-input-calls" PI_PACKAGE_DIR="$PI_PACKAGE_DIR" node --input-type=module 2>&1 <<'JS'
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -2516,6 +2520,8 @@ test_interactive_terminal_e2e() {
     "$ROOT/bin/fm-primary-scope-lib.sh" \
     "$ROOT/bin/fm-gate-refuse-lib.sh" \
     "$ROOT/bin/fm-operational-input.sh" \
+    "$ROOT/bin/fm-primary-watch-core.ts" \
+    "$ROOT/bin/fm-pi-compatible-runtimes" \
     "$project/bin/"
   chmod +x "$project/bin/"*.sh
   cat >"$project/.pi/extensions/fm-calm-e2e-inject.ts" <<'TS'
@@ -2719,11 +2725,13 @@ JSON
   active_screen_wait=0
   while [ "$active_screen_wait" -lt 120 ]; do
     tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" >"$hidden_snapshot"
-    # Wait for the redraw this block actually asserts: hidden rows gone AND the
-    # retained genuine rows back on screen. Breaking on the hidden rows alone can
-    # observe a half-redrawn transcript.
-    if ! grep -Fq "CALM_E2E_OUTPUT" "$hidden_snapshot" &&
+    # Wait for the redraw this block actually asserts: calm persisted, hidden
+    # rows gone AND the retained genuine rows back on screen. Breaking on the
+    # hidden rows alone can observe a half-redrawn transcript.
+    if [ "$(cat "$home/config/calm" 2>/dev/null || true)" = on ] &&
+      ! grep -Fq "CALM_E2E_OUTPUT" "$hidden_snapshot" &&
       ! grep -Fq "/calm" "$hidden_snapshot" &&
+      grep -Fq "Show a deterministic tool example." "$hidden_snapshot" &&
       grep -Fq "FIRSTMATE WATCHER WAKE: can you explain this phrase?" "$hidden_snapshot" &&
       grep -Fq "The deterministic tool example is complete." "$hidden_snapshot"; then
       break

@@ -95,6 +95,7 @@ Full mechanics, scoping, and fail-open behavior live in `docs/sessionstart-nudge
 - `codex`: verified on 0.144.4; `.codex/hooks.json` receives `source=startup`, and wrapper stdout reaches model context.
 - `opencode`: verified on 1.17.18; `session.created` plus `client.session.promptAsync` starts the nudge turn in the TUI, while `opencode run` remains fail-open headless.
 - `pi` and `pi-signed`: verified native `session_start`; the existing primary extension handles `startup`, `new`, and `resume` and uses `pi.sendMessage` to inject context without racing a positional launch prompt.
+- `omp`: verified native `session_start` and `session_switch`; the tracked `.omp/extensions/fm-primary-omp.ts` adapter injects startup context exactly once for startup, new, and resume, with explicit `-e` loading as the discovery fallback.
 - `grok`: the 0.2.103 project `SessionStart` event fires with `source=new`, but stdout does not reach model context; the tracked project hook remains fail-open, and a global token-guarded fallback requires a captain decision.
 
 ## Primary watcher supervision
@@ -105,6 +106,7 @@ Claude's Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns tokenles
 Codex uses bounded foreground checkpoints through `bin/fm-watch-checkpoint.sh` because Codex cannot reason while a foreground tool call is running.
 OpenCode uses `.opencode/plugins/fm-primary-watch-arm.js`, which coordinates with the turn-end guard plugin and wakes the TUI with `client.session.promptAsync`.
 Pi and pi-signed use the tracked `.pi/extensions/fm-primary-turnend-guard.ts` plus the tracked `.pi/extensions/fm-primary-pi-watch.ts`, both project-local extensions the Pi engine auto-discovers once trusted.
+OMP uses the distinct tracked `.omp/extensions/fm-primary-omp.ts` adapter, whose `fm_watch_arm_omp` tool and session transitions share the harness-neutral watcher core without using Pi lifecycle events.
 When changing any primary watcher adapter, update `docs/supervision-protocols/`, `docs/turnend-guard.md` if a shared idle or turn-end hook changed, and the relevant concise fact below.
 
 ## Launch profile axes
@@ -332,6 +334,12 @@ Pending input appears inside that bottom row or expands into a bounded content r
 Tmux submission accepts a cleared composer, a verified idle-to-working transition, or the exact dead-process postcondition for `/exit`; unknown or malformed structure remains unconfirmed.
 While OMP is working, an accepted steer appears in its native `Steering` queue and the composer clears.
 The same structural check keeps away-mode injection out of pending, malformed, or unreadable input.
+
+On Herdr, OMP requires native exact `agent=omp` identity and uses a separate status-top plus final-input-row composer structure rather than Pi separators or generic borders.
+Idle and done may classify empty or pending; working, blocked, stale, malformed, short, unreadable, and inexact-identity candidates remain unknown for injection.
+Busy steering is acknowledged only by an exact post-offset native `steering:true` user event, and `/exit` only by a post-offset normal `session_exit` followed by exact pane absence.
+A busy-steer or exit acknowledgement failure sends no second Enter, while registered idle, done, blocked, or working agents remain live for recovery and seeded-tab cleanup.
+OMP is verified only on tmux and Herdr; selecting OMP with Zellij, Orca, or cmux refuses before endpoint creation rather than borrowing those backends' generic composer assumptions.
 
 **Primary-session integration fact (verified 2026-07-30, OMP 17.1.8).**
 Plain OMP started from the Firstmate root discovers `.omp/extensions/fm-primary-omp.ts` natively, with `omp -e .omp/extensions/fm-primary-omp.ts` as the explicit fallback.

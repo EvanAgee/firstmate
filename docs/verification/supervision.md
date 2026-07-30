@@ -8,7 +8,7 @@ Task-specific chronology, temporary paths, run identifiers, and delivery transcr
 
 ## Native session-start delivery
 
-The cross-harness transport pass ran on 2026-07-17 with Codex 0.144.4, Grok 0.2.103, OpenCode 1.17.18, Pi 0.80.10, and the tracked Claude hook wiring.
+The cross-harness transport pass ran on 2026-07-17 with Codex 0.144.4, Grok 0.2.103, OpenCode 1.17.18, Pi 0.80.10, and the tracked Claude hook wiring; OMP 17.1.8 joined the matrix on 2026-07-30.
 
 Codex command shape:
 
@@ -48,11 +48,29 @@ The earlier `sendUserMessage` counterfactual raced the positional prompt; the cu
 The installed pi-signed 0.82.0 wrapper repeated the Pi primary extension and session-start path on 2026-07-27.
 [`runtime-backends.md`](runtime-backends.md#tmux) owns the shared-ancestry evidence and authoritative selection-marker boundary.
 
+OMP command shape:
+
+```sh
+omp --version
+FM_OMP_PRIMARY_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh
+```
+
+Observed bounded output:
+
+```text
+omp/17.1.8
+ok - OMP omp/17.1.8 primary E2E proved native discovery, explicit fallback, exact ownership, once-only startup, guarded watcher startup, /new continuity, shutdown, resume, and away-mode delivery
+```
+
+The OMP run used an isolated project, home, session directory, and private tmux socket.
+Plain `omp` discovered `.omp/extensions/fm-primary-omp.ts`; a second fixture loaded the same adapter with `-e`, and both retained the exact Bun/OMP identity.
+
 Current deterministic and live entry points:
 
 ```sh
 tests/fm-sessionstart-nudge.test.sh
 FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
+FM_OMP_PRIMARY_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh
 FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh
 ```
 
@@ -96,7 +114,7 @@ tests/fm-crew-state.test.sh
 
 ## Turn-end guard
 
-The direct and passive mechanisms were validated across all five harnesses on 2026-07-08 through 2026-07-12, with Claude's replacement Stop-owned path revalidated on 2026-07-24.
+The direct and passive mechanisms were validated across all six harness-engine protocols from 2026-07-08 through 2026-07-30, with Claude's replacement Stop-owned path revalidated on 2026-07-24.
 
 | Harness | Version verified | Mechanism | Observed result |
 | --- | --- | --- | --- |
@@ -104,6 +122,7 @@ The direct and passive mechanisms were validated across all five harnesses on 20
 | Codex | 0.142.1 | Blocking `Stop` hook | Hook process root stayed anchored to the trusted checkout and one continuation ran. |
 | OpenCode | 1.17.6 | Passive `session.idle` callback | Throwing could not block, while `promptAsync` scheduled one TUI follow-up; headless remained fail-open. |
 | Pi | 0.80.5 | Passive `agent_settled` callback | Exactly one guard follow-up ran for an unhealthy cycle, with no recursion across tool turns. |
+| OMP | 17.1.8 | Blocking `session_stop` callback | The shared predicate produced one native same-session continuation when supervision was unhealthy, with `stop_hook_active` bounding recursion. |
 | Grok | 0.2.112 native and 0.2.73 pre-native | Running-payload adaptive `Stop` | Native false-to-true continuation stayed in one process with two model turns and zero resume launches; the field-absent pre-native process launched exactly one guarded resume. |
 
 The Grok adaptive matrix ran on 2026-07-28 with separate scratch repositories and homes, dedicated tmux sockets, one target plus one control window, ambient tmux variables removed, and a socket-bound wrapper first in `PATH`.
@@ -149,6 +168,7 @@ Current entry points:
 tests/fm-turnend-guard.test.sh
 tests/fm-supervision-instructions.test.sh
 FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
+FM_OMP_PRIMARY_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh
 FM_GROK_STOP_LIVE_E2E=1 FM_GROK_NATIVE_BIN="$native_grok" FM_GROK_LEGACY_BIN="$pre_native_grok" tests/fm-grok-stop-live-e2e.test.sh
 ```
 
@@ -162,6 +182,7 @@ Claude Code 2.1.219
 codex-cli 0.144.4
 OpenCode 1.17.18
 Pi 0.80.10
+OMP 17.1.8
 grok 0.2.103 (89c3d36fb6f1) [stable]
 ```
 
@@ -171,6 +192,7 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | Codex | `FM_CODEX_LIVE_E2E=1 tests/fm-codex-continuity-live-e2e.test.sh` | The one-second foreground checkpoint returned without switching to the arm wrapper. |
 | OpenCode | `FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh` | A verified successor existed before prompt handling, with no model re-arm or turn-end fallback. |
 | Pi | `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh` | One initial tool call led to extension-owned successors and clean child retirement on exit. |
+| OMP | `FM_OMP_PRIMARY_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` | One initial native tool call established extension-owned successors; `/new`, normal exit, exact-session resume, and final shutdown each retired the prior generation. |
 | Grok | `FM_GROK_LIVE_E2E=1 tests/fm-grok-continuity-live-e2e.test.sh` | Native task completion surfaced the actionable close and the cycle ledger recorded `reason=actionable-signal`. |
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.
