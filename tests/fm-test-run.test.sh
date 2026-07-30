@@ -104,6 +104,8 @@ init_changed_fixture_repo() {
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
     fm-pr-merge.test.sh \
+    fm-pi-compatible-family.test.sh \
+    fm-pi-primary-types.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-afk-return.test.sh \
     fm-bearings-snapshot.test.sh \
@@ -116,6 +118,9 @@ init_changed_fixture_repo() {
   : >"$repo/tests/lib.sh"
   : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
+  : >"$repo/bin/fm-pi-compatible-lib.sh"
+  : >"$repo/bin/fm-pi-compatible-runtimes"
+  : >"$repo/bin/fm-primary-watch-core.ts"
   : >"$repo/bin/unmapped-source.sh"
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
@@ -158,6 +163,21 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-afk-return.test.sh" "supervisor target selects afk coverage"
   git -C "$repo" add bin/fm-supervisor-target-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm supervisor-change
+
+  printf '\n' >>"$repo/bin/fm-pi-compatible-lib.sh"
+  printf '\n' >>"$repo/bin/fm-pi-compatible-runtimes"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-pi-compatible-family.test.sh" "Pi-compatible sources select exact-family coverage"
+  git -C "$repo" add bin/fm-pi-compatible-lib.sh bin/fm-pi-compatible-runtimes
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm pi-family-change
+
+  printf '\n' >>"$repo/bin/fm-primary-watch-core.ts"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-pi-compatible-family.test.sh" "watcher core selects exact-family coverage"
+  assert_contains "$listed" "tests/fm-pi-primary-types.test.sh" "watcher core selects public-adapter type coverage"
+  assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "watcher core selects runtime-facing watcher coverage"
+  git -C "$repo" add bin/fm-primary-watch-core.ts
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm watch-core-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"
