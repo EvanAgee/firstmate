@@ -16,7 +16,7 @@
 #
 # Stdin mode extracts .toolInput.command for Grok or .tool_input.command for
 # Claude and Codex.
-# CLI mode is used by OpenCode and Pi after their adapters extract the exact
+# CLI mode is used by OpenCode, Pi, and OMP after their adapters extract the exact
 # command string.
 # --background remains accepted for compatibility, but harness-native tracked
 # background execution is not itself a policy signal.
@@ -31,7 +31,7 @@
 # Claude requires stdout to remain empty on deny.
 # Codex blocks on exit 2 and displays stderr.
 # Grok consumes the stdout decision object.
-# OpenCode and Pi consume exit 2 plus stderr.
+# OpenCode, Pi, and OMP consume exit 2 plus stderr.
 set -u
 
 CMD=""

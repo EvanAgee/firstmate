@@ -40,6 +40,8 @@ If the captain asks for a new harness, propose verifying it first: spawn a trivi
 ## Detection
 
 `bin/fm-harness.sh` prints firstmate's own harness, using verified env markers first and then process ancestry.
+OMP primary detection outranks inherited foreign markers only for an exact Bun argv boundary whose interpreter token is `bun` and script basename is `omp`.
+The same exact boundary owns OMP lock liveness, while `omp-helper`, `xomp`, incidental argument text, and non-Bun entrypoints are rejected.
 Within the Pi family, only the exact launch-boundary marker `FM_PI_HARNESS=pi-signed` alongside `PI_CODING_AGENT=true` selects the signed identity; unmarked shared launcher ancestry remains `pi`.
 `bin/fm-harness.sh crew` resolves the effective crewmate harness from `config/crew-harness` (absent or `default` -> own).
 `bin/fm-harness.sh secondmate` resolves the secondmate-launch harness through the chain `config/secondmate-harness` -> `config/crew-harness` -> own, so an unset `config/secondmate-harness` matches the crew harness.
@@ -53,10 +55,10 @@ Use that value for interrupt, exit, resume, and skill-invocation facts.
 
 ## Primary turn-end guard
 
-The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, and `grok` have empirically validated hook paths for the "no turn ends blind" guard.
-OMP worker and scout support is verified below, while the OMP primary integration is owned by its separately triggered implementation and verification contract.
+The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `omp`, and `grok` have empirically validated hook paths for the "no turn ends blind" guard.
 `claude` and `codex` block directly through Stop hooks that preserve exit status 2 and stderr from `bin/fm-turnend-guard.sh`.
 `opencode`, `pi`, and `pi-signed` expose passive lifecycle callbacks and force one bounded follow-up when the shared predicate blocks.
+OMP uses its native blocking `session_stop` event and returns one `{ continue: true, additionalContext }` result only when the shared predicate exits 2, with `stop_hook_active` bounding recursion.
 Grok selects native blocking or its pre-native bounded resume fallback from the exact running Stop payload; [`docs/turnend-guard.md`](../../../docs/turnend-guard.md) owns that contract.
 Kimi is outside the primary turn-end guard scope, while `docs/turnend-guard.md` owns its separate guarded global hook for crew wake signals.
 The exact hook files, commands, scoping rules, and fail-open tradeoffs are owned by `docs/turnend-guard.md`.
@@ -65,9 +67,9 @@ When changing any primary turn-end hook, validate the real harness behavior in a
 
 ## Primary pre-arm (PreToolUse) seatbelt
 
-The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, and `grok` also have wired PreToolUse-equivalent hooks that deny a watcher-arm anti-pattern (shell `&`, truncating pipe, bundling, broad `pkill -f fm-watch`) before it runs.
+The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `omp`, and `grok` also have wired PreToolUse-equivalent hooks that deny a watcher-arm anti-pattern (shell `&`, truncating pipe, bundling, broad `pkill -f fm-watch`) before it runs.
 `claude` and `codex` block directly through PreToolUse hooks; `grok` blocks the same way but requires every `$VAR` reference in its hook `command` string to carry an inline `:-default` or it fails to launch the hook entirely.
-`opencode`, `pi`, and `pi-signed` block by throwing from `tool.execute.before` / returning `{block: true}` from `tool_call`.
+`opencode`, `pi`, `pi-signed`, and `omp` block by throwing from `tool.execute.before` or returning `{ block: true }` from `tool_call`.
 The exact hook files, commands, output-shaping quirks (Claude Code only honors the deny when stdout is empty), and validation transcripts are owned by `docs/arm-pretool-check.md`.
 When changing any watcher-arm PreToolUse hook, validate the real harness behavior in a scratch project before trusting it, then update that doc.
 ## Primary delegation-shape guard
@@ -317,7 +319,7 @@ When a secondmate is launched on Pi or pi-signed, `fm-spawn.sh --secondmate` lau
 | Resume | Use the exact selected OMP binary with `--session-dir /tmp/fm-<id>/omp-sessions --resume <session-file> --auto-approve -e state/<id>.omp-ext.ts`. |
 
 OMP is an exact harness identity and is never normalized to Pi.
-`bin/fm-omp-capabilities.sh` resolves the exact executable and requires the model, thinking, unattended approval, external extension, task-local session directory, and resume surfaces before `fm-spawn` creates an endpoint.
+`bin/fm-omp-capabilities.sh` resolves the exact executable and requires a Bun-backed entrypoint plus the model, thinking, unattended approval, external extension, task-local session directory, and resume surfaces before `fm-spawn` creates an endpoint.
 A failed OMP preflight never launches another executable as a fallback.
 Workers and scouts receive one typed `launch-brief` positional argument and an external per-task extension under `state/`.
 The extension reports `session_start` readiness, acknowledges the initial instruction through `turn_start`, and touches the task's turn-completion marker on every `turn_end`.
@@ -330,6 +332,13 @@ Pending input appears inside that bottom row or expands into a bounded content r
 Tmux submission accepts a cleared composer, a verified idle-to-working transition, or the exact dead-process postcondition for `/exit`; unknown or malformed structure remains unconfirmed.
 While OMP is working, an accepted steer appears in its native `Steering` queue and the composer clears.
 The same structural check keeps away-mode injection out of pending, malformed, or unreadable input.
+
+**Primary-session integration fact (verified 2026-07-30, OMP 17.1.8).**
+Plain OMP started from the Firstmate root discovers `.omp/extensions/fm-primary-omp.ts` natively, with `omp -e .omp/extensions/fm-primary-omp.ts` as the explicit fallback.
+The adapter publishes a version-bound loaded marker tied to the live OMP PID, delivers the session-start instruction on native `session_start` and `session_switch` events, and owns watcher generations through `fm_watch_arm_omp` plus `/new` and `/resume` continuity.
+It routes watcher follow-ups through OMP's `sendUserMessage(..., { deliverAs: "followUp" })`, runs the shared turn-end predicate through native `session_stop`, and applies the shared watcher-arm, persistent-directory, and delegation-shaped tool safety checks before tool execution.
+`bin/fm-session-start.sh` rejects a missing, stale, foreign-PID, or version-mismatched loaded marker and prints both native-discovery and explicit `-e` recovery commands.
+The authoritative operating procedure is `docs/supervision-protocols/omp.md`.
 
 ## grok (VERIFIED 2026-06-29, grok 0.2.73; slash-submit re-verified 2026-07-03 on 0.2.82; reasoning-effort ceiling re-verified 2026-07-13 on grok 0.2.99; exit paths re-verified 2026-07-19 on grok 0.2.103)
 

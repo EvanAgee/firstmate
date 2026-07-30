@@ -17,7 +17,7 @@
 #   bin/fm-cd-pretool-check.sh --command '<cmd>'
 #
 # Stdin mode extracts .toolInput.command for Grok or .tool_input.command for
-# Claude and Codex. CLI mode is used by OpenCode and Pi after their adapters
+# Claude and Codex. CLI mode is used by OpenCode, Pi, and OMP after their adapters
 # extract the exact command string.
 #
 # Exit/output contract (identical shape to bin/fm-arm-pretool-check.sh):
@@ -32,7 +32,7 @@
 # Claude requires stdout to remain empty on deny.
 # Codex blocks on exit 2 and displays stderr.
 # Grok consumes the stdout decision object.
-# OpenCode and Pi consume exit 2 plus stderr.
+# OpenCode, Pi, and OMP consume exit 2 plus stderr.
 set -u
 
 CMD=""

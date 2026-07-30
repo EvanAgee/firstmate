@@ -75,7 +75,7 @@ SH
   chmod +x "$fakebin/treehouse"
   fm_fake_exit0 "$fakebin" pi-signed
   cat > "$fakebin/omp" <<'SH'
-#!/usr/bin/env bash
+#!/usr/bin/env bun
 case "${1:-}" in
   --help)
     printf '%s\n' '--model=<value>' '--thinking=<value>' '--auto-approve' '--session-dir=<value>' '-e, --extension=<value>' '-r, --resume=<value>'
@@ -85,6 +85,13 @@ case "${1:-}" in
 esac
 SH
   chmod +x "$fakebin/omp"
+  cat > "$fakebin/bun" <<'SH'
+#!/usr/bin/env bash
+script=$1
+shift
+exec bash "$script" "$@"
+SH
+  chmod +x "$fakebin/bun"
   printf '%s\n' "$fakebin"
 }
 

@@ -185,6 +185,14 @@ Applicability turns on one question: does the harness expose built-in delegation
 | Grok | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
 | OpenCode | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
 | Pi | none reported | Not wired pending live verification. See below. |
+| OMP | no built-in delegation tool observed; extension tools can add one | Wired through the native primary extension's all-tool `tool_call` handler and verified with the delegation-shaped `task` probe. |
+
+### OMP, wired at the native all-tool event
+
+`.omp/extensions/fm-primary-omp.ts` forwards every `tool_call` name to `bin/fm-subagent-pretool-check.sh --tool` before applying bash-specific checks.
+A delegation-shaped extension tool therefore cannot bypass the guard merely because it was added after the adapter.
+`tests/fm-omp-primary.test.sh` drives a public OMP adapter instance with a `task` tool event and proves the exit-2 result becomes `{ block: true }`.
+The live OMP primary test verifies that the same tracked adapter is natively discovered by OMP 17.1.8.
 
 ### Codex, verified not applicable
 

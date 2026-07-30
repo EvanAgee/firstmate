@@ -46,9 +46,8 @@
 #                       script points back to the emitted harness supervision
 #                       block and deliberately never arms the watcher itself.
 #
-# On a Pi primary, the supervision-block step also checks whether Pi's two
-# tracked primary extensions are loaded and prints a PI_WATCH_EXTENSION
-# reminder line when one is missing.
+# On Pi-family and OMP primaries, the supervision-block step also validates the tracked native integration marker against the lock-owning process.
+# It prints a harness-specific recovery line when the required integration is missing or stale.
 #
 # Why lock first: the old documented order (bootstrap, THEN lock) let a
 # SECOND concurrent session run bootstrap's mutating sweeps - fast-forwarding
@@ -233,7 +232,7 @@ hash_file() {
   fi
 }
 
-pi_extension_loaded() {
+primary_extension_loaded() {
   local marker=$1 expected_version=$2 lock=$3 marker_version marker_pid lock_pid
   [ -f "$marker" ] && [ -f "$lock" ] && [ -n "$expected_version" ] || return 1
   marker_version=$(sed -n '1p' "$marker")
@@ -323,9 +322,17 @@ if [ "$PRIMARY_HARNESS" = pi ] || [ "$PRIMARY_HARNESS" = pi-signed ]; then
   [ "$PRIMARY_HARNESS" != pi ] || PI_RESTART_COMMAND='plain pi'
   PI_WATCH_VERSION=$(hash_file "$PI_EXT" || printf '')
   PI_TURNEND_VERSION=$(hash_file "$PI_TURNEND_EXT" || printf '')
-  if ! pi_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" \
-    || ! pi_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
+  if ! primary_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" \
+    || ! primary_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
     printf 'PI_WATCH_EXTENSION: not loaded - approve Pi project trust once per clone, then restart %s so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$PI_RESTART_COMMAND" "$PI_TURNEND_EXT" "$PI_EXT" "$PI_TURNEND_EXT" "$PI_EXT"
+  fi
+fi
+if [ "$PRIMARY_HARNESS" = omp ]; then
+  OMP_PRIMARY_EXT="$FM_ROOT/.omp/extensions/fm-primary-omp.ts"
+  OMP_PRIMARY_MARKER="$STATE/.omp-primary-extension-loaded"
+  OMP_PRIMARY_VERSION=$(hash_file "$OMP_PRIMARY_EXT" || printf '')
+  if ! primary_extension_loaded "$OMP_PRIMARY_MARKER" "$OMP_PRIMARY_VERSION" "$STATE/.lock"; then
+    printf 'OMP_PRIMARY_EXTENSION: not loaded or stale - restart plain omp from %s so %s auto-loads; if native project discovery is unavailable, restart with omp -e %s\n' "$FM_ROOT" "$OMP_PRIMARY_EXT" "$OMP_PRIMARY_EXT"
   fi
 fi
 "$SCRIPT_DIR/fm-supervision-instructions.sh" \

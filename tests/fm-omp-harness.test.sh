@@ -10,9 +10,10 @@ CAPABILITIES="$ROOT/bin/fm-omp-capabilities.sh"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 write_fake_omp() {
-  local path=$1 omitted=${2:-}
+  local path=$1 omitted=${2:-} dir
+  dir=$(dirname "$path")
   cat > "$path" <<SH
-#!/usr/bin/env bash
+#!/usr/bin/env bun
 case "\${1:-}" in
   --help)
     cat <<'EOF'
@@ -34,6 +35,13 @@ SH
     mv "$path.tmp" "$path"
     chmod +x "$path"
   fi
+  cat > "$dir/bun" <<'SH'
+#!/usr/bin/env bash
+script=$1
+shift
+exec bash "$script" "$@"
+SH
+  chmod +x "$dir/bun"
 }
 
 test_launch_boundary_marker_preserves_exact_omp_identity() {
@@ -55,6 +63,19 @@ test_capability_probe_accepts_required_surface() {
   expect_code 0 "$status" "complete OMP capability surface should pass"
   [ "$out" = "$fakebin/omp" ] || fail "capability probe did not print the exact selected OMP executable: $out"
   pass "OMP capability probe accepts the required launch and recovery surface"
+}
+
+test_capability_probe_rejects_non_bun_entrypoint() {
+  local fakebin out status
+  fakebin="$TMP_ROOT/non-bun"
+  mkdir -p "$fakebin"
+  write_fake_omp "$fakebin/omp"
+  sed -i.bak '1s|.*|#!/usr/bin/env bash|' "$fakebin/omp"
+  out=$(PATH="$fakebin:/usr/bin:/bin" "$CAPABILITIES" --print-binary 2>&1)
+  status=$?
+  expect_code 1 "$status" "non-Bun OMP entrypoint should refuse exact ownership"
+  assert_contains "$out" "entrypoint is not Bun-backed" "non-Bun OMP refusal did not explain the ownership boundary"
+  pass "OMP capability probe enforces the Bun process identity used by session ownership"
 }
 
 test_capability_probe_reports_every_missing_requirement() {
@@ -86,5 +107,6 @@ test_capability_probe_never_falls_back_when_omp_is_missing() {
 
 test_launch_boundary_marker_preserves_exact_omp_identity
 test_capability_probe_accepts_required_surface
+test_capability_probe_rejects_non_bun_entrypoint
 test_capability_probe_reports_every_missing_requirement
 test_capability_probe_never_falls_back_when_omp_is_missing

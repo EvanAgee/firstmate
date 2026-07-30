@@ -105,6 +105,7 @@ init_changed_fixture_repo() {
     fm-backend.test.sh \
     fm-pr-merge.test.sh \
     fm-omp-harness.test.sh \
+    fm-omp-primary.test.sh \
     fm-pi-compatible-family.test.sh \
     fm-pi-primary-types.test.sh \
     fm-pi-watch-extension.test.sh \
@@ -120,6 +121,8 @@ init_changed_fixture_repo() {
   : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
   : >"$repo/bin/fm-omp-capabilities.sh"
+  : >"$repo/bin/fm-omp-process-lib.sh"
+  : >"$repo/bin/fm-session-lock-lib.sh"
   : >"$repo/bin/fm-pi-compatible-lib.sh"
   : >"$repo/bin/fm-pi-compatible-runtimes"
   : >"$repo/bin/fm-primary-watch-core.ts"
@@ -127,9 +130,10 @@ init_changed_fixture_repo() {
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
   printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
-  mkdir -p "$repo/.agents/skills/example" "$repo/.claude" "$repo/.pi/extensions" "$repo/src"
+  mkdir -p "$repo/.agents/skills/example" "$repo/.claude" "$repo/.omp/extensions" "$repo/.pi/extensions" "$repo/src"
   : >"$repo/.agents/skills/example/SKILL.md"
   : >"$repo/.claude/settings.json"
+  : >"$repo/.omp/extensions/fm-primary-omp.ts"
   : >"$repo/.pi/extensions/fm-primary-pi-watch.ts"
   : >"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
   : >"$repo/src/unmapped.ts"
@@ -186,6 +190,21 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-omp-harness.test.sh" "OMP capability source selects exact-harness coverage"
   git -C "$repo" add bin/fm-omp-capabilities.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-capability-change
+
+  printf '\n' >>"$repo/bin/fm-omp-process-lib.sh"
+  printf '\n' >>"$repo/bin/fm-session-lock-lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-primary.test.sh" "OMP identity sources select primary runtime coverage"
+  assert_contains "$listed" "tests/fm-backend.test.sh" "OMP identity sources select backend coverage"
+  assert_contains "$listed" "tests/fm-session-start.test.sh" "OMP identity sources select session ownership coverage"
+  git -C "$repo" add bin/fm-omp-process-lib.sh bin/fm-session-lock-lib.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-identity-change
+
+  printf '\n' >>"$repo/.omp/extensions/fm-primary-omp.ts"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-primary.test.sh" "OMP native extension selects primary runtime coverage"
+  git -C "$repo" add .omp/extensions/fm-primary-omp.ts
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-primary-extension-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"

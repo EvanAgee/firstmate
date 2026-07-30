@@ -20,6 +20,8 @@
 # duplicating it, so the two consumers cannot drift apart.
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$FM_BACKEND_LIB_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$FM_BACKEND_LIB_DIR/fm-omp-process-lib.sh"
 
 # fm_backend_tmux_resolve_bare_selector: the live-window-listing fallback for a
 # selector that is neither an explicit target nor a task selector routed
@@ -149,7 +151,7 @@ fm_backend_tmux_current_command() {  # <target>
 }
 
 fm_backend_tmux_bun_agent_state() {  # <target> -> alive|ambiguous|unreadable
-  local target=$1 pane_pid foreground_pid args first second
+  local target=$1 pane_pid foreground_pid args
   pane_pid=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null) || {
     printf 'unreadable'
     return 0
@@ -164,16 +166,11 @@ fm_backend_tmux_bun_agent_state() {  # <target> -> alive|ambiguous|unreadable
     printf 'unreadable'
     return 0
   }
-  # Read only the exact interpreter + script boundary observed for OMP.
-  read -r first second _rest <<EOF
-$args
-EOF
-  first=$(basename -- "${first:-}")
-  second=$(basename -- "${second:-}")
-  case "$first:$second" in
-    bun:omp) printf 'alive' ;;
-    *) printf 'ambiguous' ;;
-  esac
+  if fm_omp_process_matches bun "$args"; then
+    printf 'alive'
+  else
+    printf 'ambiguous'
+  fi
 }
 
 # fm_backend_tmux_agent_state: recovery-grade harness-agent state for one

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the selected OMP executable has Firstmate's required worker lifecycle surface.
+# Verify the selected OMP executable has Firstmate's required lifecycle and exact process-ownership surface.
 # Usage: fm-omp-capabilities.sh [--print-binary]
 # Success is silent unless --print-binary prints the resolved executable path.
 # Capability checks, rather than a semantic-version floor, own compatibility.
@@ -35,6 +35,16 @@ if [ ! -x "$binary" ]; then
   echo "error: resolved omp executable is not runnable: $binary" >&2
   exit 1
 fi
+
+entrypoint=$(readlink -f "$binary" 2>/dev/null || printf '%s' "$binary")
+IFS= read -r shebang < "$entrypoint" || shebang=
+case "$shebang" in
+  '#!/usr/bin/env bun'|'#!/usr/bin/env -S bun'|'#!'*/bun) ;;
+  *)
+    echo "error: omp entrypoint is not Bun-backed: $entrypoint; exact OMP process ownership requires a '#!/usr/bin/env bun' entrypoint" >&2
+    exit 1
+    ;;
+esac
 
 if help=$("$binary" --help 2>&1); then
   :
