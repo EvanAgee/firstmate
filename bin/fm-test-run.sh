@@ -146,7 +146,7 @@ family_for_basename() {
     fm-backend-herdr-smoke.test.sh|fm-backend-herdr-workspace-per-home-e2e.test.sh)
       printf '%s\n' real-herdr-gated
       ;;
-    fm-backlog-handoff.test.sh|fm-secondmate-harness.test.sh|fm-secondmate-lifecycle-e2e.test.sh|\
+    fm-backlog-handoff.test.sh|fm-omp-secondmate.test.sh|fm-secondmate-harness.test.sh|fm-secondmate-lifecycle-e2e.test.sh|\
     fm-secondmate-liveness.test.sh|fm-secondmate-safety.test.sh|fm-secondmate-sync.test.sh|\
     fm-startup-memory-budget.test.sh|\
     fm-send-secondmate-marker.test.sh|fm-shared-captain-inheritance.test.sh)
@@ -159,7 +159,7 @@ family_for_basename() {
       ;;
     fm-afk-pi-herdr-return-e2e.test.sh|\
     fm-codex-continuity-live-e2e.test.sh|fm-grok-continuity-live-e2e.test.sh|\
-    fm-grok-stop-live-e2e.test.sh|fm-omp-worker-tmux-live-e2e.test.sh|\
+    fm-grok-stop-live-e2e.test.sh|fm-omp-secondmate-live-e2e.test.sh|fm-omp-worker-tmux-live-e2e.test.sh|\
     fm-opencode-primary-live-e2e.test.sh|fm-pi-primary-live-e2e.test.sh|\
     fm-send-secondmate-marker-herdr-e2e.test.sh)
       printf '%s\n' live-harness-optin
@@ -630,6 +630,7 @@ families_for_changed_path() {
     bin/backends/orca*|bin/backends/tmux.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' orca
+      printf '%s\n' secondmate
       ;;
     bin/fm-backend.sh|bin/fm-backend-hometag-lib.sh)
       printf '%s\n' backend-dispatch
@@ -637,15 +638,20 @@ families_for_changed_path() {
       ;;
     .omp/extensions/fm-primary-omp.ts)
       printf '%s\n' watcher-wake-lock
+      printf '%s\n' secondmate
+      printf '%s\n' live-harness-optin
       ;;
     bin/fm-omp-process-lib.sh|bin/fm-session-lock-lib.sh)
       printf '%s\n' watcher-wake-lock
       printf '%s\n' backend-dispatch
       printf '%s\n' session-bootstrap
+      printf '%s\n' secondmate
       ;;
     bin/fm-omp-capabilities.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
+      printf '%s\n' secondmate
+      printf '%s\n' live-harness-optin
       ;;
     bin/fm-pi-compatible-lib.sh|bin/fm-pi-compatible-runtimes)
       printf '%s\n' pure-contract-unit
@@ -680,6 +686,7 @@ families_for_changed_path() {
     bin/fm-sessionstart-nudge.sh|bin/fm-tangle*|bin/fm-update.sh|\
     bin/fm-gate-refuse*|bin/fm-lock*|bin/fm-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
+      [ "$path" != bin/fm-bootstrap.sh ] || printf '%s\n' secondmate
       ;;
     bin/fm-pr-*|bin/fm-merge-local.sh|bin/fm-teardown.sh|bin/fm-review-diff.sh|\
     bin/fm-x-*|bin/fm-check*)
@@ -689,10 +696,15 @@ families_for_changed_path() {
       printf '%s\n' watcher-wake-lock
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
+      printf '%s\n' secondmate
       ;;
     bin/fm-spawn.sh|bin/fm-send.sh|bin/fm-peek.sh|bin/fm-composer*)
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
+      if [ "$path" = bin/fm-spawn.sh ]; then
+        printf '%s\n' secondmate
+        printf '%s\n' live-harness-optin
+      fi
       ;;
     bin/fm-bearings-snapshot.sh|bin/fm-fleet-snapshot.sh|bin/fm-fleet-view.sh)
       printf '%s\n' snapshot-bearings

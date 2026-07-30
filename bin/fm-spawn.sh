@@ -68,7 +68,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|omp|grok|kimi)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. pi-signed launches that exact executable name from PATH and
@@ -112,7 +112,9 @@
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 #     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (OMP turn-start
 #                  acknowledgement and turn-end extension, also outside the worktree)
-#     __OMPSESSIONDIR__ per-task OMP session directory under tasktmp for exact resume
+#     __OMPSESSIONDIR__ task-local or secondmate-home OMP session directory for exact resume
+#     __OMPRESUMEFLAG__ empty for a fresh OMP launch or the exact retained secondmate session file
+#     __OMPPRIMARY__ absolute path to .omp/extensions/fm-primary-omp.ts in an OMP secondmate home
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
 #     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
@@ -306,6 +308,14 @@ spawn_abort_cleanup() {
        || ! grep -Fqx 'harness=omp' "$meta" \
        || ! grep -Fqx "tasktmp=${TASK_TMP:-}" "$meta"; then
       echo "warning: OMP spawn cleanup could not prove ownership; preserving its endpoint, worktree, and task artifacts" >&2
+    elif [ "${KIND:-}" = secondmate ]; then
+      if ! grep -Fqx 'kind=secondmate' "$meta" || ! grep -Fqx "home=$WT" "$meta"; then
+        echo "warning: OMP secondmate spawn cleanup could not prove persistent-home ownership; preserving its endpoint, home, metadata, and sessions" >&2
+      elif ! fm_backend_kill "$BACKEND" "$T"; then
+        echo "warning: OMP secondmate spawn cleanup could not stop its owned endpoint; preserving its home, metadata, and sessions" >&2
+      else
+        echo "warning: OMP secondmate launch failed after endpoint creation; stopped only its owned endpoint and preserved its persistent home, metadata, and sessions" >&2
+      fi
     elif ! fm_backend_kill "$BACKEND" "$T"; then
       echo "warning: OMP spawn cleanup could not stop its owned endpoint; preserving its worktree and task artifacts" >&2
     else
@@ -457,7 +467,7 @@ FIRSTMATE_HOME=
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|pi-signed|grok|kimi)
+    ''|claude|codex|opencode|pi|pi-signed|omp|grok|kimi)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -511,8 +521,13 @@ launch_template() {
       fi
       ;;
     omp)
-      [ "$kind" != secondmate ] || return 1
-      printf '%s' '__OMPBIN__ --session-dir __OMPSESSIONDIR__ --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      if [ "$kind" = secondmate ]; then
+        # The explicit path is the exact same tracked file native project discovery sees.
+        # OMP 17.1.8's discoverExtensionPaths path-resolves and deduplicates before loading, so this guarantees the integration without registering it twice.
+        printf '%s' '__OMPBIN__ --session-dir __OMPSESSIONDIR__ __OMPRESUMEFLAG__--auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPPRIMARY__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      else
+        printf '%s' '__OMPBIN__ --session-dir __OMPSESSIONDIR__ --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      fi
       ;;
     # grok (Grok Build TUI): a positional prompt starts the supervised interactive
     # session. --always-approve auto-approves every tool execution (verified: the
@@ -580,20 +595,80 @@ if [ "$HARNESS" = pi-signed ] && ! command -v pi-signed >/dev/null 2>&1; then
   exit 1
 fi
 OMP_BIN=
+OMP_PRIMARY_EXTENSION=
+OMP_SESSION_DIR=
+OMP_SESSION_POINTER=
+OMP_RESUME_FILE=
+OMP_SECONDMATE_RELAUNCH=0
+OMP_SECONDMATE_PRIOR_STATE=fresh
 if [ "$HARNESS" = omp ]; then
   OMP_BIN=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-binary) || exit 1
   if [ "$BACKEND" != tmux ]; then
-    echo "error: harness=omp worker/scout support is verified only on backend=tmux at this implementation stage" >&2
+    echo "error: harness=omp support is verified only on backend=tmux at this implementation stage" >&2
     exit 1
   fi
-  for artifact in \
-    "$STATE/$ID.meta" "$STATE/$ID.status" "$STATE/$ID.omp-ext.ts" \
-    "$STATE/$ID.omp-ready" "$STATE/$ID.omp-started" "/tmp/fm-$ID"; do
-    if [ -e "$artifact" ] || [ -L "$artifact" ]; then
-      echo "error: refusing OMP spawn because task $ID already has artifacts at $artifact; reconcile or clean the prior task before retrying" >&2
+  if [ "$KIND" = secondmate ]; then
+    OMP_PRIOR_META="$STATE/$ID.meta"
+    if [ -L "$OMP_PRIOR_META" ]; then
+      echo "error: refusing OMP secondmate recovery through symlinked metadata: $OMP_PRIOR_META" >&2
       exit 1
     fi
-  done
+    if [ -f "$OMP_PRIOR_META" ]; then
+      OMP_PRIOR_BACKEND=$(fm_backend_of_meta "$OMP_PRIOR_META")
+      OMP_PRIOR_TARGET=$(fm_backend_target_of_meta "$OMP_PRIOR_META")
+      if [ -z "$OMP_PRIOR_TARGET" ]; then
+        OMP_SECONDMATE_PRIOR_STATE=missing
+      else
+        OMP_SECONDMATE_PRIOR_STATE=$(fm_backend_agent_state "$OMP_PRIOR_BACKEND" "$OMP_PRIOR_TARGET" 2>/dev/null) \
+          || OMP_SECONDMATE_PRIOR_STATE=unreadable
+      fi
+      case "$OMP_SECONDMATE_PRIOR_STATE" in
+        dead)
+          if ! fm_backend_kill "$OMP_PRIOR_BACKEND" "$OMP_PRIOR_TARGET"; then
+            echo "error: OMP secondmate $ID is dead but its recorded endpoint could not be retired; refusing duplicate launch" >&2
+            exit 1
+          fi
+          OMP_POST_KILL_STATE=$(fm_backend_agent_state "$OMP_PRIOR_BACKEND" "$OMP_PRIOR_TARGET" 2>/dev/null) \
+            || OMP_POST_KILL_STATE=unreadable
+          if [ "$OMP_POST_KILL_STATE" != missing ]; then
+            echo "error: OMP secondmate $ID endpoint did not become authoritatively missing after dead-agent cleanup; refusing duplicate launch" >&2
+            exit 1
+          fi
+          OMP_SECONDMATE_RELAUNCH=1
+          ;;
+        missing)
+          OMP_SECONDMATE_RELAUNCH=1
+          ;;
+        alive)
+          echo "error: OMP secondmate $ID already has a live agent at $OMP_PRIOR_TARGET; refusing duplicate launch" >&2
+          exit 1
+          ;;
+        ambiguous)
+          echo "error: OMP secondmate $ID has an ambiguous agent process at $OMP_PRIOR_TARGET; refusing duplicate launch" >&2
+          exit 1
+          ;;
+        unreadable|*)
+          echo "error: OMP secondmate $ID endpoint state is unreadable at ${OMP_PRIOR_TARGET:-unknown}; refusing duplicate launch" >&2
+          exit 1
+          ;;
+      esac
+    fi
+    for artifact in "$STATE/$ID.omp-ext.ts" "$STATE/$ID.omp-ready" "$STATE/$ID.omp-started"; do
+      if [ -e "$artifact" ] || [ -L "$artifact" ]; then
+        echo "error: refusing OMP secondmate launch because worker-only artifact exists at $artifact" >&2
+        exit 1
+      fi
+    done
+  else
+    for artifact in \
+      "$STATE/$ID.meta" "$STATE/$ID.status" "$STATE/$ID.omp-ext.ts" \
+      "$STATE/$ID.omp-ready" "$STATE/$ID.omp-started" "/tmp/fm-$ID"; do
+      if [ -e "$artifact" ] || [ -L "$artifact" ]; then
+        echo "error: refusing OMP spawn because task $ID already has artifacts at $artifact; reconcile or clean the prior task before retrying" >&2
+        exit 1
+      fi
+    done
+  fi
 fi
 
 # config/secondmate-harness may carry optional model/effort tokens alongside the
@@ -756,6 +831,60 @@ path_is_ancestor_of() {
   return 1
 }
 
+prepare_omp_secondmate_session() {
+  OMP_SESSION_DIR="$PROJ_ABS/state/omp-sessions"
+  OMP_SESSION_POINTER="$PROJ_ABS/state/.omp-session"
+  OMP_RESUME_FILE=
+  if [ -L "$OMP_SESSION_DIR" ]; then
+    echo "error: OMP secondmate session directory must not be a symlink: $OMP_SESSION_DIR" >&2
+    return 1
+  fi
+  mkdir -p "$OMP_SESSION_DIR" || {
+    echo "error: cannot create OMP secondmate session directory: $OMP_SESSION_DIR" >&2
+    return 1
+  }
+  chmod 0700 "$OMP_SESSION_DIR" 2>/dev/null || true
+  OMP_SESSION_DIR_REAL=$(cd "$OMP_SESSION_DIR" && pwd -P) || {
+    echo "error: could not resolve OMP secondmate session directory: $OMP_SESSION_DIR" >&2
+    return 1
+  }
+  if ! path_is_ancestor_of "$PROJ_ABS" "$OMP_SESSION_DIR_REAL"; then
+    echo "error: OMP secondmate session directory resolves outside its home: $OMP_SESSION_DIR" >&2
+    return 1
+  fi
+  OMP_SESSION_DIR="$OMP_SESSION_DIR_REAL"
+  if [ -L "$OMP_SESSION_POINTER" ]; then
+    echo "error: OMP secondmate session pointer must not be a symlink: $OMP_SESSION_POINTER" >&2
+    return 1
+  fi
+  if [ -f "$OMP_SESSION_POINTER" ]; then
+    if [ "$(wc -l < "$OMP_SESSION_POINTER" 2>/dev/null | tr -d '[:space:]')" != 1 ]; then
+      echo "error: OMP secondmate session pointer is malformed: $OMP_SESSION_POINTER" >&2
+      return 1
+    fi
+    IFS= read -r OMP_RESUME_FILE < "$OMP_SESSION_POINTER" || OMP_RESUME_FILE=
+    case "$OMP_RESUME_FILE" in
+      "$OMP_SESSION_DIR_REAL"/*.jsonl) ;;
+      *)
+        echo "error: OMP secondmate session pointer does not name an exact session inside $OMP_SESSION_DIR_REAL" >&2
+        return 1
+        ;;
+    esac
+    OMP_RESUME_PARENT=$(cd "$(dirname "$OMP_RESUME_FILE")" 2>/dev/null && pwd -P || true)
+    if [ "$OMP_RESUME_PARENT" != "$OMP_SESSION_DIR_REAL" ]; then
+      echo "error: OMP secondmate session pointer must name a direct child of $OMP_SESSION_DIR_REAL" >&2
+      return 1
+    fi
+    if [ -L "$OMP_RESUME_FILE" ] || [ ! -f "$OMP_RESUME_FILE" ]; then
+      echo "error: OMP secondmate session pointer does not resolve to an ordinary retained session: $OMP_RESUME_FILE" >&2
+      return 1
+    fi
+  elif find "$OMP_SESSION_DIR_REAL" -maxdepth 1 -type f -name '*.jsonl' -print -quit 2>/dev/null | grep -q .; then
+    echo "error: OMP secondmate has retained sessions but no exact session pointer; refusing an ambiguous resume" >&2
+    return 1
+  fi
+}
+
 validate_firstmate_home_for_spawn() {
   local id=$1 home=$2 abs_home abs_active_home abs_root marker_id
   abs_home=$(resolved_existing_dir "$home") || return 1
@@ -878,6 +1007,66 @@ if [ "$KIND" = secondmate ]; then
     echo "error: could not create secondmate state directory for $PROJ_ABS" >&2
     exit 1
   }
+  if [ "$HARNESS" = omp ]; then
+    OMP_PRIMARY_EXTENSION="$PROJ_ABS/.omp/extensions/fm-primary-omp.ts"
+    OMP_PRIMARY_MARKER="$PROJ_ABS/state/.omp-primary-extension-loaded"
+    if [ -L "$OMP_PRIMARY_EXTENSION" ] || [ ! -f "$OMP_PRIMARY_EXTENSION" ]; then
+      echo "error: OMP secondmate home is missing its ordinary tracked primary integration: $OMP_PRIMARY_EXTENSION" >&2
+      exit 1
+    fi
+    prepare_omp_secondmate_session || exit 1
+    OMP_HOME_LOCK_PID=$(cat "$PROJ_ABS/state/.lock" 2>/dev/null || true)
+    case "$OMP_HOME_LOCK_PID" in
+      '') ;;
+      *[!0-9]*|0*|1)
+        echo "error: OMP secondmate home has a malformed session-lock PID; refusing duplicate launch" >&2
+        exit 1
+        ;;
+      *)
+        if kill -0 "$OMP_HOME_LOCK_PID" 2>/dev/null; then
+          echo "error: OMP secondmate home already has a live session-lock owner (pid $OMP_HOME_LOCK_PID); refusing duplicate launch" >&2
+          exit 1
+        fi
+        ;;
+    esac
+    if [ -e "$OMP_PRIMARY_MARKER" ] || [ -L "$OMP_PRIMARY_MARKER" ]; then
+      if [ "$OMP_SECONDMATE_RELAUNCH" != 1 ] || [ -L "$OMP_PRIMARY_MARKER" ] || [ ! -f "$OMP_PRIMARY_MARKER" ]; then
+        echo "error: OMP secondmate home has an unowned primary-integration marker at $OMP_PRIMARY_MARKER; refusing duplicate launch" >&2
+        exit 1
+      fi
+      OMP_STALE_MARKER_VERSION=$(sed -n '1p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
+      OMP_STALE_MARKER_PID=$(sed -n '2p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
+      OMP_STALE_LOCK_PID=$(cat "$PROJ_ABS/state/.lock" 2>/dev/null || true)
+      OMP_EXPECTED_MARKER_VERSION=$(node -e \
+        'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs"); process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' \
+        "$OMP_PRIMARY_EXTENSION" 2>/dev/null || true)
+      OMP_STALE_MARKER_LAST_BYTE=$(tail -c 1 "$OMP_PRIMARY_MARKER" 2>/dev/null | od -An -tuC | tr -d '[:space:]')
+      if [ -z "$OMP_EXPECTED_MARKER_VERSION" ] \
+         || [ "$(wc -l < "$OMP_PRIMARY_MARKER" 2>/dev/null | tr -d '[:space:]')" != 2 ] \
+         || [ "$OMP_STALE_MARKER_LAST_BYTE" != 10 ] \
+         || [ "$OMP_STALE_MARKER_VERSION" != "$OMP_EXPECTED_MARKER_VERSION" ] \
+         || [ "$OMP_STALE_MARKER_PID" != "$OMP_STALE_LOCK_PID" ]; then
+        echo "error: OMP secondmate home has an unowned or malformed primary-integration marker at $OMP_PRIMARY_MARKER; refusing duplicate launch" >&2
+        exit 1
+      fi
+      case "$OMP_STALE_MARKER_PID" in
+        ''|*[!0-9]*|0*|1)
+          echo "error: OMP secondmate home has an unowned or malformed primary-integration marker at $OMP_PRIMARY_MARKER; refusing duplicate launch" >&2
+          exit 1
+          ;;
+        *)
+          if kill -0 "$OMP_STALE_MARKER_PID" 2>/dev/null; then
+            echo "error: OMP secondmate home still has a live primary-integration marker owner (pid $OMP_STALE_MARKER_PID); refusing duplicate launch" >&2
+            exit 1
+          fi
+          ;;
+      esac
+      rm -f "$OMP_PRIMARY_MARKER" || {
+        echo "error: could not retire the stale OMP secondmate integration marker: $OMP_PRIMARY_MARKER" >&2
+        exit 1
+      }
+    fi
+  fi
   CONFIG_INHERIT_LOCK=$(fm_config_inherit_lock_path "$PROJ_ABS") || {
     echo "error: could not resolve secondmate inheritance lock for $PROJ_ABS" >&2
     exit 1
@@ -1398,7 +1587,7 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 
   validate_spawn_worktree "treehouse get" "$T"
 fi
-if [ "$HARNESS" = omp ]; then
+if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
   OMP_ABORT_INITIAL_HEAD=$(git -C "$WT" rev-parse HEAD 2>/dev/null) || {
     echo "error: OMP spawn could not bind cleanup to the initial worktree HEAD" >&2
     exit 1
@@ -1411,8 +1600,15 @@ fi
 # later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
 # targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
 TASK_TMP="/tmp/fm-$ID"
+if [ -L "$TASK_TMP" ]; then
+  echo "error: task temp root must not be a symlink: $TASK_TMP" >&2
+  exit 1
+fi
 mkdir -p "$TASK_TMP/gotmp"
-[ "$HARNESS" != omp ] || mkdir -p "$TASK_TMP/omp-sessions"
+if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
+  OMP_SESSION_DIR="$TASK_TMP/omp-sessions"
+  mkdir -p "$OMP_SESSION_DIR"
+fi
 
 # Per-harness turn-end hook where enabled: a file that touches
 # state/<id>.turn-ended when the agent finishes a turn. Worktree-resident hooks
@@ -1729,6 +1925,9 @@ sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
+sq_ompprimary=$(shell_quote "$OMP_PRIMARY_EXTENSION")
+OMPRESUMEFLAG=
+[ -z "$OMP_RESUME_FILE" ] || OMPRESUMEFLAG="--resume $(shell_quote "$OMP_RESUME_FILE") "
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
@@ -1740,8 +1939,10 @@ LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
+LAUNCH=${LAUNCH//__OMPPRIMARY__/$sq_ompprimary}
 LAUNCH=${LAUNCH//__OMPBIN__/$(shell_quote "$OMP_BIN")}
-LAUNCH=${LAUNCH//__OMPSESSIONDIR__/$(shell_quote "$TASK_TMP/omp-sessions")}
+LAUNCH=${LAUNCH//__OMPSESSIONDIR__/$(shell_quote "$OMP_SESSION_DIR")}
+LAUNCH=${LAUNCH//__OMPRESUMEFLAG__/$OMPRESUMEFLAG}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
@@ -1758,6 +1959,9 @@ fi
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   sq_primary_home=$(shell_quote "$FM_HOME")
+  if [ "$HARNESS" = omp ]; then
+    LAUNCH="FM_OMP_SESSION_POINTER=$(shell_quote "$OMP_SESSION_POINTER") $LAUNCH"
+  fi
   LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home $LAUNCH"
 fi
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
@@ -1772,21 +1976,77 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
-if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
-  OMP_ACK_POLLS=${FM_OMP_LAUNCH_ACK_POLLS:-60}
+if [ "$HARNESS" = omp ]; then
   OMP_ACK_INTERVAL=${FM_OMP_LAUNCH_ACK_INTERVAL:-0.5}
   OMP_ACKED=0
-  for _ in $(seq 1 "$OMP_ACK_POLLS"); do
-    if [ -f "$OMP_STARTED" ]; then
-      OMP_ACKED=1
-      break
+  if [ "$KIND" = secondmate ]; then
+    OMP_ACK_POLLS=${FM_OMP_SECONDMATE_ACK_POLLS:-120}
+    OMP_PRIMARY_VERSION=$(node -e \
+      'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs"); process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' \
+      "$OMP_PRIMARY_EXTENSION" 2>/dev/null || true)
+    for _ in $(seq 1 "$OMP_ACK_POLLS"); do
+      OMP_MARKER_VERSION=$(sed -n '1p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
+      OMP_MARKER_PID=$(sed -n '2p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
+      OMP_LOCK_PID=$(cat "$PROJ_ABS/state/.lock" 2>/dev/null || true)
+      OMP_ACK_SESSION=$(cat "$OMP_SESSION_POINTER" 2>/dev/null || true)
+      OMP_ACK_SESSION_OK=0
+      OMP_ACK_PID_OK=0
+      OMP_ACK_MARKER_BYTES_OK=0
+      OMP_ACK_POINTER_BYTES_OK=0
+      if [ -f "$OMP_PRIMARY_MARKER" ] && [ ! -L "$OMP_PRIMARY_MARKER" ] \
+         && [ "$(wc -l < "$OMP_PRIMARY_MARKER" | tr -d '[:space:]')" = 2 ] \
+         && [ "$(tail -c 1 "$OMP_PRIMARY_MARKER" | od -An -tuC | tr -d '[:space:]')" = 10 ]; then
+        OMP_ACK_MARKER_BYTES_OK=1
+      fi
+      if [ -f "$OMP_SESSION_POINTER" ] && [ ! -L "$OMP_SESSION_POINTER" ] \
+         && [ "$(wc -l < "$OMP_SESSION_POINTER" | tr -d '[:space:]')" = 1 ] \
+         && [ "$(tail -c 1 "$OMP_SESSION_POINTER" | od -An -tuC | tr -d '[:space:]')" = 10 ]; then
+        OMP_ACK_POINTER_BYTES_OK=1
+      fi
+      case "$OMP_MARKER_PID" in
+        ''|*[!0-9]*|0*|1) ;;
+        *) OMP_ACK_PID_OK=1 ;;
+      esac
+      case "$OMP_ACK_SESSION" in
+        "$OMP_SESSION_DIR"/*.jsonl)
+          OMP_ACK_PARENT=$(cd "$(dirname "$OMP_ACK_SESSION")" 2>/dev/null && pwd -P || true)
+          [ "$OMP_ACK_PARENT" != "$OMP_SESSION_DIR" ] || [ -L "$OMP_ACK_SESSION" ] || [ ! -f "$OMP_ACK_SESSION" ] || OMP_ACK_SESSION_OK=1
+          ;;
+      esac
+      if [ "$OMP_ACK_SESSION_OK" -eq 1 ] \
+         && [ "$OMP_ACK_PID_OK" -eq 1 ] \
+         && [ "$OMP_ACK_MARKER_BYTES_OK" -eq 1 ] \
+         && [ "$OMP_ACK_POINTER_BYTES_OK" -eq 1 ] \
+         && [ -n "$OMP_PRIMARY_VERSION" ] \
+         && [ "$OMP_MARKER_VERSION" = "$OMP_PRIMARY_VERSION" ] \
+         && [ "$OMP_MARKER_PID" = "$OMP_LOCK_PID" ] \
+         && [ -n "$OMP_MARKER_PID" ] \
+         && kill -0 "$OMP_MARKER_PID" 2>/dev/null \
+         && [ "$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || true)" = alive ]; then
+        OMP_ACKED=1
+        break
+      fi
+      sleep "$OMP_ACK_INTERVAL"
+    done
+    if [ "$OMP_ACKED" -ne 1 ]; then
+      printf 'failed: OMP secondmate primary integration and durable session did not bind to its live session lock\n' >> "$STATE/$ID.status"
+      echo "error: OMP secondmate primary integration and durable session did not bind to its live session lock; stopping only the owned endpoint and preserving the persistent home" >&2
+      exit 1
     fi
-    sleep "$OMP_ACK_INTERVAL"
-  done
-  if [ "$OMP_ACKED" -ne 1 ]; then
-    printf 'failed: OMP initial instruction was not acknowledged by a turn_start event\n' >> "$STATE/$ID.status"
-    echo "error: OMP initial instruction was not acknowledged by a turn_start event; cleaning the owned launch" >&2
-    exit 1
+  else
+    OMP_ACK_POLLS=${FM_OMP_LAUNCH_ACK_POLLS:-60}
+    for _ in $(seq 1 "$OMP_ACK_POLLS"); do
+      if [ -f "$OMP_STARTED" ]; then
+        OMP_ACKED=1
+        break
+      fi
+      sleep "$OMP_ACK_INTERVAL"
+    done
+    if [ "$OMP_ACKED" -ne 1 ]; then
+      printf 'failed: OMP initial instruction was not acknowledged by a turn_start event\n' >> "$STATE/$ID.status"
+      echo "error: OMP initial instruction was not acknowledged by a turn_start event; cleaning the owned launch" >&2
+      exit 1
+    fi
   fi
   OMP_ABORT_CLEANUP=0
 fi

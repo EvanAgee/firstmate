@@ -193,8 +193,8 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 ## Harness support
 
-claude, codex, opencode, pi, pi-signed, grok, and kimi are empirically verified for crewmate and secondmate launches.
-OMP is empirically verified for crewmate and scout launches and for the primary session; persistent secondmate verification is tracked separately.
+claude, codex, opencode, pi, pi-signed, omp, grok, and kimi are empirically verified for crewmate and secondmate launches.
+OMP is also verified for scout launches and for the primary session.
 [README requirements](../README.md#requirements) owns the complete set supported for the primary session.
 New harnesses get verified through a supervised trial task before joining the set.
 The verified adapter knowledge - each harness's busy-state source, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).

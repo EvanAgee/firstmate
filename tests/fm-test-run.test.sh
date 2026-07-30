@@ -106,6 +106,8 @@ init_changed_fixture_repo() {
     fm-pr-merge.test.sh \
     fm-omp-harness.test.sh \
     fm-omp-primary.test.sh \
+    fm-omp-secondmate-live-e2e.test.sh \
+    fm-omp-secondmate.test.sh \
     fm-pi-compatible-family.test.sh \
     fm-pi-primary-types.test.sh \
     fm-pi-watch-extension.test.sh \
@@ -122,6 +124,7 @@ init_changed_fixture_repo() {
   : >"$repo/bin/fm-supervisor-target-lib.sh"
   : >"$repo/bin/fm-omp-capabilities.sh"
   : >"$repo/bin/fm-omp-process-lib.sh"
+  : >"$repo/bin/fm-spawn.sh"
   : >"$repo/bin/fm-session-lock-lib.sh"
   : >"$repo/bin/fm-pi-compatible-lib.sh"
   : >"$repo/bin/fm-pi-compatible-runtimes"
@@ -188,6 +191,8 @@ test_changed_dependency_selection_and_unmapped_failure() {
   printf '\n' >>"$repo/bin/fm-omp-capabilities.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-omp-harness.test.sh" "OMP capability source selects exact-harness coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate.test.sh" "OMP capability source selects persistent secondmate coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate-live-e2e.test.sh" "OMP capability source selects opt-in persistent lifecycle coverage"
   git -C "$repo" add bin/fm-omp-capabilities.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-capability-change
 
@@ -203,8 +208,17 @@ test_changed_dependency_selection_and_unmapped_failure() {
   printf '\n' >>"$repo/.omp/extensions/fm-primary-omp.ts"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-omp-primary.test.sh" "OMP native extension selects primary runtime coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate.test.sh" "OMP native extension selects persistent secondmate coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate-live-e2e.test.sh" "OMP native extension selects opt-in persistent lifecycle coverage"
   git -C "$repo" add .omp/extensions/fm-primary-omp.ts
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-primary-extension-change
+
+  printf '\n' >>"$repo/bin/fm-spawn.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-secondmate.test.sh" "spawn source selects persistent secondmate coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate-live-e2e.test.sh" "spawn source selects opt-in persistent lifecycle coverage"
+  git -C "$repo" add bin/fm-spawn.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm spawn-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"

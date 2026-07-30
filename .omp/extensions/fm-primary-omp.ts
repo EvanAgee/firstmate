@@ -1,11 +1,13 @@
 // Firstmate primary integration for OMP.
 // OMP-native session, stop, tool-call, and shutdown events stay in this adapter.
 import { spawn, spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   BeforeAgentStartEventResult,
   ExtensionAPI,
+  ExtensionContext,
   SessionStopEvent,
   SessionStopEventResult,
 } from "@oh-my-pi/pi-coding-agent";
@@ -48,6 +50,25 @@ function primaryIntegrationApplies(): boolean {
     { stdio: "ignore" },
   );
   return result.status === 0;
+}
+
+function publishSecondmateSession(ctx: ExtensionContext): void {
+  const pointer = process.env.FM_OMP_SESSION_POINTER;
+  if (!pointer || !isAbsolute(pointer)) return;
+  const sessionFile = ctx.sessionManager.getSessionFile();
+  if (!sessionFile || !isAbsolute(sessionFile)) return;
+  const temp = `${pointer}.tmp.${process.pid}`;
+  try {
+    writeFileSync(temp, `${sessionFile}\n`, { mode: 0o600 });
+    renameSync(temp, pointer);
+  } catch {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // The temporary file may not have been created.
+    }
+    // Session persistence must never break the live OMP conversation.
+  }
 }
 
 function runSessionstartNudge(forceForNativeSwitch = false): string {
@@ -159,14 +180,16 @@ export default function (omp: ExtensionAPI) {
     pendingStartupNudge = runSessionstartNudge(forceForNativeSwitch);
   };
 
-  omp.on("session_start", () => {
+  omp.on("session_start", (_event, ctx) => {
     watch.sessionStart();
+    publishSecondmateSession(ctx);
     deliverSessionstartNudge();
   });
 
-  omp.on("session_switch", (event) => {
+  omp.on("session_switch", (event, ctx) => {
     watch.sessionShutdown();
     watch.sessionStart();
+    publishSecondmateSession(ctx);
     deliverSessionstartNudge(event.reason === "new" || event.reason === "resume");
     watch.arm();
   });

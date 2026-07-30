@@ -340,6 +340,15 @@ It routes watcher follow-ups through OMP's `sendUserMessage(..., { deliverAs: "f
 `bin/fm-session-start.sh` rejects a missing, stale, foreign-PID, or version-mismatched loaded marker and prints both native-discovery and explicit `-e` recovery commands.
 The authoritative operating procedure is `docs/supervision-protocols/omp.md`.
 
+**Persistent-secondmate fact (verified 2026-07-30, OMP 17.1.8, tmux).**
+`config/secondmate-harness` accepts exact `omp` identity plus optional model and thinking-level pins, and `fm-spawn.sh --secondmate` preserves all three values without changing the primary's crew-harness selection.
+The launch runs in the isolated Firstmate home, explicitly passes that home's tracked `.omp/extensions/fm-primary-omp.ts`, stores sessions under `state/omp-sessions`, and binds `state/.omp-session` to the exact direct-child JSONL conversation selected for resume.
+OMP 17.1.8 path-resolves and deduplicates native and explicitly configured extension paths before loading them, so passing the exact natively discoverable tracked adapter with `-e` guarantees loading without duplicate registration.
+A successful launch requires the adapter hash and OMP PID marker, the same live PID in the isolated home's session lock, an alive backend endpoint, and the exact durable-session pointer.
+Recovery refuses live, ambiguous, unreadable, malformed-pointer, and unbound-session states; only authoritative missing or proven dead-then-missing state may relaunch, and resume always uses the manifest-bound session rather than filename ordering.
+A post-metadata acknowledgement failure may stop only the proven-owned endpoint and preserves the persistent home, metadata, and sessions.
+Real isolated tmux verification covers idle health, inherited crew configuration, model and thinking pins, correlated marked replies, clean exit, exact resume with conversational context, restored primary integration, and live duplicate refusal in `tests/fm-omp-secondmate-live-e2e.test.sh`.
+
 ## grok (VERIFIED 2026-06-29, grok 0.2.73; slash-submit re-verified 2026-07-03 on 0.2.82; reasoning-effort ceiling re-verified 2026-07-13 on grok 0.2.99; exit paths re-verified 2026-07-19 on grok 0.2.103)
 
 Grok Build TUI (`grok`), a Claude-Code-compatible CLI from xAI.

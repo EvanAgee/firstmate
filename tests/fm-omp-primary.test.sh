@@ -148,6 +148,7 @@ SH
     FM_HOME="$fixture/home" FM_ROOT_OVERRIDE="$fixture" \
     FM_STATE_OVERRIDE="$fixture/home/state" FM_CONFIG_OVERRIDE="$fixture/home/config" \
     FM_TEST_GUARD_PAYLOADS="$fixture/guard-payloads" FM_OMP_ARM_READY_TIMEOUT_MS=500 \
+    FM_OMP_SESSION_POINTER="$fixture/home/state/.omp-session" \
     node --input-type=module 2>&1 <<'JS'
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -181,7 +182,11 @@ let markerLines = readFileSync(marker, "utf8").trim().split("\n");
 if (markerLines[0] !== expectedVersion || markerLines[1] !== String(process.pid)) {
   throw new Error(`invalid OMP primary marker ${markerLines.join("|")}`);
 }
-await handlers.get("session_start")({ type: "session_start" }, {});
+const extensionContext = { sessionManager: { getSessionFile: () => `${process.env.FIXTURE}/omp-session.jsonl` } };
+await handlers.get("session_start")({ type: "session_start" }, extensionContext);
+if (readFileSync(process.env.FM_OMP_SESSION_POINTER, "utf8").trim() !== `${process.env.FIXTURE}/omp-session.jsonl`) {
+  throw new Error("OMP primary integration did not publish the exact secondmate session pointer");
+}
 const startup = await handlers.get("before_agent_start")({ type: "before_agent_start" }, {});
 if (startup?.message?.customType !== "firstmate-sessionstart-nudge" || startup.message.content !== "OMP_PRIMARY_STARTUP_NUDGE" || startup.message.attribution !== "agent") {
   throw new Error(`startup nudge was not bound to the first provider turn: ${JSON.stringify(startup)}`);
@@ -190,7 +195,7 @@ if (await handlers.get("before_agent_start")({ type: "before_agent_start" }, {})
   throw new Error("startup nudge repeated within one OMP session");
 }
 writeFileSync(`${process.env.FM_STATE_OVERRIDE}/.lock`, `${process.pid}\n`);
-await handlers.get("session_switch")({ type: "session_switch", reason: "new" }, {});
+await handlers.get("session_switch")({ type: "session_switch", reason: "new" }, extensionContext);
 const newStartup = await handlers.get("before_agent_start")({ type: "before_agent_start" }, {});
 if (newStartup?.message?.customType !== "firstmate-sessionstart-nudge" || newStartup.message.attribution !== "agent") {
   throw new Error(`in-process OMP /new lost its once-only startup instruction: ${JSON.stringify(newStartup)}`);
@@ -198,7 +203,7 @@ if (newStartup?.message?.customType !== "firstmate-sessionstart-nudge" || newSta
 if (await handlers.get("before_agent_start")({ type: "before_agent_start" }, {}) !== undefined) {
   throw new Error("in-process OMP /new repeated its startup instruction");
 }
-await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {});
+await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, extensionContext);
 const resumeStartup = await handlers.get("before_agent_start")({ type: "before_agent_start" }, {});
 if (resumeStartup?.message?.customType !== "firstmate-sessionstart-nudge" || resumeStartup.message.attribution !== "agent") {
   throw new Error(`in-process OMP /resume lost its once-only startup instruction: ${JSON.stringify(resumeStartup)}`);

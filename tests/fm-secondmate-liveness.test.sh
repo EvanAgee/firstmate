@@ -447,6 +447,25 @@ test_sweep_respawns_authoritatively_missing_pi_signed_secondmate() {
   pass "sweep: an authoritatively missing pi-signed secondmate window is relaunched"
 }
 
+test_sweep_recognizes_omp_for_missing_recovery() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-missing-omp)
+  printf '%s\n' omp > "$w/home/config/secondmate-harness"
+  add_sm_home "$w" sm1 firstmate:fm-sm1 omp
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" missing "$log")
+
+  assert_not_contains "$out" "recorded harness 'omp' is unverified for recovery" \
+    "startup recovery should recognize the exact OMP secondmate identity"
+  assert_contains "$out" "respawn failed after recorded endpoint confidently missing" \
+    "the fixture's absent OMP executable should fail only after missing state authorizes an exact-runtime relaunch attempt"
+  assert_not_contains "$(cat "$log")" "kill-window" \
+    "an absent OMP window should not need a destructive pre-kill"
+  pass "sweep: an authoritatively missing OMP secondmate reaches exact-runtime recovery instead of unverified fallback"
+}
+
 test_sweep_never_acts_on_ambiguous_existing_process() {
   local w fb tmuxfb log out
   w=$(new_world sweep-ambiguous)
@@ -571,6 +590,7 @@ test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate
+test_sweep_recognizes_omp_for_missing_recovery
 test_sweep_never_acts_on_ambiguous_existing_process
 test_sweep_never_acts_on_transient_unreadability
 test_sweep_reports_missing_endpoint_relaunch_failure
