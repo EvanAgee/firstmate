@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/backends/tmux.sh through bin/fm-backend.sh.
 # bin/backends/tmux.sh - the tmux session-provider adapter.
 #
 # Reference backend (AGENTS.md section 8; data/fm-backend-design-d7). P1 moves

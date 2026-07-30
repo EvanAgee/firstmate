@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-tmux-lib.sh, then call its tmux composer, busy, or submit functions.
 # fm-tmux-lib.sh — shared tmux pane primitives for firstmate.
 #
 # ONE source of truth for: busy detection, composer-empty (pending-input)

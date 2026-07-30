@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: fm-watch.sh
 # Firstmate watcher.
 # Classifies supervision wakes in bash. In normal mode it absorbs benign wakes
 # and keeps blocking; it queues and exits only for actionable wakes.

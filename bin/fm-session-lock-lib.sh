@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-session-lock-lib.sh, then call its fm_session_lock_* and fm_harness_* functions.
 # Shared session-lock harness identity.
 #
 # ONE owner of the "which verified-harness process holds this home's session

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-backend.sh, then call its fm_backend_* dispatch functions.
 # fm-backend.sh - runtime-backend selection, meta helpers, selector resolution,
 # and dispatch for firstmate's session-provider abstraction.
 #

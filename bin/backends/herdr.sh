@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/backends/herdr.sh through bin/fm-backend.sh.
 # bin/backends/herdr.sh - the herdr session-provider adapter (EXPERIMENTAL).
 #
 # Design: data/fm-backend-design-d7/herdr-addendum.md ("Interface mapping",

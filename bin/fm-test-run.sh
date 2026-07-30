@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: fm-test-run.sh (--all | --family <name> | --changed | --lane <name> | --proven-isolated | tests/<name>.test.sh...)
 # fm-test-run.sh - single owner of Firstmate's behavior-test runner, lane
 # composition for portable CI shards, local --jobs for the proven-isolated set,
 # timing markers, and the complete-regression coverage guard.

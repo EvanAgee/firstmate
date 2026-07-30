@@ -187,7 +187,7 @@ herdr status --json | jq -c '{client:.client.protocol,server:.server.protocol}'
 herdr api schema --json | jq -c '.schemas.subscription_event["$defs"].SubscriptionEventKind.enum'
 ```
 
-Observed current shapes:
+Observed retained protocol-16 shapes from the macOS aarch64 projection run:
 
 ```text
 herdr 0.7.5
@@ -365,6 +365,7 @@ Observed bounded output:
 ```text
 omp/17.1.8
 herdr 0.7.5
+{"client":17,"server":17}
 ok - real Herdr OMP role matrix: primary, worker, scout, secondmate, busy steering, normal exits, recovery, duplicate refusal, and guarded teardown
 ok - real Herdr OMP /exit: exact native identity, post-offset normal session_exit, pane absence, and guarded tripwire teardown
 ```

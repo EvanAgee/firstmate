@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: fm-supervision-instructions.sh [--repair-line] [harness]
 # Render the primary-harness supervision operating block for session start and
 # the short repair line used by guards and turn-end hooks.
 set -eu

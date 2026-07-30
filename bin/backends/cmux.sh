@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/backends/cmux.sh through bin/fm-backend.sh.
 # bin/backends/cmux.sh - the cmux session-provider adapter (EXPERIMENTAL).
 #
 # Design: data/cmux-backend-feasibility-c7/report.md (adapter design sketch,
