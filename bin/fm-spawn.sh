@@ -260,9 +260,6 @@ if [ "$BACKEND" = cmux ] && [ "$KIND" = secondmate ]; then
   echo "error: backend=cmux does not support --secondmate spawns yet" >&2
   exit 1
 fi
-if [ "$BACKEND" = orca ]; then
-  fm_backend_orca_runtime_check || exit 1
-fi
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
@@ -296,17 +293,26 @@ parse_orca_worktree_result() {
   fi
 }
 
+spawn_omp_abort_ownership_proven() {  # <meta>
+  local meta=$1
+  [ "${SPAWN_TASK_LOCK_HELD:-0}" = 1 ] \
+    && [ -n "${BACKEND:-}" ] \
+    && [ -n "${T:-}" ] \
+    && [ -n "${WT:-}" ] \
+    && fm_backend_validate_task_endpoint "$meta" "${ID:-}" \
+    && [ "$FM_BACKEND_VALIDATED_BACKEND" = "$BACKEND" ] \
+    && [ "$FM_BACKEND_VALIDATED_TARGET" = "$T" ] \
+    && grep -Fqx "worktree=$WT" "$meta" \
+    && grep -Fqx 'harness=omp' "$meta" \
+    && grep -Fqx "tasktmp=${TASK_TMP:-}" "$meta"
+}
+
 spawn_abort_cleanup() {
   local status=$? meta current_head dirty
   if [ "$OMP_ABORT_CLEANUP" = 1 ]; then
     OMP_ABORT_CLEANUP=0
     meta="${STATE:-}/${ID:-}.meta"
-    if [ "${SPAWN_TASK_LOCK_HELD:-0}" != 1 ] || [ "${BACKEND:-}" != tmux ] \
-       || [ -z "${T:-}" ] || [ -z "${WT:-}" ] || [ ! -f "$meta" ] \
-       || ! grep -Fqx "window=$T" "$meta" \
-       || ! grep -Fqx "worktree=$WT" "$meta" \
-       || ! grep -Fqx 'harness=omp' "$meta" \
-       || ! grep -Fqx "tasktmp=${TASK_TMP:-}" "$meta"; then
+    if ! spawn_omp_abort_ownership_proven "$meta"; then
       echo "warning: OMP spawn cleanup could not prove ownership; preserving its endpoint, worktree, and task artifacts" >&2
     elif [ "${KIND:-}" = secondmate ]; then
       if ! grep -Fqx 'kind=secondmate' "$meta" || ! grep -Fqx "home=$WT" "$meta"; then
@@ -602,11 +608,19 @@ OMP_RESUME_FILE=
 OMP_SECONDMATE_RELAUNCH=0
 OMP_SECONDMATE_PRIOR_STATE=fresh
 if [ "$HARNESS" = omp ]; then
+  case "$BACKEND" in
+    tmux|herdr) ;;
+    *)
+      echo "error: harness=omp support is verified only on backend=tmux or backend=herdr (selected backend=$BACKEND)" >&2
+      exit 1
+      ;;
+  esac
+fi
+if [ "$BACKEND" = orca ]; then
+  fm_backend_orca_runtime_check || exit 1
+fi
+if [ "$HARNESS" = omp ]; then
   OMP_BIN=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-binary) || exit 1
-  if [ "$BACKEND" != tmux ]; then
-    echo "error: harness=omp support is verified only on backend=tmux at this implementation stage" >&2
-    exit 1
-  fi
   if [ "$KIND" = secondmate ]; then
     OMP_PRIOR_META="$STATE/$ID.meta"
     if [ -L "$OMP_PRIOR_META" ]; then

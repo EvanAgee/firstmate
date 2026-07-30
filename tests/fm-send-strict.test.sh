@@ -59,6 +59,17 @@ esac
 exit 0
 SH
   chmod +x "$fb/tmux"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "${FM_HERDR_LOG:-/dev/null}"
+case "${1:-} ${2:-}" in
+  "status --json") printf '%s\n' '{"client":{"version":"0.7.5","protocol":17},"server":{"running":true}}' ;;
+  "pane get") printf '{"result":{"pane":{"pane_id":"%s"}}}\n' "${3:-}" ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/herdr"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -133,6 +144,18 @@ test_prefixless_herdr_pane_id_fails() {
   pass "fm-send strict: prefixless herdr pane ids are rejected before tmux fallback"
 }
 
+test_fm_prefixed_herdr_explicit_target_matches_recorded_window() {
+  local dir fb home err log rc
+  dir="$TMP_ROOT/herdr-fm-session"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); home=$(setup_home herdrfmsession); err="$dir/send.err"; log="$dir/herdr.log"; : > "$log"
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_HERDR_LOG="$log" \
+    "$SEND" fm-lab-proof:w1:p2 --key Escape >/dev/null 2>"$err"; rc=$?
+  expect_code 0 "$rc" "fm-prefixed Herdr explicit target should verify without metadata"
+  assert_contains "$(cat "$log")" 'pane send-keys w1:p2 escape' \
+    "fm-prefixed Herdr explicit target did not reach the recorded pane"
+  pass "fm-send strict: fm-prefixed live Herdr targets reach explicit endpoint verification before label refusal"
+}
+
 test_unmatched_single_colon_target_must_exist() {
   local dir fb home err log rc
   dir="$TMP_ROOT/dead-explicit"; mkdir -p "$dir"
@@ -167,5 +190,6 @@ test_exact_lane_id_send_still_works
 test_unset_fm_home_fails
 test_unresolvable_target_does_not_tmux_fallback
 test_prefixless_herdr_pane_id_fails
+test_fm_prefixed_herdr_explicit_target_matches_recorded_window
 test_unmatched_single_colon_target_must_exist
 test_healthy_fm_id_send_still_works

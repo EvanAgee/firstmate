@@ -81,6 +81,11 @@
 #                                   supported as supervisor backends; the daemon
 #                                   refuses loudly at startup rather than trying
 #                                   tmux primitives against a non-tmux pane.
+#          FM_SUPERVISOR_HARNESS    exact supervisor harness identity. The
+#                                   detached launcher passes this explicitly;
+#                                   otherwise startup derives it with
+#                                   bin/fm-harness.sh. Herdr injection refuses
+#                                   when the identity is unknown.
 #          FM_INJECT_SKIP           |-prefixes force-self-handle bypassing
 #                                   classification (default "heartbeat"); empty
 #                                   disables. Use sparingly: it overrides the
@@ -1112,7 +1117,7 @@ window_for_task() {  # <task-key> [state]
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded
+  local msg=$1 state target backend harness retries sleep_s verdict composer encoded
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; firstmate drives the normal always-on
@@ -1159,9 +1164,20 @@ inject_msg() {  # <message> [state]
   # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh): for
   # backend=tmux this calls fm_backend_tmux_send_text_submit, a verbatim
   # re-export of fm_tmux_submit_core - byte-identical to calling it directly.
+  harness=${FM_SUPERVISOR_HARNESS:-}
+  case "$harness" in
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi) ;;
+    *)
+      if [ "$backend" = herdr ]; then
+        log "inject deferred: herdr supervisor harness is not a verified exact identity (harness=${harness:-unknown})"
+        return 1
+      fi
+      harness=
+      ;;
+  esac
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
-  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s")
+  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" "" "$harness")
   if [ "$verdict" = empty ]; then
     return 0  # Backend confirmed the submit.
   fi
@@ -1340,7 +1356,7 @@ fm_super_main() {
   # into FM_SUPERVISOR_BACKEND makes inject_msg/pane_is_busy/pane_input_pending
   # (which read that env var) dispatch through the right backend without an
   # extra global thread-through.
-  local discovered_backend backend_source
+  local discovered_backend backend_source discovered_harness
   backend_source="FM_SUPERVISOR_BACKEND"
   if [ -z "${FM_SUPERVISOR_BACKEND:-}" ]; then
     if [ -n "${TMUX_PANE:-}" ]; then
@@ -1367,6 +1383,10 @@ fm_super_main() {
     rm -f "$PIDFILE" 2>/dev/null || true
     exit 1
   fi
+  discovered_harness=${FM_SUPERVISOR_HARNESS:-}
+  [ -n "$discovered_harness" ] || discovered_harness=$("$FM_DAEMON_DIR/fm-harness.sh")
+  FM_SUPERVISOR_HARNESS=$discovered_harness
+  export FM_SUPERVISOR_HARNESS
 
   # --- auto-discover the supervisor target (the pane running firstmate) -----
   # Priority: FM_SUPERVISOR_TARGET override > $TMUX_PANE (tmux; inherited from

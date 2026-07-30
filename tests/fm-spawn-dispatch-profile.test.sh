@@ -67,6 +67,53 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  cat > "$fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+cmd=${1:-}
+sub=${2:-}
+case "$cmd $sub" in
+  "status --json")
+    printf '%s\n' '{"client":{"version":"0.7.5","protocol":17},"server":{"running":true}}'
+    ;;
+  "workspace list")
+    printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"}]}}'
+    ;;
+  "tab list")
+    printf '%s\n' '{"result":{"tabs":[]}}'
+    ;;
+  "tab create")
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'tab create\n' >> "$FM_FAKE_ENDPOINT_LOG"
+    printf '%s\n' '{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2"}}}'
+    ;;
+  "pane get")
+    printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s"}}}\n' "${3:-w1:p2}" "${FM_FAKE_PANE_PATH:-}"
+    ;;
+  "pane run")
+    exit 0
+    ;;
+  "pane send-text")
+    [ -z "${FM_FAKE_LAUNCH_LOG:-}" ] || printf '%s\n' "${4:-}" >> "$FM_FAKE_LAUNCH_LOG"
+    ;;
+  "pane send-keys")
+    case "${4:-}" in
+      enter)
+        if grep -Fq 'FM_OMP_HARNESS=omp' "${FM_FAKE_LAUNCH_LOG:-/dev/null}" 2>/dev/null; then
+          [ -z "${FM_FAKE_OMP_ACK:-}" ] || : > "$FM_FAKE_OMP_ACK"
+        fi
+        ;;
+    esac
+    ;;
+  "pane close")
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'pane close %s\n' "${3:-}" >> "$FM_FAKE_ENDPOINT_LOG"
+    ;;
+  "agent get")
+    printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}'
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/herdr"
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 [ -z "${FM_FAKE_TREEHOUSE_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_TREEHOUSE_LOG"
@@ -651,6 +698,55 @@ test_omp_threads_exact_identity_model_and_every_thinking_level() {
   pass "OMP preserves exact identity and forwards every supported thinking level"
 }
 
+test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
+  local kind rec id out status launch flag
+  for kind in worker scout; do
+    id="profile-omp-herdr-$kind-z8ph"
+    rec=$(make_spawn_case "profile-omp-herdr-$kind" omp "$id")
+    read_case_record "$rec"
+    export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
+    flag=
+    [ "$kind" != scout ] || flag=--scout
+
+    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --backend herdr --model openai-codex/gpt-5.6-sol --effort low $flag)
+    status=$?
+    expect_code 0 "$status" "OMP Herdr $kind launch should succeed after turn-start acknowledgement"
+    assert_contains "$out" "spawned $id harness=omp" "OMP Herdr $kind launch lost exact runtime identity"
+    assert_grep 'backend=herdr' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its backend"
+    assert_grep 'herdr_session=default' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its named session"
+    assert_grep 'herdr_pane_id=w1:p2' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its exact pane"
+    launch=$(cat "$LAUNCH_LOG")
+    assert_contains "$launch" "FM_OMP_HARNESS=omp" "OMP Herdr $kind launch omitted the exact identity marker"
+    assert_contains "$launch" "--session-dir '/tmp/fm-$id/omp-sessions'" "OMP Herdr $kind launch omitted its nonempty isolated session directory"
+    assert_contains "$launch" "-e '$HOME_DIR/state/$id.omp-ext.ts'" "OMP Herdr $kind launch omitted its acknowledgement extension"
+    unset FM_TEST_OMP_ACK
+  done
+  pass "OMP Herdr workers and scouts preserve exact identity, isolated sessions, metadata, and launch acknowledgement"
+}
+
+test_omp_refuses_unverified_backends_before_endpoint_creation() {
+  local backend rec id out status endpoint_log
+  for backend in zellij orca cmux; do
+    id="profile-omp-unverified-$backend-z8pu"
+    rec=$(make_spawn_case "profile-omp-unverified-$backend" omp "$id")
+    read_case_record "$rec"
+    endpoint_log="$CASE_DIR/endpoint.log"
+    : > "$endpoint_log"
+
+    out=$(FM_FAKE_ENDPOINT_LOG="$endpoint_log" \
+      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend "$backend")
+    status=$?
+    expect_code 1 "$status" "OMP should refuse unverified backend $backend"
+    assert_contains "$out" "verified only on backend=tmux or backend=herdr" \
+      "OMP $backend refusal did not name the supported backend allowlist"
+    assert_absent "$HOME_DIR/state/$id.meta" "OMP $backend refusal wrote task metadata"
+    [ ! -s "$endpoint_log" ] || fail "OMP $backend refusal created an endpoint"
+    [ ! -s "$LAUNCH_LOG" ] || fail "OMP $backend refusal typed a launch command"
+  done
+  pass "OMP refuses every backend outside the verified tmux/herdr allowlist before endpoint creation"
+}
+
 test_omp_scout_uses_external_turn_extension() {
   local rec id out status
   id=profile-omp-scout-z8p
@@ -738,6 +834,28 @@ test_omp_launch_requires_observable_turn_start_acknowledgement() {
   assert_absent "$HOME_DIR/state/$id.omp-ext.ts" "OMP unacknowledged launch left its extension"
   assert_absent "/tmp/fm-$id" "OMP unacknowledged launch left its task temp root"
   pass "OMP spawn requires the initial turn-start acknowledgement and cleans its unchanged launch"
+}
+
+test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts() {
+  local rec id out status endpointlog treehouselog
+  id=profile-omp-herdr-unacked-z8rh
+  rec=$(make_spawn_case profile-omp-herdr-unacked omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr)
+  status=$?
+  expect_code 1 "$status" "unacknowledged OMP Herdr launch should fail"
+  assert_contains "$out" "initial instruction was not acknowledged" \
+    "OMP Herdr unacknowledged launch did not reach the observable acknowledgement gate"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_grep 'pane close w1:p2' "$endpointlog" "OMP Herdr unacknowledged launch left its owned endpoint alive"
+  assert_grep "return --force $WT_DIR" "$treehouselog" "OMP Herdr unacknowledged launch did not return its unchanged worktree"
+  assert_absent "$HOME_DIR/state/$id.meta" "OMP Herdr unacknowledged launch left owned metadata"
+  assert_absent "$HOME_DIR/state/$id.omp-ext.ts" "OMP Herdr unacknowledged launch left its extension"
+  assert_absent "/tmp/fm-$id" "OMP Herdr unacknowledged launch left its task temp root"
+  pass "OMP Herdr spawn failure cleans its proven endpoint, unchanged worktree, and task artifacts"
 }
 
 test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
@@ -892,9 +1010,12 @@ test_pi_threads_model_and_max_effort
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_omp_threads_exact_identity_model_and_every_thinking_level
+test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack
+test_omp_refuses_unverified_backends_before_endpoint_creation
 test_omp_scout_uses_external_turn_extension
 test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata
 test_omp_launch_requires_observable_turn_start_acknowledgement
+test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts
 test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags

@@ -28,11 +28,13 @@ setup_case() { # <name>
   HOME_DIR="$CASE/secondmate-home"
   FAKEBIN="$CASE/fakebin"
   TMUX_LOG="$CASE/tmux.log"
+  HERDR_LOG="$CASE/herdr.log"
   LAUNCH_LOG="$CASE/launch"
   WINDOW_FLAG="$CASE/window"
   RETIRED_FLAG="$CASE/retired"
   mkdir -p "$MAIN_STATE" "$MAIN_DATA/$TASK_ID" "$MAIN_CONFIG" "$MAIN_PROJECTS" \
     "$HOME_DIR/.omp/extensions" "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/data" "$HOME_DIR/projects" "$FAKEBIN" "$CASE/tmp"
+  : > "$HERDR_LOG"
   cp "$ROOT/.omp/extensions/fm-primary-omp.ts" "$HOME_DIR/.omp/extensions/fm-primary-omp.ts"
   cp "$ROOT/AGENTS.md" "$HOME_DIR/AGENTS.md"
   ln -s "$ROOT/bin" "$HOME_DIR/bin"
@@ -125,6 +127,78 @@ exit 0
 SH
   chmod +x "$FAKEBIN/tmux"
 
+  cat > "$FAKEBIN/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%q ' "$@" >> "$FM_TEST_HERDR_LOG"
+printf '\n' >> "$FM_TEST_HERDR_LOG"
+cmd=${1:-}
+sub=${2:-}
+case "$cmd $sub" in
+  "status --json")
+    printf '%s\n' '{"client":{"version":"0.7.5","protocol":17},"server":{"running":true}}'
+    ;;
+  "workspace list")
+    printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"2ndmate-%s"}]}}\n' "$FM_TEST_TASK_ID"
+    ;;
+  "tab list")
+    printf '%s\n' '{"result":{"tabs":[]}}'
+    ;;
+  "tab create")
+    : > "$FM_TEST_WINDOW_FLAG"
+    printf '%s\n' '{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2"}}}'
+    ;;
+  "pane get")
+    if [ ! -f "$FM_TEST_WINDOW_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"pane_not_found"}}' >&2
+      exit 1
+    fi
+    if [ "${FM_TEST_STATE_MODE:-}" = unreadable ] && [ ! -f "$FM_TEST_RETIRED_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"internal_error"}}' >&2
+      exit 1
+    fi
+    printf '{"result":{"pane":{"pane_id":"w1:p2","foreground_cwd":"%s"}}}\n' "$FM_TEST_HOME"
+    ;;
+  "agent get")
+    if [ ! -f "$FM_TEST_WINDOW_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"agent_not_found"}}' >&2
+      exit 1
+    fi
+    if [ "${FM_TEST_STATE_MODE:-}" = dead ] && [ ! -f "$FM_TEST_RETIRED_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"agent_not_found"}}' >&2
+      exit 1
+    fi
+    if [ "${FM_TEST_STATE_MODE:-}" = unreadable ] && [ ! -f "$FM_TEST_RETIRED_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"internal_error"}}' >&2
+      exit 1
+    fi
+    printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}'
+    ;;
+  "pane run")
+    ;;
+  "pane send-text")
+    printf '%s\n' "${4:-}" > "$FM_TEST_LAUNCH_LOG"
+    ;;
+  "pane send-keys")
+    if [ "${4:-}" = enter ] && [ -s "$FM_TEST_LAUNCH_LOG" ] && [ "${FM_TEST_SKIP_ACK:-0}" != 1 ]; then
+      mkdir -p "$FM_TEST_HOME/state/omp-sessions"
+      session="$FM_TEST_HOME/state/omp-sessions/${FM_TEST_ACK_SESSION:-selected.jsonl}"
+      printf '{"type":"session"}\n' > "$session"
+      printf '%s\n' "$session" > "$FM_TEST_HOME/state/.omp-session"
+      version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$FM_TEST_HOME/.omp/extensions/fm-primary-omp.ts")
+      printf '%s\n%s\n' "$version" "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.omp-primary-extension-loaded"
+      printf '%s\n' "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.lock"
+    fi
+    ;;
+  "pane close")
+    rm -f "$FM_TEST_WINDOW_FLAG"
+    : > "$FM_TEST_RETIRED_FLAG"
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$FAKEBIN/herdr"
+
   cat > "$FAKEBIN/treehouse" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_TREEHOUSE_LOG"
@@ -160,6 +234,33 @@ run_spawn() { # [extra env NAME=VALUE ...]
     "$ROOT/bin/fm-spawn.sh" "$TASK_ID" "$HOME_DIR" --secondmate
 }
 
+run_spawn_herdr() { # [extra env NAME=VALUE ...]
+  env \
+    PATH="$FAKEBIN:$BASE_PATH" \
+    TMPDIR="$CASE/tmp" \
+    FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$MAIN_STATE" \
+    FM_DATA_OVERRIDE="$MAIN_DATA" \
+    FM_CONFIG_OVERRIDE="$MAIN_CONFIG" \
+    FM_PROJECTS_OVERRIDE="$MAIN_PROJECTS" \
+    FM_BACKEND=herdr \
+    HERDR_SESSION=fmtest \
+    FM_TEST_HERDR_LOG="$HERDR_LOG" \
+    FM_TEST_LAUNCH_LOG="$LAUNCH_LOG" \
+    FM_TEST_WINDOW_FLAG="$WINDOW_FLAG" \
+    FM_TEST_RETIRED_FLAG="$RETIRED_FLAG" \
+    FM_TEST_AGENT_PID="$AGENT_PID" \
+    FM_TEST_HOME="$HOME_DIR" \
+    FM_TEST_TASK_ID="$TASK_ID" \
+    FM_TEST_TREEHOUSE_LOG="$CASE/treehouse.log" \
+    FM_TEST_STATE_MODE="${FM_TEST_STATE_MODE:-}" \
+    FM_TEST_SKIP_ACK="${FM_TEST_SKIP_ACK:-0}" \
+    FM_OMP_SECONDMATE_ACK_POLLS=3 \
+    FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    "$@" \
+    "$ROOT/bin/fm-spawn.sh" "$TASK_ID" "$HOME_DIR" --secondmate
+}
+
 count_new_windows() {
   grep '^new-window ' "$TMUX_LOG" 2>/dev/null | wc -l | tr -d '[:space:]'
 }
@@ -176,6 +277,78 @@ kind=secondmate
 home=$HOME_DIR
 backend=tmux
 EOF_META
+}
+
+write_herdr_meta() {
+  cat > "$MAIN_STATE/$TASK_ID.meta" <<EOF_META
+window=fmtest:w1:p2
+endpoint_task_id=$TASK_ID
+worktree=$HOME_DIR
+project=$HOME_DIR
+harness=omp
+model=test/model
+effort=low
+kind=secondmate
+home=$HOME_DIR
+backend=herdr
+herdr_session=fmtest
+herdr_workspace_id=w1
+herdr_tab_id=w1:t2
+herdr_pane_id=w1:p2
+EOF_META
+}
+
+test_herdr_launch_exact_resume_recovery_and_abort() {
+  local out selected before
+  setup_case herdr-launch
+
+  out=$(run_spawn_herdr 2>&1) || fail "fresh OMP Herdr secondmate spawn failed: $out"
+  assert_contains "$(cat "$LAUNCH_LOG")" "--session-dir '$HOME_DIR/state/omp-sessions'" \
+    "OMP Herdr secondmate launch did not carry a nonempty isolated session directory"
+  assert_contains "$(cat "$MAIN_STATE/$TASK_ID.meta")" 'harness=omp' "OMP Herdr secondmate identity was not exact"
+  assert_contains "$(cat "$MAIN_STATE/$TASK_ID.meta")" 'backend=herdr' "OMP Herdr secondmate backend was not recorded"
+  assert_contains "$(cat "$MAIN_STATE/$TASK_ID.meta")" 'herdr_pane_id=w1:p2' "OMP Herdr secondmate exact pane was not recorded"
+  selected="$HOME_DIR/state/omp-sessions/selected.jsonl"
+  [ -f "$selected" ] || fail "OMP Herdr secondmate acknowledgement did not create its selected durable session"
+
+  rm -f "$WINDOW_FLAG" "$HOME_DIR/state/.omp-primary-extension-loaded" "$HOME_DIR/state/.lock"
+  : > "$LAUNCH_LOG"
+  out=$(FM_TEST_STATE_MODE=missing run_spawn_herdr 2>&1) || fail "OMP Herdr secondmate exact resume failed: $out"
+  assert_contains "$(cat "$LAUNCH_LOG")" "--resume '$selected'" \
+    "OMP Herdr secondmate recovery did not resume the pointer-bound exact session"
+
+  setup_case herdr-live-refusal
+  write_herdr_meta
+  : > "$WINDOW_FLAG"
+  before=$(grep -c '^tab create ' "$HERDR_LOG" 2>/dev/null || true)
+  out=$(FM_TEST_STATE_MODE=alive run_spawn_herdr 2>&1) && fail "OMP Herdr secondmate accepted a live duplicate"
+  assert_contains "$out" 'already has a live agent' "OMP Herdr live duplicate refusal was not actionable"
+  [ "$(grep -c '^tab create ' "$HERDR_LOG" 2>/dev/null || true)" = "$before" ] \
+    || fail "OMP Herdr live duplicate refusal created another endpoint: $(cat "$HERDR_LOG")"
+
+  setup_case herdr-unreadable-refusal
+  write_herdr_meta
+  : > "$WINDOW_FLAG"
+  out=$(FM_TEST_STATE_MODE=unreadable run_spawn_herdr 2>&1) && fail "OMP Herdr secondmate accepted an unreadable duplicate"
+  assert_contains "$out" 'endpoint state is unreadable' "OMP Herdr unreadable duplicate refusal was not actionable"
+
+  setup_case herdr-dead-recovery
+  write_herdr_meta
+  : > "$WINDOW_FLAG"
+  out=$(FM_TEST_STATE_MODE=dead run_spawn_herdr 2>&1) || fail "dead OMP Herdr secondmate did not recover: $out"
+  assert_contains "$(cat "$HERDR_LOG")" 'pane close w1:p2' "dead OMP Herdr endpoint was not retired"
+  assert_contains "$(cat "$HERDR_LOG")" 'tab create' "dead OMP Herdr secondmate was not relaunched"
+
+  setup_case herdr-abort
+  printf 'preserve me\n' > "$HOME_DIR/state/sentinel"
+  out=$(FM_TEST_SKIP_ACK=1 run_spawn_herdr 2>&1) && fail "OMP Herdr secondmate launch unexpectedly succeeded without acknowledgement"
+  assert_contains "$out" 'preserving the persistent home' "OMP Herdr acknowledgement failure did not preserve its home contract"
+  [ -f "$HOME_DIR/state/sentinel" ] || fail "OMP Herdr secondmate abort removed persistent home state"
+  [ -f "$MAIN_STATE/$TASK_ID.meta" ] || fail "OMP Herdr secondmate abort removed recovery metadata"
+  [ ! -f "$WINDOW_FLAG" ] || fail "OMP Herdr secondmate abort left its owned endpoint running"
+  [ ! -s "$CASE/treehouse.log" ] || fail "OMP Herdr secondmate abort invoked treehouse against a persistent home"
+
+  pass "OMP Herdr secondmate launch, exact resume, conservative recovery, and post-ack abort preserve the durable contract"
 }
 
 test_launch_and_exact_resume() {
@@ -295,6 +468,7 @@ test_post_meta_abort_preserves_home() {
   pass "post-metadata OMP acknowledgement failure stops only the owned endpoint and preserves home, metadata, and sessions"
 }
 
+test_herdr_launch_exact_resume_recovery_and_abort
 test_launch_and_exact_resume
 test_duplicate_recovery_states
 test_post_meta_abort_preserves_home

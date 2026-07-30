@@ -53,6 +53,10 @@ if [ "${1:-}" = status ] && [ "${2:-}" = --json ] && [ "${FM_HERDR_SCRIPT_STATUS
 fi
 n=$next
 echo "$n" > "$COUNT_FILE"
+if [ "${1:-} ${2:-}" = "pane send-keys" ] && [ "${4:-}" = enter ] \
+   && [ -n "${FM_HERDR_APPEND_SESSION_ON_ENTER:-}" ]; then
+  printf '%s\n' "${FM_HERDR_APPEND_SESSION_RECORD:-}" >> "$FM_HERDR_APPEND_SESSION_ON_ENTER"
+fi
 if [ -f "$RESP/$n.exit" ]; then
   exit "$(cat "$RESP/$n.exit")"
 fi
@@ -139,6 +143,14 @@ case "$cmd $sub" in
     ;;
   "pane list")
     jq_state --arg w "$ws" '{result:{panes:[.tabs[]|select(.workspace_id==$w)|{pane_id:.pane_id, tab_id:.tab_id}]}}'
+    ;;
+  "pane get")
+    pane=${3:-}
+    if jq_state -e --arg p "$pane" '.tabs[] | select(.pane_id == $p)' >/dev/null 2>&1; then
+      printf '{"result":{"pane":{"pane_id":"%s"}}}\n' "$pane"
+    else
+      printf '{"error":{"code":"pane_not_found"}}\n'
+    fi
     ;;
   "pane close")
     pane=${3:-}
@@ -905,10 +917,11 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
   printf '{"result":{"tab":{"tab_id":"w9:t2"},"root_pane":{"pane_id":"w9:p2"}}}\n' > "$resp/2.out"
   printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/3.out"
   printf '{"result":{"panes":[{"pane_id":"w9:p1","tab_id":"w9:t1"},{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/4.out"
-  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/5.out"
-  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/6.out"
-  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/8.out"
-  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/9.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1"}}}\n' > "$resp/5.out"
+  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/6.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/7.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/9.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/10.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
     bash -c '
@@ -948,10 +961,11 @@ test_projection_create_never_closes_a_concurrent_same_label_tab() {
   printf '{"result":{"tab":{"tab_id":"w9:t2"},"root_pane":{"pane_id":"w9:p2"}}}\n' > "$resp/2.out"
   printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/3.out"
   printf '{"result":{"panes":[{"pane_id":"w9:p1","tab_id":"w9:t1"},{"pane_id":"w9:p2","tab_id":"w9:t2"},{"pane_id":"w9:p3","tab_id":"w9:t3"}]}}\n' > "$resp/4.out"
-  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/5.out"
-  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/6.out"
-  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/8.out"
-  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"},{"pane_id":"w9:p3","tab_id":"w9:t3"}]}}\n' > "$resp/9.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1"}}}\n' > "$resp/5.out"
+  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/6.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/7.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/9.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"},{"pane_id":"w9:p3","tab_id":"w9:t3"}]}}\n' > "$resp/10.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_focus_snapshot() { printf "captain-ws\tcaptain-tab"; }; fm_backend_herdr_projection_focus_restore() { return 0; }; fm_backend_herdr_projection_create_task /tmp/proj label fm-task-p2' "$ROOT" 2>&1)
@@ -1086,10 +1100,11 @@ test_projection_seeded_prune_refuses_active_tab() {
   log="$dir/log"; resp="$dir/responses"; : > "$log"
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9","focused":true},{"tab_id":"w9:t2","label":"fm-task","workspace_id":"w9","focused":false}]}}' > "$resp/1.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w9:p1","tab_id":"w9:t1"},{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}' > "$resp/2.out"
-  printf '%s\n' '{"error":{"code":"agent_not_found"}}' > "$resp/3.out"
-  printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w9","active_tab_id":"w9:t1","focused":true}]}}' > "$resp/4.out"
-  printf '%s\n' '{"result":{"tabs":[{"tab_id":"w9:t1","focused":true},{"tab_id":"w9:t2","focused":false}]}}' > "$resp/5.out"
-  printf '%s\n' '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}' > "$resp/6.out"
+  printf '%s\n' '{"result":{"pane":{"pane_id":"w9:p1"}}}' > "$resp/3.out"
+  printf '%s\n' '{"error":{"code":"agent_not_found"}}' > "$resp/4.out"
+  printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w9","active_tab_id":"w9:t1","focused":true}]}}' > "$resp/5.out"
+  printf '%s\n' '{"result":{"tabs":[{"tab_id":"w9:t1","focused":true},{"tab_id":"w9:t2","focused":false}]}}' > "$resp/6.out"
+  printf '%s\n' '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}' > "$resp/7.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_prune_seeded_default_tab fmtest w9 w9:t1 focus-preserving' "$ROOT" 2>&1)
@@ -1955,6 +1970,70 @@ test_composer_state_unknown_when_no_composer_row_found() {
   pass "fm_backend_herdr_composer_state: reports unknown for bare shell prompts with no composer row"
 }
 
+# OMP uses a status row followed by a bottom input row, not Pi's separator
+# composer and not the generic side-bordered or bare-prompt shapes above.
+# Herdr's native exact OMP identity is therefore part of the proof.
+test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
+  local dir log resp fb out top width case_id content middle idx=0
+  top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
+  width=${#top}
+  for case_id in empty pending multiline; do
+    idx=$((idx + 1))
+    dir="$TMP_ROOT/composer-omp-$case_id"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+    content=
+    middle=
+    case "$case_id" in
+      pending) content=' steer after current turn' ;;
+      multiline) middle=$'follow the first constraint\nand preserve the second\n' ;;
+    esac
+    {
+      printf '%s\n' "$top"
+      printf '%s' "$middle"
+      printf '╰─%-*s─╯\n' "$((width - 4))" "$content"
+    } > "$resp/1.out"
+    printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}' > "$resp/2.out"
+    fb=$(make_herdr_fakebin "$dir")
+    out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2' "$ROOT" )
+    case "$case_id:$out" in
+      empty:empty|pending:pending|multiline:pending) ;;
+      *) fail "OMP Herdr composer case '$case_id' classified '$out'" ;;
+    esac
+  done
+  pass "fm_backend_herdr_composer_state: exact OMP structure distinguishes empty, pending, and bounded multi-line input"
+}
+
+test_composer_state_omp_malformed_short_stale_working_and_unreadable_are_unknown() {
+  local dir log resp fb out top width case_id content agent_status
+  top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
+  width=${#top}
+  for case_id in short malformed stale working blocked unreadable non-omp; do
+    dir="$TMP_ROOT/composer-omp-unsafe-$case_id"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+    case "$case_id" in
+      short) printf '%s\n╰─ short ─╯\n' "$top" > "$resp/1.out" ;;
+      malformed) printf '%s\nmissing OMP closing row\n' "$top" > "$resp/1.out" ;;
+      stale) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\ntranscript continued after stale composer\n' "$((width - 4))" ' stale input' >> "$resp/1.out" ;;
+      *) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$resp/1.out" ;;
+    esac
+    agent_status=idle
+    case "$case_id" in
+      working|blocked) agent_status=$case_id ;;
+    esac
+    if [ "$case_id" = unreadable ]; then
+      printf '1\n' > "$resp/2.exit"
+    elif [ "$case_id" = non-omp ]; then
+      printf '{"result":{"agent":{"agent":"pi","agent_status":"idle"}}}\n' > "$resp/2.out"
+    else
+      printf '{"result":{"agent":{"agent":"omp","agent_status":"%s"}}}\n' "$agent_status" > "$resp/2.out"
+    fi
+    fb=$(make_herdr_fakebin "$dir")
+    out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2' "$ROOT" )
+    [ "$out" = unknown ] || fail "unsafe OMP Herdr composer case '$case_id' must remain unknown, got '$out'"
+  done
+  pass "fm_backend_herdr_composer_state: OMP short, malformed, stale, working, blocked, unreadable, and inexact-identity shapes remain unknown"
+}
+
 # Real Pi 0.80.7 on Herdr 0.7.3 renders no prompt glyph and no side border.
 # Its content is the row(s) between two blue horizontal separators; the idle row
 # carries only a reverse-video cursor. This exact shape was `unknown` for 4555s
@@ -2298,6 +2377,170 @@ test_wait_for_working_treats_blocked_as_submit_active() {
 # deterministic call-count assertions; the multi-sample behavior itself is
 # covered above by the wait_for_working tests and by
 # test_send_text_submit_slow_transition_within_one_enter_needs_no_extra_enter.
+
+test_omp_session_reader_uses_bsd_tail_compatible_arguments() {
+  local dir fb session log offset real_tail
+  dir="$TMP_ROOT/omp-session-portable-tail"; fb="$dir/fakebin"; session="$dir/session.jsonl"; log="$dir/tail.log"
+  mkdir -p "$fb"; : > "$log"
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  offset=$(wc -c < "$session")
+  printf '%s\n' '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"portable"}],"steering":true}}' >> "$session"
+  real_tail=$(command -v tail)
+  cat > "$fb/tail" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> '$log'
+[ "\$#" -eq 3 ] && [ "\$1" = -c ] && [ "\${2#+}" != "\$2" ] || exit 9
+exec '$real_tail' "\$@"
+SH
+  chmod +x "$fb/tail"
+  PATH="$fb:$PATH" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_has_message_after "$1" "$2" portable' "$ROOT" "$session" "$offset" \
+    || fail "OMP session matcher failed through the BSD-compatible tail argument shape"
+  assert_not_contains "$(cat "$log")" ' -- ' "OMP session matcher passed GNU-only -- to tail"
+  pass "OMP session event readers use portable tail -c +N file arguments without GNU-only option termination"
+}
+
+test_send_text_submit_omp_idle_refuses_missing_native_session_identity() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/submit-omp-idle-missing-session"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"done"}}}' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "do not type" 3 0.01 0 "" omp' "$ROOT" )
+  [ "$out" = unknown ] || fail "OMP idle submit without an exact native session path must remain unknown, got '$out'"
+  [ "$(grep -c $'\x1f''pane'$'\x1f''send-text' "$log")" -eq 0 ] \
+    || fail "OMP idle submit typed before proving its native session identity"
+  pass "fm_backend_herdr_send_text_submit: OMP idle/done targets without an exact native session path refuse before typing"
+}
+
+test_send_text_submit_omp_exit_requires_normal_session_event_and_closes_endpoint() {
+  local dir log resp fb out session close_count bad_offset
+  dir="$TMP_ROOT/submit-omp-exit"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"done","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/5.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
+    FM_HERDR_APPEND_SESSION_RECORD='{"type":"custom","customType":"session_exit","data":{"reason":"dispose","kind":"normal"}}' \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=1 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 /exit 3 0.01 0 "" omp' "$ROOT" )
+  [ "$out" = empty ] || fail "a normal post-offset OMP session_exit plus missing endpoint should confirm /exit, got '$out'"
+  close_count=$(grep -c $'\x1f''pane'$'\x1f''close'$'\x1f''w1:p2' "$log")
+  [ "$close_count" -eq 1 ] || fail "confirmed OMP /exit did not close exactly its task pane (count=$close_count)"
+  bad_offset=$(wc -c < "$session")
+  printf '%s\n' '{"type":"custom","customType":"session_exit","data":{"reason":"error","kind":"abnormal"}}' >> "$session"
+  if bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_has_normal_exit_after "$1" "$2"' "$ROOT" "$session" "$bad_offset"; then
+    fail "an abnormal or pre-offset OMP exit event must not satisfy normal exit acknowledgement"
+  fi
+  pass "fm_backend_herdr_send_text_submit: exact normal OMP session_exit confirms /exit before the owned Herdr pane is closed"
+}
+
+test_send_text_submit_omp_exit_without_normal_event_never_falls_back_to_steering_ack() {
+  local dir log resp fb out session enter_count close_count
+  dir="$TMP_ROOT/submit-omp-exit-no-event"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"working","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
+    FM_HERDR_APPEND_SESSION_RECORD='{"type":"message","message":{"role":"user","content":[{"type":"text","text":"/exit"}],"steering":true}}' \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=1 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 /exit 3 0.01 0 "" omp' "$ROOT" )
+  [ "$out" = unknown ] || fail "OMP /exit without a normal exit event must remain unknown, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  close_count=$(grep -c $'\x1f''pane'$'\x1f''close'$'\x1f''w1:p2' "$log" || true)
+  [ "$enter_count" -eq 1 ] && [ "$close_count" -eq 0 ] \
+    || fail "unconfirmed OMP /exit retried Enter or closed the pane (enter=$enter_count close=$close_count)"
+  pass "fm_backend_herdr_send_text_submit: OMP /exit requires normal exit proof and cannot fall back to a steering acknowledgement"
+}
+
+test_send_text_submit_omp_busy_steer_requires_matching_new_session_event() {
+  local dir log resp fb out enter_count session text
+  dir="$TMP_ROOT/submit-omp-busy-ack"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  text='After the current tool finishes, report OMP_BUSY_ACK.'
+  printf '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"%s"}],"steering":true}}\n' "$text" > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"working","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
+    FM_HERDR_APPEND_SESSION_RECORD="{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"$text\"}],\"steering\":true}}" \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
+  [ "$out" = empty ] || fail "a busy OMP steer with a matching new session event should confirm delivery, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 1 ] || fail "a matching OMP steer event should require exactly one Enter, got $enter_count"
+  [ "$(grep -c $'\x1f''pane'$'\x1f''send-text'$'\x1f''w1:p2'$'\x1f' "$log")" -eq 1 ] \
+    || fail "OMP busy acknowledgement retyped the message"
+  [ "$(grep -c $'\x1f''pane'$'\x1f''read' "$log")" -eq 0 ] \
+    || fail "OMP busy acknowledgement borrowed a raw pane-change proof"
+  pass "fm_backend_herdr_send_text_submit: a busy OMP steer confirms only from the exact matching post-offset session event"
+}
+
+test_send_text_submit_omp_busy_rejects_identical_ordinary_user_event() {
+  local dir log resp fb out enter_count session text
+  dir="$TMP_ROOT/submit-omp-busy-ordinary-event"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  text='An ordinary same-text turn is not a steering acknowledgement.'
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"working","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
+    FM_HERDR_APPEND_SESSION_RECORD="{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"$text\"}]}}" \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
+  [ "$out" = unknown ] || fail "an identical ordinary OMP user event must not acknowledge busy steering, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 1 ] || fail "an ordinary same-text event provoked an unsafe Enter retry, got $enter_count"
+  pass "fm_backend_herdr_send_text_submit: identical post-offset ordinary OMP user events cannot impersonate native steering acknowledgement"
+}
+
+test_send_text_submit_omp_busy_default_event_budget_is_bounded_and_long_enough() {
+  local dir log resp fb out session text sleep_log sleeps
+  dir="$TMP_ROOT/submit-omp-busy-default-budget"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; sleep_log="$dir/sleeps"; : > "$log"; : > "$sleep_log"
+  session="$dir/omp-session.jsonl"
+  text='Wait for the native steering event without redelivery.'
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"working","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_SLEEP_LOG="$sleep_log" \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP= \
+    bash -c '. "$0/bin/backends/herdr.sh"; sleep() { printf "sleep:%s\n" "$1" >> "$FM_SLEEP_LOG"; }; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
+  [ "$out" = unknown ] || fail "missing OMP steering event should remain unknown after the default budget, got '$out'"
+  sleeps=$(grep -c '^sleep:6.0000$' "$sleep_log")
+  [ "$sleeps" -eq 1 ] || fail "default OMP event confirmation did not sample immediately and at the bounded six-second endpoint: $(cat "$sleep_log")"
+  [ "$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")" -eq 1 ] \
+    || fail "default OMP event budget retried Enter"
+  pass "fm_backend_herdr_send_text_submit: default OMP steering acknowledgement waits a bounded six seconds without redelivery"
+}
+
+test_send_text_submit_omp_busy_without_new_event_refuses_without_retry() {
+  local dir log resp fb out enter_count send_count session text
+  dir="$TMP_ROOT/submit-omp-busy-no-ack"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  text='Do not duplicate this busy steer.'
+  printf '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"%s"}],"steering":true}}\n' "$text" > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"working","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
+  [ "$out" = unknown ] || fail "a busy OMP steer without a new matching event must remain unknown, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  send_count=$(grep -c $'\x1f''pane'$'\x1f''send-text'$'\x1f''w1:p2'$'\x1f' "$log")
+  [ "$enter_count" -eq 1 ] && [ "$send_count" -eq 1 ] \
+    || fail "an unacknowledged busy OMP steer retried delivery (send-text=$send_count enter=$enter_count)"
+  pass "fm_backend_herdr_send_text_submit: an unacknowledged busy OMP steer stays unknown without any automatic redelivery"
+}
 
 test_send_text_submit_detects_landed_send() {
   local dir log resp fb out enter_count
@@ -2741,39 +2984,37 @@ EOF
   pass "fm_backend_herdr_create_task: the label-collision startup-workspace scenario (2026-07-02 incident) leaves the captain's live tab untouched"
 }
 
-test_prune_refuses_a_working_agent_pane_defense_in_depth() {
-  # Defense in depth (not the primary safety mechanism): even for a
-  # freshly-created workspace with a genuine non-empty seeded default tab id,
-  # if that specific pane's agent reports "working" by the time create_task
-  # runs, the prune must refuse rather than close a live agent's pane.
-  local dir log state fb raw container seeded seeded_pane ids pane
-  dir="$TMP_ROOT/prune-busy-defense"; mkdir -p "$dir"; log="$dir/log"; state="$dir/state.json"; : > "$log"
-  fb=$(make_herdr_statefake "$dir")
-  raw=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" HERDR_SESSION=fmtest \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_container_ensure /proj' "$ROOT" ) \
-    || fail "container_ensure failed against the stateful fake"
-  container=${raw%%$'\t'*}
-  seeded=${raw#*$'\t'}
-  [ -n "$seeded" ] || fail "expected a freshly created workspace to report a seeded default tab id"
-  # Mark the seeded default tab's pane as hosting a working agent (simulates
-  # some other path landing a live agent there between creation and prune).
-  seeded_pane=$(jq -r --arg t "$seeded" '.tabs[] | select(.tab_id == $t) | .pane_id' "$state")
-  [ -n "$seeded_pane" ] || fail "could not resolve the seeded default tab's pane id from state"
-  fake_herdr_set_agent_status "$state" "$seeded_pane" working
+test_prune_refuses_every_registered_or_malformed_agent_pane_defense_in_depth() {
+  # Only a positively confirmed agent_not_found response licenses pruning.
+  # Every registered native state and every malformed status must preserve the
+  # seeded tab because idle, done, and blocked agents are still live sessions.
+  local status dir log state fb raw container seeded seeded_pane ids pane
+  for status in working idle done blocked malformed; do
+    dir="$TMP_ROOT/prune-$status-defense"; mkdir -p "$dir"; log="$dir/log"; state="$dir/state.json"; : > "$log"
+    fb=$(make_herdr_statefake "$dir")
+    raw=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" HERDR_SESSION=fmtest \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_container_ensure /proj' "$ROOT" ) \
+      || fail "container_ensure failed against the stateful fake for $status"
+    container=${raw%%$'\t'*}
+    seeded=${raw#*$'\t'}
+    [ -n "$seeded" ] || fail "expected a freshly created workspace to report a seeded default tab id"
+    seeded_pane=$(jq -r --arg t "$seeded" '.tabs[] | select(.tab_id == $t) | .pane_id' "$state")
+    [ -n "$seeded_pane" ] || fail "could not resolve the seeded default pane for $status"
+    fake_herdr_set_agent_status "$state" "$seeded_pane" "$status"
 
-  ids=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" HERDR_SESSION=fmtest \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_create_task "$1" "$2" /proj "$3"' "$ROOT" "$container" "fm-busytest" "$seeded" ) \
-    || fail "create_task failed against the stateful fake"
-  read -r _ pane <<EOF
+    ids=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" HERDR_SESSION=fmtest \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_create_task "$1" "$2" /proj "$3"' "$ROOT" "$container" "fm-${status}test" "$seeded" ) \
+      || fail "create_task failed against the stateful fake for $status"
+    read -r _ pane <<EOF
 $ids
 EOF
-  [ -n "$pane" ] || fail "create_task returned no pane id"
-
-  jq -e --arg t "$seeded" '.tabs[] | select(.tab_id == $t)' "$state" >/dev/null \
-    || fail "the seeded default tab was closed despite its pane reporting a working agent (defense-in-depth failed)"
-  assert_not_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''close'$'\x1f'"$seeded_pane" \
-    "create_task must refuse to close a seeded default tab whose pane hosts a working agent"
-  pass "fm_backend_herdr_workspace_prune_seeded_default_tab: refuses to close the seeded default tab when its pane reports a working agent (defense in depth)"
+    [ -n "$pane" ] || fail "create_task returned no pane id for $status"
+    jq -e --arg t "$seeded" '.tabs[] | select(.tab_id == $t)' "$state" >/dev/null \
+      || fail "seeded tab was closed for registered or malformed agent state $status"
+    assert_not_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''close'$'\x1f'"$seeded_pane" \
+      "seeded prune closed a pane whose agent state was $status"
+  done
+  pass "fm_backend_herdr_workspace_prune_seeded_default_tab: only confirmed agent_not_found permits pruning; working, idle, done, blocked, and malformed states are preserved"
 }
 
 # --- native event push: normalize / policy-routing / dedupe / wait ----------
@@ -3115,7 +3356,7 @@ test_workspace_ensure_prunes_default_tab
 test_repeated_cycles_reuse_one_workspace_no_orphans
 test_adopted_workspace_never_prunes_default_tab
 test_label_collision_startup_workspace_leaves_live_tab_alone
-test_prune_refuses_a_working_agent_pane_defense_in_depth
+test_prune_refuses_every_registered_or_malformed_agent_pane_defense_in_depth
 test_create_task_refuses_duplicate_label
 test_create_task_refuses_duplicate_label_when_agent_live
 test_create_task_refuses_when_any_duplicate_label_is_live
@@ -3173,6 +3414,8 @@ test_composer_state_real_text_is_pending
 test_composer_state_popup_placeholder_fill_is_pending
 test_composer_state_unknown_on_capture_failure
 test_composer_state_unknown_when_no_composer_row_found
+test_composer_state_omp_structure_classifies_empty_pending_and_multiline
+test_composer_state_omp_malformed_short_stale_working_and_unreadable_are_unknown
 test_composer_state_pi_separator_idle_is_empty
 test_composer_state_pi_separator_real_text_is_pending
 test_composer_state_pi_incomplete_separator_below_stale_generic_is_unknown
@@ -3194,6 +3437,14 @@ test_send_text_submit_applies_herdr_minimum_confirm_budget
 test_wait_for_working_returns_idle_when_never_busy_but_readable
 test_wait_for_working_returns_unknown_when_never_readable
 test_wait_for_working_treats_blocked_as_submit_active
+test_omp_session_reader_uses_bsd_tail_compatible_arguments
+test_send_text_submit_omp_idle_refuses_missing_native_session_identity
+test_send_text_submit_omp_exit_requires_normal_session_event_and_closes_endpoint
+test_send_text_submit_omp_exit_without_normal_event_never_falls_back_to_steering_ack
+test_send_text_submit_omp_busy_steer_requires_matching_new_session_event
+test_send_text_submit_omp_busy_rejects_identical_ordinary_user_event
+test_send_text_submit_omp_busy_default_event_budget_is_bounded_and_long_enough
+test_send_text_submit_omp_busy_without_new_event_refuses_without_retry
 test_send_text_submit_detects_landed_send
 test_send_text_submit_detects_swallowed_enter
 test_send_text_submit_popup_autocomplete_requires_second_enter

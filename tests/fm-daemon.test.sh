@@ -1768,6 +1768,24 @@ test_inject_msg_herdr_pane_gone_defers() {
   pass "inject_msg: herdr pane-gone check defers before any busy/composer/submit call"
 }
 
+test_inject_msg_herdr_refuses_unknown_harness_before_submit() {
+  local dir state
+  dir=$(make_supercase inject-herdr-unknown-harness)
+  state="$dir/state"
+  afk_enter "$state"
+  (
+    fm_backend_target_exists() { return 0; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_composer_state() { printf 'empty'; }
+    fm_backend_send_text_submit() { fail "unknown-harness Herdr injection must not reach submit"; }
+    if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" \
+      FM_SUPERVISOR_HARNESS=unknown inject_msg "hello" "$state"; then
+      fail "unknown-harness Herdr injection should refuse"
+    fi
+  ) || fail "herdr unknown-harness injection subshell failed"
+  pass "inject_msg: Herdr injection refuses before typing when supervisor harness identity is unknown"
+}
+
 test_inject_msg_herdr_submits_through_backend_dispatch() {
   local dir state
   dir=$(make_supercase inject-herdr-submit)
@@ -1780,12 +1798,15 @@ test_inject_msg_herdr_submits_through_backend_dispatch() {
     fm_backend_send_text_submit() {
       [ "$1" = herdr ] && [ "$2" = "default:w1:p2" ] || fail "unexpected send_text_submit args: $1 $2"
       case "$3" in *"hello"*) : ;; *) fail "digest text missing from send_text_submit: $3" ;; esac
+      [ "$#" -eq 8 ] && [ "$7" = "" ] || fail "expected-label placeholder shifted the harness argument (argc=$#)"
+      [ "$8" = omp ] || fail "OMP Herdr injection did not forward exact harness identity: ${8:-missing}"
       printf 'empty'
     }
-    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" inject_msg "hello" "$state" \
-      || fail "inject_msg should succeed when send_text_submit confirms empty"
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" \
+      FM_SUPERVISOR_HARNESS=omp inject_msg "hello" "$state" \
+      || fail "inject_msg should succeed when OMP-native confirmation reports delivery"
   ) || fail "herdr successful-submit inject_msg subshell failed"
-  pass "inject_msg: dispatches busy-guard/composer-guard/submit through the herdr backend and succeeds on a confirmed empty composer"
+  pass "inject_msg: OMP Herdr away delivery reaches the exact-runtime native confirmation path"
 }
 
 # Safety-critical (task fm-composer-shellglyph-safety): the away-mode injector
@@ -1923,6 +1944,7 @@ test_pane_input_pending_herdr_dispatch
 test_inject_msg_herdr_busy_guard_defers
 test_inject_msg_herdr_composer_guard_defers
 test_inject_msg_herdr_pane_gone_defers
+test_inject_msg_herdr_refuses_unknown_harness_before_submit
 test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state

@@ -1039,10 +1039,9 @@ fm_backend_herdr_launcher_identity() {  # <session>
 # Defense in depth on top of that gate (not the primary safety mechanism):
 # re-verify <seeded_tab_id> is still present, still carries label "1" (a
 # human could have renamed or repurposed it in the interim), and refuse to
-# close it if its pane hosts an actively working agent per herdr's own
-# agent-state detection (`agent get`) - belt-and-suspenders against any other
-# unforeseen path landing a live agent in a tab this function was about to
-# close.
+# close it unless the pane is positively confirmed to have no registered
+# agent (`agent get` reports exactly agent_not_found). Working, idle, done,
+# blocked, malformed, and unreadable states all preserve the tab.
 #
 # Verified real-herdr behavior (not modeled by the canned-response fake-CLI
 # unit tests; modeled by make_herdr_statefake): closing a workspace's LAST
@@ -1052,7 +1051,7 @@ fm_backend_herdr_launcher_identity() {  # <session>
 # exists alongside it, never right after workspace creation - and this
 # function independently re-checks the tab count as a second layer.
 fm_backend_herdr_workspace_prune_seeded_default_tab() {  # <session> <workspace_id> <seeded_tab_id> [focus-preserving]
-  local session=$1 wsid=$2 tab_id=$3 close_mode=${4:-direct} tabs tab_count current_label pane_id agent_out agent_status
+  local session=$1 wsid=$2 tab_id=$3 close_mode=${4:-direct} tabs tab_count current_label pane_id
   [ -n "$tab_id" ] || return 0
   tabs=$(fm_backend_herdr_cli "$session" tab list --workspace "$wsid" 2>/dev/null) || return 0
   tab_count=$(printf '%s' "$tabs" | jq -r '.result.tabs? // [] | length' 2>/dev/null)
@@ -1061,9 +1060,7 @@ fm_backend_herdr_workspace_prune_seeded_default_tab() {  # <session> <workspace_
   [ "$current_label" = "1" ] || return 0
   pane_id=$(fm_backend_herdr_pane_for_tab "$session" "$wsid" "$tab_id") || return 0
   [ -n "$pane_id" ] || return 0
-  agent_out=$(fm_backend_herdr_cli "$session" agent get "$pane_id" 2>/dev/null)
-  agent_status=$(printf '%s' "$agent_out" | jq -r '.result.agent.agent_status // empty' 2>/dev/null)
-  [ "$agent_status" = working ] && return 0
+  [ "$(fm_backend_herdr_pane_agent_state "$session" "$pane_id")" = no-agent ] || return 0
   if [ "$close_mode" = focus-preserving ]; then
     fm_backend_herdr_projection_close_pane_focus_preserving "$session" "$pane_id"
   else
@@ -2055,6 +2052,79 @@ FM_BACKEND_HERDR_IDLE_RE=${FM_BACKEND_HERDR_IDLE_RE:-'^Type a message\.\.\.$'}
 # An alternation's branches are matched as whole literal byte sequences and
 # stay correct regardless of locale.
 FM_BACKEND_HERDR_BARE_PROMPT_RE=${FM_BACKEND_HERDR_BARE_PROMPT_RE:-'^(❯|›)'}
+# OMP's native composer is a status top row followed by a closing input row.
+# Pending multi-line input may add a bounded number of rows between them.
+FM_BACKEND_HERDR_OMP_COMPOSER_MAX_LINES=${FM_BACKEND_HERDR_OMP_COMPOSER_MAX_LINES:-8}
+FM_BACKEND_HERDR_OMP_COMPOSER_MIN_WIDTH=${FM_BACKEND_HERDR_OMP_COMPOSER_MIN_WIDTH:-20}
+
+# Find OMP's bottom-most structural candidate without borrowing Pi's separator
+# model or the generic bordered-row model.
+# The candidate must end at the last non-empty captured row so a stale transcript
+# copy cannot become the live composer.
+fm_backend_herdr_omp_composer_find() {  # <ansi-capture>
+  local cap=$1 line plain trimmed row=0 open=0 lines=0 max min_width
+  local candidate="" bottom_inner bottom_width top_width=0 last_nonempty=0
+  max=$FM_BACKEND_HERDR_OMP_COMPOSER_MAX_LINES
+  min_width=$FM_BACKEND_HERDR_OMP_COMPOSER_MIN_WIDTH
+  case "$max" in ''|*[!0-9]*|0) max=8 ;; esac
+  case "$min_width" in ''|*[!0-9]*|0) min_width=20 ;; esac
+  FM_BACKEND_HERDR_OMP_SIGNAL=0
+  FM_BACKEND_HERDR_OMP_FOUND=0
+  FM_BACKEND_HERDR_OMP_VALID=0
+  FM_BACKEND_HERDR_OMP_BOTTOM_LINE=0
+  FM_BACKEND_HERDR_OMP_CONTENT=""
+  while IFS= read -r line; do
+    row=$((row + 1))
+    plain=$(fm_backend_herdr_strip_ansi "$line")
+    trimmed="${plain#"${plain%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [ -z "$trimmed" ] || last_nonempty=$row
+    case "$trimmed" in
+      '╭── '*' ▶'*'──╮')
+        FM_BACKEND_HERDR_OMP_SIGNAL=1
+        open=1
+        top_width=${#trimmed}
+        lines=0
+        candidate=""
+        ;;
+      '╰─'*'─╯')
+        if [ "$open" -eq 1 ]; then
+          FM_BACKEND_HERDR_OMP_FOUND=1
+          FM_BACKEND_HERDR_OMP_BOTTOM_LINE=$row
+          FM_BACKEND_HERDR_OMP_VALID=0
+          bottom_width=${#trimmed}
+          bottom_inner=${trimmed#╰─}
+          bottom_inner=${bottom_inner%─╯}
+          if [ "$top_width" -ge "$min_width" ] \
+             && [ "$bottom_width" -ge "$min_width" ] \
+             && [ "$lines" -le "$max" ]; then
+            FM_BACKEND_HERDR_OMP_VALID=1
+            FM_BACKEND_HERDR_OMP_CONTENT=$candidate
+            [ -z "$FM_BACKEND_HERDR_OMP_CONTENT" ] \
+              || FM_BACKEND_HERDR_OMP_CONTENT="${FM_BACKEND_HERDR_OMP_CONTENT}"$'\n'
+            FM_BACKEND_HERDR_OMP_CONTENT="${FM_BACKEND_HERDR_OMP_CONTENT}${bottom_inner}"
+          fi
+        fi
+        open=0
+        ;;
+      *)
+        if [ "$open" -eq 1 ]; then
+          [ -z "$candidate" ] || candidate="${candidate}"$'\n'
+          candidate="${candidate}${line}"
+          lines=$((lines + 1))
+        fi
+        ;;
+    esac
+  done <<EOF
+$cap
+EOF
+  if [ "$FM_BACKEND_HERDR_OMP_FOUND" -eq 1 ] \
+     && [ "$FM_BACKEND_HERDR_OMP_BOTTOM_LINE" -ne "$last_nonempty" ]; then
+    FM_BACKEND_HERDR_OMP_VALID=0
+    FM_BACKEND_HERDR_OMP_CONTENT=""
+  fi
+}
+
 # Pi allows a multi-line composer between its horizontal separators. Bound the
 # structural candidate so two unrelated transcript rules with an arbitrarily
 # large region between them can never be promoted into a composer.
@@ -2129,6 +2199,33 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
   pane=$FM_BACKEND_HERDR_PANE
   cap=$(fm_backend_herdr_capture_ansi "$target" "$FM_BACKEND_HERDR_COMPOSER_LINES" 2>/dev/null \
     || fm_backend_herdr_capture "$target" "$FM_BACKEND_HERDR_COMPOSER_LINES") || { printf 'unknown'; return 0; }
+
+  # OMP has its own structural contract and native exact identity.
+  # Any OMP-shaped candidate that is malformed, stale, short, active, or
+  # unreadable remains unknown rather than falling through to Pi or generic
+  # rendering assumptions.
+  fm_backend_herdr_omp_composer_find "$cap"
+  if [ "$FM_BACKEND_HERDR_OMP_SIGNAL" -eq 1 ]; then
+    identity=$(fm_backend_herdr_agent_identity_raw "$session" "$pane" 2>/dev/null || true)
+    IFS=$'\t' read -r agent agent_status <<EOF
+$identity
+EOF
+    case "$agent:$agent_status" in
+      omp:idle|omp:done)
+        if [ "$FM_BACKEND_HERDR_OMP_FOUND" -eq 1 ] \
+           && [ "$FM_BACKEND_HERDR_OMP_VALID" -eq 1 ]; then
+          stripped=$(printf '%s\n' "$FM_BACKEND_HERDR_OMP_CONTENT" | fm_composer_strip_ghost)
+          stripped="${stripped#"${stripped%%[![:space:]]*}"}"
+          stripped="${stripped%"${stripped##*[![:space:]]}"}"
+          fm_composer_classify_content 1 "$stripped" "$FM_BACKEND_HERDR_IDLE_RE"
+          return 0
+        fi
+        ;;
+    esac
+    printf 'unknown'
+    return 0
+  fi
+
   # Structural scan: locate the bottom-most composer row and remember its RAW
   # (styled) bytes. Shape detection runs on the plain row (fm_backend_herdr_strip_ansi
   # keeps ghost text so the border/prompt glyph is still visible); the raw row is
@@ -2280,21 +2377,144 @@ EOF
 #     re-invokes this function from scratch with the same text after seeing
 #     an error, which is a human/escalation decision, not an automatic
 #     retry).
+# OMP's busy steering path is the one native exception to the generic
+# preexisting-working fallback. Before typing, it binds the exact native OMP
+# session path and byte offset. After one Enter, only a matching user-message
+# event appended after that offset confirms delivery. This avoids both false
+# failure from OMP remaining `working` and duplicate steering from retrying an
+# Enter whose queued message was already accepted.
+fm_backend_herdr_omp_submit_snapshot() {  # <session> <pane_id>
+  local session=$1 pane_id=$2 out
+  FM_BACKEND_HERDR_OMP_SUBMIT_STATUS=
+  FM_BACKEND_HERDR_OMP_SUBMIT_SESSION=
+  FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET=
+  out=$(fm_backend_herdr_cli "$session" agent get "$pane_id" 2>/dev/null) || return 1
+  [ "$(printf '%s' "$out" | jq -r '.result.agent.agent // empty' 2>/dev/null)" = omp ] || return 1
+  FM_BACKEND_HERDR_OMP_SUBMIT_STATUS=$(printf '%s' "$out" | jq -r '.result.agent.agent_status // empty' 2>/dev/null)
+  case "$FM_BACKEND_HERDR_OMP_SUBMIT_STATUS" in
+    working|blocked|idle|done) ;;
+    *) return 1 ;;
+  esac
+  [ "$(printf '%s' "$out" | jq -r '.result.agent.agent_session.kind // empty' 2>/dev/null)" = path ] || return 1
+  FM_BACKEND_HERDR_OMP_SUBMIT_SESSION=$(printf '%s' "$out" | jq -r '.result.agent.agent_session.value // empty' 2>/dev/null)
+  case "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" in /*.jsonl) : ;; *) return 1 ;; esac
+  [ -f "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" ] \
+    && [ ! -L "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" ] || return 1
+  FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET=$(wc -c < "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" 2>/dev/null) || return 1
+  case "$FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET" in ''|*[!0-9]*) return 1 ;; esac
+}
+
+fm_backend_herdr_omp_session_has_message_after() {  # <session-file> <byte-offset> <exact-text>
+  local session_file=$1 offset=$2 text=$3 size start
+  [ -f "$session_file" ] && [ ! -L "$session_file" ] || return 1
+  size=$(wc -c < "$session_file" 2>/dev/null) || return 1
+  case "$size" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$size" -gt "$offset" ] || return 1
+  start=$((offset + 1))
+  tail -c "+$start" "$session_file" 2>/dev/null \
+    | jq -se --arg text "$text" '
+        any(.[];
+          .type == "message"
+          and .message.role == "user"
+          and .message.steering == true
+          and any(.message.content[]?; .type == "text" and .text == $text)
+        )
+      ' >/dev/null 2>&1
+}
+
+fm_backend_herdr_omp_session_has_normal_exit_after() {  # <session-file> <byte-offset>
+  local session_file=$1 offset=$2 size start
+  [ -f "$session_file" ] && [ ! -L "$session_file" ] || return 1
+  size=$(wc -c < "$session_file" 2>/dev/null) || return 1
+  case "$size" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$size" -gt "$offset" ] || return 1
+  start=$((offset + 1))
+  tail -c "+$start" "$session_file" 2>/dev/null \
+    | jq -se '
+        any(.[];
+          .type == "custom"
+          and .customType == "session_exit"
+          and .data.reason == "dispose"
+          and .data.kind == "normal"
+        )
+      ' >/dev/null 2>&1
+}
+
+fm_backend_herdr_wait_omp_session_event() {  # <exit|message> <session-file> <byte-offset> <budget-seconds> <polls> [exact-text]
+  local kind=$1 session_file=$2 offset=$3 budget=$4 polls=${5:-1} text=${6:-} interval i
+  case "$polls" in ''|*[!0-9]*|0) polls=1 ;; esac
+  interval=$(awk -v b="$budget" -v p="$polls" 'BEGIN { d = p - 1; if (d < 1) d = 1; v = b / d; if (v < 0) v = 0; printf "%.4f", v }' 2>/dev/null)
+  case "$interval" in ''|*[!0-9.]*) interval=0 ;; esac
+  for ((i = 0; i < polls; i++)); do
+    if [ "$polls" -eq 1 ] || [ "$i" -gt 0 ]; then
+      sleep "$interval"
+    fi
+    case "$kind" in
+      exit) fm_backend_herdr_omp_session_has_normal_exit_after "$session_file" "$offset" && return 0 ;;
+      message) fm_backend_herdr_omp_session_has_message_after "$session_file" "$offset" "$text" && return 0 ;;
+      *) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+fm_backend_herdr_wait_omp_session_exit() {  # <session-file> <byte-offset> <budget-seconds> <polls>
+  fm_backend_herdr_wait_omp_session_event exit "$1" "$2" "$3" "${4:-1}"
+}
+
+fm_backend_herdr_wait_omp_session_message() {  # <session-file> <byte-offset> <exact-text> <budget-seconds> <polls>
+  fm_backend_herdr_wait_omp_session_event message "$1" "$2" "$4" "${5:-1}" "$3"
+}
+
 # Echoes empty|pending|unknown|send-failed, a subset of the proof-carrying
 # submit vocabulary. Empty means confirmed submitted for every backend; how
 # each backend confirms it is an internal decision, and herdr's is no longer
 # literally "the composer read empty".
-fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 verdict baseline confirm_sleep
+fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${7:-}
+  local i=0 verdict baseline confirm_sleep omp_confirm_sleep omp_session= omp_offset=
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
+  if [ "$harness" = omp ]; then
+    fm_backend_herdr_omp_submit_snapshot "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
+      || { printf 'unknown'; return 0; }
+    baseline=$(fm_backend_herdr_classify_submit_agent_status "$FM_BACKEND_HERDR_OMP_SUBMIT_STATUS")
+    omp_session=$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION
+    omp_offset=$FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET
+  fi
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
-  baseline=$(fm_backend_herdr_classify_submit_agent_status \
-    "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")")
+  if [ "$harness" != omp ]; then
+    baseline=$(fm_backend_herdr_classify_submit_agent_status \
+      "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")")
+  fi
   confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$sleep_s")
   while :; do
     fm_backend_herdr_send_key "$target" Enter || true
-    if [ "$baseline" = idle ]; then
+    if [ "$harness" = omp ] && [ "$text" = /exit ]; then
+      omp_confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP")
+      if fm_backend_herdr_wait_omp_session_exit "$omp_session" "$omp_offset" \
+        "$omp_confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS"; then
+        fm_backend_herdr_kill "$target"
+        if [ "$(fm_backend_herdr_agent_state "$target")" = missing ]; then
+          printf 'empty'
+        else
+          printf 'unknown'
+        fi
+      else
+        printf 'unknown'
+      fi
+      return 0
+    fi
+    if [ "$harness" = omp ] && [ "$baseline" = busy ]; then
+      omp_confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP")
+      if fm_backend_herdr_wait_omp_session_message "$omp_session" "$omp_offset" "$text" \
+        "$omp_confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS"; then
+        printf 'empty'
+      else
+        printf 'unknown'
+      fi
+      return 0
+    elif [ "$baseline" = idle ]; then
       verdict=$(fm_backend_herdr_wait_for_working "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
     else
@@ -2411,6 +2631,10 @@ fm_backend_herdr_busy_state() {  # <target>
 # call-count assertions).
 FM_BACKEND_HERDR_SUBMIT_POLLS=${FM_BACKEND_HERDR_SUBMIT_POLLS:-6}
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=${FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP:-0.6}
+# A busy OMP steer is durably appended after OMP's queue processing, which can
+# lag Herdr's Enter acknowledgement beyond the normal turn-start window.
+# Waiting longer is safe because this path never sends a second Enter.
+FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=${FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP:-6}
 
 fm_backend_herdr_submit_confirm_budget() {  # <caller-budget-seconds>
   awk -v b="${1:-0}" -v m="$FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP" 'BEGIN {
