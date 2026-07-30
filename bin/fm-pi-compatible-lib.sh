@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-pi-compatible-lib.sh; fm_pi_compatible_harness_is_verified <harness>
 # Exact verified Pi-compatible harness family membership.
 # Source this file, then call:
 #   fm_pi_compatible_harness_is_verified <harness>

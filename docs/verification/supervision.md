@@ -46,6 +46,20 @@ pi -p -e .pi/extensions/fm-primary-turnend-guard.ts \
 Observed result: `PI_SMOKE_DONE`, with one session-start execution.
 The earlier `sendUserMessage` counterfactual raced the positional prompt; the current non-triggering `pi.sendMessage` custom message did not.
 The installed pi-signed 0.82.0 wrapper repeated the Pi primary extension and session-start path on 2026-07-27.
+Pi 0.82.1 repeated the complete live primary regression on 2026-07-30 after the shared `pi|omp` watcher-core extraction:
+
+```sh
+pi --version
+FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
+```
+
+```text
+0.82.1
+ok - Pi 0.82.1 live E2E covered native Calm Working visibility, Ahoy first/later messages, legacy transcripts, near misses, and watcher continuity
+```
+
+The deterministic Pi session-start, watcher-generation, supervision-rendering, tmux composer, secondmate, and exact-family tests also passed.
+Two installed-API checks (`fm-pi-primary-types` and the OpenCode tail of `fm-pi-watch-extension`) failed identically on `origin/main` and this branch, so they are retained as baseline environment findings rather than attributed to the OMP family extraction.
 [`runtime-backends.md`](runtime-backends.md#tmux) owns the shared-ancestry evidence and authoritative selection-marker boundary.
 
 OMP command shape:

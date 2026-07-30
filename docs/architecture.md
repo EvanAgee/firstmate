@@ -107,7 +107,7 @@ All are harness-scoped rather than a global pattern union, and none is a recorde
 ## Harness identity and the Pi-compatible family
 
 `omp` is a durable harness identity in its own right, not an alias for `pi`.
-`bin/fm-pi-compatible-family.sh` owns the closed `pi|omp` allowlist for mechanics proven compatible, while detection, native extension entry points, lifecycle events, TUI behavior, skill invocation, and recovery remain thin runtime-specific adapters.
+`bin/fm-pi-compatible-runtimes` owns the closed `pi|omp` allowlist for mechanics proven compatible, while detection, native extension entry points, lifecycle events, TUI behavior, skill invocation, and recovery remain thin runtime-specific adapters.
 No executable-name pattern, similar flag surface, or shared model provider can add a runtime to that family.
 `bin/fm-omp-capabilities.sh` requires the selected Bun-backed OMP entrypoint plus model, thinking, unattended approval, explicit extension, session-directory, and resume surfaces before endpoint publication, and selection never falls back to Pi or another harness.
 OMP workers, scouts, and secondmates preserve `harness=omp`; the primary uses OMP's blocking `session_stop` and native extension discovery instead of Pi event semantics.

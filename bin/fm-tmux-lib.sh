@@ -457,7 +457,7 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [harness] [bas
   # and queued the message for processing when the current turn ends.
   # Treat it as submitted so the caller does not re-send.
   # On an idle pane, keep reporting pending - a genuine swallow.
-  if fm_pane_is_busy "$target"; then
+  if fm_pane_is_busy "$target" "$harness"; then
     printf 'empty'
   else
     printf 'pending'

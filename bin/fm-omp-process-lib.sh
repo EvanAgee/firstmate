@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-omp-process-lib.sh; fm_omp_process_matches <comm-or-path> <args>
 # Exact OMP process identity shared by primary ancestry and backend liveness probes.
 # Bun may publish comm=omp as its process title, but argv must still begin with the exact `bun .../omp` boundary.
 # This file has no side effects when sourced.

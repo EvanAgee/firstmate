@@ -13,10 +13,16 @@ set -u
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-dispatch-profile)
 cleanup() {
-  local data_dir id
+  local data_dir id home meta tasktmp
   while IFS= read -r data_dir; do
     id=$(basename "$data_dir")
-    case "$id" in profile-*) rm -rf "/tmp/fm-$id" ;; esac
+    home=$(dirname "$(dirname "$data_dir")")
+    meta="$home/state/$id.meta"
+    tasktmp=$(sed -n 's/^tasktmp=//p' "$meta" 2>/dev/null)
+    [ -n "$tasktmp" ] || tasktmp=$(sed -n 's/^tasktmp=//p' "$meta.test-owner" 2>/dev/null)
+    case "$id:$tasktmp" in
+      profile-*:/tmp/fm-"$id") rm -rf "$tasktmp" ;;
+    esac
   done < <(find "$TMP_ROOT" -type d -path '*/home/data/profile-*' 2>/dev/null)
   rm -rf "$TMP_ROOT"
 }
@@ -55,6 +61,7 @@ case "${1:-}" in
           if grep -Fq 'FM_OMP_HARNESS=omp' "$FM_FAKE_LAUNCH_LOG" 2>/dev/null; then
             [ -z "${FM_FAKE_OMP_ACK:-}" ] || : > "$FM_FAKE_OMP_ACK"
             if [ -n "${FM_FAKE_OMP_META_TAMPER:-}" ]; then
+              cp "$FM_FAKE_OMP_META_TAMPER" "$FM_FAKE_OMP_META_TAMPER.test-owner"
               printf 'window=unrelated:retry\n' > "$FM_FAKE_OMP_META_TAMPER"
             fi
           fi
@@ -156,7 +163,8 @@ make_spawn_case() {
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   for id in "$@"; do
-    rm -rf "/tmp/fm-$id"
+    [ ! -e "/tmp/fm-$id" ] && [ ! -L "/tmp/fm-$id" ] \
+      || fail "refusing fixture task-id collision at /tmp/fm-$id"
     mkdir -p "$home/data/$id"
     printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
   done
@@ -876,7 +884,11 @@ test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
   assert_no_grep 'kill-window' "$endpointlog" "OMP abort killed an endpoint after metadata ownership changed"
   assert_no_grep 'return --force' "$treehouselog" "OMP abort returned a worktree after metadata ownership changed"
   [ -f "$HOME_DIR/state/$id.meta" ] || fail "OMP abort removed metadata after ownership changed"
+  [ "$(cat "$HOME_DIR/state/$id.meta")" = 'window=unrelated:retry' ] \
+    || fail "OMP abort did not preserve the intentionally tampered metadata"
   [ -d "/tmp/fm-$id" ] || fail "OMP abort removed task temp after ownership changed"
+  [ "$(sed -n 's/^tasktmp=//p' "$HOME_DIR/state/$id.meta.test-owner")" = "/tmp/fm-$id" ] \
+    || fail "the pre-tamper metadata did not prove test ownership of /tmp/fm-$id"
   rm -rf "/tmp/fm-$id"
   pass "OMP spawn abort preserves endpoint, worktree, and artifacts unless ownership is proven"
 }

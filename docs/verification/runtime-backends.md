@@ -96,6 +96,39 @@ ok - real isolated tmux OMP secondmate launch, idle health, marked replies, exit
 The runs retained exact `harness=omp`, forwarded the selected model and thinking level, delivered each initial instruction once, and used `/skill:<name>` for the real skill turn.
 Normal `/exit` stopped each OMP process without killing the private tmux server, exact session resume restored prior context, and cleanup removed every generated extension, session, task temp root, worktree, and socket-owned endpoint.
 
+The full OMP contract and both live backend matrices then passed together in one runner invocation on 2026-07-30:
+
+```sh
+FM_OMP_PRIMARY_LIVE_E2E=1 \
+FM_OMP_TMUX_LIVE_E2E=1 \
+FM_OMP_SECONDMATE_LIVE_E2E=1 \
+FM_OMP_HERDR_LIVE_E2E=1 \
+FM_OMP_HERDR_EXIT_LIVE_E2E=1 \
+HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+bin/fm-test-run.sh \
+  tests/fm-omp-harness.test.sh \
+  tests/fm-pi-compatible-family.test.sh \
+  tests/fm-omp-primary.test.sh \
+  tests/fm-omp-secondmate.test.sh \
+  tests/fm-backend-herdr.test.sh \
+  tests/fm-spawn-dispatch-profile.test.sh \
+  tests/fm-tmux-submit-busy.test.sh \
+  tests/fm-omp-primary-live-e2e.test.sh \
+  tests/fm-omp-worker-tmux-live-e2e.test.sh \
+  tests/fm-omp-secondmate-live-e2e.test.sh \
+  tests/fm-omp-herdr-live-e2e.test.sh \
+  tests/fm-omp-herdr-exit-live-e2e.test.sh
+```
+
+```text
+FM_TEST_SUMMARY total=12 failed=0 skipped_gate=0
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=2 failed=0
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=4 failed=0
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 failed=0
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 failed=0
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 failed=0
+```
+
 Backend applicability was reviewed across every spawn adapter.
 Tmux needs the exact `pi-launcher`, `pi-signed`, `pi`, and `Pi` process identities for recovery-grade liveness.
 Herdr uses native registered-agent state and needs no process-name branch.
@@ -143,7 +176,7 @@ Claude, Codex, OpenCode, Pi, pi-signed, Grok, and Kimi share that backend cleanu
 ## Herdr
 
 The compatibility floor is protocol 14.
-The latest active verification uses Herdr 0.7.5 protocol 17 on macOS aarch64, with earlier 0.7.4, protocol-16, protocol-14, and 0.7.3 evidence retained where they define current behavior or fallbacks.
+The latest active verification uses Herdr 0.7.5 protocol 17 on macOS aarch64, with the protocol-16 macOS aarch64 projection run and earlier 0.7.4, protocol-14, and 0.7.3 evidence retained where they define current behavior or fallbacks.
 Protocol 17 keeps every protocol-16 feature gate satisfied; the event and workspace-move floors remain 16.
 
 Core read-only probes:
