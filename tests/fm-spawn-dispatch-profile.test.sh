@@ -12,6 +12,15 @@ set -u
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-dispatch-profile)
+cleanup() {
+  local data_dir id
+  while IFS= read -r data_dir; do
+    id=$(basename "$data_dir")
+    case "$id" in profile-*) rm -rf "/tmp/fm-$id" ;; esac
+  done < <(find "$TMP_ROOT" -type d -path '*/home/data/profile-*' 2>/dev/null)
+  rm -rf "$TMP_ROOT"
+}
+trap cleanup EXIT
 
 make_spawn_fakebin() {
   local dir=$1 fakebin
@@ -25,7 +34,13 @@ esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  has-session|new-session) exit 0 ;;
+  kill-window)
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'kill-window %s\n' "$*" >> "$FM_FAKE_ENDPOINT_LOG"
+    exit 0 ;;
+  new-window)
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'new-window\n' >> "$FM_FAKE_ENDPOINT_LOG"
+    exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -35,6 +50,16 @@ case "${1:-}" in
         fi
         prev=$a
       done
+      case "$*" in
+        *Enter*)
+          if grep -Fq 'FM_OMP_HARNESS=omp' "$FM_FAKE_LAUNCH_LOG" 2>/dev/null; then
+            [ -z "${FM_FAKE_OMP_ACK:-}" ] || : > "$FM_FAKE_OMP_ACK"
+            if [ -n "${FM_FAKE_OMP_META_TAMPER:-}" ]; then
+              printf 'window=unrelated:retry\n' > "$FM_FAKE_OMP_META_TAMPER"
+            fi
+          fi
+          ;;
+      esac
     fi
     exit 0
     ;;
@@ -42,7 +67,24 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse pi-signed
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+[ -z "${FM_FAKE_TREEHOUSE_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_TREEHOUSE_LOG"
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
+  fm_fake_exit0 "$fakebin" pi-signed
+  cat > "$fakebin/omp" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --help)
+    printf '%s\n' '--model=<value>' '--thinking=<value>' '--auto-approve' '--session-dir=<value>' '-e, --extension=<value>' '-r, --resume=<value>'
+    ;;
+  --version) printf 'omp/17.1.8\n' ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/omp"
   printf '%s\n' "$fakebin"
 }
 
@@ -60,6 +102,7 @@ make_spawn_case() {
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   for id in "$@"; do
+    rm -rf "/tmp/fm-$id"
     mkdir -p "$home/data/$id"
     printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
   done
@@ -81,9 +124,13 @@ make_seeded_secondmate_home() {
 }
 
 run_spawn() {
-  local home=$1 wt=$2 fakebin=$3 launchlog=$4
+  local home=$1 wt=$2 fakebin=$3 launchlog=$4 endpointlog treehouselog rc meta tasktmp
   shift 4
+  endpointlog="${launchlog%/*}/endpoint.log"
+  treehouselog="${launchlog%/*}/treehouse.log"
   : > "$launchlog"
+  : > "$endpointlog"
+  : > "$treehouselog"
   # CLAUDE_CONFIG_DIR is forwarded onto claude launches by fm-spawn, so pin it
   # explicitly (empty by default) instead of leaking the invoking shell's value,
   # which would make launch assertions depend on the developer's environment.
@@ -93,8 +140,20 @@ run_spawn() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
-    FM_FAKE_LAUNCH_LOG="$launchlog" GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
+    FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_ENDPOINT_LOG="$endpointlog" \
+    FM_FAKE_TREEHOUSE_LOG="$treehouselog" FM_FAKE_OMP_ACK="${FM_TEST_OMP_ACK:-}" \
+    FM_FAKE_OMP_META_TAMPER="${FM_TEST_OMP_META_TAMPER:-}" \
+    GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    for meta in "$home/state"/*.meta; do
+      [ -f "$meta" ] || continue
+      tasktmp=$(sed -n 's/^tasktmp=//p' "$meta")
+      case "$tasktmp" in /tmp/fm-profile-*) rm -rf "$tasktmp" ;; esac
+    done
+  fi
+  return "$rc"
 }
 
 read_case_record() {
@@ -559,6 +618,144 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
   pass "pi-signed refuses safely and actionably when the selected executable is unavailable"
 }
 
+test_omp_threads_exact_identity_model_and_every_thinking_level() {
+  local effort rec id out status launch expected_bin
+  for effort in low medium high xhigh max; do
+    id="profile-omp-${effort}-z8o"
+    rec=$(make_spawn_case "profile-omp-$effort" omp "$id")
+    read_case_record "$rec"
+    export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
+
+    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --model openai-codex/gpt-5.6-sol --effort "$effort")
+    status=$?
+    expect_code 0 "$status" "OMP spawn with $effort thinking should succeed"
+    assert_contains "$out" "spawned $id harness=omp kind=ship" "OMP spawn did not preserve exact identity"
+    assert_meta_profile "$HOME_DIR/state/$id.meta" omp openai-codex/gpt-5.6-sol "$effort"
+    launch=$(cat "$LAUNCH_LOG")
+    expected_bin=$(cd "$FAKEBIN_DIR" && pwd -P)/omp
+    assert_contains "$launch" "FM_OMP_HARNESS=omp '$expected_bin' --session-dir '/tmp/fm-$id/omp-sessions' --auto-approve --model 'openai-codex/gpt-5.6-sol' --thinking '$effort' -e '$HOME_DIR/state/$id.omp-ext.ts'" \
+      "OMP launch did not receive the exact binary, unattended mode, model, thinking, and extension"
+    [ "$(grep -Fo "encode launch-brief" "$LAUNCH_LOG" | wc -l | tr -d ' ')" = 1 ] \
+      || fail "OMP launch did not deliver exactly one positional launch brief"
+    assert_present "$HOME_DIR/state/$id.omp-ext.ts" "OMP launch did not create the external turn extension"
+    unset FM_TEST_OMP_ACK
+  done
+  pass "OMP preserves exact identity and forwards every supported thinking level"
+}
+
+test_omp_scout_uses_external_turn_extension() {
+  local rec id out status
+  id=profile-omp-scout-z8p
+  rec=$(make_spawn_case profile-omp-scout omp "$id")
+  read_case_record "$rec"
+  export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
+  status=$?
+  expect_code 0 "$status" "OMP scout spawn should succeed"
+  assert_contains "$out" "spawned $id harness=omp kind=scout" "OMP scout did not preserve exact identity"
+  assert_grep 'kind=scout' "$HOME_DIR/state/$id.meta" "OMP scout metadata lost delivery semantics"
+  assert_present "$HOME_DIR/state/$id.omp-ext.ts" "OMP scout did not receive the external turn extension"
+  rm -f "$HOME_DIR/state/$id.omp-ready" "$HOME_DIR/state/$id.omp-started" "$HOME_DIR/state/$id.turn-ended"
+  PLUGIN="$HOME_DIR/state/$id.omp-ext.ts" READY="$HOME_DIR/state/$id.omp-ready" \
+    STARTED="$HOME_DIR/state/$id.omp-started" TURNENDED="$HOME_DIR/state/$id.turn-ended" \
+    node --input-type=module <<'JS'
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const extension = await import(pathToFileURL(process.env.PLUGIN).href);
+extension.default({ on(name, handler) { handlers.set(name, handler); } });
+await handlers.get("session_start")?.();
+await handlers.get("turn_start")?.();
+await handlers.get("turn_end")?.();
+for (let i = 0; i < 50 && (!existsSync(process.env.READY) || !existsSync(process.env.STARTED) || !existsSync(process.env.TURNENDED)); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (!existsSync(process.env.READY)) throw new Error("OMP session_start did not report readiness");
+if (!existsSync(process.env.STARTED)) throw new Error("OMP turn_start did not acknowledge launch");
+if (!existsSync(process.env.TURNENDED)) throw new Error("OMP turn_end did not publish completion");
+JS
+  unset FM_TEST_OMP_ACK
+  pass "OMP scouts retain scout semantics and external per-turn notification"
+}
+
+test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata() {
+  local mode rec id out status endpoint_log
+  for mode in missing-binary missing-thinking existing-artifact; do
+    id="profile-omp-$mode-z8q"
+    rec=$(make_spawn_case "profile-omp-$mode" omp "$id")
+    read_case_record "$rec"
+    endpoint_log="$CASE_DIR/endpoint.log"
+    : > "$endpoint_log"
+    case "$mode" in
+      missing-binary) rm -f "$FAKEBIN_DIR/omp" ;;
+      missing-thinking) sed -i '/thinking/d' "$FAKEBIN_DIR/omp" ;;
+      existing-artifact) : > "$HOME_DIR/state/$id.status" ;;
+    esac
+
+    out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+      FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+      FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_FAKE_ENDPOINT_LOG="$endpoint_log" FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
+      PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+      "$SPAWN" "$id" "$PROJ_DIR" 2>&1)
+    status=$?
+    expect_code 1 "$status" "OMP $mode should refuse before launch"
+    assert_contains "$out" "omp" "OMP preflight refusal did not name the selected runtime"
+    assert_absent "$HOME_DIR/state/$id.meta" "OMP $mode refusal wrote task metadata"
+    [ ! -s "$endpoint_log" ] || fail "OMP $mode refusal created a backend endpoint"
+    [ ! -s "$LAUNCH_LOG" ] || fail "OMP $mode refusal typed a launch command"
+  done
+  pass "OMP missing binary and capability failures occur before endpoint or metadata publication"
+}
+
+test_omp_launch_requires_observable_turn_start_acknowledgement() {
+  local rec id out status endpointlog treehouselog
+  id=profile-omp-unacked-z8r
+  rec=$(make_spawn_case profile-omp-unacked omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "unacknowledged OMP launch should fail"
+  assert_contains "$out" "initial instruction was not acknowledged" \
+    "OMP unacknowledged launch did not report its concrete postcondition"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_grep 'kill-window' "$endpointlog" "OMP unacknowledged launch left its owned endpoint alive"
+  assert_grep "return --force $WT_DIR" "$treehouselog" "OMP unacknowledged launch did not return its unchanged worktree"
+  assert_absent "$HOME_DIR/state/$id.meta" "OMP unacknowledged launch left owned metadata"
+  assert_absent "$HOME_DIR/state/$id.omp-ext.ts" "OMP unacknowledged launch left its extension"
+  assert_absent "/tmp/fm-$id" "OMP unacknowledged launch left its task temp root"
+  pass "OMP spawn requires the initial turn-start acknowledgement and cleans its unchanged launch"
+}
+
+test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
+  local rec id out status endpointlog treehouselog
+  id=profile-omp-unacked-owner-z8s
+  rec=$(make_spawn_case profile-omp-unacked-owner omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    FM_TEST_OMP_META_TAMPER="$HOME_DIR/state/$id.meta" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "ownership-changed OMP launch should fail"
+  assert_contains "$out" "could not prove ownership" \
+    "OMP ownership-changed abort did not explain why cleanup was refused"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_no_grep 'kill-window' "$endpointlog" "OMP abort killed an endpoint after metadata ownership changed"
+  assert_no_grep 'return --force' "$treehouselog" "OMP abort returned a worktree after metadata ownership changed"
+  [ -f "$HOME_DIR/state/$id.meta" ] || fail "OMP abort removed metadata after ownership changed"
+  [ -d "/tmp/fm-$id" ] || fail "OMP abort removed task temp after ownership changed"
+  rm -rf "/tmp/fm-$id"
+  pass "OMP spawn abort preserves endpoint, worktree, and artifacts unless ownership is proven"
+}
+
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   local rec id sm out status launch
   id=profile-pi-signed-secondmate-z8d
@@ -687,6 +884,11 @@ test_opencode_threads_model_and_ignores_effort_axis
 test_pi_threads_model_and_max_effort
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
+test_omp_threads_exact_identity_model_and_every_thinking_level
+test_omp_scout_uses_external_turn_extension
+test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata
+test_omp_launch_requires_observable_turn_start_acknowledgement
+test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags
 test_claude_forwards_firstmate_config_dir_when_set

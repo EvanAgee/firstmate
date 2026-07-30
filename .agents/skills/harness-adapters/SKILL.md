@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, and kimi.
+description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, pi-signed, omp, grok, and kimi.
 user-invocable: false
 metadata:
   internal: true
@@ -54,6 +54,7 @@ Use that value for interrupt, exit, resume, and skill-invocation facts.
 ## Primary turn-end guard
 
 The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, and `grok` have empirically validated hook paths for the "no turn ends blind" guard.
+OMP worker and scout support is verified below, while the OMP primary integration is owned by its separately triggered implementation and verification contract.
 `claude` and `codex` block directly through Stop hooks that preserve exit status 2 and stderr from `bin/fm-turnend-guard.sh`.
 `opencode`, `pi`, and `pi-signed` expose passive lifecycle callbacks and force one bounded follow-up when the shared predicate blocks.
 Grok selects native blocking or its pre-native bounded resume fallback from the exact running Stop payload; [`docs/turnend-guard.md`](../../../docs/turnend-guard.md) owns that contract.
@@ -125,6 +126,7 @@ The supported launch-profile flags below are verified locally; each row records 
 | codex | `--model <model>` | `-c 'model_reasoning_effort="<low\|medium\|high\|xhigh>"'` | Verified on codex-cli 0.142.1. The installed binary schema contains `model_reasoning_effort`, the active config uses it, and the bundled model catalog advertises only low/medium/high/xhigh. `max` is omitted. |
 | grok | `--model <model>` | `--reasoning-effort <low\|medium\|high>` | Verified on grok 0.2.99 (2026-07-13). `--effort` is an alias, but firstmate's profile axis is reasoning effort. As of 0.2.99 the ceiling is `high`; both `xhigh` and `max` are rejected with `use one of: high, medium, low`, so firstmate omits them. |
 | pi / pi-signed | `--model <model>` | `--thinking <low\|medium\|high\|xhigh\|max>` | Verified 2026-07-27 on Pi and pi-signed 0.82.0. Both expose the same accepted thinking levels and completed the same model-qualified max-thinking smoke. |
+| omp | `--model <model>` | `--thinking <low\|medium\|high\|xhigh\|max>` | Verified 2026-07-30 on OMP 17.1.8 through exact worker launches for every thinking level. |
 | opencode | `--model <provider/model>` | none for firstmate's interactive launch | Verified on opencode 1.17.6. `opencode run` has `--variant`, but firstmate launches the interactive `opencode --prompt` path, which has no verified effort flag. |
 | kimi | `--model <model>` | none | Verified 2026-07-25 on Kimi Code CLI 0.29.1. |
 
@@ -142,6 +144,7 @@ Use the discovery surface in the current authenticated environment because suppo
 | codex | Open the current interactive session's `/model` picker. |
 | opencode | Run `opencode models [provider]`, which lists available provider/model identifiers. |
 | pi / pi-signed | Run the selected executable as `<executable> --list-models [search]`; Pi's installed `docs/models.md` owns how built-in, extension-registered, and custom provider/model entries reach that list. |
+| omp | Run `omp models` or `omp models <provider>`; the selected OMP installation and authenticated account own current model availability. |
 | grok | Run `grok models`, which lists the models available to the current Grok installation and account. |
 | kimi | Run `kimi provider list --json`, which lists the current provider and model configuration. |
 
@@ -161,6 +164,7 @@ Natural language is acceptable if uncertain.
 - codex: `$<skill>`, for example `$no-mistakes`; `/<skill>` is claude-only and codex rejects it as "Unrecognized command".
 - opencode: no separate verified skill invocation beyond normal slash-command behavior; use natural language if the exact skill command is uncertain.
 - pi and pi-signed: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
+- omp: `/skill:<name>`, for example `/skill:no-mistakes`; the tmux submission adapter verifies autocomplete closure through the structural OMP composer and a real turn transition.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) handles this through the structural composer reader; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
 - kimi: `/<skill>`, for example `/no-mistakes`.
 
@@ -301,7 +305,33 @@ The model arms through `fm_watch_arm_pi`, never a foreground bash arm; the watch
 `bin/fm-session-start.sh` reports when the live Pi-family session has not loaded both the turn-end guard and watcher extensions, and points at the selected executable after project trust as the fix, with `-e` as a trust-free fallback.
 When a secondmate is launched on Pi or pi-signed, `fm-spawn.sh --secondmate` launches the selected executable with both `-e .pi/extensions/fm-primary-turnend-guard.ts` and `-e .pi/extensions/fm-primary-pi-watch.ts`, both already present in the secondmate home's git worktree.
 
-## grok (VERIFIED 2026-06-29, grok 0.2.73; slash-submit re-verified 2026-07-03 on 0.2.82; reasoning-effort ceiling re-verified 2026-07-13 on 0.2.99; exit paths re-verified 2026-07-19 on grok 0.2.103)
+## omp (VERIFIED 2026-07-30, OMP 17.1.8)
+
+| Fact | Value |
+|---|---|
+| Busy-pane signature | `Working… ⟦esc⟧` with a rotating braille prefix. |
+| Exit command | `/exit` |
+| Interrupt | Single Escape stops the active turn without exiting the session. |
+| Skill invocation | `/skill:<name>`, for example `/skill:no-mistakes`. |
+| Autonomy | `--auto-approve` |
+| Resume | Use the exact selected OMP binary with `--session-dir /tmp/fm-<id>/omp-sessions --resume <session-file> --auto-approve -e state/<id>.omp-ext.ts`. |
+
+OMP is an exact harness identity and is never normalized to Pi.
+`bin/fm-omp-capabilities.sh` resolves the exact executable and requires the model, thinking, unattended approval, external extension, task-local session directory, and resume surfaces before `fm-spawn` creates an endpoint.
+A failed OMP preflight never launches another executable as a fallback.
+Workers and scouts receive one typed `launch-brief` positional argument and an external per-task extension under `state/`.
+The extension reports `session_start` readiness, acknowledges the initial instruction through `turn_start`, and touches the task's turn-completion marker on every `turn_end`.
+Firstmate waits for the first `turn_start` acknowledgement before reporting a successful spawn.
+OMP workers keep their sessions under the task temp root so recovery can resume the exact conversation and ordinary cleanup can remove the session files with the rest of the task temp.
+
+OMP 17.1.8 runs as `bun <exact-path>/omp ...`, so the tmux recovery probe checks that exact interpreter and script boundary rather than treating every Bun process as OMP.
+Its idle composer is a verified two-row structure with a status top border and a `╰─ ... ─╯` input row.
+Pending input appears inside that bottom row or expands into a bounded content row above it.
+Tmux submission accepts a cleared composer, a verified idle-to-working transition, or the exact dead-process postcondition for `/exit`; unknown or malformed structure remains unconfirmed.
+While OMP is working, an accepted steer appears in its native `Steering` queue and the composer clears.
+The same structural check keeps away-mode injection out of pending, malformed, or unreadable input.
+
+## grok (VERIFIED 2026-06-29, grok 0.2.73; slash-submit re-verified 2026-07-03 on 0.2.82; reasoning-effort ceiling re-verified 2026-07-13 on grok 0.2.99; exit paths re-verified 2026-07-19 on grok 0.2.103)
 
 Grok Build TUI (`grok`), a Claude-Code-compatible CLI from xAI.
 Launch with a positional prompt: `grok --always-approve "$(cat <brief>)"`.

@@ -63,6 +63,33 @@ SH
   printf '%s\n' "$fakebin"
 }
 
+make_probe_tmux_omp() {
+  local dir=$1 args=$2 fakebin
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  display-message)
+    case "$*" in
+      *pane_current_command*) printf 'bun\n' ;;
+      *pane_pid*) printf '4242\n' ;;
+    esac
+    ;;
+  list-windows) printf 'win\n' ;;
+esac
+SH
+  cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *'tpgid='*) printf '4242\n' ;;
+  *'args='*) printf '%s\n' '$args' ;;
+  *'comm='*) printf 'bun\n' ;;
+esac
+SH
+  chmod +x "$fakebin/tmux" "$fakebin/ps"
+  printf '%s\n' "$fakebin"
+}
+
 # make_failed_probe_tmux <dir> <inventory>: missing and present fail the pane
 # read, while unreadable returns a misleading fallback node process but fails
 # the inventory that must be authoritative.
@@ -107,6 +134,16 @@ test_tmux_agent_state_classifies() {
     fb=$(make_probe_tmux "$TMP_ROOT/tmux-${shell#-}" "$shell")
     out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
     [ "$out" = dead ] || fail "a bare $shell foreground process should classify as dead, got '$out'"
+  done
+
+  fb=$(make_probe_tmux_omp "$TMP_ROOT/tmux-omp" 'bun /opt/bin/omp --auto-approve')
+  out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
+  [ "$out" = alive ] || fail "an exact bun-launched OMP process should classify as alive, got '$out'"
+
+  for args in 'bun /opt/bin/omp-helper' 'bun /opt/bin/xomp' 'bun /tmp/not-omp.ts omp'; do
+    fb=$(make_probe_tmux_omp "$TMP_ROOT/tmux-inexact-${RANDOM}" "$args")
+    out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
+    [ "$out" = ambiguous ] || fail "an inexact OMP process '$args' should stay ambiguous, got '$out'"
   done
 
   fb=$(make_probe_tmux "$TMP_ROOT/tmux-node" node)

@@ -73,6 +73,8 @@
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. pi-signed launches that exact executable name from PATH and
 #   refuses before endpoint creation when it is unavailable; it never falls back to pi.
+#   omp resolves its exact executable and checks its required launch/recovery
+#   capabilities before endpoint creation; it never falls back to pi or another harness.
 #   config/secondmate-harness may also carry an optional model and effort as extra
 #   whitespace-separated tokens ("<harness> [<model>] [<effort>]"). For a
 #   --secondmate spawn, those tokens apply only when this spawn also resolves its
@@ -108,6 +110,9 @@
 #                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
+#     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (OMP turn-start
+#                  acknowledgement and turn-end extension, also outside the worktree)
+#     __OMPSESSIONDIR__ per-task OMP session directory under tasktmp for exact resume
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
 #     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
@@ -259,6 +264,8 @@ fi
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
+OMP_ABORT_CLEANUP=0
+OMP_ABORT_INITIAL_HEAD=
 HERDR_PROJECTION_ABORT_CLEANUP=0
 HERDR_PROJECTION_ABORT_SESSION=
 HERDR_PROJECTION_ABORT_TASK_PANE=
@@ -288,7 +295,34 @@ parse_orca_worktree_result() {
 }
 
 spawn_abort_cleanup() {
-  local status=$?
+  local status=$? meta current_head dirty
+  if [ "$OMP_ABORT_CLEANUP" = 1 ]; then
+    OMP_ABORT_CLEANUP=0
+    meta="${STATE:-}/${ID:-}.meta"
+    if [ "${SPAWN_TASK_LOCK_HELD:-0}" != 1 ] || [ "${BACKEND:-}" != tmux ] \
+       || [ -z "${T:-}" ] || [ -z "${WT:-}" ] || [ ! -f "$meta" ] \
+       || ! grep -Fqx "window=$T" "$meta" \
+       || ! grep -Fqx "worktree=$WT" "$meta" \
+       || ! grep -Fqx 'harness=omp' "$meta" \
+       || ! grep -Fqx "tasktmp=${TASK_TMP:-}" "$meta"; then
+      echo "warning: OMP spawn cleanup could not prove ownership; preserving its endpoint, worktree, and task artifacts" >&2
+    elif ! fm_backend_kill "$BACKEND" "$T"; then
+      echo "warning: OMP spawn cleanup could not stop its owned endpoint; preserving its worktree and task artifacts" >&2
+    else
+      sleep 0.1
+      current_head=$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)
+      dirty=$(git -C "$WT" status --porcelain 2>/dev/null || printf 'unreadable\n')
+      if [ -z "$OMP_ABORT_INITIAL_HEAD" ] || [ "$current_head" != "$OMP_ABORT_INITIAL_HEAD" ] || [ -n "$dirty" ]; then
+        echo "warning: OMP spawn cleanup stopped its endpoint but found work to preserve in $WT" >&2
+      elif treehouse return --force "$WT" >/dev/null 2>&1; then
+        rm -rf "${TASK_TMP:-}"
+        rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
+          "$STATE/$ID.omp-ext.ts" "$STATE/$ID.omp-ready" "$STATE/$ID.omp-started"
+      else
+        echo "warning: OMP spawn cleanup stopped its endpoint but could not return the unchanged worktree $WT" >&2
+      fi
+    fi
+  fi
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
      && [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
     if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
@@ -476,6 +510,10 @@ launch_template() {
         printf '%s%s' "$harness" ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       fi
       ;;
+    omp)
+      [ "$kind" != secondmate ] || return 1
+      printf '%s' '__OMPBIN__ --session-dir __OMPSESSIONDIR__ --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      ;;
     # grok (Grok Build TUI): a positional prompt starts the supervised interactive
     # session. --always-approve auto-approves every tool execution (verified: the
     # crewmate runs fully autonomously, no permission gate), which an unattended
@@ -531,6 +569,7 @@ esac
 
 case "$HARNESS" in
   pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
+  omp) LAUNCH="FM_OMP_HARNESS=omp $LAUNCH" ;;
 esac
 
 # pi-signed is an explicitly selected executable identity, not an alias that may
@@ -539,6 +578,22 @@ esac
 if [ "$HARNESS" = pi-signed ] && ! command -v pi-signed >/dev/null 2>&1; then
   echo "error: pi-signed executable not found on PATH; install the signed Pi wrapper or select a different verified harness" >&2
   exit 1
+fi
+OMP_BIN=
+if [ "$HARNESS" = omp ]; then
+  OMP_BIN=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-binary) || exit 1
+  if [ "$BACKEND" != tmux ]; then
+    echo "error: harness=omp worker/scout support is verified only on backend=tmux at this implementation stage" >&2
+    exit 1
+  fi
+  for artifact in \
+    "$STATE/$ID.meta" "$STATE/$ID.status" "$STATE/$ID.omp-ext.ts" \
+    "$STATE/$ID.omp-ready" "$STATE/$ID.omp-started" "/tmp/fm-$ID"; do
+    if [ -e "$artifact" ] || [ -L "$artifact" ]; then
+      echo "error: refusing OMP spawn because task $ID already has artifacts at $artifact; reconcile or clean the prior task before retrying" >&2
+      exit 1
+    fi
+  done
 fi
 
 # config/secondmate-harness may carry optional model/effort tokens alongside the
@@ -612,7 +667,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi)
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -644,9 +699,9 @@ effort_flag_for_harness() {
         low|medium|high) printf -- '--reasoning-effort %s ' "$(shell_quote "$effort")" ;;
       esac
       ;;
-    pi|pi-signed)
-      # Pi 0.80.6 accepts the full shared effort vocabulary, including max, through
-      # its --thinking flag.
+    pi|pi-signed|omp)
+      # Pi and OMP accept the full shared effort vocabulary, including max,
+      # through their separately selected --thinking launch flags.
       case "$effort" in
         low|medium|high|xhigh|max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
       esac
@@ -1343,6 +1398,12 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 
   validate_spawn_worktree "treehouse get" "$T"
 fi
+if [ "$HARNESS" = omp ]; then
+  OMP_ABORT_INITIAL_HEAD=$(git -C "$WT" rev-parse HEAD 2>/dev/null) || {
+    echo "error: OMP spawn could not bind cleanup to the initial worktree HEAD" >&2
+    exit 1
+  }
+fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
 # create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
@@ -1351,6 +1412,7 @@ fi
 # targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
 TASK_TMP="/tmp/fm-$ID"
 mkdir -p "$TASK_TMP/gotmp"
+[ "$HARNESS" != omp ] || mkdir -p "$TASK_TMP/omp-sessions"
 
 # Per-harness turn-end hook where enabled: a file that touches
 # state/<id>.turn-ended when the agent finishes a turn. Worktree-resident hooks
@@ -1510,6 +1572,20 @@ export default function (pi: any) {
 }
 EOF
       ;;
+    omp)
+      OMP_READY="$STATE_REAL/$ID.omp-ready"
+      OMP_STARTED="$STATE_REAL/$ID.omp-started"
+      rm -f "$OMP_READY" "$OMP_STARTED"
+      cat > "$STATE/$ID.omp-ext.ts" <<EOF
+// Firstmate OMP launch acknowledgement and turn-end signal; written by fm-spawn.
+import { execFile } from "node:child_process";
+export default function (omp: any) {
+  omp.on("session_start", () => execFile("touch", ["$OMP_READY"]));
+  omp.on("turn_start", () => execFile("touch", ["$OMP_STARTED"]));
+  omp.on("turn_end", () => execFile("touch", ["$TURNEND"]));
+}
+EOF
+      ;;
     codex*)
       # Semantic busy-state source negotiation (bin/fm-busy-lib.sh owns the
       # probes and the evidence). Neither Codex path is usable on the
@@ -1647,10 +1723,12 @@ META_WINDOW=$T
   fi
 } > "$STATE/$ID.meta"
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
+[ "$HARNESS" != omp ] || OMP_ABORT_CLEANUP=1
 
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
+sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
@@ -1661,6 +1739,9 @@ LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
+LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
+LAUNCH=${LAUNCH//__OMPBIN__/$(shell_quote "$OMP_BIN")}
+LAUNCH=${LAUNCH//__OMPSESSIONDIR__/$(shell_quote "$TASK_TMP/omp-sessions")}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
@@ -1691,6 +1772,24 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
+if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
+  OMP_ACK_POLLS=${FM_OMP_LAUNCH_ACK_POLLS:-60}
+  OMP_ACK_INTERVAL=${FM_OMP_LAUNCH_ACK_INTERVAL:-0.5}
+  OMP_ACKED=0
+  for _ in $(seq 1 "$OMP_ACK_POLLS"); do
+    if [ -f "$OMP_STARTED" ]; then
+      OMP_ACKED=1
+      break
+    fi
+    sleep "$OMP_ACK_INTERVAL"
+  done
+  if [ "$OMP_ACKED" -ne 1 ]; then
+    printf 'failed: OMP initial instruction was not acknowledged by a turn_start event\n' >> "$STATE/$ID.status"
+    echo "error: OMP initial instruction was not acknowledged by a turn_start event; cleaning the owned launch" >&2
+    exit 1
+  fi
+  OMP_ABORT_CLEANUP=0
+fi
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then
     kimi_spawn_fail "kimi did not show a verified ready signal before brief delivery"

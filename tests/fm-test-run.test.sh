@@ -104,6 +104,7 @@ init_changed_fixture_repo() {
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
     fm-pr-merge.test.sh \
+    fm-omp-harness.test.sh \
     fm-pi-compatible-family.test.sh \
     fm-pi-primary-types.test.sh \
     fm-pi-watch-extension.test.sh \
@@ -118,6 +119,7 @@ init_changed_fixture_repo() {
   : >"$repo/tests/lib.sh"
   : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
+  : >"$repo/bin/fm-omp-capabilities.sh"
   : >"$repo/bin/fm-pi-compatible-lib.sh"
   : >"$repo/bin/fm-pi-compatible-runtimes"
   : >"$repo/bin/fm-primary-watch-core.ts"
@@ -178,6 +180,12 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "watcher core selects runtime-facing watcher coverage"
   git -C "$repo" add bin/fm-primary-watch-core.ts
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm watch-core-change
+
+  printf '\n' >>"$repo/bin/fm-omp-capabilities.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-harness.test.sh" "OMP capability source selects exact-harness coverage"
+  git -C "$repo" add bin/fm-omp-capabilities.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-capability-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"

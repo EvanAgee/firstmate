@@ -50,8 +50,8 @@ fm_backend_tmux_send_key() {  # <target> <key>
 # submit with Enter, retried (Enter only, never retyped) until the composer
 # clears. Re-exports fm_tmux_submit_core (bin/fm-tmux-lib.sh) verbatim; see
 # that file for the composer-verification contract and echoed verdicts.
-fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
-  fm_tmux_submit_core "$@"
+fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness]
+  fm_tmux_submit_core "$1" "$2" "$3" "$4" "$5" "${7:-}"
 }
 
 # fm_backend_tmux_container_ensure: reuse the current tmux session when
@@ -148,6 +148,34 @@ fm_backend_tmux_current_command() {  # <target>
   tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null
 }
 
+fm_backend_tmux_bun_agent_state() {  # <target> -> alive|ambiguous|unreadable
+  local target=$1 pane_pid foreground_pid args first second
+  pane_pid=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null) || {
+    printf 'unreadable'
+    return 0
+  }
+  case "$pane_pid" in ''|*[!0-9]*) printf 'unreadable'; return 0 ;; esac
+  foreground_pid=$(ps -o tpgid= -p "$pane_pid" 2>/dev/null | tr -d '[:space:]') || {
+    printf 'unreadable'
+    return 0
+  }
+  case "$foreground_pid" in ''|*[!0-9]*|0|1) printf 'unreadable'; return 0 ;; esac
+  args=$(ps -o args= -p "$foreground_pid" 2>/dev/null) || {
+    printf 'unreadable'
+    return 0
+  }
+  # Read only the exact interpreter + script boundary observed for OMP.
+  read -r first second _rest <<EOF
+$args
+EOF
+  first=$(basename -- "${first:-}")
+  second=$(basename -- "${second:-}")
+  case "$first:$second" in
+    bun:omp) printf 'alive' ;;
+    *) printf 'ambiguous' ;;
+  esac
+}
+
 # fm_backend_tmux_agent_state: recovery-grade harness-agent state for one
 # recorded target. See bin/fm-backend.sh's fm_backend_agent_state for the
 # shared state vocabulary and docs/tmux-backend.md "Agent liveness probe" for
@@ -193,7 +221,8 @@ fm_backend_tmux_agent_state() {  # <target>
   }
   comm=${comm#-}
   case "$comm" in
-    *claude*|*codex*|*opencode*|*grok*|*kimi*|pi|pi-signed|pi-launcher|Pi) printf 'alive' ;;
+    *claude*|*codex*|*opencode*|*grok*|*kimi*|omp|pi|pi-signed|pi-launcher|Pi) printf 'alive' ;;
+    bun) fm_backend_tmux_bun_agent_state "$target" ;;
     zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'dead' ;;
     '') printf 'unreadable' ;;
     *) printf 'ambiguous' ;;
