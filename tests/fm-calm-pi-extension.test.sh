@@ -1163,7 +1163,7 @@ TS
     expected_notifications=$4
     local session_arg=${5:-}
     local shape=${6:-single}
-    local extensions
+    local extensions settled previous
 
     tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
     if [ "$calm_state" = absent ]; then
@@ -1210,9 +1210,28 @@ TS
       fail "Pi follow-up $label case did not process the monitoring notification"
     fi
 
-    pane=$(tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" -S - 2>/dev/null || true)
-    [ "$(printf '%s\n' "$pane" | grep -Fc "CAPTAIN_ANSWER_$label" || true)" -eq 1 ] \
-      || fail "Pi follow-up $label case rendered a duplicate captain answer"
+    settled=0
+    previous=
+    i=0
+    while [ "$i" -lt 120 ]; do
+      pane=$(tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" -S - 2>/dev/null || true)
+      if [ "$(printf '%s\n' "$pane" | grep -Fc "CAPTAIN_ANSWER_$label" || true)" -eq 1 ] \
+        && printf '%s\n' "$pane" | grep -Fq "CAPTAIN_PROMPT_$label" \
+        && printf '%s\n' "$pane" | grep -Fq "MONITOR_HANDLED_${label}_ONE"; then
+        if [ "$pane" = "$previous" ]; then
+          settled=$((settled + 1))
+        else
+          settled=0
+        fi
+        [ "$settled" -ge 3 ] && break
+      else
+        settled=0
+      fi
+      previous=$pane
+      sleep 0.05
+      i=$((i + 1))
+    done
+    [ "$settled" -ge 3 ] || fail "Pi follow-up $label case did not reach a settled single-answer frame"
     assert_contains "$pane" "CAPTAIN_PROMPT_$label" "Pi follow-up $label case hid the genuine captain prompt"
     assert_contains "$pane" "MONITOR_HANDLED_${label}_ONE" "Pi follow-up $label case did not render the intended processing result"
     if [ "$calm_state" = on ]; then

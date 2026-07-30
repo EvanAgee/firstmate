@@ -12,6 +12,8 @@ set -u
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-dispatch-profile)
+PROFILE_RUN_TOKEN="t$$-${RANDOM:-0}"
+profile_id() { printf '%s-%s' "$1" "$PROFILE_RUN_TOKEN"; }
 cleanup() {
   local data_dir id home meta tasktmp
   while IFS= read -r data_dir; do
@@ -233,7 +235,7 @@ assert_meta_profile() {
 
 test_no_profile_keeps_claude_profile_defaults() {
   local rec id out status expected launch
-  id=profile-off-z1
+  id=$(profile_id profile-off-z1)
   rec=$(make_spawn_case profile-off claude "$id")
   read_case_record "$rec"
 
@@ -251,7 +253,7 @@ test_no_profile_keeps_claude_profile_defaults() {
 
 test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
   local rec id out status launch home_real
-  id=profile-relative-paths-z1b
+  id=$(profile_id profile-relative-paths-z1b)
   rec=$(make_spawn_case profile-relative-paths pi "$id")
   read_case_record "$rec"
   home_real=$(cd "$HOME_DIR" && pwd -P)
@@ -280,8 +282,8 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
 
 test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
   local rec relative_id absolute_id out status launch home_real linked_home
-  relative_id=profile-relative-home-defaults-z1c
-  absolute_id=profile-absolute-home-defaults-z1d
+  relative_id=$(profile_id profile-relative-home-defaults-z1c)
+  absolute_id=$(profile_id profile-absolute-home-defaults-z1d)
   rec=$(make_spawn_case profile-home-defaults pi "$relative_id" "$absolute_id")
   read_case_record "$rec"
   home_real=$(cd "$HOME_DIR" && pwd -P)
@@ -329,7 +331,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
 
 test_absolute_override_spelling_is_preserved_in_launch_paths() {
   local rec id out status launch linked_home
-  id=profile-absolute-paths-z1c
+  id=$(profile_id profile-absolute-paths-z1c)
   rec=$(make_spawn_case profile-absolute-paths pi "$id")
   read_case_record "$rec"
   linked_home="$CASE_DIR/home-link"
@@ -357,7 +359,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
 
 test_unresolvable_relative_overrides_fail_loudly() {
   local rec id out status
-  id=profile-unresolvable-paths-z1d
+  id=$(profile_id profile-unresolvable-paths-z1d)
   rec=$(make_spawn_case profile-unresolvable-paths pi "$id")
   read_case_record "$rec"
 
@@ -398,7 +400,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
 
 test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   local rec id out status
-  id=profile-required-ship-z11
+  id=$(profile_id profile-required-ship-z11)
   rec=$(make_spawn_case profile-required-ship claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -414,7 +416,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
 
 test_active_dispatch_profile_requires_explicit_harness_for_scout() {
   local rec id out status
-  id=profile-required-scout-z12
+  id=$(profile_id profile-required-scout-z12)
   rec=$(make_spawn_case profile-required-scout claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -430,7 +432,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_scout() {
 
 test_active_dispatch_profile_allows_explicit_harness() {
   local rec id out status launch
-  id=profile-explicit-z13
+  id=$(profile_id profile-explicit-z13)
   rec=$(make_spawn_case profile-explicit claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -449,7 +451,7 @@ test_active_dispatch_profile_allows_explicit_harness() {
 
 test_active_dispatch_profile_allows_positional_harness() {
   local rec id out status
-  id=profile-positional-z14
+  id=$(profile_id profile-positional-z14)
   rec=$(make_spawn_case profile-positional claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -465,7 +467,7 @@ test_active_dispatch_profile_allows_positional_harness() {
 
 test_active_dispatch_profile_allows_raw_launch_command() {
   local rec id out status launch
-  id=profile-raw-z15
+  id=$(profile_id profile-raw-z15)
   rec=$(make_spawn_case profile-raw claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -483,7 +485,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
 
 test_claude_threads_model_and_effort() {
   local rec id out status launch
-  id=profile-claude-z2
+  id=$(profile_id profile-claude-z2)
   rec=$(make_spawn_case profile-claude claude "$id")
   read_case_record "$rec"
 
@@ -499,7 +501,7 @@ test_claude_threads_model_and_effort() {
 
 test_codex_threads_model_and_effort() {
   local rec id out status launch
-  id=profile-codex-z3
+  id=$(profile_id profile-codex-z3)
   rec=$(make_spawn_case profile-codex codex "$id")
   read_case_record "$rec"
 
@@ -515,7 +517,7 @@ test_codex_threads_model_and_effort() {
 
 test_codex_omits_invalid_max_effort() {
   local rec id out status launch
-  id=profile-codex-max-z4
+  id=$(profile_id profile-codex-max-z4)
   rec=$(make_spawn_case profile-codex-max codex "$id")
   read_case_record "$rec"
 
@@ -532,7 +534,7 @@ test_codex_omits_invalid_max_effort() {
 
 test_grok_threads_model_and_reasoning_effort() {
   local rec id out status launch
-  id=profile-grok-z5
+  id=$(profile_id profile-grok-z5)
   rec=$(make_spawn_case profile-grok grok "$id")
   read_case_record "$rec"
 
@@ -549,7 +551,7 @@ test_grok_threads_model_and_reasoning_effort() {
 
 test_grok_omits_invalid_max_reasoning_effort() {
   local rec id out status launch
-  id=profile-grok-max-z6
+  id=$(profile_id profile-grok-max-z6)
   rec=$(make_spawn_case profile-grok-max grok "$id")
   read_case_record "$rec"
 
@@ -567,7 +569,7 @@ test_grok_omits_invalid_max_reasoning_effort() {
 
 test_grok_omits_invalid_xhigh_reasoning_effort() {
   local rec id out status launch
-  id=profile-grok-xhigh-z6b
+  id=$(profile_id profile-grok-xhigh-z6b)
   rec=$(make_spawn_case profile-grok-xhigh grok "$id")
   read_case_record "$rec"
 
@@ -586,7 +588,7 @@ test_grok_omits_invalid_xhigh_reasoning_effort() {
 
 test_opencode_threads_model_and_ignores_effort_axis() {
   local rec id out status launch
-  id=profile-opencode-z7
+  id=$(profile_id profile-opencode-z7)
   rec=$(make_spawn_case profile-opencode opencode "$id")
   read_case_record "$rec"
 
@@ -605,7 +607,7 @@ test_opencode_threads_model_and_ignores_effort_axis() {
 
 test_pi_threads_model_and_max_effort() {
   local rec id out status launch
-  id=profile-pi-z8
+  id=$(profile_id profile-pi-z8)
   rec=$(make_spawn_case profile-pi pi "$id")
   read_case_record "$rec"
 
@@ -626,7 +628,7 @@ test_pi_threads_model_and_max_effort() {
 
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   local rec id out status launch
-  id=profile-pi-signed-z8b
+  id=$(profile_id profile-pi-signed-z8b)
   rec=$(make_spawn_case profile-pi-signed pi-signed "$id")
   read_case_record "$rec"
 
@@ -659,7 +661,7 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
 
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
   local rec id out status
-  id=profile-pi-signed-missing-z8c
+  id=$(profile_id profile-pi-signed-missing-z8c)
   rec=$(make_spawn_case profile-pi-signed-missing pi-signed "$id")
   read_case_record "$rec"
   rm -f "$FAKEBIN_DIR/pi-signed"
@@ -683,7 +685,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
 test_omp_threads_exact_identity_model_and_every_thinking_level() {
   local effort rec id out status launch expected_bin
   for effort in low medium high xhigh max; do
-    id="profile-omp-${effort}-z8o"
+    id=$(profile_id "profile-omp-${effort}-z8o")
     rec=$(make_spawn_case "profile-omp-$effort" omp "$id")
     read_case_record "$rec"
     export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
@@ -709,7 +711,7 @@ test_omp_threads_exact_identity_model_and_every_thinking_level() {
 test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
   local kind rec id out status launch flag
   for kind in worker scout; do
-    id="profile-omp-herdr-$kind-z8ph"
+    id=$(profile_id "profile-omp-herdr-$kind-z8ph")
     rec=$(make_spawn_case "profile-omp-herdr-$kind" omp "$id")
     read_case_record "$rec"
     export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
@@ -736,7 +738,7 @@ test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
 test_omp_refuses_unverified_backends_before_endpoint_creation() {
   local backend rec id out status endpoint_log
   for backend in zellij orca cmux; do
-    id="profile-omp-unverified-$backend-z8pu"
+    id=$(profile_id "profile-omp-unverified-$backend-z8pu")
     rec=$(make_spawn_case "profile-omp-unverified-$backend" omp "$id")
     read_case_record "$rec"
     endpoint_log="$CASE_DIR/endpoint.log"
@@ -757,7 +759,7 @@ test_omp_refuses_unverified_backends_before_endpoint_creation() {
 
 test_omp_scout_uses_external_turn_extension() {
   local rec id out status
-  id=profile-omp-scout-z8p
+  id=$(profile_id profile-omp-scout-z8p)
   rec=$(make_spawn_case profile-omp-scout omp "$id")
   read_case_record "$rec"
   export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
@@ -794,7 +796,7 @@ JS
 test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata() {
   local mode rec id out status endpoint_log
   for mode in missing-binary missing-thinking existing-artifact; do
-    id="profile-omp-$mode-z8q"
+    id=$(profile_id "profile-omp-$mode-z8q")
     rec=$(make_spawn_case "profile-omp-$mode" omp "$id")
     read_case_record "$rec"
     endpoint_log="$CASE_DIR/endpoint.log"
@@ -824,7 +826,7 @@ test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata() {
 
 test_omp_launch_requires_observable_turn_start_acknowledgement() {
   local rec id out status endpointlog treehouselog
-  id=profile-omp-unacked-z8r
+  id=$(profile_id profile-omp-unacked-z8r)
   rec=$(make_spawn_case profile-omp-unacked omp "$id")
   read_case_record "$rec"
 
@@ -846,7 +848,7 @@ test_omp_launch_requires_observable_turn_start_acknowledgement() {
 
 test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts() {
   local rec id out status endpointlog treehouselog
-  id=profile-omp-herdr-unacked-z8rh
+  id=$(profile_id profile-omp-herdr-unacked-z8rh)
   rec=$(make_spawn_case profile-omp-herdr-unacked omp "$id")
   read_case_record "$rec"
 
@@ -868,7 +870,7 @@ test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts() {
 
 test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
   local rec id out status endpointlog treehouselog
-  id=profile-omp-unacked-owner-z8s
+  id=$(profile_id profile-omp-unacked-owner-z8s)
   rec=$(make_spawn_case profile-omp-unacked-owner omp "$id")
   read_case_record "$rec"
 
@@ -895,7 +897,7 @@ test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
 
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   local rec id sm out status launch
-  id=profile-pi-signed-secondmate-z8d
+  id=$(profile_id profile-pi-signed-secondmate-z8d)
   rec=$(make_spawn_case profile-pi-signed-secondmate codex "$id")
   read_case_record "$rec"
   printf '%s\n' pi-signed > "$HOME_DIR/config/secondmate-harness"
@@ -936,7 +938,7 @@ test_batch_forwards_shared_profile_flags() {
 
 test_claude_forwards_firstmate_config_dir_when_set() {
   local rec id out status launch
-  id=profile-claude-cfgdir-z17
+  id=$(profile_id profile-claude-cfgdir-z17)
   rec=$(make_spawn_case profile-claude-cfgdir claude "$id")
   read_case_record "$rec"
 
@@ -952,7 +954,7 @@ test_claude_forwards_firstmate_config_dir_when_set() {
 
 test_claude_omits_config_dir_prefix_when_unset() {
   local rec id out status launch
-  id=profile-claude-nocfgdir-z18
+  id=$(profile_id profile-claude-nocfgdir-z18)
   rec=$(make_spawn_case profile-claude-nocfgdir claude "$id")
   read_case_record "$rec"
 
@@ -969,7 +971,7 @@ test_claude_omits_config_dir_prefix_when_unset() {
 
 test_non_claude_harness_ignores_config_dir() {
   local rec id out status launch
-  id=profile-codex-nocfgdir-z19
+  id=$(profile_id profile-codex-nocfgdir-z19)
   rec=$(make_spawn_case profile-codex-nocfgdir codex "$id")
   read_case_record "$rec"
 
@@ -985,7 +987,7 @@ test_non_claude_harness_ignores_config_dir() {
 
 test_active_dispatch_profile_does_not_block_secondmate_launch() {
   local rec id sm out status
-  id=profile-secondmate-z16
+  id=$(profile_id profile-secondmate-z16)
   rec=$(make_spawn_case profile-secondmate codex "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
