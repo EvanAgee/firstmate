@@ -30,12 +30,5 @@ fm_primary_scope_matches() {
   fi
   [ -f "$root/AGENTS.md" ] || return 1
   [ -d "$root/bin" ] || return 1
-  if [ -d "$state" ] && [ ! -L "$state" ]; then
-    return 0
-  fi
-  # A first plain launch in a fresh clone precedes bootstrap's state creation.
-  # Admit only the absent canonical root/state path; the verified extension core
-  # creates it privately before publishing its loaded marker. Overrides and
-  # symlinks still require an existing ordinary directory.
-  [ "$state" = "$root/state" ] && [ ! -e "$state" ] && [ ! -L "$state" ]
+  [ -d "$state" ] && [ ! -L "$state" ]
 }

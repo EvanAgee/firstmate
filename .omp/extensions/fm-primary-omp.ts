@@ -1,7 +1,7 @@
 // Firstmate primary integration for OMP.
 // OMP-native session, stop, tool-call, and shutdown events stay in this adapter.
 import { spawn, spawnSync } from "node:child_process";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -42,7 +42,19 @@ function primaryIntegrationApplies(): boolean {
     "bash",
     [
       "-c",
-      '. "$1/bin/fm-gate-refuse-lib.sh"; . "$1/bin/fm-primary-scope-lib.sh"; ! fm_is_gate_agent "$1" && fm_primary_scope_matches "$1" "$2"',
+      `
+        . "$1/bin/fm-gate-refuse-lib.sh"
+        . "$1/bin/fm-primary-scope-lib.sh"
+        ! fm_is_gate_agent "$1" || exit 1
+        fm_primary_scope_matches "$1" "$2" && exit 0
+        # Only the native OMP owner admits a first plain launch before its
+        # canonical state directory exists. Generic hooks remain silent.
+        [ "$2" = "$1/state" ] && [ ! -e "$2" ] && [ ! -L "$2" ] || exit 1
+        [ -f "$1/AGENTS.md" ] && [ -d "$1/bin" ] || exit 1
+        git_dir=$(git -C "$1" rev-parse --git-dir 2>/dev/null) || exit 1
+        git_common_dir=$(git -C "$1" rev-parse --git-common-dir 2>/dev/null) || exit 1
+        [ "$git_dir" = "$git_common_dir" ]
+      `,
       "fm-omp-primary-scope",
       fmRoot,
       state,
@@ -50,6 +62,16 @@ function primaryIntegrationApplies(): boolean {
     { stdio: "ignore" },
   );
   return result.status === 0;
+}
+
+function publishNativeProcessIdentity(): void {
+  const bunPath = realpathSync(process.execPath);
+  const ompPath = realpathSync(process.argv[1]);
+  if (/\s/u.test(bunPath) || /\s/u.test(ompPath)) {
+    throw new Error("OMP primary identity paths containing whitespace are unsupported");
+  }
+  process.env.FM_OMP_PROCESS_EXPECTED_BUN = bunPath;
+  process.env.FM_OMP_PROCESS_EXPECTED_BIN = ompPath;
 }
 
 function publishSecondmateSession(ctx: ExtensionContext): void {
@@ -157,6 +179,7 @@ function runGuard(event: SessionStopEvent): Promise<ProcessResult> {
 
 export default function (omp: ExtensionAPI) {
   if (!primaryIntegrationApplies()) return;
+  publishNativeProcessIdentity();
   let pendingStartupNudge = "";
   const watch = createPrimaryWatchCore({
     runtime: "omp",

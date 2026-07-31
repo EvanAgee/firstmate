@@ -24,17 +24,33 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 self_dir=$(cd "$(dirname "$0")" && pwd)
+expected_bun=${FM_TEST_EXPECTED_BUN:-$self_dir/bun}
+expected_omp=${FM_TEST_EXPECTED_OMP:-$self_dir/omp}
+if [ -n "${FM_TEST_OWNER_PID:-}" ] && [ "$pid" = "$FM_TEST_OWNER_PID" ]; then
+  case "$field" in
+    comm=) printf '%s\n' bun ;;
+    args=) printf '%s %s\n' "$expected_bun" "$expected_omp --model openai-codex/gpt-5.6-sol" ;;
+    ppid=) printf '%s\n' 1 ;;
+  esac
+  exit 0
+fi
+omp_pid=${FM_TEST_OMP_PID:-700}
+if [ "$pid" = "$omp_pid" ]; then
+  case "$field" in
+    comm=) printf '%s\n' "${FM_TEST_OMP_COMM:-bun}" ;;
+    args=)
+      case "${FM_TEST_OMP_SHAPE:-exact}" in
+        exact) printf '%s %s\n' "$expected_bun" "$expected_omp --model openai-codex/gpt-5.6-sol" ;;
+        helper) printf '%s %s\n' "$expected_bun" "$self_dir/omp-helper --model test" ;;
+        prefixed) printf '%s %s\n' "$expected_bun" "$self_dir/xomp --model test" ;;
+        incidental) printf '%s %s\n' "$expected_bun" "$self_dir/tool.js --label omp" ;;
+      esac
+      ;;
+    ppid=) printf '%s\n' 1 ;;
+  esac
+  exit 0
+fi
 case "$pid:$field" in
-  700:comm=) printf '%s\n' "${FM_TEST_OMP_COMM:-bun}" ;;
-  700:args=)
-    case "${FM_TEST_OMP_SHAPE:-exact}" in
-      exact) printf '%s %s\n' "$self_dir/bun" "$self_dir/omp --model openai-codex/gpt-5.6-sol" ;;
-      helper) printf '%s %s\n' "$self_dir/bun" "$self_dir/omp-helper --model test" ;;
-      prefixed) printf '%s %s\n' "$self_dir/bun" "$self_dir/xomp --model test" ;;
-      incidental) printf '%s %s\n' "$self_dir/bun" "$self_dir/tool.js --label omp" ;;
-    esac
-    ;;
-  700:ppid=) printf '%s\n' 1 ;;
   500:comm=) printf '%s\n' "${FM_TEST_NESTED_COMM:-claude}" ;;
   500:args=) printf '%s\n' "${FM_TEST_NESTED_COMM:-claude} --resume" ;;
   500:ppid=) printf '%s\n' 700 ;;
@@ -47,7 +63,7 @@ SH
   cat > "$fakebin/lsof" <<'SH'
 #!/usr/bin/env bash
 self_dir=$(cd "$(dirname "$0")" && pwd)
-printf 'n%s/bun\n' "$self_dir"
+printf 'n%s\n' "${FM_TEST_EXPECTED_BUN:-$self_dir/bun}"
 SH
   chmod +x "$fakebin/lsof"
   for name in bun omp omp-helper xomp tool.js; do
@@ -143,16 +159,17 @@ test_nested_foreign_harness_keeps_its_own_identity() {
   pass "exact-OMP ancestry stops at the innermost foreign harness ancestor"
 }
 
-test_primary_scope_allows_only_absent_canonical_state() {
+test_primary_scope_requires_canonical_state() {
   local fixture external out
   fixture="$TMP_ROOT/fresh-primary-scope"
   external="$TMP_ROOT/external-state"
   mkdir -p "$fixture/bin" "$external"
   : > "$fixture/AGENTS.md"
   git init -q -b main "$fixture"
-  FM_TEST_ROOT="$fixture" FM_TEST_STATE="$fixture/state" bash -c \
-    '. "$0/bin/fm-primary-scope-lib.sh"; fm_primary_scope_matches "$FM_TEST_ROOT" "$FM_TEST_STATE"' "$ROOT" \
-    || fail "fresh plain checkout did not admit its absent canonical state path"
+  if FM_TEST_ROOT="$fixture" FM_TEST_STATE="$fixture/state" bash -c \
+    '. "$0/bin/fm-primary-scope-lib.sh"; fm_primary_scope_matches "$FM_TEST_ROOT" "$FM_TEST_STATE"' "$ROOT"; then
+    fail "generic primary scope admitted a checkout with absent canonical state"
+  fi
   [ ! -e "$fixture/state" ] || fail "primary scope predicate created state instead of leaving creation to the extension core"
   if FM_TEST_ROOT="$fixture" FM_TEST_STATE="$external/missing" bash -c \
     '. "$0/bin/fm-primary-scope-lib.sh"; fm_primary_scope_matches "$FM_TEST_ROOT" "$FM_TEST_STATE"' "$ROOT"; then
@@ -202,6 +219,52 @@ JS
   pass "OMP fresh primary lifecycle creates canonical state and atomically replaces a marker symlink without following it"
 }
 
+test_native_omp_fresh_checkout_nudges_once() {
+  local fixture out status=0
+  fixture="$TMP_ROOT/native-fresh"
+  mkdir -p "$fixture/.omp/extensions" "$fixture/bin" "$fixture/config"
+  : > "$fixture/AGENTS.md"
+  git init -q -b main "$fixture"
+  cp "$ROOT/.omp/extensions/fm-primary-omp.ts" "$fixture/.omp/extensions/fm-primary-omp.ts"
+  cp "$ROOT/bin/fm-primary-watch-core.ts" "$fixture/bin/fm-primary-watch-core.ts"
+  cp "$ROOT/bin/fm-primary-scope-lib.sh" "$fixture/bin/fm-primary-scope-lib.sh"
+  cp "$ROOT/bin/fm-gate-refuse-lib.sh" "$fixture/bin/fm-gate-refuse-lib.sh"
+  cp "$ROOT/bin/fm-operational-input.sh" "$fixture/bin/fm-operational-input.sh"
+  cp "$ROOT/bin/fm-sessionstart-nudge.sh" "$fixture/bin/fm-sessionstart-nudge.sh"
+  cp "$ROOT/bin/fm-pi-compatible-runtimes" "$fixture/bin/fm-pi-compatible-runtimes"
+  chmod +x "$fixture/bin/"*.sh
+
+  out=$(EXTENSION="$fixture/.omp/extensions/fm-primary-omp.ts" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" FM_STATE_OVERRIDE="$fixture/state" \
+    node --input-type=module 2>&1 <<'JS'
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const api = {
+  zod: { object: () => ({}) },
+  on(name, handler) { handlers.set(name, handler); },
+  registerCommand() {},
+  registerTool() {},
+  sendUserMessage() {},
+};
+process.argv[1] = process.env.EXTENSION;
+const extension = await import(`${pathToFileURL(process.env.EXTENSION).href}?fresh-native=${Date.now()}`);
+extension.default(api);
+const context = { sessionManager: { getSessionFile: () => "" } };
+await handlers.get("session_start")({ type: "session_start" }, context);
+const first = await handlers.get("before_agent_start")({ type: "before_agent_start" }, {});
+const second = await handlers.get("before_agent_start")({ type: "before_agent_start" }, {});
+if (first?.message?.customType !== "firstmate-sessionstart-nudge" || !first.message.content.includes("fm-session-start.sh")) {
+  throw new Error(`fresh native OMP did not receive its startup instruction: ${JSON.stringify(first)}`);
+}
+if (second !== undefined) throw new Error("fresh native OMP repeated its startup instruction");
+console.log("fresh-native-nudge-once");
+JS
+  ) || status=$?
+  expect_code 0 "$status" "fresh native OMP startup"
+  assert_contains "$out" fresh-native-nudge-once "fresh native OMP did not deliver exactly one startup instruction"
+  pass "native OMP alone admits a fresh plain checkout and delivers one startup instruction"
+}
+
 test_primary_marker_refuses_whitespace_identity() {
   local fixture entry out
   fixture="$TMP_ROOT/whitespace-primary"
@@ -247,6 +310,7 @@ test_native_primary_extension_contract() {
   fixture="$TMP_ROOT/extension"
   mkdir -p "$fixture/.omp/extensions" "$fixture/bin" "$fixture/home/state" "$fixture/home/config"
   cp "$ROOT/.omp/extensions/fm-primary-omp.ts" "$fixture/.omp/extensions/fm-primary-omp.ts"
+  chmod +x "$fixture/.omp/extensions/fm-primary-omp.ts"
   cp "$ROOT/bin/fm-primary-watch-core.ts" "$fixture/bin/fm-primary-watch-core.ts"
   cp "$ROOT/bin/fm-pi-compatible-runtimes" "$fixture/bin/fm-pi-compatible-runtimes"
   cat > "$fixture/bin/fm-gate-refuse-lib.sh" <<'SH'
@@ -434,6 +498,70 @@ JS
   assert_contains "$out" '"startupMessages":3' "OMP primary runtime result lost once-only startup delivery across start, new, and resume"
   assert_contains "$out" '"guarded":true' "OMP primary runtime result lost stop guard evidence"
 
+  local contended_fakebin contended
+  contended_fakebin=$(make_process_fakebin "$TMP_ROOT/contended-process")
+  cat > "$contended_fakebin/kill" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$contended_fakebin/kill"
+  printf 'owner-marker\n' > "$fixture/home/state/.omp-primary-extension-loaded"
+  contended=$(EXTENSION="$fixture/.omp/extensions/fm-primary-omp.ts" \
+    FM_HOME="$fixture/home" FM_ROOT_OVERRIDE="$fixture" \
+    FM_STATE_OVERRIDE="$fixture/home/state" FM_CONFIG_OVERRIDE="$fixture/home/config" \
+    FM_TEST_PROJECT_ROOT="$ROOT" PATH="$contended_fakebin:$PATH" node --input-type=module 2>&1 <<'JS'
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+const api = { zod: { object: () => ({}) }, on() {}, registerCommand() {}, registerTool() {} };
+const expectedBun = realpathSync(process.execPath);
+const expectedBin = realpathSync(process.env.EXTENSION);
+const owner = spawn(process.execPath, ["-e", "setInterval(() => {}, 60000)"], { stdio: "ignore" });
+if (!owner.pid) throw new Error("could not start a real lock-holder process");
+writeFileSync(`${process.env.FM_STATE_OVERRIDE}/.lock`, `${owner.pid}\n`);
+try {
+  process.argv[1] = process.env.EXTENSION;
+  const extension = await import(`${pathToFileURL(process.env.EXTENSION).href}?contended=${Date.now()}`);
+  extension.default(api);
+if (process.env.FM_OMP_PROCESS_EXPECTED_BUN !== expectedBun || process.env.FM_OMP_PROCESS_EXPECTED_BIN !== expectedBin) {
+  throw new Error(`native OMP did not publish its process identity: ${process.env.FM_OMP_PROCESS_EXPECTED_BUN}|${process.env.FM_OMP_PROCESS_EXPECTED_BIN}`);
+}
+if (readFileSync(`${process.env.FM_STATE_OVERRIDE}/.omp-primary-extension-loaded`, "utf8") !== "owner-marker\n") {
+  throw new Error("contended OMP replaced the live owner's canonical marker");
+}
+  const childEnv = {
+  ...process.env,
+  FM_ROOT_OVERRIDE: process.env.FM_TEST_PROJECT_ROOT,
+  FM_TEST_OWNER_PID: String(owner.pid),
+  FM_TEST_OMP_PID: "970000",
+  FM_TEST_EXPECTED_BUN: expectedBun,
+  FM_TEST_EXPECTED_OMP: expectedBin,
+  CLAUDECODE: "1",
+  PI_CODING_AGENT: "true",
+  FM_TEST_HARNESS_PARENT: "970000",
+};
+  const direct = spawnSync(`${process.env.FM_TEST_PROJECT_ROOT}/bin/fm-harness.sh`, { env: childEnv, encoding: "utf8" });
+if (direct.stdout.trim() !== "omp") throw new Error(`contended direct OMP resolved ${direct.stdout.trim()}`);
+  const inner = spawnSync(`${process.env.FM_TEST_PROJECT_ROOT}/bin/fm-harness.sh`, {
+  env: { ...childEnv, FM_TEST_HARNESS_PARENT: "500" }, encoding: "utf8",
+});
+if (inner.stdout.trim() !== "claude") throw new Error(`nearer Claude ancestor resolved ${inner.stdout.trim()}`);
+  const lock = spawnSync(`${process.env.FM_TEST_PROJECT_ROOT}/bin/fm-lock.sh`, { env: childEnv, encoding: "utf8" });
+  if (lock.status !== 1 || !lock.stderr.includes("another live firstmate session holds the lock")) {
+    throw new Error(`contended OMP lock result ${lock.status}: ${lock.stderr}`);
+  }
+  if (readFileSync(`${process.env.FM_STATE_OVERRIDE}/.lock`, "utf8") !== `${owner.pid}\n`) {
+    throw new Error("contended OMP changed the live owner's lock");
+  }
+  console.log("contended-native-identity-ok");
+} finally {
+  owner.kill();
+}
+JS
+  ) || status=$?
+  expect_code 0 "$status" "contended native OMP identity"
+  assert_contains "$contended" contended-native-identity-ok "contended OMP did not preserve exact identity, nearest harness precedence, and lock refusal"
+
   rm -f "$fixture/home/state/.omp-primary-extension-loaded"
   inert=$(EXTENSION="$fixture/.omp/extensions/fm-primary-omp.ts" FM_TEST_PRIMARY_SCOPE=0 \
     FM_HOME="$fixture/home" FM_ROOT_OVERRIDE="$fixture" \
@@ -493,6 +621,7 @@ JS
 test_resolve_path_uses_node_when_readlink_f_is_unavailable
 test_exact_bun_omp_primary_identity
 test_nested_foreign_harness_keeps_its_own_identity
-test_primary_scope_allows_only_absent_canonical_state
+test_primary_scope_requires_canonical_state
+test_native_omp_fresh_checkout_nudges_once
 test_primary_marker_refuses_whitespace_identity
 test_native_primary_extension_contract
