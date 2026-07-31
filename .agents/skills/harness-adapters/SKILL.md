@@ -41,6 +41,7 @@ If the captain asks for a new harness, propose verifying it first: spawn a trivi
 
 `bin/fm-harness.sh` prints firstmate's own harness, using verified env markers first and then process ancestry.
 OMP primary detection and lock liveness follow the distinct launch-bound identity contract owned by [the tmux backend guide](../../../docs/tmux-backend.md#current-behavior-and-safety), and only a proven OMP identity may outrank inherited foreign markers.
+That probe stops at the innermost harness ancestor, so an agent of another harness started from OMP's bash tool keeps its own identity instead of inheriting the OMP primary's.
 Within the Pi family, only the exact launch-boundary marker `FM_PI_HARNESS=pi-signed` alongside `PI_CODING_AGENT=true` selects the signed identity; unmarked shared launcher ancestry remains `pi`.
 `bin/fm-harness.sh crew` resolves the effective crewmate harness from `config/crew-harness` (absent or `default` -> own).
 `bin/fm-harness.sh secondmate` resolves the secondmate-launch harness through the chain `config/secondmate-harness` -> `config/crew-harness` -> own, so an unset `config/secondmate-harness` matches the crew harness.

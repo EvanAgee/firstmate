@@ -5,10 +5,11 @@ Must-work continuity now lives above that process boundary instead of depending 
 
 ## Ownership
 
-Pi's `.pi/extensions/fm-primary-pi-watch.ts` and OpenCode's `.opencode/plugins/fm-primary-watch-arm.js` own continuous re-arm after an actionable child close.
+Pi's `.pi/extensions/fm-primary-pi-watch.ts`, OMP's `.omp/extensions/fm-primary-omp.ts`, and OpenCode's `.opencode/plugins/fm-primary-watch-arm.js` own continuous re-arm after an actionable child close.
+Pi and OMP are thin adapters over the shared lifecycle core in `bin/fm-primary-watch-core.ts`; each keeps its own runtime identity, event bindings, and follow-up delivery.
 Each adapter starts the next arm before delivering the wake prompt, checks current session-lock ownership at launch, preserves one child or scheduled retry at a time, and applies bounded exponential retry after an unexpected or failed close.
 A failed follow-up never cancels continuity restoration.
-Pi same-process session replacement follows the generation-owner contract in `.pi/extensions/fm-primary-pi-watch.ts`.
+Same-process session replacement on Pi and OMP follows the generation-owner contract stated once in `bin/fm-primary-watch-core.ts`.
 Claude's `.claude/settings.json` Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns routine tokenless re-arm.
 The hook fires on every Stop, and an eligible primary with supervision need admits one home-scoped owner that foregrounds `bin/fm-watch-arm.sh` inside the hook-owned process tree.
 A numeric session-lock owner that fails the shared `fm_harness_pid_alive` predicate is reclaimed through `bin/fm-lock.sh` before auto-arm state changes, while a live owner, absent lock, or malformed lock keeps the competing hook inert.
@@ -17,14 +18,14 @@ While supervision is still needed and away mode remains inactive, an actionable 
 
 ## Actionable wake ordering
 
-After an actionable Pi or OpenCode child close, the adapter starts and verifies one singleton successor before it delivers the original wake.
+After an actionable Pi, OMP, or OpenCode child close, the adapter starts and verifies one singleton successor before it delivers the original wake.
 It waits at most one readiness timeout per attempt, then sends TERM and waits a bounded retirement confirmation before the next lock-verified exponential retry.
 If the unready arm does not retire within that bound, the adapter keeps ownership, starts no overlapping retry, and delivers the typed fallback immediately.
 When that retained arm later closes, its actual close is classified as a new supervised event without replaying the earlier fallback.
 After the configured retry bound is exhausted, it delivers the original wake with a typed continuity-restoration failure even if every successor arm hung without reporting readiness.
 This is deliberate Option B ordering: the fleet is protected before the model handles the wake whenever restoration succeeds, but the model is never left blind when it does not.
 
-Claude's Stop hook starts the successor arm at the next Stop after the handling turn, rather than before notification as Pi and OpenCode do.
+Claude's Stop hook starts the successor arm at the next Stop after the handling turn, rather than before notification as Pi, OMP, and OpenCode do.
 The durable wake queue preserves actionable events during the residual active-turn window, and the unchanged bounded turn-end guard enforces recovery at Stop when no watcher or auto-arm claim is present.
 No PreToolUse hook denies fleet commands based on watcher status.
 The model no longer re-arms after ordinary wakes.
@@ -54,6 +55,7 @@ Only the watcher process touches `state/.last-watcher-beat`; no helper process c
 
 `tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops, then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, blocks prompt delivery to prove the successor launches first, verifies single-flight behavior, changes the session lock before close to prove ownership is rechecked, and hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.
 The same suite covers ordinary same-process session replacement for `/new`, `/resume`, and `/fork`, same-instance shutdown-plus-start, stale prior-generation callbacks, repeated transitions with exactly one live cycle, disappearance of the shutting-down refusal after a valid replacement activates, and terminal quit still refusing late rearm.
+`tests/fm-omp-primary.test.sh` covers OMP's binding of the same core to its native session, watcher, and shutdown surfaces.
 `tests/fm-watcher-lock.test.sh` covers verified-successor attach, the typed self-eviction failure, bounded and successor-linked lifecycle rows, and a SIGSTOP counterfactual that distinguishes a live PID from a stale beacon before classifying termination.
 `tests/fm-subagent-pretool-check.test.sh` proves Claude retains only the non-status Bash seatbelts.
 `tests/fm-claude-stop-autoarm.test.sh` covers the auto-arm's scope, stale and live session owners, unchanged AFK and need boundaries, single-flight, and exit-2 translation.
@@ -62,9 +64,9 @@ The same suite covers ordinary same-process session replacement for `/new`, `/re
 
 ## Active limits and verification
 
-The goal is continuity without a Pi or OpenCode model-memory re-arm step.
+The goal is continuity without a Pi, OMP, or OpenCode model-memory re-arm step.
 No zero-latency guarantee is claimed because lock verification, watcher startup, and bounded retry delays remain deliberate safety work.
 OpenCode support targets persistent TUI sessions rather than headless `opencode run`.
 Claude depends on the Stop `asyncRewake` rewake, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
 
-[`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current five-harness live evidence, the 2026-07-24 Stop-owned Claude auto-arm results, and exact opt-in commands.
+[`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current six-harness live evidence, the 2026-07-24 Stop-owned Claude auto-arm results, and exact opt-in commands.
