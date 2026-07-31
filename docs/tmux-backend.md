@@ -81,7 +81,12 @@ OpenCode 1.18.4 has one busy-queue exception.
 While OpenCode is mid-turn, Enter queues the message but leaves its text visible until the turn completes.
 After the normal retry budget, only structurally proven pending text in a provably busy pane is accepted as queued, while an idle pane remains `pending` as a genuine swallowed Enter.
 Ambiguous pending text never receives the busy-queue conversion.
-`tests/fm-tmux-submit-busy.test.sh` covers busy and idle panes with proven, ambiguous, and cleared composers.
+
+OMP has one narrower exception, scoped to `harness=omp` alone.
+Its composer disappears while a turn runs, so the accepted Enter reads `unknown` rather than empty.
+Only when the pane showed no OMP busy signature before typing and shows one after the Enter is that `unknown` converted to `empty`; otherwise the retries continue and the verdict stays `unknown`.
+Every other harness keeps the original behavior of returning `unknown` immediately without further Enter retries.
+`tests/fm-tmux-submit-busy.test.sh` covers busy and idle panes with proven, ambiguous, and cleared composers, plus the OMP baseline-busy and non-OMP unknown cases.
 
 ## Limits and regression entry points
 

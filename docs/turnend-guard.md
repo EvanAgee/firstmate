@@ -23,8 +23,8 @@ A secondmate home runs its own primary Firstmate session, so a genuine `.fm-seco
 The marker must be a regular non-symlink file whose whitespace-stripped first line is a non-empty identifier containing only letters, digits, dots, underscores, and dashes.
 An unmarked checkout or invalid marker falls through to the git-dir check.
 That check keeps crewmate and scout linked worktrees inert because their git dir differs from their git common dir.
-It also requires `AGENTS.md`, `bin/`, and the effective state directory, which must be an ordinary non-symlink directory.
-The one exception is a first launch in a fresh clone, before bootstrap has created `state/`: an entirely absent canonical `<root>/state` path is in scope, while an overridden or symlinked state path still requires an existing ordinary directory.
+It also requires `AGENTS.md`, `bin/`, and the effective state directory, which must be an existing ordinary non-symlink directory with no exception.
+A first launch in a fresh clone, before bootstrap has created `state/`, is therefore out of scope for every hook sharing this predicate; only OMP's native primary adapter admits that case through its own probe, described in [configuration](configuration.md#harness-support).
 
 For an in-scope primary, the guard counts in-flight work from `state/*.meta`.
 The default cross-harness mode exits silently with no work in flight.
