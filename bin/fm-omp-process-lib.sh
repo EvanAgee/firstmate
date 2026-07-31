@@ -58,12 +58,28 @@ fm_omp_primary_marker_read() {  # <marker>; sets FM_OMP_MARKER_{VERSION,PID,BUN,
     && fm_omp_process_identity_path_valid "$FM_OMP_MARKER_BIN"
 }
 
-fm_omp_process_primary_identity() {  # <pid> -> <bun-realpath> newline <omp-realpath>
-  local pid=$1 lib_dir root state marker
+fm_omp_process_primary_marker_path() {
+  local lib_dir root state
   lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return 1
   root=$(cd "$lib_dir/.." && pwd -P) || return 1
   state=${FM_STATE_OVERRIDE:-${FM_HOME:-$root}/state}
-  marker="$state/.omp-primary-extension-loaded"
+  printf '%s' "$state/.omp-primary-extension-loaded"
+}
+
+# True when this home can produce OMP identity evidence at all: either the
+# caller supplied both expected launch paths, or a primary marker file exists.
+# Without one of those, fm_omp_process_matches can never match, so ancestry
+# probes may skip their process walk entirely.
+fm_omp_process_identity_available() {
+  local marker
+  [ -n "${FM_OMP_PROCESS_EXPECTED_BUN:-}" ] && [ -n "${FM_OMP_PROCESS_EXPECTED_BIN:-}" ] && return 0
+  marker=$(fm_omp_process_primary_marker_path) || return 1
+  [ -f "$marker" ]
+}
+
+fm_omp_process_primary_identity() {  # <pid> -> <bun-realpath> newline <omp-realpath>
+  local pid=$1 marker
+  marker=$(fm_omp_process_primary_marker_path) || return 1
   fm_omp_primary_marker_read "$marker" || return 1
   [ "$FM_OMP_MARKER_PID" = "$pid" ] || return 1
   printf '%s\n%s\n' "$FM_OMP_MARKER_BUN" "$FM_OMP_MARKER_BIN"

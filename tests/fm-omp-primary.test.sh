@@ -35,9 +35,12 @@ case "$pid:$field" in
     esac
     ;;
   700:ppid=) printf '%s\n' 1 ;;
+  500:comm=) printf '%s\n' "${FM_TEST_NESTED_COMM:-claude}" ;;
+  500:args=) printf '%s\n' "${FM_TEST_NESTED_COMM:-claude} --resume" ;;
+  500:ppid=) printf '%s\n' 700 ;;
   *:comm=) printf '%s\n' bash ;;
   *:args=) printf '%s\n' 'bash -c firstmate-tool' ;;
-  *:ppid=) printf '%s\n' 700 ;;
+  *:ppid=) printf '%s\n' "${FM_TEST_HARNESS_PARENT:-700}" ;;
 esac
 SH
   chmod +x "$fakebin/ps"
@@ -110,6 +113,34 @@ test_exact_bun_omp_primary_identity() {
   done
   unset FM_OMP_PROCESS_EXPECTED_BUN FM_OMP_PROCESS_EXPECTED_BIN
   pass "OMP primary identity requires launch-bound Bun and OMP realpaths plus the exact argv boundary"
+}
+
+test_nested_foreign_harness_keeps_its_own_identity() {
+  local fakebin got
+  fakebin=$(make_process_fakebin "$TMP_ROOT/nested")
+  export FM_OMP_PROCESS_EXPECTED_BUN="$fakebin/bun"
+  export FM_OMP_PROCESS_EXPECTED_BIN="$fakebin/omp"
+
+  got=$(PATH="$fakebin:$BASE_PATH" FM_TEST_HARNESS_PARENT=500 \
+    env -u PI_CODING_AGENT -u GROK_AGENT CLAUDECODE=1 "$ROOT/bin/fm-harness.sh")
+  [ "$got" = claude ] \
+    || fail "claude nested inside an OMP tree resolved '$got', expected claude"
+
+  got=$(PATH="$fakebin:$BASE_PATH" FM_TEST_HARNESS_PARENT=500 FM_TEST_NESTED_COMM=codex \
+    env -u PI_CODING_AGENT -u CLAUDECODE -u GROK_AGENT "$ROOT/bin/fm-harness.sh")
+  [ "$got" = codex ] \
+    || fail "markerless codex nested inside an OMP tree resolved '$got', expected codex"
+
+  got=$(PATH="$fakebin:$BASE_PATH" \
+    env -u PI_CODING_AGENT -u CLAUDECODE -u GROK_AGENT "$ROOT/bin/fm-harness.sh")
+  [ "$got" = omp ] || fail "direct OMP ancestry resolved '$got', expected omp"
+
+  unset FM_OMP_PROCESS_EXPECTED_BUN FM_OMP_PROCESS_EXPECTED_BIN
+  got=$(PATH="$fakebin:$BASE_PATH" FM_STATE_OVERRIDE="$TMP_ROOT/nested/no-state" \
+    env -u PI_CODING_AGENT -u GROK_AGENT CLAUDECODE=1 "$ROOT/bin/fm-harness.sh")
+  [ "$got" = claude ] \
+    || fail "absent OMP identity evidence resolved '$got', expected claude"
+  pass "exact-OMP ancestry stops at the innermost foreign harness ancestor"
 }
 
 test_primary_scope_allows_only_absent_canonical_state() {
@@ -461,6 +492,7 @@ JS
 
 test_resolve_path_uses_node_when_readlink_f_is_unavailable
 test_exact_bun_omp_primary_identity
+test_nested_foreign_harness_keeps_its_own_identity
 test_primary_scope_allows_only_absent_canonical_state
 test_primary_marker_refuses_whitespace_identity
 test_native_primary_extension_contract

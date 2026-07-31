@@ -29,12 +29,31 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$SCRIPT_DIR/fm-omp-process-lib.sh"
 
+# Exact-OMP ancestry probe. Innermost wins, exactly like the layer-2 walk
+# below: the moment a nearer ancestor is itself a harness process, this stops
+# and reports no match, so a foreign harness nested inside an OMP tree (an
+# agent started from OMP's bash tool) keeps its own identity instead of
+# inheriting the OMP primary's marker from further up the chain.
+# The walk is skipped outright when this home holds no OMP identity evidence,
+# so non-OMP harnesses pay no ps forks on this frequently called path.
 omp_ancestry_is_exact() {
-  local pid=$$ comm args
+  local pid=$$ comm args bc
+  fm_omp_process_identity_available || return 1
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
-    args=$(ps -o args= -p "$pid" 2>/dev/null)
-    fm_omp_process_matches "$comm" "$args" "$pid" && return 0
+    bc=$(basename -- "$comm")
+    case "$bc" in
+      bun|omp)
+        args=$(ps -o args= -p "$pid" 2>/dev/null)
+        fm_omp_process_matches "$comm" "$args" "$pid" && return 0
+        ;;
+      *claude*|*codex*|*opencode*|*grok*|kimi|pi|pi-signed) return 1 ;;
+      node*|python*)
+        args=$(ps -o args= -p "$pid" 2>/dev/null)
+        case "$args" in
+          *claude*|*codex*|*opencode*|*grok*|*" pi "*|*/pi) return 1 ;;
+        esac ;;
+    esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
   done
@@ -43,7 +62,11 @@ omp_ancestry_is_exact() {
 
 detect_own() {
   # Layer 1: environment markers for verified harnesses.
-  # Keep marker detection before ancestry detection as an explicit precedence rule.
+  # Keep marker detection before the layer-2 command-name walk as an explicit
+  # precedence rule. The single exception is the exact-OMP ancestry probe, which
+  # runs first because an OMP session carries inherited foreign markers of its
+  # own; it is bounded to the innermost harness ancestor, so it can only claim a
+  # process that has no nearer harness of another identity above it.
   # Only claude, pi, and grok set verified markers of their own; Firstmate adds
   # the exact FM_OMP_HARNESS=omp marker at a verified OMP worker launch boundary.
   # Codex, OpenCode, and Kimi are markerless, so a foreign marker retained in a terminal
