@@ -10,8 +10,17 @@
 // rearm. Stale callbacks from an earlier generation are no-ops against the active
 // replacement.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 
 type LockOwnership = "owned" | "missing" | "other";
 
@@ -152,7 +161,41 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
   function markLoaded(): void {
     if (lockOwnership() === "other") return;
     mkdirSync(state, { recursive: true });
-    writeFileSync(marker, `${extensionVersion}\n${process.pid}\n`);
+    let runtimeIdentity = "";
+    if (runtime === "omp") {
+      const bunPath = realpathSync(process.execPath);
+      const ompPath = realpathSync(process.argv[1]);
+      if (/\s/u.test(bunPath) || /\s/u.test(ompPath)) {
+        throw new Error("OMP primary identity paths containing whitespace are unsupported");
+      }
+      runtimeIdentity = `${bunPath}\n${ompPath}\n`;
+    }
+    const contents = `${extensionVersion}\n${process.pid}\n${runtimeIdentity}`;
+    const temporary = `${marker}.tmp.${process.pid}.${randomUUID()}`;
+    let descriptor = -1;
+    try {
+      descriptor = openSync(temporary, "wx", 0o600);
+      writeFileSync(descriptor, contents, "utf8");
+      closeSync(descriptor);
+      descriptor = -1;
+      // Same-directory rename replaces the marker pathname itself, so a
+      // pre-existing symlink is never followed to its target.
+      renameSync(temporary, marker);
+    } catch (error) {
+      if (descriptor >= 0) {
+        try {
+          closeSync(descriptor);
+        } catch {
+          // Preserve the publication error; the descriptor may already be closed.
+        }
+      }
+      try {
+        unlinkSync(temporary);
+      } catch {
+        // The temp path may not exist yet or may already have been renamed.
+      }
+      throw error;
+    }
   }
 
   function classifyClose(

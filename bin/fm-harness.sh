@@ -34,7 +34,7 @@ omp_ancestry_is_exact() {
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
     args=$(ps -o args= -p "$pid" 2>/dev/null)
-    fm_omp_process_matches "$comm" "$args" && return 0
+    fm_omp_process_matches "$comm" "$args" "$pid" && return 0
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
   done

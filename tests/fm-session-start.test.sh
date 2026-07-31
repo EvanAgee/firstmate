@@ -162,8 +162,23 @@ SH
   printf '%s\n' "$harness" > "$fakebin/.harness-name"
 }
 
+prepare_fake_omp_holder_bins() {
+  local fakebin=$1 real_bun
+  # Keep the deterministic portable lane independent of a host OMP/Bun install;
+  # the fake process inventory still exposes the exact launch-bound identities.
+  real_bun=$(fm_test_realpath "$(command -v node)")
+  ln -sf "$real_bun" "$fakebin/bun"
+  cat > "$fakebin/omp" <<'JS'
+#!/usr/bin/env bun
+if (process.argv.includes("--hold")) setInterval(() => {}, 60_000);
+JS
+  chmod +x "$fakebin/omp"
+}
+
 make_fake_ps_omp_holder() {
-  local fakebin=$1 holder_pid=$2
+  local fakebin=$1 holder_pid=$2 bun omp
+  bun="$fakebin/bun"
+  omp="$fakebin/omp"
   cat > "$fakebin/ps" <<SH
 #!/usr/bin/env bash
 set -u
@@ -175,11 +190,11 @@ for arg in "\$@"; do
 done
 case "\$*" in
   *"comm="*)
-    if [ "\$pid" = "$holder_pid" ]; then printf '/usr/local/bin/bun\n'; else printf '/bin/zsh\n'; fi
+    if [ "\$pid" = "$holder_pid" ]; then printf '%s\n' "$bun"; else printf '/bin/zsh\n'; fi
     exit 0
     ;;
   *"args="*)
-    if [ "\$pid" = "$holder_pid" ]; then printf '/usr/local/bin/bun /usr/local/bin/omp\n'; else printf 'zsh\n'; fi
+    if [ "\$pid" = "$holder_pid" ]; then printf '%s %s\n' "$bun" "$omp"; else printf 'zsh\n'; fi
     exit 0
     ;;
   *"ppid="*) printf '%s\n' "$holder_pid"; exit 0 ;;
@@ -472,6 +487,9 @@ EOF
   touch "$home/state/.last-watcher-beat"
   {
     printf 'window=firstmate:fm-%s\n' "$id"
+    printf 'endpoint_task_id=%s\n' "$id"
+    printf 'worktree=%s\n' "$mate"
+    printf 'project=%s\n' "$mate"
     printf 'kind=secondmate\n'
     printf 'harness=pi\n'
     printf 'home=%s\n' "$mate"
@@ -512,6 +530,9 @@ EOF
   touch "$home/state/.last-watcher-beat"
   {
     printf 'window=default:p-old\n'
+    printf 'endpoint_task_id=%s\n' "$id"
+    printf 'worktree=%s\n' "$mate"
+    printf 'project=%s\n' "$mate"
     printf 'kind=secondmate\n'
     printf 'harness=pi\n'
     printf 'home=%s\n' "$mate"
@@ -554,9 +575,9 @@ install_omp_primary_extension_fixture() {
 }
 
 write_omp_primary_loaded_marker() {
-  local home=$1 root=$2 pid=$3 version
+  local home=$1 root=$2 pid=$3 fakebin=$4 version
   version=$(hash_file_for_test "$root/.omp/extensions/fm-primary-omp.ts")
-  printf '%s\n%s\n' "$version" "$pid" > "$home/state/.omp-primary-extension-loaded"
+  printf '%s\n%s\n%s\n%s\n' "$version" "$pid" "$(fm_test_realpath "$fakebin/bun")" "$(fm_test_realpath "$fakebin/omp")" > "$home/state/.omp-primary-extension-loaded"
 }
 
 install_pi_turnend_extension_fixture() {
@@ -1304,11 +1325,14 @@ test_omp_primary_diagnostic_and_protocol() {
 $rec
 EOF
   make_fake_toolchain "$fakebin"
-  sleep 300 &
+  prepare_fake_omp_holder_bins "$fakebin"
+  "$fakebin/bun" "$fakebin/omp" --hold &
   holder_pid=$!
   make_fake_ps_omp_holder "$fakebin" "$holder_pid"
 
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(FM_OMP_PROCESS_EXPECTED_BUN="$(fm_test_realpath "$fakebin/bun")" \
+    FM_OMP_PROCESS_EXPECTED_BIN="$(fm_test_realpath "$fakebin/omp")" \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
 
@@ -1333,18 +1357,20 @@ test_omp_primary_marker_is_bound_to_lock_owner() {
 $rec
 EOF
   make_fake_toolchain "$fakebin"
-  sleep 300 &
+  prepare_fake_omp_holder_bins "$fakebin"
+  "$fakebin/bun" "$fakebin/omp" --hold &
   holder_pid=$!
   make_fake_ps_omp_holder "$fakebin" "$holder_pid"
   install_omp_primary_extension_fixture "$root"
-  write_omp_primary_loaded_marker "$home" "$root" "$holder_pid"
+  write_omp_primary_loaded_marker "$home" "$root" "$holder_pid" "$fakebin"
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_not_contains "$out" "OMP_PRIMARY_EXTENSION: not loaded or stale" \
     "OMP diagnostic rejected the current version-bound owning-session marker"
 
   marker="$home/state/.omp-primary-extension-loaded"
-  printf 'stale-extension-version\n%s\n' "$holder_pid" > "$marker"
+  printf 'stale-extension-version\n%s\n%s\n%s\n' "$holder_pid" \
+    "$(fm_test_realpath "$fakebin/bun")" "$(fm_test_realpath "$fakebin/omp")" > "$marker"
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true

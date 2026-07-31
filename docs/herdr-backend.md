@@ -202,6 +202,7 @@ A human-blocked permission dialog has no busy banner and still surfaces.
 Herdr has no direct cursor-row primitive.
 The adapter locates the bottom-most recognized bordered row, Claude `❯` row, Codex `›` row, or a Pi separator region admitted only when native identity is exactly Pi and state is idle, done, or blocked.
 OMP uses an independent native shape: one status top row and a final input row, with at most eight bounded content rows between them, admitted only when native identity is exactly `omp` and state is idle or done.
+OMP applies the shared terminal-cell geometry contract owned by [the tmux backend guide](tmux-backend.md#current-behavior-and-safety); Herdr additionally enforces the bounded row count above.
 Empty, pending, and multi-line OMP input classify from that structure; a short, stale, malformed, working, blocked, unreadable, or inexact-identity candidate is unknown and cannot authorize injection.
 A working Pi, pending middle row, missing identity, incomplete separator pair, or over-tall candidate remains pending or unknown.
 

@@ -40,8 +40,7 @@ If the captain asks for a new harness, propose verifying it first: spawn a trivi
 ## Detection
 
 `bin/fm-harness.sh` prints firstmate's own harness, using verified env markers first and then process ancestry.
-OMP primary detection outranks inherited foreign markers only for an exact Bun argv boundary whose interpreter token is `bun` and script basename is `omp`.
-The same exact boundary owns OMP lock liveness, while `omp-helper`, `xomp`, incidental argument text, and non-Bun entrypoints are rejected.
+OMP primary detection and lock liveness follow the distinct launch-bound identity contract owned by [the tmux backend guide](../../../docs/tmux-backend.md#current-behavior-and-safety), and only a proven OMP identity may outrank inherited foreign markers.
 Within the Pi family, only the exact launch-boundary marker `FM_PI_HARNESS=pi-signed` alongside `PI_CODING_AGENT=true` selects the signed identity; unmarked shared launcher ancestry remains `pi`.
 `bin/fm-harness.sh crew` resolves the effective crewmate harness from `config/crew-harness` (absent or `default` -> own).
 `bin/fm-harness.sh secondmate` resolves the secondmate-launch harness through the chain `config/secondmate-harness` -> `config/crew-harness` -> own, so an unset `config/secondmate-harness` matches the crew harness.
@@ -309,7 +308,7 @@ The model arms through `fm_watch_arm_pi`, never a foreground bash arm; the watch
 `bin/fm-session-start.sh` reports when the live Pi-family session has not loaded both the turn-end guard and watcher extensions, and points at the selected executable after project trust as the fix, with `-e` as a trust-free fallback.
 When a secondmate is launched on Pi or pi-signed, `fm-spawn.sh --secondmate` launches the selected executable with both `-e .pi/extensions/fm-primary-turnend-guard.ts` and `-e .pi/extensions/fm-primary-pi-watch.ts`, both already present in the secondmate home's git worktree.
 
-## omp (VERIFIED 2026-07-30, OMP 17.1.8)
+## omp (VERIFIED 2026-07-31, OMP 17.1.8)
 
 | Fact | Value |
 |---|---|
@@ -328,22 +327,13 @@ The extension reports `session_start` readiness, acknowledges the initial instru
 Firstmate waits for the first `turn_start` acknowledgement before reporting a successful spawn.
 OMP workers keep their sessions under the task temp root so recovery can resume the exact conversation and ordinary cleanup can remove the session files with the rest of the task temp.
 
-OMP 17.1.8 runs as `bun <exact-path>/omp ...`, so the tmux recovery probe checks that exact interpreter and script boundary rather than treating every Bun process as OMP.
-Its idle composer is a verified two-row structure with a status top border and a `╰─ ... ─╯` input row.
-Pending input appears inside that bottom row or expands into a bounded content row above it.
-Tmux submission accepts a cleared composer, a verified idle-to-working transition, or the exact dead-process postcondition for `/exit`; unknown or malformed structure remains unconfirmed.
-While OMP is working, an accepted steer appears in its native `Steering` queue and the composer clears.
-The same structural check keeps away-mode injection out of pending, malformed, or unreadable input.
+[The tmux backend guide](../../../docs/tmux-backend.md#current-behavior-and-safety) owns OMP's launch identity, supported canonical paths, composer geometry, submission, and recovery behavior.
+[The Herdr backend guide](../../../docs/herdr-backend.md#composer-and-injection-safety) owns OMP's native identity, composer, busy steering, normal exit, and blocked-injection behavior on Herdr.
+OMP is verified only on tmux and Herdr; the backend applicability rationale and inspection evidence live in [runtime-backends verification](../../../docs/verification/runtime-backends.md#omp-applicability-outside-tmux-and-herdr).
 
-On Herdr, OMP requires native exact `agent=omp` identity and uses a separate status-top plus final-input-row composer structure rather than Pi separators or generic borders.
-Idle and done may classify empty or pending; working, blocked, stale, malformed, short, unreadable, and inexact-identity candidates remain unknown for injection.
-Busy steering is acknowledged only by an exact post-offset native `steering:true` user event, and `/exit` only by a post-offset normal `session_exit` followed by exact pane absence.
-A busy-steer or exit acknowledgement failure sends no second Enter, while registered idle, done, blocked, or working agents remain live for recovery and seeded-tab cleanup.
-OMP is verified only on tmux and Herdr; selecting OMP with Zellij, Orca, or cmux refuses before endpoint creation rather than borrowing those backends' generic composer assumptions.
-
-**Primary-session integration fact (verified 2026-07-30, OMP 17.1.8).**
-Plain OMP started from the Firstmate root discovers `.omp/extensions/fm-primary-omp.ts` natively, with `omp -e .omp/extensions/fm-primary-omp.ts` as the explicit fallback.
-The adapter publishes a version-bound loaded marker tied to the live OMP PID, delivers the session-start instruction on native `session_start` and `session_switch` events, and owns watcher generations through `fm_watch_arm_omp` plus `/new` and `/resume` continuity.
+**Primary-session integration fact (verified 2026-07-31, OMP 17.1.8).**
+Plain OMP started from the Firstmate root discovers `.omp/extensions/fm-primary-omp.ts` natively, including in a fresh checkout before canonical `state/` exists; `omp -e .omp/extensions/fm-primary-omp.ts` remains the explicit recovery fallback.
+The adapter publishes the OMP marker shape owned by [configuration](../../../docs/configuration.md#harness-support), delivers the session-start instruction on native `session_start` and `session_switch` events, and owns watcher generations through `fm_watch_arm_omp` plus `/new` and `/resume` continuity.
 It routes watcher follow-ups through OMP's `sendUserMessage(..., { deliverAs: "followUp" })`, runs the shared turn-end predicate through native `session_stop`, and applies the shared watcher-arm, persistent-directory, and delegation-shaped tool safety checks before tool execution.
 `bin/fm-session-start.sh` rejects a missing, stale, foreign-PID, or version-mismatched loaded marker and prints both native-discovery and explicit `-e` recovery commands.
 The authoritative operating procedure is `docs/supervision-protocols/omp.md`.

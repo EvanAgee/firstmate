@@ -176,6 +176,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$SCRIPT_DIR/fm-omp-process-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
@@ -530,9 +532,9 @@ launch_template() {
       if [ "$kind" = secondmate ]; then
         # The explicit path is the exact same tracked file native project discovery sees.
         # OMP 17.1.8's discoverExtensionPaths path-resolves and deduplicates before loading, so this guarantees the integration without registering it twice.
-        printf '%s' '__OMPBIN__ --session-dir __OMPSESSIONDIR__ __OMPRESUMEFLAG__--auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPPRIMARY__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' '__OMPBUN__ __OMPBIN__ --session-dir __OMPSESSIONDIR__ __OMPRESUMEFLAG__--auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPPRIMARY__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       else
-        printf '%s' '__OMPBIN__ --session-dir __OMPSESSIONDIR__ --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' '__OMPBUN__ __OMPBIN__ --session-dir __OMPSESSIONDIR__ --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       fi
       ;;
     # grok (Grok Build TUI): a positional prompt starts the supervised interactive
@@ -601,6 +603,8 @@ if [ "$HARNESS" = pi-signed ] && ! command -v pi-signed >/dev/null 2>&1; then
   exit 1
 fi
 OMP_BIN=
+OMP_BIN_CANON=
+OMP_BUN_CANON=
 OMP_PRIMARY_EXTENSION=
 OMP_SESSION_DIR=
 OMP_SESSION_POINTER=
@@ -621,6 +625,19 @@ if [ "$BACKEND" = orca ]; then
 fi
 if [ "$HARNESS" = omp ]; then
   OMP_BIN=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-binary) || exit 1
+  OMP_BIN_CANON=$(fm_omp_process_resolve_path "$OMP_BIN") || {
+    echo "error: selected OMP executable cannot be canonicalized: $OMP_BIN" >&2
+    exit 1
+  }
+  OMP_BUN_CANON=$(fm_omp_process_resolve_path bun) || {
+    echo "error: selected OMP runtime cannot bind its Bun executable" >&2
+    exit 1
+  }
+  if ! fm_omp_process_identity_path_valid "$OMP_BIN_CANON" \
+     || ! fm_omp_process_identity_path_valid "$OMP_BUN_CANON"; then
+    echo "error: selected OMP and Bun identities must be canonical executable paths without whitespace" >&2
+    exit 1
+  fi
   if [ "$KIND" = secondmate ]; then
     OMP_PRIOR_META="$STATE/$ID.meta"
     if [ -L "$OMP_PRIOR_META" ]; then
@@ -633,7 +650,7 @@ if [ "$HARNESS" = omp ]; then
       if [ -z "$OMP_PRIOR_TARGET" ]; then
         OMP_SECONDMATE_PRIOR_STATE=missing
       else
-        OMP_SECONDMATE_PRIOR_STATE=$(fm_backend_agent_state "$OMP_PRIOR_BACKEND" "$OMP_PRIOR_TARGET" 2>/dev/null) \
+        OMP_SECONDMATE_PRIOR_STATE=$(fm_backend_agent_state "$OMP_PRIOR_BACKEND" "$OMP_PRIOR_TARGET" "$OMP_PRIOR_META" 2>/dev/null) \
           || OMP_SECONDMATE_PRIOR_STATE=unreadable
       fi
       case "$OMP_SECONDMATE_PRIOR_STATE" in
@@ -642,7 +659,7 @@ if [ "$HARNESS" = omp ]; then
             echo "error: OMP secondmate $ID is dead but its recorded endpoint could not be retired; refusing duplicate launch" >&2
             exit 1
           fi
-          OMP_POST_KILL_STATE=$(fm_backend_agent_state "$OMP_PRIOR_BACKEND" "$OMP_PRIOR_TARGET" 2>/dev/null) \
+          OMP_POST_KILL_STATE=$(fm_backend_agent_state "$OMP_PRIOR_BACKEND" "$OMP_PRIOR_TARGET" "$OMP_PRIOR_META" 2>/dev/null) \
             || OMP_POST_KILL_STATE=unreadable
           if [ "$OMP_POST_KILL_STATE" != missing ]; then
             echo "error: OMP secondmate $ID endpoint did not become authoritatively missing after dead-agent cleanup; refusing duplicate launch" >&2
@@ -1048,21 +1065,20 @@ if [ "$KIND" = secondmate ]; then
         echo "error: OMP secondmate home has an unowned primary-integration marker at $OMP_PRIMARY_MARKER; refusing duplicate launch" >&2
         exit 1
       fi
-      OMP_STALE_MARKER_VERSION=$(sed -n '1p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
-      OMP_STALE_MARKER_PID=$(sed -n '2p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
       OMP_STALE_LOCK_PID=$(cat "$PROJ_ABS/state/.lock" 2>/dev/null || true)
       OMP_EXPECTED_MARKER_VERSION=$(node -e \
         'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs"); process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' \
         "$OMP_PRIMARY_EXTENSION" 2>/dev/null || true)
-      OMP_STALE_MARKER_LAST_BYTE=$(tail -c 1 "$OMP_PRIMARY_MARKER" 2>/dev/null | od -An -tuC | tr -d '[:space:]')
-      if [ -z "$OMP_EXPECTED_MARKER_VERSION" ] \
-         || [ "$(wc -l < "$OMP_PRIMARY_MARKER" 2>/dev/null | tr -d '[:space:]')" != 2 ] \
-         || [ "$OMP_STALE_MARKER_LAST_BYTE" != 10 ] \
-         || [ "$OMP_STALE_MARKER_VERSION" != "$OMP_EXPECTED_MARKER_VERSION" ] \
-         || [ "$OMP_STALE_MARKER_PID" != "$OMP_STALE_LOCK_PID" ]; then
+      # Legacy two-line markers contain no executable identity and are not safe
+      # recovery evidence; preserve the home and require explicit reconciliation.
+      if ! fm_omp_primary_marker_read "$OMP_PRIMARY_MARKER" \
+         || [ -z "$OMP_EXPECTED_MARKER_VERSION" ] \
+         || [ "$FM_OMP_MARKER_VERSION" != "$OMP_EXPECTED_MARKER_VERSION" ] \
+         || [ "$FM_OMP_MARKER_PID" != "$OMP_STALE_LOCK_PID" ]; then
         echo "error: OMP secondmate home has an unowned or malformed primary-integration marker at $OMP_PRIMARY_MARKER; refusing duplicate launch" >&2
         exit 1
       fi
+      OMP_STALE_MARKER_PID=$FM_OMP_MARKER_PID
       case "$OMP_STALE_MARKER_PID" in
         ''|*[!0-9]*|0*|1)
           echo "error: OMP secondmate home has an unowned or malformed primary-integration marker at $OMP_PRIMARY_MARKER; refusing duplicate launch" >&2
@@ -1904,6 +1920,10 @@ META_WINDOW=$T
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
+  if [ "$HARNESS" = omp ]; then
+    echo "omp_bin=$OMP_BIN_CANON"
+    echo "omp_bun=$OMP_BUN_CANON"
+  fi
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
   # data/fm-backend-design-d7's P1 compatibility contract).
@@ -1954,7 +1974,8 @@ LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
 LAUNCH=${LAUNCH//__OMPPRIMARY__/$sq_ompprimary}
-LAUNCH=${LAUNCH//__OMPBIN__/$(shell_quote "$OMP_BIN")}
+LAUNCH=${LAUNCH//__OMPBUN__/$(shell_quote "$OMP_BUN_CANON")}
+LAUNCH=${LAUNCH//__OMPBIN__/$(shell_quote "$OMP_BIN_CANON")}
 LAUNCH=${LAUNCH//__OMPSESSIONDIR__/$(shell_quote "$OMP_SESSION_DIR")}
 LAUNCH=${LAUNCH//__OMPRESUMEFLAG__/$OMPRESUMEFLAG}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
@@ -1999,19 +2020,21 @@ if [ "$HARNESS" = omp ]; then
       'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs"); process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' \
       "$OMP_PRIMARY_EXTENSION" 2>/dev/null || true)
     for _ in $(seq 1 "$OMP_ACK_POLLS"); do
-      OMP_MARKER_VERSION=$(sed -n '1p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
-      OMP_MARKER_PID=$(sed -n '2p' "$OMP_PRIMARY_MARKER" 2>/dev/null || true)
+      OMP_MARKER_VERSION=
+      OMP_MARKER_PID=
+      OMP_MARKER_BUN=
+      OMP_MARKER_BIN=
+      if fm_omp_primary_marker_read "$OMP_PRIMARY_MARKER"; then
+        OMP_MARKER_VERSION=$FM_OMP_MARKER_VERSION
+        OMP_MARKER_PID=$FM_OMP_MARKER_PID
+        OMP_MARKER_BUN=$FM_OMP_MARKER_BUN
+        OMP_MARKER_BIN=$FM_OMP_MARKER_BIN
+      fi
       OMP_LOCK_PID=$(cat "$PROJ_ABS/state/.lock" 2>/dev/null || true)
       OMP_ACK_SESSION=$(cat "$OMP_SESSION_POINTER" 2>/dev/null || true)
       OMP_ACK_SESSION_OK=0
       OMP_ACK_PID_OK=0
-      OMP_ACK_MARKER_BYTES_OK=0
       OMP_ACK_POINTER_BYTES_OK=0
-      if [ -f "$OMP_PRIMARY_MARKER" ] && [ ! -L "$OMP_PRIMARY_MARKER" ] \
-         && [ "$(wc -l < "$OMP_PRIMARY_MARKER" | tr -d '[:space:]')" = 2 ] \
-         && [ "$(tail -c 1 "$OMP_PRIMARY_MARKER" | od -An -tuC | tr -d '[:space:]')" = 10 ]; then
-        OMP_ACK_MARKER_BYTES_OK=1
-      fi
       if [ -f "$OMP_SESSION_POINTER" ] && [ ! -L "$OMP_SESSION_POINTER" ] \
          && [ "$(wc -l < "$OMP_SESSION_POINTER" | tr -d '[:space:]')" = 1 ] \
          && [ "$(tail -c 1 "$OMP_SESSION_POINTER" | od -An -tuC | tr -d '[:space:]')" = 10 ]; then
@@ -2029,14 +2052,15 @@ if [ "$HARNESS" = omp ]; then
       esac
       if [ "$OMP_ACK_SESSION_OK" -eq 1 ] \
          && [ "$OMP_ACK_PID_OK" -eq 1 ] \
-         && [ "$OMP_ACK_MARKER_BYTES_OK" -eq 1 ] \
          && [ "$OMP_ACK_POINTER_BYTES_OK" -eq 1 ] \
          && [ -n "$OMP_PRIMARY_VERSION" ] \
          && [ "$OMP_MARKER_VERSION" = "$OMP_PRIMARY_VERSION" ] \
+         && [ "$OMP_MARKER_BUN" = "$OMP_BUN_CANON" ] \
+         && [ "$OMP_MARKER_BIN" = "$OMP_BIN_CANON" ] \
          && [ "$OMP_MARKER_PID" = "$OMP_LOCK_PID" ] \
          && [ -n "$OMP_MARKER_PID" ] \
          && kill -0 "$OMP_MARKER_PID" 2>/dev/null \
-         && [ "$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || true)" = alive ]; then
+         && [ "$(fm_backend_agent_state "$BACKEND" "$T" "$STATE/$ID.meta" 2>/dev/null || true)" = alive ]; then
         OMP_ACKED=1
         break
       fi

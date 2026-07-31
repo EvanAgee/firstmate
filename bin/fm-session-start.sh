@@ -233,10 +233,17 @@ hash_file() {
 }
 
 primary_extension_loaded() {
-  local marker=$1 expected_version=$2 lock=$3 marker_version marker_pid lock_pid
-  [ -f "$marker" ] && [ -f "$lock" ] && [ -n "$expected_version" ] || return 1
-  marker_version=$(sed -n '1p' "$marker")
-  marker_pid=$(sed -n '2p' "$marker")
+  local marker=$1 expected_version=$2 lock=$3 runtime=${4:-pi} marker_version marker_pid lock_pid
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ -f "$lock" ] && [ ! -L "$lock" ] \
+    && [ -n "$expected_version" ] || return 1
+  if [ "$runtime" = omp ]; then
+    fm_omp_primary_marker_read "$marker" || return 1
+    marker_version=$FM_OMP_MARKER_VERSION
+    marker_pid=$FM_OMP_MARKER_PID
+  else
+    marker_version=$(sed -n '1p' "$marker")
+    marker_pid=$(sed -n '2p' "$marker")
+  fi
   lock_pid=$(sed -n '1p' "$lock")
   [ -n "$marker_pid" ] || return 1
   [ "$marker_version" = "$expected_version" ] && [ "$marker_pid" = "$lock_pid" ]
@@ -331,7 +338,7 @@ if [ "$PRIMARY_HARNESS" = omp ]; then
   OMP_PRIMARY_EXT="$FM_ROOT/.omp/extensions/fm-primary-omp.ts"
   OMP_PRIMARY_MARKER="$STATE/.omp-primary-extension-loaded"
   OMP_PRIMARY_VERSION=$(hash_file "$OMP_PRIMARY_EXT" || printf '')
-  if ! primary_extension_loaded "$OMP_PRIMARY_MARKER" "$OMP_PRIMARY_VERSION" "$STATE/.lock"; then
+  if ! primary_extension_loaded "$OMP_PRIMARY_MARKER" "$OMP_PRIMARY_VERSION" "$STATE/.lock" omp; then
     printf 'OMP_PRIMARY_EXTENSION: not loaded or stale - restart plain omp from %s so %s auto-loads; if native project discovery is unavailable, restart with omp -e %s\n' "$FM_ROOT" "$OMP_PRIMARY_EXT" "$OMP_PRIMARY_EXT"
   fi
 fi

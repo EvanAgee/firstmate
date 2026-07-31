@@ -18,7 +18,7 @@ SOCKET="fm-omp-worker-live-$$"
 HOME_DIR="$LAB/home"
 PROJECT="$LAB/project"
 WRAPPER_BIN="$LAB/bin"
-OMP_BIN=$("$ROOT/bin/fm-omp-capabilities.sh" --print-binary) || fail "OMP capability check failed"
+"$ROOT/bin/fm-omp-capabilities.sh" >/dev/null || fail "OMP capability check failed"
 WORKER_ID=omp-live-worker
 SCOUT_ID=omp-live-scout
 WORKER_WT="$LAB/worker-wt"
@@ -89,22 +89,25 @@ esac
 exec bash --noprofile --norc
 SH
 chmod +x "$WRAPPER_BIN/tmux" "$WRAPPER_BIN/treehouse"
-PATH="$WRAPPER_BIN:$PATH" tmux new-session -d -s firstmate -n fixture -c "$PROJECT"
-PATH="$WRAPPER_BIN:$PATH" tmux set-option -g default-shell /bin/bash
-PATH="$WRAPPER_BIN:$PATH" tmux set-option -g default-command "env PATH='$WRAPPER_BIN:$PATH' bash --noprofile --norc"
+FIXTURE_PATH="$WRAPPER_BIN:$PATH"
+PATH="$FIXTURE_PATH" tmux new-session -d -s firstmate -n fixture -c "$PROJECT"
+PATH="$FIXTURE_PATH" tmux set-option -g default-shell /bin/bash
+PATH="$FIXTURE_PATH" tmux set-option -g default-command "env PATH='$FIXTURE_PATH' bash --noprofile --norc"
 
 capture() {
   PATH="$WRAPPER_BIN:$PATH" tmux capture-pane -p -t "$1" -S -220 2>/dev/null || true
 }
 
 agent_state() {
-  PATH="$WRAPPER_BIN:$PATH" bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state tmux "$2"' \
-    _ "$ROOT" "$1"
+  PATH="$WRAPPER_BIN:$PATH" bash -c \
+    '. "$1/bin/fm-backend.sh"; meta=$(fm_backend_meta_for_window "$2" "$3") || exit 1; fm_backend_agent_state tmux "$2" "$meta"' \
+    _ "$ROOT" "$1" "$HOME_DIR/state"
 }
 
 composer_state() {
-  PATH="$WRAPPER_BIN:$PATH" bash -c '. "$1/bin/fm-tmux-lib.sh"; fm_tmux_composer_state "$2"' \
-    _ "$ROOT" "$1"
+  PATH="$WRAPPER_BIN:$PATH" bash -c \
+    '. "$1/bin/fm-backend.sh"; meta=$(fm_backend_meta_for_window "$2" "$3") || exit 1; fm_backend_agent_record_identity tmux "$2" "$meta" || exit 1; fm_backend_composer_state tmux "$2" omp "$FM_BACKEND_AGENT_OMP_BUN"' \
+    _ "$ROOT" "$1" "$HOME_DIR/state"
 }
 
 pane_busy() {
@@ -231,7 +234,10 @@ SESSION_DIR="/tmp/fm-$WORKER_ID/omp-sessions"
 SESSION_FILE=$(find "$SESSION_DIR" -type f -name '*.jsonl' -print 2>/dev/null | head -1)
 [ -n "$SESSION_FILE" ] || fail "OMP worker session file was not retained for resume"
 
-RESUME_COMMAND="FM_OMP_HARNESS=omp '$OMP_BIN' --session-dir '$SESSION_DIR' --resume '$SESSION_FILE' --auto-approve -e '$HOME_DIR/state/$WORKER_ID.omp-ext.ts'"
+OMP_RESUME_BUN=$(sed -n 's/^omp_bun=//p' "$HOME_DIR/state/$WORKER_ID.meta")
+OMP_RESUME_BIN=$(sed -n 's/^omp_bin=//p' "$HOME_DIR/state/$WORKER_ID.meta")
+[ -x "$OMP_RESUME_BUN" ] && [ -x "$OMP_RESUME_BIN" ] || fail "OMP resume metadata lost its canonical Bun/OMP pair"
+RESUME_COMMAND="FM_OMP_HARNESS=omp '$OMP_RESUME_BUN' '$OMP_RESUME_BIN' --session-dir '$SESSION_DIR' --resume '$SESSION_FILE' --auto-approve -e '$HOME_DIR/state/$WORKER_ID.omp-ext.ts'"
 rm -f "$HOME_DIR/state/$WORKER_ID.omp-ready"
 PATH="$WRAPPER_BIN:$PATH" tmux send-keys -t "$WORKER_TARGET" -l "$RESUME_COMMAND"
 PATH="$WRAPPER_BIN:$PATH" tmux send-keys -t "$WORKER_TARGET" Enter
@@ -258,6 +264,21 @@ assert_grep 'kind=scout' "$SCOUT_META" "OMP scout changed delivery semantics"
 wait_file "$HOME_DIR/state/$SCOUT_ID.omp-ready" || fail "OMP scout extension did not report session readiness"
 wait_file "$HOME_DIR/state/$SCOUT_ID.turn-ended" || fail "initial OMP scout turn did not complete"
 wait_text_count "$SCOUT_TARGET" OMP_SCOUT_INITIAL_DONE 2 || fail "OMP scout response was not observed"
+[ "$(agent_state "$SCOUT_TARGET")" = alive ] || fail "idle OMP scout was not classified alive"
+rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
+run_send "$SCOUT_ID" 'Respond exactly OMP_SCOUT_IDLE_STEER_DONE.' || fail "idle OMP scout steer was not acknowledged"
+wait_file "$HOME_DIR/state/$SCOUT_ID.turn-ended" || fail "idle OMP scout steer did not complete"
+wait_text_count "$SCOUT_TARGET" OMP_SCOUT_IDLE_STEER_DONE 2 || fail "idle OMP scout steer response was not observed"
+rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
+run_send "$SCOUT_ID" 'Run this exact command with bash: sleep 5. Then respond exactly OMP_SCOUT_BUSY_FIRST_DONE.' \
+  || fail "OMP scout busy-turn setup was not submitted"
+wait_busy "$SCOUT_TARGET" || fail "OMP scout busy indicator was not observed"
+run_send "$SCOUT_ID" 'After the current tool finishes, respond exactly OMP_SCOUT_BUSY_STEER_DONE.' \
+  || fail "busy OMP scout steer was not acknowledged"
+assert_contains "$(capture "$SCOUT_TARGET")" 'Steering · 1' "busy OMP scout steer did not enter the verified queue"
+wait_file "$HOME_DIR/state/$SCOUT_ID.turn-ended" 400 || fail "busy OMP scout turn did not complete"
+wait_idle "$SCOUT_TARGET" 400 || fail "OMP scout did not return idle after busy steering"
+wait_text_count "$SCOUT_TARGET" OMP_SCOUT_BUSY_STEER_DONE 2 || fail "busy OMP scout steer response was not observed"
 run_send "$SCOUT_ID" /exit || fail "OMP scout did not exit cleanly"
 for _ in $(seq 1 120); do
   [ "$(agent_state "$SCOUT_TARGET")" = dead ] && break
@@ -265,4 +286,4 @@ for _ in $(seq 1 120); do
 done
 [ "$(agent_state "$SCOUT_TARGET")" = dead ] || fail "OMP scout remained live after exit"
 
-pass "real tmux OMP worker/scout lifecycle: launch, exact identity, turns, idle/busy steering, interrupt, skill, exit, and resume"
+pass "real tmux OMP worker/scout lifecycle: launch, exact identity, worker and scout idle/busy steering, interrupt, skill, exit, and resume"

@@ -187,42 +187,64 @@ test_unrecognized_state_skips_busy_conversion() {
 }
 
 test_omp_composer_and_submission_use_verified_two_row_structure() {
-  local dir fakebin composer sent vfile top width
+  local dir fakebin composer sent vfile top width bun
+  if ! command -v bun >/dev/null 2>&1; then
+    pass "OMP tmux composer subtest skipped: bun not found"
+    return
+  fi
+  bun=$(command -v bun)
   dir="$TMP_ROOT/omp-composer"
   fakebin=$(make_submit_mock "$dir")
   composer="$dir/composer"
   sent="$dir/sent.log"
   vfile="$dir/verdict"
   : > "$sent"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/bun"
+  chmod +x "$fakebin/bun"
   top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
-  width=${#top}
+  width=$(fm_composer_terminal_width "$top" "$bun") || fail "could not measure OMP fixture width"
 
   printf '%s\n' "$top" > "$composer"
   printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$composer"
-  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp > "$vfile" 2>/dev/null
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp omp "$bun" > "$vfile" 2>/dev/null
   [ "$(cat "$vfile")" = empty ] || fail "verified empty OMP composer should be empty, got '$(cat "$vfile")'"
 
   printf '%s\n' "$top" > "$composer"
   printf '╰─%-*s─╯\n' "$((width - 4))" ' steer after current turn' >> "$composer"
-  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp > "$vfile" 2>/dev/null
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp omp "$bun" > "$vfile" 2>/dev/null
   [ "$(cat "$vfile")" = pending ] || fail "verified OMP composer text should be pending, got '$(cat "$vfile")'"
 
   printf 'transcript row\n%s\n' "$top" > "$composer"
   printf '╰─%-*s─╯\n' "$((width - 4))" ' stale transcript text' >> "$composer"
   PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_CURSOR_Y=1 \
-    fm_tmux_composer_state omp > "$vfile" 2>/dev/null
+    fm_tmux_composer_state omp omp "$bun" > "$vfile" 2>/dev/null
   [ "$(cat "$vfile")" = unknown ] || fail "stale OMP transcript box should not become live input, got '$(cat "$vfile")'"
 
   printf '%s\n╰─ malformed ─╯\n' "$top" > "$composer"
-  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp > "$vfile" 2>/dev/null
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp omp "$bun" > "$vfile" 2>/dev/null
   [ "$(cat "$vfile")" = unknown ] || fail "malformed OMP composer geometry should be unknown, got '$(cat "$vfile")'"
+
+  printf '%s\n' "$top" > "$composer"
+  printf '╰─%-*s─╯\n' "$((width - 5))" ' ' >> "$composer"
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp omp "$bun" > "$vfile" 2>/dev/null
+  [ "$(cat "$vfile")" = unknown ] || fail "width-mismatched OMP composer should be unknown, got '$(cat "$vfile")'"
+
+  printf '%s\n' "$top" > "$composer"
+  printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$composer"
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp omp "" > "$vfile" 2>/dev/null
+  [ "$(cat "$vfile")" = unknown ] || fail "OMP geometry without a task-bound Bun should be unknown, got '$(cat "$vfile")'"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/bun"
+  chmod +x "$fakebin/bun"
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" fm_tmux_composer_state omp omp "$fakebin/bun" > "$vfile" 2>/dev/null
+  [ "$(cat "$vfile")" = unknown ] || fail "unprovable OMP terminal width should be unknown, got '$(cat "$vfile")'"
+  rm "$fakebin/bun"
 
   printf '%s\n' "$top" > "$composer"
   printf '╰─%-*s─╯\n' "$((width - 4))" ' /skill:no-mistakes' >> "$composer"
   touch "$dir/.swallow"
   PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" \
     FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PANE_BUSY=0 \
-    fm_tmux_submit_enter_core omp 3 0.01 > "$vfile" 2>/dev/null
+    fm_tmux_submit_enter_core omp 3 0.01 omp 0 "$bun" > "$vfile" 2>/dev/null
   [ "$(cat "$vfile")" = empty ] || fail "OMP skill submission should retry the autocomplete swallow, got '$(cat "$vfile")'"
   [ "$(grep -c '^Enter$' "$sent")" -eq 2 ] || fail "OMP skill submission should require one verified Enter retry"
   pass "OMP tmux composer distinguishes empty, pending, stale, malformed, and autocomplete submission states"
@@ -263,13 +285,21 @@ test_omp_idle_to_busy_transition_confirms_submission() {
 test_omp_busy_signature_is_exact_and_scoped() {
   printf ' ⠸ Working… ⟦esc⟧\n' | fm_busy_lines_match omp \
     || fail "live OMP Working capture should classify busy"
+  printf ' ⠙ Running requested sleep ⟦esc⟧\n' | fm_busy_lines_match omp \
+    || fail "live OMP Running-tool capture should classify busy"
   printf 'Working...\n' | fm_busy_lines_match omp \
     && fail "OMP must not borrow Pi's ASCII Working signature"
   printf ' ⠸ Working… ⟦esc⟧\n' | fm_busy_lines_match pi \
     && fail "Pi must not borrow OMP's Unicode Working signature"
-  printf ' ⠸ Working… ⟦esc⟧\n' | fm_busy_lines_match \
-    || fail "no-harness compatibility fallback should include verified OMP busy state"
-  pass "OMP busy detection uses its verified Unicode loader without widening Pi"
+  printf ' ⠙ Running requested sleep ⟦esc⟧\n' | fm_busy_lines_match pi \
+    && fail "Pi must not borrow OMP's Running-tool signature"
+  printf 'Running requested sleep ⟦esc⟧\n' | fm_busy_lines_match omp \
+    && fail "OMP Running-tool status requires its exact Braille-spinner row"
+  printf ' ⠙ Running requested sleep ⟦esc⟧ trailing\n' | fm_busy_lines_match omp \
+    && fail "OMP Running-tool status must stay anchored at the row end"
+  printf ' ⠸ Working… ⟦esc⟧\n ⠙ Running requested sleep ⟦esc⟧\n' | fm_busy_lines_match \
+    || fail "no-harness compatibility fallback should include verified OMP busy states"
+  pass "OMP busy detection uses its verified Unicode status rows without widening Pi"
 }
 
 test_claude_busy_signature_uses_real_capture_shapes() {

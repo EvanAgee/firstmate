@@ -116,31 +116,31 @@ launch_omp() {
 }
 
 FALLBACK_PROJECT="$LAB/fallback-project"
-FALLBACK_HOME="$LAB/fallback-home"
+FALLBACK_HOME="$FALLBACK_PROJECT"
 FALLBACK_SESSIONS="$LAB/fallback-sessions"
-mkdir -p "$FALLBACK_PROJECT/.omp-fallback/extensions" "$FALLBACK_HOME/state" \
-  "$FALLBACK_HOME/config" "$FALLBACK_SESSIONS"
+mkdir -p "$FALLBACK_PROJECT/.omp/extensions" "$FALLBACK_HOME/config" "$FALLBACK_SESSIONS"
 cp "$ROOT/AGENTS.md" "$FALLBACK_PROJECT/AGENTS.md"
 cp -R "$ROOT/bin" "$FALLBACK_PROJECT/bin"
 cp "$ROOT/.omp/extensions/fm-primary-omp.ts" \
-  "$FALLBACK_PROJECT/.omp-fallback/extensions/fm-primary-omp.ts"
+  "$FALLBACK_PROJECT/.omp/extensions/fm-primary-omp.ts"
 git init -q -b main "$FALLBACK_PROJECT"
 git -C "$FALLBACK_PROJECT" add .
 git -C "$FALLBACK_PROJECT" commit -qm init
 PATH="$WRAPPER_BIN:$PATH" tmux new-session -d -s fallback -n omp -c "$FALLBACK_PROJECT" \
-  "env FM_HOME='$FALLBACK_HOME' FM_ROOT_OVERRIDE='$FALLBACK_PROJECT' FM_STATE_OVERRIDE='$FALLBACK_HOME/state' FM_CONFIG_OVERRIDE='$FALLBACK_HOME/config' OMP_SKIP_SETUP=1 '$OMP_BIN' --model openai-codex/gpt-5.6-sol --thinking low --session-dir '$FALLBACK_SESSIONS' -e '$FALLBACK_PROJECT/.omp-fallback/extensions/fm-primary-omp.ts'"
+  "env FM_HOME='$FALLBACK_HOME' FM_ROOT_OVERRIDE='$FALLBACK_PROJECT' FM_CONFIG_OVERRIDE='$FALLBACK_HOME/config' OMP_SKIP_SETUP=1 '$OMP_BIN' --model openai-codex/gpt-5.6-sol --thinking low --session-dir '$FALLBACK_SESSIONS'"
 wait_file_nonempty "$FALLBACK_HOME/state/.omp-primary-extension-loaded" \
-  || fail "explicit OMP primary extension fallback did not load"
-fallback_pid=$(tail -n 1 "$FALLBACK_HOME/state/.omp-primary-extension-loaded")
-bash -c '. "$1/bin/fm-session-lock-lib.sh"; fm_harness_pid_alive "$2"' \
+  || fail "fresh plain-checkout OMP primary extension did not create state and load"
+fallback_pid=$(sed -n '2p' "$FALLBACK_HOME/state/.omp-primary-extension-loaded")
+FM_STATE_OVERRIDE="$FALLBACK_HOME/state" bash -c \
+  '. "$1/bin/fm-session-lock-lib.sh"; fm_harness_pid_alive "$2"' \
   _ "$FALLBACK_PROJECT" "$fallback_pid" \
-  || fail "explicit OMP extension fallback did not retain exact process identity"
+  || fail "fresh plain-checkout OMP extension did not retain exact process identity"
 PATH="$WRAPPER_BIN:$PATH" tmux kill-session -t fallback
 for _ in $(seq 1 120); do
   kill -0 "$fallback_pid" 2>/dev/null || break
   sleep 0.1
 done
-kill -0 "$fallback_pid" 2>/dev/null && fail "explicit OMP extension fallback did not shut down cleanly"
+kill -0 "$fallback_pid" 2>/dev/null && fail "fresh plain-checkout OMP extension did not shut down cleanly"
 
 first_prompt="Follow the injected Firstmate startup instruction exactly once. Then run this exact bash command: bin/fm-harness.sh > '$LAB/first-harness'. Call the fm_watch_arm_omp tool exactly once. When startup and supervision are ready, reply exactly OMP_PRIMARY_READY."
 launch_omp "$first_prompt"
@@ -153,11 +153,17 @@ LOCK="$HOME_DIR/state/.lock"
 WATCH_LOCK="$HOME_DIR/state/.watch.lock/pid"
 wait_file_nonempty "$MARKER" || fail "plain OMP did not natively discover the tracked primary extension"
 wait_file_nonempty "$LOCK" || fail "injected startup did not publish the primary session lock"
-first_omp_pid=$(tail -n 1 "$MARKER")
+first_omp_pid=$(sed -n '2p' "$MARKER")
 [ "$first_omp_pid" = "$(cat "$LOCK")" ] || fail "OMP loaded marker was not tied to the lock owner"
 expected_version=$(hash_file "$PROJECT/.omp/extensions/fm-primary-omp.ts")
 [ "$(head -n 1 "$MARKER")" = "$expected_version" ] || fail "OMP loaded marker was not tied to the adapter version"
-bash -c '. "$1/bin/fm-session-lock-lib.sh"; fm_harness_pid_alive "$2"' _ "$PROJECT" "$first_omp_pid" \
+[ "$(wc -l < "$MARKER" | tr -d '[:space:]')" = 4 ] || fail "OMP loaded marker omitted executable identity"
+[ "$(sed -n '3p' "$MARKER")" = "$(fm_test_realpath "$(command -v bun)")" ] \
+  || fail "OMP loaded marker did not bind the Bun realpath"
+[ "$(sed -n '4p' "$MARKER")" = "$(fm_test_realpath "$OMP_BIN")" ] \
+  || fail "OMP loaded marker did not bind the selected OMP realpath"
+FM_STATE_OVERRIDE="$HOME_DIR/state" bash -c \
+  '. "$1/bin/fm-session-lock-lib.sh"; fm_harness_pid_alive "$2"' _ "$PROJECT" "$first_omp_pid" \
   || fail "real OMP process-title identity did not satisfy the exact Bun argv boundary"
 first_watch_pid=$(wait_pid_change "$WATCH_LOCK") || fail "fm_watch_arm_omp did not establish a live watcher child"
 
@@ -204,7 +210,7 @@ PATH="$WRAPPER_BIN:$PATH" tmux send-keys -t "$TARGET" Enter
 wait_file_nonempty "$LAB/resume-harness" || fail "resumed OMP primary did not reclaim startup ownership"
 wait_text OMP_RESUME_READY || fail "resumed OMP primary did not complete its guarded turn"
 [ "$(cat "$LAB/resume-harness")" = omp ] || fail "resumed OMP subprocess lost exact harness identity"
-second_omp_pid=$(tail -n 1 "$MARKER")
+second_omp_pid=$(sed -n '2p' "$MARKER")
 [ "$second_omp_pid" != "$first_omp_pid" ] || fail "OMP resume marker retained the exited process identity"
 [ "$second_omp_pid" = "$(cat "$LOCK")" ] || fail "OMP resume did not bind the lock to the new process"
 resume_watch_pid=$(wait_pid_change "$WATCH_LOCK" "$second_watch_pid") \
@@ -217,6 +223,7 @@ touch "$HOME_DIR/state/.afk"
 PATH="$WRAPPER_BIN:$PATH" FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$PROJECT" \
   FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
   FM_SUPERVISOR_TARGET="$TARGET" FM_SUPERVISOR_BACKEND=tmux \
+  FM_SUPERVISOR_HARNESS=omp FM_SUPERVISOR_OMP_BUN="$(sed -n '3p' "$MARKER")" \
   FM_INJECT_CONFIRM_RETRIES=5 FM_INJECT_CONFIRM_SLEEP=0.2 \
   bash -c '. "$1/bin/fm-supervise-daemon.sh"; inject_msg "OMP_AWAY_DELIVERY" "$2"' \
     _ "$PROJECT" "$HOME_DIR/state" \
@@ -230,5 +237,5 @@ grep -R -F 'OMP_AWAY_DELIVERY' "$SESSION_DIR"/*.jsonl >/dev/null 2>&1 \
 grep -R -F 'away-supervisor' "$SESSION_DIR"/*.jsonl >/dev/null 2>&1 \
   || fail "OMP away-mode notification lost its operational-input kind"
 
-printf 'ok - OMP %s primary E2E proved native discovery, explicit fallback, exact ownership, once-only startup, guarded watcher startup, /new continuity, shutdown, resume, and away-mode delivery\n' \
+printf 'ok - OMP %s primary E2E proved fresh no-state and ordinary native discovery, exact ownership, once-only startup, guarded watcher startup, /new continuity, shutdown, resume, and away-mode delivery\n' \
   "$("$OMP_BIN" --version 2>/dev/null | head -1)"

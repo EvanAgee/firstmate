@@ -110,7 +110,7 @@ for _ in $(seq 1 600); do
   identity=$(printf '%s' "$agent" | jq -r '.result.agent.agent // empty' 2>/dev/null)
   status=$(printf '%s' "$agent" | jq -r '.result.agent.agent_status // empty' 2>/dev/null)
   SESSION_FILE=$(printf '%s' "$agent" | jq -r 'select(.result.agent.agent_session.kind == "path") | .result.agent.agent_session.value // empty' 2>/dev/null)
-  if [ "$identity" = omp ] && { [ "$status" = idle ] || [ "$status" = done ]; } \
+  if [ "$identity" = omp ] && { [ "$status" = idle ] || [ "$status" = "done" ]; } \
     && [ -n "$SESSION_FILE" ] && [ -f "$OMP_READY" ] && [ -f "$OMP_STARTED" ] && [ -f "$OMP_TURN_ENDED" ]; then
     break
   fi

@@ -14,6 +14,14 @@ DRAIN="$ROOT/bin/fm-wake-drain.sh"
 LIB="$ROOT/bin/fm-wake-lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-watcher-lock-tests)
+# Both paths are created through command substitutions, whose array mutation
+# does not propagate back to this shell. Register them explicitly with the
+# already-installed shared EXIT cleanup so a failed assertion cannot leak the
+# watcher fixture or its inert tangle root.
+FM_TEST_CLEANUP_DIRS+=("$TMP_ROOT")
+case "$FM_ROOT_OVERRIDE" in
+  "${TMPDIR:-/tmp}"/fm-wake-tangle-root.*) FM_TEST_CLEANUP_DIRS+=("$FM_ROOT_OVERRIDE") ;;
+esac
 
 mark_pr_check_migration_complete() {
   local state=$1
@@ -437,12 +445,27 @@ test_watch_restart_rejects_reused_pid() {
   pass "watch restart refuses to signal a reused pid"
 }
 
-test_watch_restart_attaches_to_healthy_peer() {
-  local dir state fakebin out peer identity armpid status i
+test_watch_restart_attaches_to_healthy_peer() (
+  local dir state fakebin out peer='' identity armpid='' status i lock_pid
   dir=$(make_case restart-healthy-peer)
   state="$dir/state"
   fakebin="$dir/fakebin"
   out="$dir/restart.out"
+  # shellcheck disable=SC2329  # invoked indirectly by the EXIT trap below
+  cleanup_restart_healthy_peer() {
+    lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+    if [ -n "$lock_pid" ] \
+       && FM_HOME="$dir" FM_STATE_OVERRIDE="$state" bash -c \
+         '. "$1"; fm_watcher_lock_matches_pid "$2" "$3" "$4" "$5"' \
+         _ "$LIB" "$state" "$WATCH" "$lock_pid" "$dir"; then
+      kill "$lock_pid" 2>/dev/null || true
+    fi
+    [ -z "$armpid" ] || kill "$armpid" 2>/dev/null || true
+    [ -z "$peer" ] || kill -KILL "$peer" 2>/dev/null || true
+    [ -z "$armpid" ] || wait "$armpid" 2>/dev/null || true
+    [ -z "$peer" ] || wait "$peer" 2>/dev/null || true
+  }
+  trap cleanup_restart_healthy_peer EXIT
   mark_pr_check_migration_complete "$state"
   node -e 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 300000)' &
   peer=$!
@@ -453,7 +476,7 @@ test_watch_restart_attaches_to_healthy_peer() {
   printf '%s\n' "$WATCH" > "$state/.watch.lock/watcher-path"
   printf '%s\n' "$identity" > "$state/.watch.lock/pid-identity"
   touch "$state/.last-watcher-beat"
-  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" --restart > "$out" &
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" > "$out" &
   armpid=$!
   i=0
   while [ "$i" -lt 80 ]; do
@@ -471,7 +494,7 @@ test_watch_restart_attaches_to_healthy_peer() {
   [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "restart arm did not fail after its attached peer ended without a successor (status $status)"
   grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$out" || fail "restart arm did not surface the attached cycle end"
   pass "watch restart attaches to a verified healthy peer and later surfaces a successor gap"
-}
+)
 
 test_watcher_self_evicts_on_lock_takeover() {
   local dir state fakebin out pid i lock_pid
@@ -1027,7 +1050,7 @@ test_lock_empty_pid_uses_minimum_grace
 test_lock_late_claim_loses_after_recreate
 test_lock_paused_mid_acquire_claim_fails_during_steal
 test_watch_restart_rejects_reused_pid
-test_watch_restart_attaches_to_healthy_peer
+test_watch_restart_attaches_to_healthy_peer || exit $?
 test_watcher_self_evicts_on_lock_takeover
 test_arm_self_eviction_is_loud_without_successor
 test_arm_attaches_and_waits_for_live_fresh_watcher

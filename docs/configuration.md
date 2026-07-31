@@ -68,6 +68,7 @@ A cmux spawn additionally version-gates against the installed `cmux` binary's ve
 A backend spawn refusal from a missing dependency, version gate, or unauthenticated socket is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
 Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
+An OMP task additionally records canonical `omp_bin=` and `omp_bun=` launch identities; [the tmux backend guide](tmux-backend.md#current-behavior-and-safety) owns their recovery and supported-path contract.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
 An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
@@ -207,6 +208,8 @@ Claude's Stop `asyncRewake` hook owns tokenless re-arm cycles, Grok uses backgro
 When pi-signed is selected, Firstmate launches the executable named `pi-signed` from `PATH` with `FM_PI_HARNESS=pi-signed` and refuses the launch if it is unavailable rather than falling back to pi.
 Plain Pi launches set `FM_PI_HARNESS=pi`, so a signed primary's environment cannot relabel a plain Pi worker.
 OMP remains a separate `harness=omp` identity, must resolve to a Bun-backed `omp` entrypoint with every required launch and resume capability, and never falls back to Pi or another executable.
+Its primary loaded marker contains adapter hash, owning PID, canonical Bun realpath, and canonical OMP entrypoint realpath; legacy two-line OMP markers cannot authorize recovery.
+A fresh plain checkout may create only its absent canonical `state/` directory during native extension startup, while state overrides and symlinked paths remain strict.
 When it is absent or contains `default`, crewmates mirror the firstmate's own harness.
 `config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.

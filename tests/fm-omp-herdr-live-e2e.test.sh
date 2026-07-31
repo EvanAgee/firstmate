@@ -16,6 +16,9 @@ command -v jq >/dev/null 2>&1 || fail "jq not found"
 command -v treehouse >/dev/null 2>&1 || fail "treehouse not found"
 
 OMP_BIN=$("$ROOT/bin/fm-omp-capabilities.sh" --print-binary) || fail "OMP capability check failed"
+OMP_BIN=$(fm_test_realpath "$OMP_BIN") || fail "OMP binary realpath could not be resolved"
+BUN_BIN=$(node -e 'const {realpathSync}=require("node:fs");process.stdout.write(realpathSync(process.argv[1]))' "$(command -v bun)") \
+  || fail "Bun realpath could not be resolved"
 REAL_HERDR=$(command -v herdr)
 HERDR_LAB_HELPER=${HERDR_LAB_HELPER:-$ROOT/bin/fm-herdr-lab.sh}
 [ -x "$HERDR_LAB_HELPER" ] || fail "Herdr lab helper is not executable: $HERDR_LAB_HELPER"
@@ -38,12 +41,20 @@ WORKER_WT=
 SCOUT_WT=
 TEARDOWN_DONE=0
 
-cleanup_pid_file() { # <file>
-  local file=$1 pid
+cleanup_pid_file() { # <file> <exact-owner-script>
+  local file=$1 owner=$2 pid args
   pid=$(cat "$file" 2>/dev/null || true)
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
   kill -0 "$pid" 2>/dev/null || return 0
-  kill -TERM "$pid" 2>/dev/null || true
+  args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
+  case " $args " in *" $owner"*) ;; *) return 1 ;; esac
+  kill -TERM "$pid" 2>/dev/null || return 1
+  for _ in $(seq 1 50); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  args=$(ps -o args= -p "$pid" 2>/dev/null) || return 0
+  case " $args " in *" $owner"*) kill -KILL "$pid" 2>/dev/null || return 1 ;; *) return 1 ;; esac
 }
 
 cleanup_worktree() { # <path>
@@ -62,8 +73,8 @@ cleanup() {
     echo "diagnostic: preserving failed lab $SESSION at $LAB" >&2
     return
   fi
-  cleanup_pid_file "$PRIMARY_HOME/state/.watch.lock/pid"
-  cleanup_pid_file "$SECOND_HOME/state/.watch.lock/pid"
+  cleanup_pid_file "$PRIMARY_HOME/state/.watch.lock/pid" "$DRIVER_ROOT/bin/fm-watch.sh" || cleanup_ok=0
+  cleanup_pid_file "$SECOND_HOME/state/.watch.lock/pid" "$SECOND_HOME/bin/fm-watch.sh" || cleanup_ok=0
   if [ "$TEARDOWN_DONE" -ne 1 ]; then
     FM_HERDR_LAB_INNER=1 PATH="$WRAPPER_BIN:$BASE_PATH" \
       "$HERDR_LAB_HELPER" teardown "$SESSION" >/dev/null 2>&1 || cleanup_ok=0
@@ -83,6 +94,13 @@ trap cleanup EXIT
 mkdir -p "$WRAPPER_BIN" "$PROJECT" "$DRIVER_ROOT" "$HOME_DIR/data/$WORKER_ID" "$HOME_DIR/data/$SCOUT_ID" \
   "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/projects"
 git archive HEAD | tar -x -C "$DRIVER_ROOT"
+# The live matrix validates the current branch, including uncommitted issue-fix
+# slices under test, while the driver itself remains a clean committed clone.
+git diff --name-only HEAD | while IFS= read -r changed; do
+  [ -f "$ROOT/$changed" ] || continue
+  mkdir -p "$DRIVER_ROOT/$(dirname "$changed")"
+  cp "$ROOT/$changed" "$DRIVER_ROOT/$changed"
+done
 git init -q -b main "$DRIVER_ROOT"
 fm_git_identity fmtest fmtest@example.invalid
 git -C "$DRIVER_ROOT" add .
@@ -97,6 +115,8 @@ session='$SESSION'
 base_path='$BASE_PATH'
 wrapper_bin='$WRAPPER_BIN'
 log='$WRAPPER_LOG'
+omp_bin='$OMP_BIN'
+bun_bin='$BUN_BIN'
 if [ "\${FM_HERDR_LAB_INNER:-0}" = 1 ]; then
   if [ "\${1:-}" = server ]; then
     exec env -u FM_HERDR_LAB_INNER "\$real" "\$@"
@@ -106,6 +126,37 @@ fi
 case "\${1:-}" in
   --version|-V|version) exec "\$real" "\$@" ;;
 esac
+# OMP itself probes Herdr with its own prefix-session syntax. Those calls are
+# outside Firstmate's backend API and cannot satisfy this matrix's trailing-
+# session contract. Quarantine only the exact observed read-only forms from an
+# exact OMP parent; keep them out of the production-command log and never run
+# them against the server.
+parent_args=\$(ps -o args= -p "\$PPID" 2>/dev/null || true)
+if [ -e "/proc/\$PPID/exe" ]; then
+  parent_exe=\$(readlink -f "/proc/\$PPID/exe" 2>/dev/null || true)
+else
+  parent_exe=\$(lsof -a -p "\$PPID" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+fi
+case "\$parent_exe:\$parent_args" in
+  "\$bun_bin":bun\ "\$omp_bin"\ *)
+    native_probe=0
+    native_probe_pane=
+    case "\$#:\$*" in
+      "1:agent"|"1:--help"|"3:--session \$session --help") native_probe=1 ;;
+      3:agent\ get\ *) native_probe_pane=\$3 ;;
+      5:--session\ "\$session"\ agent\ get\ *) native_probe_pane=\$5 ;;
+    esac
+    case "\$native_probe_pane" in
+      ''|*[!A-Za-z0-9._:@%+-]*) ;;
+      *) native_probe=1 ;;
+    esac
+    if [ "\$native_probe" -eq 1 ]; then
+      printf '%q ' "\$@" >> "\$log.native-omp-probes"
+      printf '\n' >> "\$log.native-omp-probes"
+      exit 96
+    fi
+    ;;
+esac
 if [ "\$#" -eq 2 ] && [ "\$1" = status ] && [ "\$2" = --json ] \
   && [ "\${HERDR_SESSION:-}" = "\$session" ]; then
   set -- "\$@" --session "\$session"
@@ -113,12 +164,26 @@ fi
 printf '%q ' "\$@" >> "\$log"
 printf '\n' >> "\$log"
 argc=\$#
-[ "\$argc" -ge 2 ] || { echo "OMP Herdr fixture refused a command without explicit session binding" >&2; exit 96; }
+[ "\$argc" -ge 2 ] || {
+  printf 'args=' >> "\$log.callers"
+  printf '%q ' "\$@" >> "\$log.callers"
+  printf ' parent=' >> "\$log.callers"
+  ps -o args= -p "\$PPID" >> "\$log.callers" 2>/dev/null || printf 'unreadable\n' >> "\$log.callers"
+  echo "OMP Herdr fixture refused a command without explicit session binding" >&2
+  exit 96
+}
 args=("\$@")
 penultimate=\${args[\$((argc - 2))]}
 last=\${args[\$((argc - 1))]}
 [ "\$penultimate" = --session ] && [ "\$last" = "\$session" ] \
-  || { echo "OMP Herdr fixture refused a command outside its exact lab session" >&2; exit 96; }
+  || {
+    printf 'args=' >> "\$log.callers"
+    printf '%q ' "\$@" >> "\$log.callers"
+    printf ' parent=' >> "\$log.callers"
+    ps -o args= -p "\$PPID" >> "\$log.callers" 2>/dev/null || printf 'unreadable\n' >> "\$log.callers"
+    echo "OMP Herdr fixture refused a command outside its exact lab session" >&2
+    exit 96
+  }
 set -- "\${args[@]:0:\$((argc - 2))}"
 case "\${1:-}" in
   server|session)
@@ -175,6 +240,15 @@ session_file_for() {
   agent_json "$1" | jq -r 'select(.result.agent.agent_session.kind == "path") | .result.agent.agent_session.value // empty' 2>/dev/null
 }
 
+session_has_exact_user_after() { # <file> <offset> <text> <steering-json>
+  local file=$1 offset=$2 text=$3 steering=$4 start
+  start=$((offset + 1))
+  tail -c "+$start" "$file" 2>/dev/null \
+    | jq -se --arg text "$text" --argjson steering "$steering" \
+      'any(.[]; .type == "message" and .message.role == "user" and .message.attribution == "user" and ((.message.steering // false) == $steering) and .message.content[0].text == $text)' \
+      >/dev/null 2>&1
+}
+
 session_has_exact_steer_after() { # <file> <offset> <text>
   local file=$1 offset=$2 text=$3 start
   start=$((offset + 1))
@@ -223,21 +297,21 @@ printf -v primary_launch \
   "exec env PATH=%q OMP_SKIP_SETUP=1 FM_HOME=%q FM_ROOT_OVERRIDE=%q FM_STATE_OVERRIDE=%q FM_CONFIG_OVERRIDE=%q %q --model openai-codex/gpt-5.6-sol --thinking low --session-dir %q --auto-approve -e %q %q" \
   "$WRAPPER_BIN:$BASE_PATH" "$PRIMARY_HOME" "$PRIMARY_PROJECT" "$PRIMARY_HOME/state" "$PRIMARY_HOME/config" \
   "$OMP_BIN" "$PRIMARY_HOME/sessions" "$PRIMARY_PROJECT/.omp/extensions/fm-primary-omp.ts" \
-  "Follow the injected startup instruction exactly once, call the fm_watch_arm_omp tool, then reply exactly OMP_HERDR_PRIMARY_READY."
+  "Follow the injected startup instruction exactly once, call the fm_watch_arm_omp tool, then reply exactly: Herdr primary is ready."
 lab pane run "$PRIMARY_PANE" "$primary_launch" >/dev/null || fail "could not launch the real OMP primary"
 wait_for "exact idle OMP primary identity" agent_is "$PRIMARY_TARGET" omp 'idle done'
 wait_for "OMP primary integration marker" file_nonempty "$PRIMARY_HOME/state/.omp-primary-extension-loaded"
 wait_for "OMP primary session lock" file_nonempty "$PRIMARY_HOME/state/.lock"
 PRIMARY_SESSION=$(session_file_for "$PRIMARY_TARGET")
 case "$PRIMARY_SESSION" in "$PRIMARY_HOME/sessions/"*.jsonl) ;; *) fail "primary Herdr identity did not bind its controlled native session" ;; esac
-wait_for "OMP primary guarded response" file_has "$PRIMARY_SESSION" OMP_HERDR_PRIMARY_READY
+wait_for "OMP primary guarded response" file_has "$PRIMARY_SESSION" 'Herdr primary is ready.'
 
 # Keep the real primary and its home-scoped watcher alive while it supervises
 # the worker, scout, and secondmate role evidence below.
 
 # --- production worker and scout --------------------------------------------
-printf 'Remember OMP_HERDR_CONTEXT_73. Reply exactly OMP_HERDR_WORKER_READY.\n' > "$HOME_DIR/data/$WORKER_ID/brief.md"
-printf 'Reply exactly OMP_HERDR_SCOUT_READY.\n' > "$HOME_DIR/data/$SCOUT_ID/brief.md"
+printf 'Reply exactly: Herdr worker is ready.\n' > "$HOME_DIR/data/$WORKER_ID/brief.md"
+printf 'Reply exactly: Herdr scout is ready.\n' > "$HOME_DIR/data/$SCOUT_ID/brief.md"
 printf '%s\n' '- project [direct-PR] - OMP Herdr live fixture (added 2026-07-30)' > "$HOME_DIR/data/projects.md"
 printf 'fixture\n' > "$PROJECT/README.md"
 git init -q -b main "$PROJECT"
@@ -262,19 +336,43 @@ wait_for "worker first turn" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
 wait_for "exact idle worker identity" agent_is "$WORKER_TARGET" omp 'idle done'
 WORKER_SESSION=$(session_file_for "$WORKER_TARGET")
 case "$WORKER_SESSION" in "/tmp/fm-$WORKER_ID/omp-sessions/"*.jsonl) ;; *) fail "worker Herdr identity did not bind its task-owned session" ;; esac
-file_has "$WORKER_SESSION" OMP_HERDR_WORKER_READY || fail "worker launch brief did not complete"
+file_has "$WORKER_SESSION" 'Herdr worker is ready.' || fail "worker launch brief did not complete"
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
-send_task "$WORKER_ID" 'Run this exact bash command: sleep 4. Then reply exactly OMP_HERDR_BUSY_FIRST.' \
+blocked_prompt="Before continuing, use the ask tool for one single-choice question: 'Which audience should the report focus on?' Offer exactly two options, 'Operators' and 'Maintainers', and wait for my selection."
+send_task "$WORKER_ID" "$blocked_prompt" || fail "worker question-induced blocked-state setup was not submitted"
+wait_for "real OMP worker blocked state" agent_is "$WORKER_TARGET" omp blocked
+wait_for "watcher blocked escalation" file_has "$HOME_DIR/state/.wake-queue" "herdr: agent blocked - waiting on human"
+file_has "$HOME_DIR/state/.wake-queue" "$WORKER_TARGET" \
+  || fail "blocked escalation did not identify the exact OMP worker target"
+lab pane send-keys "$(pane_id "$WORKER_TARGET")" enter >/dev/null \
+  || fail "could not answer the real OMP ask dialog"
+wait_for "question-induced worker turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
+wait_for "question-induced worker return to idle" agent_is "$WORKER_TARGET" omp 'idle done'
+
+rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
+worker_idle_text='Reply exactly: The idle worker message was processed.'
+worker_idle_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
+send_task "$WORKER_ID" "$worker_idle_text" || fail "worker idle steering was not submitted"
+wait_for "worker exact native idle user event" session_has_exact_user_after \
+  "$WORKER_SESSION" "$worker_idle_offset" "$worker_idle_text" false
+wait_for "worker idle turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
+wait_for "worker idle response" file_has "$WORKER_SESSION" 'The idle worker message was processed.'
+wait_for "worker idle steering return" agent_is "$WORKER_TARGET" omp 'idle done'
+
+rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
+send_task "$WORKER_ID" 'Run this exact bash command: sleep 4. Then reply exactly: The worker completed its timed command.' \
   || fail "worker busy-turn setup was not submitted"
 wait_for "native working worker state" agent_is "$WORKER_TARGET" omp working
 steer_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
-send_task "$WORKER_ID" 'After the tool finishes, reply exactly OMP_HERDR_BUSY_STEER.' \
+send_task "$WORKER_ID" 'After the tool finishes, reply exactly: The busy worker message was processed.' \
   || fail "worker busy steering was not event-confirmed"
 wait_for "worker exact native steering event" session_has_exact_steer_after \
-  "$WORKER_SESSION" "$steer_offset" 'After the tool finishes, reply exactly OMP_HERDR_BUSY_STEER.'
+  "$WORKER_SESSION" "$steer_offset" 'After the tool finishes, reply exactly: The busy worker message was processed.'
 wait_for "worker busy turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
+wait_for "worker busy response" file_has "$WORKER_SESSION" 'The busy worker message was processed.'
 wait_for "worker return to idle" agent_is "$WORKER_TARGET" omp 'idle done'
+
 worker_exit_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
 send_task "$WORKER_ID" /exit || fail "production worker /exit was not event-confirmed"
 wait_for "exact worker pane absence" pane_missing "$WORKER_TARGET"
@@ -300,7 +398,28 @@ wait_for "scout extension readiness" file_exists "$HOME_DIR/state/$SCOUT_ID.omp-
 wait_for "scout first turn" file_exists "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 wait_for "exact idle scout identity" agent_is "$SCOUT_TARGET" omp 'idle done'
 SCOUT_SESSION=$(session_file_for "$SCOUT_TARGET")
-file_has "$SCOUT_SESSION" OMP_HERDR_SCOUT_READY || fail "scout launch brief did not complete"
+file_has "$SCOUT_SESSION" 'Herdr scout is ready.' || fail "scout launch brief did not complete"
+rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
+scout_idle_text='Reply exactly: The idle scout message was processed.'
+scout_idle_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
+send_task "$SCOUT_ID" "$scout_idle_text" || fail "scout idle steering was not submitted"
+wait_for "scout exact native idle user event" session_has_exact_user_after \
+  "$SCOUT_SESSION" "$scout_idle_offset" "$scout_idle_text" false
+wait_for "scout idle turn completion" file_exists "$HOME_DIR/state/$SCOUT_ID.turn-ended"
+wait_for "scout idle response" file_has "$SCOUT_SESSION" 'The idle scout message was processed.'
+wait_for "scout idle steering return" agent_is "$SCOUT_TARGET" omp 'idle done'
+rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
+scout_busy_prompt='Run this exact bash command: sleep 4. Then reply exactly: The scout completed its timed command.'
+send_task "$SCOUT_ID" "$scout_busy_prompt" || fail "scout busy-turn setup was not submitted"
+wait_for "native working scout state" agent_is "$SCOUT_TARGET" omp working
+scout_steer_text='After the tool finishes, reply exactly: The busy scout message was processed.'
+scout_steer_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
+send_task "$SCOUT_ID" "$scout_steer_text" || fail "scout busy steering was not event-confirmed"
+wait_for "scout exact native steering event" session_has_exact_steer_after \
+  "$SCOUT_SESSION" "$scout_steer_offset" "$scout_steer_text"
+wait_for "scout busy turn completion" file_exists "$HOME_DIR/state/$SCOUT_ID.turn-ended"
+wait_for "scout busy response" file_has "$SCOUT_SESSION" 'The busy scout message was processed.'
+wait_for "scout busy steering return" agent_is "$SCOUT_TARGET" omp 'idle done'
 scout_exit_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
 send_task "$SCOUT_ID" /exit || fail "production scout /exit was not event-confirmed"
 wait_for "exact scout pane absence" pane_missing "$SCOUT_TARGET"
@@ -341,9 +460,9 @@ assert_grep 'harness=omp' "$SECONDMATE_META" "Herdr secondmate metadata lost exa
 assert_grep 'kind=secondmate' "$SECONDMATE_META" "Herdr secondmate metadata lost its role"
 wait_for "secondmate primary integration" file_nonempty "$SECOND_HOME/state/.omp-primary-extension-loaded"
 wait_for "exact idle secondmate identity" agent_is "$SECONDMATE_TARGET" omp 'idle done'
-send_task "$SECONDMATE_ID" 'Return exactly OMP_HERDR_ROUTED_REPLY through the correlated parent status path.' \
+send_task "$SECONDMATE_ID" 'Return exactly "Herdr secondmate routed reply received." through the correlated parent status path.' \
   || fail "marked secondmate request was not submitted"
-wait_for "correlated secondmate reply" file_has "$HOME_DIR/state/$SECONDMATE_ID.status" OMP_HERDR_ROUTED_REPLY
+wait_for "correlated secondmate reply" file_has "$HOME_DIR/state/$SECONDMATE_ID.status" 'Herdr secondmate routed reply received.'
 wait_for "secondmate return to idle" agent_is "$SECONDMATE_TARGET" omp 'idle done'
 SECONDMATE_SESSION=$(cat "$SECOND_HOME/state/.omp-session" 2>/dev/null || true)
 case "$SECONDMATE_SESSION" in "$SECOND_HOME/state/omp-sessions/"*.jsonl) ;; *) fail "secondmate did not publish an exact durable OMP session" ;; esac
@@ -374,10 +493,32 @@ tail -c "+$((primary_offset + 1))" "$PRIMARY_SESSION" \
   | jq -se 'any(.[]; .type == "custom" and .customType == "session_exit" and .data.kind == "normal")' >/dev/null \
   || fail "real OMP primary did not append a normal session_exit"
 
+cleanup_pid_file "$PRIMARY_HOME/state/.watch.lock/pid" "$DRIVER_ROOT/bin/fm-watch.sh" \
+  || fail "primary evidence watcher did not stop under its exact ownership binding"
+cleanup_pid_file "$SECOND_HOME/state/.watch.lock/pid" "$SECOND_HOME/bin/fm-watch.sh" \
+  || fail "secondmate evidence watcher did not stop under its exact ownership binding"
+fm_env "$DRIVER_ROOT/bin/fm-wake-drain.sh" >/dev/null \
+  || fail "primary OMP Herdr evidence queue did not drain"
+env PATH="$WRAPPER_BIN:$BASE_PATH" HERDR_SESSION="$SESSION" FM_BACKEND=herdr \
+  FM_HOME="$SECOND_HOME" FM_ROOT_OVERRIDE="$SECOND_HOME" \
+  FM_STATE_OVERRIDE="$SECOND_HOME/state" FM_DATA_OVERRIDE="$SECOND_HOME/data" \
+  FM_CONFIG_OVERRIDE="$SECOND_HOME/config" FM_PROJECTS_OVERRIDE="$SECOND_HOME/projects" \
+  "$SECOND_HOME/bin/fm-wake-drain.sh" >/dev/null \
+  || fail "secondmate OMP Herdr evidence queue did not drain"
+[ ! -s "$PRIMARY_HOME/state/.wake-queue" ] \
+  || fail "primary OMP Herdr evidence queue retained notifications after drain"
+[ ! -s "$SECOND_HOME/state/.wake-queue" ] \
+  || fail "secondmate OMP Herdr evidence queue retained notifications after drain"
+
 # Every production Herdr command logged by the wrapper was accepted only with
 # the exact trailing named-session binding. The helper owns final teardown and
 # its default-session tripwire.
 [ -s "$WRAPPER_LOG" ] || fail "production role matrix issued no Herdr commands through the wrapper"
+if [ -s "$WRAPPER_LOG.native-omp-probes" ]; then
+  grep -Ev "^(agent |--help |agent get [A-Za-z0-9._:@%+-]+ |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
+    "$WRAPPER_LOG.native-omp-probes" >/dev/null \
+    && fail "an unexpected native OMP Herdr probe escaped quarantine"
+fi
 awk -v session="$SESSION" '$(NF - 1) != "--session" || $NF != session { bad = 1 } END { exit bad }' "$WRAPPER_LOG" \
   || fail "a production Herdr command escaped the exact lab session"
 FM_HERDR_LAB_INNER=1 PATH="$WRAPPER_BIN:$BASE_PATH" \
@@ -385,4 +526,4 @@ FM_HERDR_LAB_INNER=1 PATH="$WRAPPER_BIN:$BASE_PATH" \
   || fail "guarded Herdr role-matrix teardown or default-session tripwire failed"
 TEARDOWN_DONE=1
 
-pass "real Herdr OMP role matrix: primary, worker, scout, secondmate, busy steering, normal exits, recovery, duplicate refusal, and guarded teardown"
+pass "real Herdr OMP role matrix: primary, worker/scout idle and busy steering, blocked escalation, secondmate, normal exits, recovery, duplicate refusal, and guarded teardown"

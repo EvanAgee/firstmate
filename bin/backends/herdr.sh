@@ -2062,8 +2062,8 @@ FM_BACKEND_HERDR_OMP_COMPOSER_MIN_WIDTH=${FM_BACKEND_HERDR_OMP_COMPOSER_MIN_WIDT
 # model or the generic bordered-row model.
 # The candidate must end at the last non-empty captured row so a stale transcript
 # copy cannot become the live composer.
-fm_backend_herdr_omp_composer_find() {  # <ansi-capture>
-  local cap=$1 line plain trimmed row=0 open=0 lines=0 max min_width
+fm_backend_herdr_omp_composer_find() {  # <ansi-capture> [canonical-omp-bun]
+  local cap=$1 bun=${2:-${FM_OMP_BUN:-}} line plain trimmed row=0 open=0 lines=0 max min_width
   local candidate="" bottom_inner bottom_width top_width=0 last_nonempty=0
   max=$FM_BACKEND_HERDR_OMP_COMPOSER_MAX_LINES
   min_width=$FM_BACKEND_HERDR_OMP_COMPOSER_MIN_WIDTH
@@ -2084,7 +2084,7 @@ fm_backend_herdr_omp_composer_find() {  # <ansi-capture>
       '╭── '*' ▶'*'──╮')
         FM_BACKEND_HERDR_OMP_SIGNAL=1
         open=1
-        top_width=${#trimmed}
+        top_width=$(fm_composer_terminal_width "$trimmed" "$bun" 2>/dev/null || printf '0')
         lines=0
         candidate=""
         ;;
@@ -2093,11 +2093,11 @@ fm_backend_herdr_omp_composer_find() {  # <ansi-capture>
           FM_BACKEND_HERDR_OMP_FOUND=1
           FM_BACKEND_HERDR_OMP_BOTTOM_LINE=$row
           FM_BACKEND_HERDR_OMP_VALID=0
-          bottom_width=${#trimmed}
+          bottom_width=$(fm_composer_terminal_width "$trimmed" "$bun" 2>/dev/null || printf '0')
           bottom_inner=${trimmed#╰─}
           bottom_inner=${bottom_inner%─╯}
           if [ "$top_width" -ge "$min_width" ] \
-             && [ "$bottom_width" -ge "$min_width" ] \
+             && [ "$bottom_width" -eq "$top_width" ] \
              && [ "$lines" -le "$max" ]; then
             FM_BACKEND_HERDR_OMP_VALID=1
             FM_BACKEND_HERDR_OMP_CONTENT=$candidate
@@ -2192,8 +2192,9 @@ fm_backend_herdr_agent_identity_raw() {  # <session> <pane> -> <agent>\t<status>
   printf '%s' "$out" | jq -r '[.result.agent.agent // "", .result.agent.agent_status // ""] | @tsv' 2>/dev/null
 }
 
-fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
-  local target=$1 session pane cap line trimmed found=0 shape="" raw_match="" bordered=0 stripped
+fm_backend_herdr_composer_state() {  # <target> [harness] [canonical-omp-bun] -> empty|pending|unknown
+  local target=$1 harness=${2:-} bun=${3:-${FM_OMP_BUN:-}}
+  local session pane cap line trimmed found=0 shape="" raw_match="" bordered=0 stripped
   local identity agent agent_status row=0 generic_line=0
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   session=$FM_BACKEND_HERDR_SESSION
@@ -2205,7 +2206,7 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
   # Any OMP-shaped candidate that is malformed, stale, short, active, or
   # unreadable remains unknown rather than falling through to Pi or generic
   # rendering assumptions.
-  fm_backend_herdr_omp_composer_find "$cap"
+  fm_backend_herdr_omp_composer_find "$cap" "$bun"
   if [ "$FM_BACKEND_HERDR_OMP_SIGNAL" -eq 1 ]; then
     identity=$(fm_backend_herdr_agent_identity_raw "$session" "$pane" 2>/dev/null || true)
     IFS=$'\t' read -r agent agent_status <<EOF
@@ -2471,9 +2472,9 @@ fm_backend_herdr_wait_omp_session_message() {  # <session-file> <byte-offset> <e
 # submit vocabulary. Empty means confirmed submitted for every backend; how
 # each backend confirms it is an internal decision, and herdr's is no longer
 # literally "the composer read empty".
-fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness]
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${7:-}
-  local i=0 verdict baseline confirm_sleep omp_confirm_sleep omp_session= omp_offset=
+fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness] [canonical-omp-bun]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${7:-} bun=${8:-}
+  local i=0 verdict baseline confirm_sleep omp_confirm_sleep omp_session='' omp_offset=''
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   if [ "$harness" = omp ]; then
     fm_backend_herdr_omp_submit_snapshot "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
@@ -2520,7 +2521,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
     else
       sleep "$sleep_s"
-      verdict=$(fm_backend_herdr_composer_state "$target")
+      verdict=$(fm_backend_herdr_composer_state "$target" "$harness" "$bun")
     fi
     case "$verdict" in
       busy) printf 'empty'; return 0 ;;

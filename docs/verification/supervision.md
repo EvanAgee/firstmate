@@ -46,7 +46,7 @@ pi -p -e .pi/extensions/fm-primary-turnend-guard.ts \
 Observed result: `PI_SMOKE_DONE`, with one session-start execution.
 The earlier `sendUserMessage` counterfactual raced the positional prompt; the current non-triggering `pi.sendMessage` custom message did not.
 The installed pi-signed 0.82.0 wrapper repeated the Pi primary extension and session-start path on 2026-07-27.
-Pi 0.82.1 repeated the complete live primary regression on 2026-07-30 after the shared `pi|omp` watcher-core extraction:
+Pi 0.82.1 repeated the complete live primary regression on 2026-07-31 after the shared `pi|omp` watcher-core extraction:
 
 ```sh
 pi --version
@@ -58,8 +58,29 @@ FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
 ok - Pi 0.82.1 live E2E covered native Calm Working visibility, Ahoy first/later messages, legacy transcripts, near misses, and watcher continuity
 ```
 
-The deterministic Pi session-start, watcher-generation, supervision-rendering, tmux composer, secondmate, and exact-family tests also passed.
-Two installed-API checks (`fm-pi-primary-types` and the OpenCode tail of `fm-pi-watch-extension`) failed identically on `origin/main` and this branch, so they are retained as baseline environment findings rather than attributed to the OMP family extraction.
+The complete Pi-prefixed regression set reran on 2026-07-31:
+
+```sh
+for test in \
+  tests/fm-pi-compatible-family.test.sh \
+  tests/fm-pi-watch-extension.test.sh \
+  tests/fm-pi-primary-types.test.sh \
+  tests/fm-pi-primary-live-e2e.test.sh
+do
+  FM_PI_LIVE_E2E=1 bash "$test"
+done
+```
+
+```text
+PASS fm-pi-compatible-family
+PASS every Pi-owned fm-pi-watch-extension assertion
+BASELINE fm-pi-watch-extension OpenCode lock-owner tail
+BASELINE fm-pi-primary-types installed-API type checks
+PASS Pi 0.82.1 live primary
+```
+
+The exact-family result, every Pi-owned watcher-extension assertion, and live primary behavior remained unchanged.
+The two installed-API checks (`fm-pi-primary-types` and the OpenCode tail of `fm-pi-watch-extension`) failed identically on `origin/main` and this branch, so the differential complete-suite result retains them as baseline environment findings rather than attributing them to the OMP family extraction.
 [`runtime-backends.md`](runtime-backends.md#tmux) owns the shared-ancestry evidence and authoritative selection-marker boundary.
 
 OMP command shape:
@@ -69,15 +90,18 @@ omp --version
 FM_OMP_PRIMARY_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh
 ```
 
+OMP 17.1.8 repeated the primary lifecycle on 2026-07-31.
+
 Observed bounded output:
 
 ```text
 omp/17.1.8
-ok - OMP omp/17.1.8 primary E2E proved native discovery, explicit fallback, exact ownership, once-only startup, guarded watcher startup, /new continuity, shutdown, resume, and away-mode delivery
+ok - OMP omp/17.1.8 primary E2E proved fresh no-state and ordinary native discovery, exact ownership, once-only startup, guarded watcher startup, /new continuity, shutdown, resume, and away-mode delivery
 ```
 
-The OMP run used an isolated project, home, session directory, and private tmux socket.
-Plain `omp` discovered `.omp/extensions/fm-primary-omp.ts`; a second fixture loaded the same adapter with `-e`, and both retained the exact Bun/OMP identity.
+The OMP run used isolated projects, homes, session directories, and private tmux sockets.
+Plain `omp` discovered `.omp/extensions/fm-primary-omp.ts` both before a fresh checkout had a `state/` directory and during an ordinary primary lifecycle.
+Both paths published the exact four-line adapter, process, Bun, and OMP identity marker without an explicit `-e` fallback.
 
 Current deterministic and live entry points:
 

@@ -16,6 +16,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/herdr-test-safety.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the herdr adapter)"; exit 0; }
+# shellcheck source=bin/fm-composer-lib.sh
+. "$ROOT/bin/fm-composer-lib.sh"
 
 # These cases script a canned fake CLI; a Herdr pane identity leaked in from the
 # developer's own terminal would make the adapter resolve a launcher that this
@@ -1974,9 +1976,14 @@ test_composer_state_unknown_when_no_composer_row_found() {
 # composer and not the generic side-bordered or bare-prompt shapes above.
 # Herdr's native exact OMP identity is therefore part of the proof.
 test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
-  local dir log resp fb out top width case_id content middle idx=0
+  local dir log resp fb out top width case_id content middle bun idx=0
+  if ! command -v bun >/dev/null 2>&1; then
+    pass "OMP Herdr composer structure subtest skipped: bun not found"
+    return
+  fi
+  bun=$(command -v bun)
   top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
-  width=${#top}
+  width=$(fm_composer_terminal_width "$top" "$bun") || fail "could not measure OMP Herdr fixture width"
   for case_id in empty pending multiline; do
     idx=$((idx + 1))
     dir="$TMP_ROOT/composer-omp-$case_id"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -1993,25 +2000,33 @@ test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
     } > "$resp/1.out"
     printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}' > "$resp/2.out"
     fb=$(make_herdr_fakebin "$dir")
-    out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2' "$ROOT" )
+    printf '#!/usr/bin/env bash\nexit 1\n' > "$fb/bun"
+    chmod +x "$fb/bun"
+    out=$( PATH="$fb:$PATH" FM_OMP_BUN="$bun" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2 omp "$FM_OMP_BUN"' "$ROOT" )
     case "$case_id:$out" in
       empty:empty|pending:pending|multiline:pending) ;;
       *) fail "OMP Herdr composer case '$case_id' classified '$out'" ;;
     esac
   done
-  pass "fm_backend_herdr_composer_state: exact OMP structure distinguishes empty, pending, and bounded multi-line input"
+  pass "fm_backend_herdr_composer_state: exact OMP structure uses the bound Bun despite PATH drift and distinguishes empty, pending, and bounded multi-line input"
 }
 
 test_composer_state_omp_malformed_short_stale_working_and_unreadable_are_unknown() {
-  local dir log resp fb out top width case_id content agent_status
+  local dir log resp fb out top width case_id content agent_status bun
+  if ! command -v bun >/dev/null 2>&1; then
+    pass "OMP Herdr unsafe-composer subtest skipped: bun not found"
+    return
+  fi
+  bun=$(command -v bun)
   top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
-  width=${#top}
-  for case_id in short malformed stale working blocked unreadable non-omp; do
+  width=$(fm_composer_terminal_width "$top" "$bun") || fail "could not measure unsafe OMP Herdr fixture width"
+  for case_id in short malformed width-mismatch stale working blocked unreadable non-omp; do
     dir="$TMP_ROOT/composer-omp-unsafe-$case_id"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
     case "$case_id" in
       short) printf '%s\n╰─ short ─╯\n' "$top" > "$resp/1.out" ;;
       malformed) printf '%s\nmissing OMP closing row\n' "$top" > "$resp/1.out" ;;
+      width-mismatch) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\n' "$((width - 5))" ' ' >> "$resp/1.out" ;;
       stale) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\ntranscript continued after stale composer\n' "$((width - 4))" ' stale input' >> "$resp/1.out" ;;
       *) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$resp/1.out" ;;
     esac
@@ -2027,11 +2042,20 @@ test_composer_state_omp_malformed_short_stale_working_and_unreadable_are_unknown
       printf '{"result":{"agent":{"agent":"omp","agent_status":"%s"}}}\n' "$agent_status" > "$resp/2.out"
     fi
     fb=$(make_herdr_fakebin "$dir")
-    out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2' "$ROOT" )
+    out=$( PATH="$fb:$PATH" FM_OMP_BUN="$bun" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2 omp "$FM_OMP_BUN"' "$ROOT" )
     [ "$out" = unknown ] || fail "unsafe OMP Herdr composer case '$case_id' must remain unknown, got '$out'"
   done
-  pass "fm_backend_herdr_composer_state: OMP short, malformed, stale, working, blocked, unreadable, and inexact-identity shapes remain unknown"
+  dir="$TMP_ROOT/composer-omp-missing-bun"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '%s\n' "$top" > "$resp/1.out"
+  printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$resp/1.out"
+  printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}' > "$resp/2.out"
+  fb=$(make_herdr_fakebin "$dir")
+  # shellcheck disable=SC2016  # expansion belongs to the inner bash
+  out=$( env -u FM_OMP_BUN PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2 omp "$1"' "$ROOT" "" )
+  [ "$out" = unknown ] || fail "OMP Herdr geometry without a task-bound Bun must remain unknown, got '$out'"
+  pass "fm_backend_herdr_composer_state: OMP short, malformed, width-mismatched, stale, working, blocked, unreadable, missing-Bun, and inexact-identity shapes remain unknown"
 }
 
 # Real Pi 0.80.7 on Herdr 0.7.3 renders no prompt glyph and no side border.
@@ -2512,7 +2536,7 @@ test_send_text_submit_omp_busy_default_event_budget_is_bounded_and_long_enough()
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_SLEEP_LOG="$sleep_log" \
     FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
-    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP= \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP='' \
     bash -c '. "$0/bin/backends/herdr.sh"; sleep() { printf "sleep:%s\n" "$1" >> "$FM_SLEEP_LOG"; }; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
   [ "$out" = unknown ] || fail "missing OMP steering event should remain unknown after the default budget, got '$out'"
   sleeps=$(grep -c '^sleep:6.0000$' "$sleep_log")
@@ -2989,7 +3013,7 @@ test_prune_refuses_every_registered_or_malformed_agent_pane_defense_in_depth() {
   # Every registered native state and every malformed status must preserve the
   # seeded tab because idle, done, and blocked agents are still live sessions.
   local status dir log state fb raw container seeded seeded_pane ids pane
-  for status in working idle done blocked malformed; do
+  for status in working idle "done" blocked malformed; do
     dir="$TMP_ROOT/prune-$status-defense"; mkdir -p "$dir"; log="$dir/log"; state="$dir/state.json"; : > "$log"
     fb=$(make_herdr_statefake "$dir")
     raw=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" HERDR_SESSION=fmtest \

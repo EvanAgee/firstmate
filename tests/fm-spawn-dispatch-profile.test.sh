@@ -683,7 +683,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
 }
 
 test_omp_threads_exact_identity_model_and_every_thinking_level() {
-  local effort rec id out status launch expected_bin
+  local effort rec id out status launch expected_bin expected_bun
   for effort in low medium high xhigh max; do
     id=$(profile_id "profile-omp-${effort}-z8o")
     rec=$(make_spawn_case "profile-omp-$effort" omp "$id")
@@ -698,14 +698,17 @@ test_omp_threads_exact_identity_model_and_every_thinking_level() {
     assert_meta_profile "$HOME_DIR/state/$id.meta" omp openai-codex/gpt-5.6-sol "$effort"
     launch=$(cat "$LAUNCH_LOG")
     expected_bin=$(cd "$FAKEBIN_DIR" && pwd -P)/omp
-    assert_contains "$launch" "FM_OMP_HARNESS=omp '$expected_bin' --session-dir '/tmp/fm-$id/omp-sessions' --auto-approve --model 'openai-codex/gpt-5.6-sol' --thinking '$effort' -e '$HOME_DIR/state/$id.omp-ext.ts'" \
-      "OMP launch did not receive the exact binary, unattended mode, model, thinking, and extension"
+    expected_bun=$(cd "$FAKEBIN_DIR" && pwd -P)/bun
+    assert_contains "$launch" "FM_OMP_HARNESS=omp '$expected_bun' '$expected_bin' --session-dir '/tmp/fm-$id/omp-sessions' --auto-approve --model 'openai-codex/gpt-5.6-sol' --thinking '$effort' -e '$HOME_DIR/state/$id.omp-ext.ts'" \
+      "OMP launch did not execute the canonical Bun/OMP pair with unattended mode, model, thinking, and extension"
+    assert_grep "omp_bun=$expected_bun" "$HOME_DIR/state/$id.meta" \
+      "OMP launch metadata did not bind the same Bun executable used by the literal pane command"
     [ "$(grep -Fo "encode launch-brief" "$LAUNCH_LOG" | wc -l | tr -d ' ')" = 1 ] \
       || fail "OMP launch did not deliver exactly one positional launch brief"
     assert_present "$HOME_DIR/state/$id.omp-ext.ts" "OMP launch did not create the external turn extension"
     unset FM_TEST_OMP_ACK
   done
-  pass "OMP preserves exact identity and forwards every supported thinking level"
+  pass "OMP launches through its metadata-bound canonical Bun/OMP pair and forwards every supported thinking level"
 }
 
 test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
@@ -727,7 +730,8 @@ test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
     assert_grep 'herdr_session=default' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its named session"
     assert_grep 'herdr_pane_id=w1:p2' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its exact pane"
     launch=$(cat "$LAUNCH_LOG")
-    assert_contains "$launch" "FM_OMP_HARNESS=omp" "OMP Herdr $kind launch omitted the exact identity marker"
+    assert_contains "$launch" "FM_OMP_HARNESS=omp '$(cd "$FAKEBIN_DIR" && pwd -P)/bun' '$(cd "$FAKEBIN_DIR" && pwd -P)/omp'" \
+      "OMP Herdr $kind launch omitted its canonical Bun/OMP execution boundary"
     assert_contains "$launch" "--session-dir '/tmp/fm-$id/omp-sessions'" "OMP Herdr $kind launch omitted its nonempty isolated session directory"
     assert_contains "$launch" "-e '$HOME_DIR/state/$id.omp-ext.ts'" "OMP Herdr $kind launch omitted its acknowledgement extension"
     unset FM_TEST_OMP_ACK
@@ -791,6 +795,30 @@ if (!existsSync(process.env.TURNENDED)) throw new Error("OMP turn_end did not pu
 JS
   unset FM_TEST_OMP_ACK
   pass "OMP scouts retain scout semantics and external per-turn notification"
+}
+
+test_omp_whitespace_identity_paths_refuse_before_endpoint() {
+  local mode rec id out status spaced path
+  for mode in omp bun; do
+    id=$(profile_id "omp-space-$mode")
+    rec=$(make_spawn_case "omp-space-$mode" omp "$id")
+    read_case_record "$rec"
+    spaced="$CASE_DIR/$mode identity"
+    mkdir -p "$spaced"
+    cp "$FAKEBIN_DIR/$mode" "$spaced/$mode"
+    chmod +x "$spaced/$mode"
+    path="$spaced:$FAKEBIN_DIR"
+
+    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$path" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 1 "$status" "OMP should refuse a whitespace-bearing $mode identity"
+    assert_contains "$out" 'canonical executable paths without whitespace' \
+      "OMP whitespace-bearing $mode refusal was not actionable"
+    [ ! -s "$CASE_DIR/endpoint.log" ] || fail "OMP whitespace-bearing $mode identity created an endpoint"
+    [ ! -s "$LAUNCH_LOG" ] || fail "OMP whitespace-bearing $mode identity typed a launch command"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "OMP whitespace-bearing $mode identity published metadata"
+  done
+  pass "OMP and Bun whitespace-bearing identity paths refuse before endpoint creation"
 }
 
 test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata() {
@@ -1027,6 +1055,7 @@ test_omp_threads_exact_identity_model_and_every_thinking_level
 test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack
 test_omp_refuses_unverified_backends_before_endpoint_creation
 test_omp_scout_uses_external_turn_extension
+test_omp_whitespace_identity_paths_refuse_before_endpoint
 test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata
 test_omp_launch_requires_observable_turn_start_acknowledgement
 test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts

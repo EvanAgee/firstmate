@@ -892,7 +892,7 @@ e2e_herdr() {
 # ---------------------------------------------------------------------------
 e2e_tmux_child_receives_exact_state_and_harness() {
   command -v tmux >/dev/null 2>&1 || { pass "tmux child env: skipped (tmux absent)"; return 0; }
-  local root home state probe entry cap_session cap_pane rec i
+  local root home state probe entry cap_session cap_pane rec
   root=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-child-env.XXXXXX")
   home="$root/home"
   state="$root/separate-state"
@@ -915,7 +915,7 @@ EOF
     "$LAUNCH" start >/dev/null 2>&1 || fail "tmux child env: launcher start failed"
   rec=$(cut -f2 "$state/.afk-daemon-terminal" 2>/dev/null || true)
   [ -z "$rec" ] || TRACK_TMUX_SESSIONS="$TRACK_TMUX_SESSIONS $rec"
-  for i in $(seq 1 40); do [ -s "$probe" ] && break; sleep 0.1; done
+  for _ in $(seq 1 40); do [ -s "$probe" ] && break; sleep 0.1; done
   if [ "$(cat "$probe" 2>/dev/null)" = "$state"$'\n'"omp" ]; then
     pass "tmux child env: detached daemon receives the exact resolved state directory and OMP harness"
   else

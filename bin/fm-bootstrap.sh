@@ -448,7 +448,7 @@ secondmate_liveness_sweep() {
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     [ -n "$target" ] || target="$window"
-    agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
+    agent_state=$(fm_backend_agent_state "$backend" "$target" "$meta" 2>/dev/null) || agent_state=unreadable
     case "$harness" in
       claude|codex|opencode|pi|pi-signed|omp|grok|kimi) ;;
       *)

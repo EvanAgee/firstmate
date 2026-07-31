@@ -602,7 +602,7 @@ pane_is_busy() {  # <target> [backend]
 # directly and applies the same positive-proof boundary.
 pane_input_pending() {  # <target> [backend]
   local target=$1 backend=${2:-tmux}
-  [ "$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)" != empty ]
+  [ "$(fm_backend_composer_state "$backend" "$target" "${FM_SUPERVISOR_HARNESS:-}" "${FM_SUPERVISOR_OMP_BUN:-}" 2>/dev/null)" != empty ]
 }
 
 task_window_backend() {  # <window> <state>
@@ -1152,7 +1152,7 @@ inject_msg() {  # <message> [state]
   #      target - typing the escalation into a shell could execute it - so defer
   #      on anything that is not affirmatively 'empty'. A deferred escalation
   #      stays buffered for the next cycle or the catch-up flush.
-  composer=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)
+  composer=$(fm_backend_composer_state "$backend" "$target" "${FM_SUPERVISOR_HARNESS:-}" "${FM_SUPERVISOR_OMP_BUN:-}" 2>/dev/null)
   if [ "$composer" != empty ]; then
     log "inject deferred: supervisor composer not confirmed-empty (state=${composer:-unknown}: pending input, dead-shell prompt, or unreadable pane)"
     return 1
@@ -1177,7 +1177,7 @@ inject_msg() {  # <message> [state]
   esac
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
-  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" "" "$harness")
+  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" "" "$harness" "${FM_SUPERVISOR_OMP_BUN:-}")
   if [ "$verdict" = empty ]; then
     return 0  # Backend confirmed the submit.
   fi
@@ -1356,7 +1356,7 @@ fm_super_main() {
   # into FM_SUPERVISOR_BACKEND makes inject_msg/pane_is_busy/pane_input_pending
   # (which read that env var) dispatch through the right backend without an
   # extra global thread-through.
-  local discovered_backend backend_source discovered_harness
+  local discovered_backend backend_source discovered_harness omp_primary_comm omp_primary_args
   backend_source="FM_SUPERVISOR_BACKEND"
   if [ -z "${FM_SUPERVISOR_BACKEND:-}" ]; then
     if [ -n "${TMUX_PANE:-}" ]; then
@@ -1387,6 +1387,18 @@ fm_super_main() {
   [ -n "$discovered_harness" ] || discovered_harness=$("$FM_DAEMON_DIR/fm-harness.sh")
   FM_SUPERVISOR_HARNESS=$discovered_harness
   export FM_SUPERVISOR_HARNESS
+  FM_SUPERVISOR_OMP_BUN=
+  if [ "$FM_SUPERVISOR_HARNESS" = omp ] \
+     && fm_omp_primary_marker_read "$STATE/.omp-primary-extension-loaded"; then
+    omp_primary_comm=$(ps -o comm= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)
+    omp_primary_args=$(ps -o args= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)
+    if FM_OMP_PROCESS_EXPECTED_BUN=$FM_OMP_MARKER_BUN \
+       FM_OMP_PROCESS_EXPECTED_BIN=$FM_OMP_MARKER_BIN \
+       fm_omp_process_matches "$omp_primary_comm" "$omp_primary_args" "$FM_OMP_MARKER_PID"; then
+      FM_SUPERVISOR_OMP_BUN=$FM_OMP_MARKER_BUN
+    fi
+  fi
+  export FM_SUPERVISOR_OMP_BUN
 
   # --- auto-discover the supervisor target (the pane running firstmate) -----
   # Priority: FM_SUPERVISOR_TARGET override > $TMUX_PANE (tmux; inherited from

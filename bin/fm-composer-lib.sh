@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-composer-lib.sh, then call its composer classification and width helpers.
 # bin/fm-composer-lib.sh - the ONE fleet-wide owner of composer-content
 # classification, shared by every session-provider adapter: the tmux path
 # through bin/fm-tmux-lib.sh, and bin/backends/{herdr,orca,cmux}.sh directly.
@@ -49,6 +50,20 @@
 # they have no ghost styling to strip and rely on the idle-placeholder match
 # below. Re-sourcing is a cheap idempotent redefinition, so this file needs no
 # include guard (matching bin/fm-tmux-lib.sh).
+
+# fm_composer_terminal_width: print the exact terminal-cell width of one OMP
+# structural row through the canonical Bun identity bound to that task (or to
+# the active OMP primary marker). A fresh PATH lookup is never runtime evidence.
+# Missing, relative, non-executable, or malformed support returns nonzero so
+# callers classify the candidate as unknown.
+fm_composer_terminal_width() {  # <row> [canonical-bun]
+  local bun=${2:-${FM_OMP_BUN:-}} out
+  case "$bun" in /*) ;; *) return 1 ;; esac
+  [ -x "$bun" ] || return 1
+  out=$("$bun" -e 'try { const width = Bun.stringWidth(process.argv[1]); if (!Number.isSafeInteger(width) || width < 0) process.exit(1); process.stdout.write(String(width)); } catch { process.exit(1); }' "$1" 2>/dev/null) || return 1
+  case "$out" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$out"
+}
 
 # fm_composer_strip_ansi: drop every CSI escape sequence, leaving plain text.
 # Used for STRUCTURAL row/shape detection, where ghost text must be KEPT so the

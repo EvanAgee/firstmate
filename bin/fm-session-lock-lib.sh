@@ -37,7 +37,7 @@ fm_harness_ancestry_pid() {
     args=$(ps -o args= -p "$pid" 2>/dev/null)
     bc=$(basename -- "$comm")
     hit=0; is_claude=0
-    if fm_omp_process_matches "$comm" "$args"; then
+    if fm_omp_process_matches "$comm" "$args" "$pid"; then
       hit=1
     elif printf '%s' "$bc" | grep -qE "$FM_HARNESS_RE"; then
       hit=1
@@ -76,7 +76,7 @@ fm_harness_pid_alive() {
   kill -0 "$pid" 2>/dev/null || return 1
   comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
   args=$(ps -o args= -p "$pid" 2>/dev/null)
-  if fm_omp_process_matches "$(basename -- "$comm")" "$args"; then
+  if fm_omp_process_matches "$(basename -- "$comm")" "$args" "$pid"; then
     return 0
   fi
   if printf '%s' "$(basename -- "$comm")" | grep -qE "$FM_HARNESS_RE"; then

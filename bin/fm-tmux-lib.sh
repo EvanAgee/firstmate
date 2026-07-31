@@ -69,7 +69,8 @@
 
 # Delivery-only rendered busy footers per harness. claude/codex: "esc to
 # interrupt"; opencode: "esc interrupt"; pi: "Working..."; omp:
-# "Working… ⟦esc⟧"; grok: "Ctrl+c:cancel".
+# "Working… ⟦esc⟧" or an anchored Braille-spinner "Running … ⟦esc⟧" tool
+# status; grok: "Ctrl+c:cancel".
 # Claude's current spinner has a rotating glyph and word, but every active-turn
 # line has an ellipsis followed by a parenthesized elapsed duration. Keep this
 # signature separate from the shared default because that shape is not generic
@@ -84,12 +85,12 @@
 # busy signals on their own.
 # The full moon-phase set remains locale- and emoji-font-sensitive because Kimi
 # exposes no stable ASCII busy token.
-FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Working…[[:space:]]+⟦esc⟧|Ctrl\+c:cancel'
+FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Working…[[:space:]]+⟦esc⟧|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)[[:space:]]+Running[[:space:]].*[[:space:]]+⟦esc⟧[[:space:]]*$|Ctrl\+c:cancel'
 FM_TMUX_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
 FM_TMUX_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
 FM_TMUX_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
 FM_TMUX_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
-FM_TMUX_OMP_BUSY_REGEX_DEFAULT='Working…[[:space:]]+⟦esc⟧'
+FM_TMUX_OMP_BUSY_REGEX_DEFAULT='Working…[[:space:]]+⟦esc⟧|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)[[:space:]]+Running[[:space:]].*[[:space:]]+⟦esc⟧[[:space:]]*$'
 FM_TMUX_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
 FM_TMUX_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
 
@@ -317,8 +318,8 @@ EOF
 # requires positive proof: a genuinely empty composer, an all-empty unambiguous
 # box, an empty non-bordered fallback row, or the submit core's proven
 # busy-queued Enter conversion.
-fm_tmux_omp_composer_state() {  # <cursor-y> <plain-visible-pane> -> state; 1 when not OMP shape
-  local cy=$1 pane=$2 top bottom bottom_width content
+fm_tmux_omp_composer_state() {  # <cursor-y> <plain-visible-pane> [canonical-bun] -> state; 1 when not OMP shape
+  local cy=$1 pane=$2 bun=${3:-${FM_OMP_BUN:-}} top bottom top_width bottom_width content
   [ "$cy" -gt 0 ] || return 1
   top=$(printf '%s\n' "$pane" | sed -n "${cy}p")
   bottom=$(printf '%s\n' "$pane" | sed -n "$((cy + 1))p")
@@ -334,8 +335,9 @@ fm_tmux_omp_composer_state() {  # <cursor-y> <plain-visible-pane> -> state; 1 wh
     '╰─'*'─╯') ;;
     *) printf 'unknown'; return 0 ;;
   esac
-  bottom_width=${#bottom}
-  if [ "$bottom_width" -lt 20 ]; then
+  top_width=$(fm_composer_terminal_width "$top" "$bun") || { printf 'unknown'; return 0; }
+  bottom_width=$(fm_composer_terminal_width "$bottom" "$bun") || { printf 'unknown'; return 0; }
+  if [ "$top_width" -lt 20 ] || [ "$bottom_width" -ne "$top_width" ]; then
     printf 'unknown'
     return 0
   fi
@@ -346,14 +348,15 @@ fm_tmux_omp_composer_state() {  # <cursor-y> <plain-visible-pane> -> state; 1 wh
   fm_composer_classify_content 1 "$content" "${FM_COMPOSER_IDLE_RE:-}" insensitive "$bottom"
 }
 
-fm_tmux_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
-  local target=$1 cy raw pane plain box box_status top bottom geometry_ambiguous omp_state
+fm_tmux_composer_state() {  # <target> [harness] [canonical-omp-bun] -> empty|pending|pending-unproven|unknown
+  local target=$1 harness=${2:-} bun=${3:-${FM_OMP_BUN:-}}
+  local cy raw pane plain box box_status top bottom geometry_ambiguous omp_state
   local row row_raw state unknown_seen=0
   cy=$(tmux display-message -p -t "$target" '#{cursor_y}' 2>/dev/null) || { printf 'unknown'; return 0; }
   case "$cy" in ''|*[!0-9]*) printf 'unknown'; return 0 ;; esac
   pane=$(tmux capture-pane -e -p -t "$target" -S 0 -E - 2>/dev/null) || { printf 'unknown'; return 0; }
   plain=$(printf '%s\n' "$pane" | fm_composer_strip_ansi)
-  if omp_state=$(fm_tmux_omp_composer_state "$cy" "$plain"); then
+  if omp_state=$(fm_tmux_omp_composer_state "$cy" "$plain" "$bun"); then
     printf '%s' "$omp_state"
     return 0
   fi
@@ -403,8 +406,8 @@ fm_tmux_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
 
 # fm_pane_input_pending: 0 when the composer is not proven empty, so pending
 # text, ambiguous structure, unreadable state, and future verdicts all defer.
-fm_pane_input_pending() {  # <target>
-  [ "$(fm_tmux_composer_state "$1")" != empty ]
+fm_pane_input_pending() {  # <target> [harness] [canonical-omp-bun]
+  [ "$(fm_tmux_composer_state "$1" "${2:-}" "${3:-}")" != empty ]
 }
 
 # fm_pane_is_busy: 0 if the pane's last few non-blank lines show a busy footer
@@ -429,12 +432,12 @@ fm_pane_is_busy() {  # <target> [harness]
 # `empty` so the caller does not re-send), while an idle pane keeps `pending` as
 # a genuine swallow. Pending-unproven receives the same Enter retry budget but
 # never reaches this exception.
-fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [harness] [baseline-busy]
-  local target=$1 retries=$2 sleep_s=$3 harness=${4:-} baseline_busy=${5:-0} i=0 state
+fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [harness] [baseline-busy] [canonical-omp-bun]
+  local target=$1 retries=$2 sleep_s=$3 harness=${4:-} baseline_busy=${5:-0} bun=${6:-} i=0 state
   while :; do
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
-    state=$(fm_tmux_composer_state "$target")
+    state=$(fm_tmux_composer_state "$target" "$harness" "$bun")
     case "$state" in
       pending|pending-unproven) ;;
       unknown)
@@ -465,12 +468,12 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [harness] [bas
   fi
 }
 
-fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [harness]
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${6:-} baseline_busy=0
+fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [harness] [canonical-omp-bun]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${6:-} bun=${7:-} baseline_busy=0
   if [ "$harness" = omp ] && fm_pane_is_busy "$target" omp; then
     baseline_busy=1
   fi
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
-  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$harness" "$baseline_busy"
+  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$harness" "$baseline_busy" "$bun"
 }

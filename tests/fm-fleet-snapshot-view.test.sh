@@ -37,9 +37,11 @@ case "${1:-}" in
       *pane_current_command*)
         case "$target" in
           *dead-secondmate*) printf 'zsh\n' ;;
+          *omp-snapshot*) printf 'bun\n' ;;
           *) printf 'codex\n' ;;
         esac
         ;;
+      *pane_pid*) printf '4242\n' ;;
       *) printf '%%1\n' ;;
     esac
     ;;
@@ -52,7 +54,18 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux"
+  cat > "$fb/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'tpgid='*) printf '4343\n' ;;
+  *'args='*) printf '%s %s --auto-approve\n' "$FM_TEST_OMP_BUN" "$FM_TEST_OMP_BIN" ;;
+esac
+SH
+  cat > "$fb/lsof" <<'SH'
+#!/usr/bin/env bash
+printf 'n%s\n' "$FM_TEST_OMP_BUN"
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/ps" "$fb/lsof"
   printf '%s\n' "$fb"
 }
 
@@ -130,6 +143,38 @@ EOF
     "harness=codex" \
     "kind=ship" \
     "mode=ship"
+}
+
+test_omp_secondmate_snapshot_uses_bound_identity() {
+  local home fakebin identity omp_bun omp_bin out
+  home=$(make_home omp-snapshot)
+  identity="$home/identity"
+  mkdir -p "$identity" "$home/secondmate-home"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$identity/bun"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$identity/omp"
+  chmod +x "$identity/bun" "$identity/omp"
+  omp_bun=$(cd "$identity" && pwd -P)/bun
+  omp_bin=$(cd "$identity" && pwd -P)/omp
+  fm_write_meta "$home/state/omp-snapshot.meta" \
+    "window=firstmate:fm-omp-snapshot" \
+    "endpoint_task_id=omp-snapshot" \
+    "worktree=$home/secondmate-home" \
+    "project=$home/secondmate-home" \
+    "harness=omp" \
+    "kind=secondmate" \
+    "mode=secondmate" \
+    "home=$home/secondmate-home" \
+    "omp_bin=$omp_bin" \
+    "omp_bun=$omp_bun"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" \
+    FM_TEST_OMP_BUN="$omp_bun" FM_TEST_OMP_BIN="$omp_bin" \
+    "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "omp-snapshot")
+    | .endpoint.agent_alive == "alive"
+  ' >/dev/null || fail "fleet snapshot did not pass OMP metadata into exact liveness: $out"
+  pass "fleet snapshot reports metadata-bound OMP secondmate liveness"
 }
 
 test_empty_fleet_json() {
@@ -779,6 +824,7 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+test_omp_secondmate_snapshot_uses_bound_identity
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_main_inventory_orphan_and_unstructured_disclosure

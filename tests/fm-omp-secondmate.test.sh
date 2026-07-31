@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-omp-secondmate.test.sh - persistent OMP secondmate launch, exact
 # durable-session selection, duplicate-safe recovery, and abort preservation.
+# shellcheck disable=SC2119,SC2120  # optional env arguments are fixture controls
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -49,13 +50,11 @@ setup_case() { # <name>
   git -C "$HOME_DIR" add README.md .omp/extensions/fm-primary-omp.ts
   git -C "$HOME_DIR" commit -qm init
 
-  sleep 300 &
-  AGENT_PID=$!
-  PIDS+=("$AGENT_PID")
-
   cat > "$FAKEBIN/omp" <<'JS'
 #!/usr/bin/env bun
-console.log(`OMP 17.1.8
+if (process.argv.includes("--hold")) {
+  setInterval(() => {}, 60_000);
+} else console.log(`OMP 17.1.8
 --model=provider/id
 --thinking=level
 --auto-approve
@@ -65,6 +64,24 @@ console.log(`OMP 17.1.8
 --resume=path`);
 JS
   chmod +x "$FAKEBIN/omp"
+  TEST_OMP_BIN=$(fm_test_realpath "$FAKEBIN/omp")
+  # A Node symlink supplies the fixture's Bun launch boundary without making
+  # the portable deterministic lane depend on a host OMP/Bun installation.
+  TEST_OMP_BUN=$(fm_test_realpath "$(command -v node)")
+  ln -sf "$TEST_OMP_BUN" "$FAKEBIN/bun"
+  "$TEST_OMP_BUN" "$TEST_OMP_BIN" --hold &
+  AGENT_PID=$!
+  PIDS+=("$AGENT_PID")
+
+  cat > "$FAKEBIN/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *"tpgid="*"$FM_TEST_AGENT_PID"*) printf '%s\n' "$FM_TEST_AGENT_PID" ;;
+  *"args="*"$FM_TEST_AGENT_PID"*) printf '%s %s --auto-approve\n' "$FM_TEST_OMP_BUN" "$FM_TEST_OMP_BIN" ;;
+  *) exec /usr/bin/ps "$@" ;;
+esac
+SH
+  chmod +x "$FAKEBIN/ps"
 
   cat > "$FAKEBIN/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -114,7 +131,7 @@ case "$cmd" in
       printf '{"type":"session"}\n' > "$session"
       printf '%s\n' "$session" > "$FM_TEST_HOME/state/.omp-session"
       version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$FM_TEST_HOME/.omp/extensions/fm-primary-omp.ts")
-      printf '%s\n%s\n' "$version" "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.omp-primary-extension-loaded"
+      printf '%s\n%s\n%s\n%s\n' "$version" "$FM_TEST_AGENT_PID" "$FM_TEST_OMP_BUN" "$FM_TEST_OMP_BIN" > "$FM_TEST_HOME/state/.omp-primary-extension-loaded"
       printf '%s\n' "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.lock"
     fi
     ;;
@@ -186,7 +203,7 @@ case "$cmd $sub" in
       printf '{"type":"session"}\n' > "$session"
       printf '%s\n' "$session" > "$FM_TEST_HOME/state/.omp-session"
       version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$FM_TEST_HOME/.omp/extensions/fm-primary-omp.ts")
-      printf '%s\n%s\n' "$version" "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.omp-primary-extension-loaded"
+      printf '%s\n%s\n%s\n%s\n' "$version" "$FM_TEST_AGENT_PID" "$FM_TEST_OMP_BUN" "$FM_TEST_OMP_BIN" > "$FM_TEST_HOME/state/.omp-primary-extension-loaded"
       printf '%s\n' "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.lock"
     fi
     ;;
@@ -224,6 +241,8 @@ run_spawn() { # [extra env NAME=VALUE ...]
     FM_TEST_RETIRED_FLAG="$RETIRED_FLAG" \
     FM_TEST_WINDOW_NAME="$WINDOW_NAME" \
     FM_TEST_AGENT_PID="$AGENT_PID" \
+    FM_TEST_OMP_BIN="$TEST_OMP_BIN" \
+    FM_TEST_OMP_BUN="$TEST_OMP_BUN" \
     FM_TEST_HOME="$HOME_DIR" \
     FM_TEST_TREEHOUSE_LOG="$CASE/treehouse.log" \
     FM_TEST_STATE_MODE="${FM_TEST_STATE_MODE:-}" \
@@ -250,6 +269,8 @@ run_spawn_herdr() { # [extra env NAME=VALUE ...]
     FM_TEST_WINDOW_FLAG="$WINDOW_FLAG" \
     FM_TEST_RETIRED_FLAG="$RETIRED_FLAG" \
     FM_TEST_AGENT_PID="$AGENT_PID" \
+    FM_TEST_OMP_BIN="$TEST_OMP_BIN" \
+    FM_TEST_OMP_BUN="$TEST_OMP_BUN" \
     FM_TEST_HOME="$HOME_DIR" \
     FM_TEST_TASK_ID="$TASK_ID" \
     FM_TEST_TREEHOUSE_LOG="$CASE/treehouse.log" \
@@ -262,12 +283,14 @@ run_spawn_herdr() { # [extra env NAME=VALUE ...]
 }
 
 count_new_windows() {
+  # shellcheck disable=SC2126  # wc keeps a zero count readable when grep finds none
   grep '^new-window ' "$TMUX_LOG" 2>/dev/null | wc -l | tr -d '[:space:]'
 }
 
 write_meta() {
   cat > "$MAIN_STATE/$TASK_ID.meta" <<EOF_META
 window=firstmate:$WINDOW_NAME
+endpoint_task_id=$TASK_ID
 worktree=$HOME_DIR
 project=$HOME_DIR
 harness=omp
@@ -275,6 +298,8 @@ model=test/model
 effort=low
 kind=secondmate
 home=$HOME_DIR
+omp_bin=$TEST_OMP_BIN
+omp_bun=$TEST_OMP_BUN
 backend=tmux
 EOF_META
 }
@@ -290,6 +315,8 @@ model=test/model
 effort=low
 kind=secondmate
 home=$HOME_DIR
+omp_bin=$TEST_OMP_BIN
+omp_bun=$TEST_OMP_BUN
 backend=herdr
 herdr_session=fmtest
 herdr_workspace_id=w1
@@ -303,8 +330,8 @@ test_herdr_launch_exact_resume_recovery_and_abort() {
   setup_case herdr-launch
 
   out=$(run_spawn_herdr 2>&1) || fail "fresh OMP Herdr secondmate spawn failed: $out"
-  assert_contains "$(cat "$LAUNCH_LOG")" "--session-dir '$HOME_DIR/state/omp-sessions'" \
-    "OMP Herdr secondmate launch did not carry a nonempty isolated session directory"
+  assert_contains "$(cat "$LAUNCH_LOG")" "'$TEST_OMP_BUN' '$TEST_OMP_BIN' --session-dir '$HOME_DIR/state/omp-sessions'" \
+    "OMP Herdr secondmate launch did not use its canonical Bun/OMP pair and isolated session directory"
   assert_contains "$(cat "$MAIN_STATE/$TASK_ID.meta")" 'harness=omp' "OMP Herdr secondmate identity was not exact"
   assert_contains "$(cat "$MAIN_STATE/$TASK_ID.meta")" 'backend=herdr' "OMP Herdr secondmate backend was not recorded"
   assert_contains "$(cat "$MAIN_STATE/$TASK_ID.meta")" 'herdr_pane_id=w1:p2' "OMP Herdr secondmate exact pane was not recorded"
@@ -357,7 +384,8 @@ test_launch_and_exact_resume() {
 
   out=$(run_spawn 2>&1) || fail "fresh OMP secondmate spawn failed: $out"
   assert_contains "$(cat "$LAUNCH_LOG")" "FM_OMP_SESSION_POINTER='$HOME_DIR/state/.omp-session'" "OMP launch did not bind the home-owned session pointer"
-  assert_contains "$(cat "$LAUNCH_LOG")" "'$FAKEBIN/omp'" "OMP launch did not use the capability-checked executable"
+  assert_contains "$(cat "$LAUNCH_LOG")" "'$TEST_OMP_BUN' '$TEST_OMP_BIN'" \
+    "OMP launch did not use the capability-checked canonical Bun/OMP pair"
   assert_contains "$(cat "$LAUNCH_LOG")" "--session-dir '$HOME_DIR/state/omp-sessions' --auto-approve --model 'test/model' --thinking 'low' -e '$HOME_DIR/.omp/extensions/fm-primary-omp.ts'" "OMP launch did not preserve exact pins, adapter, and durable session directory"
   assert_not_contains "$(cat "$LAUNCH_LOG")" '__OMP' "OMP launch retained an unsubstituted template placeholder"
   assert_contains "$(cat "$MAIN_STATE/$TASK_ID.meta")" 'harness=omp' "OMP identity was not recorded exactly"
@@ -438,7 +466,7 @@ test_duplicate_recovery_states() {
   setup_case duplicate-owned-stale-marker
   write_meta
   version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$HOME_DIR/.omp/extensions/fm-primary-omp.ts")
-  printf '%s\n99999999\n' "$version" > "$HOME_DIR/state/.omp-primary-extension-loaded"
+  printf '%s\n99999999\n%s\n%s\n' "$version" "$TEST_OMP_BUN" "$TEST_OMP_BIN" > "$HOME_DIR/state/.omp-primary-extension-loaded"
   printf '99999999\n' > "$HOME_DIR/state/.lock"
   out=$(FM_TEST_STATE_MODE=missing run_spawn 2>&1) || fail "OMP secondmate did not recover from its proven stale integration marker: $out"
   assert_contains "$(cat "$TMUX_LOG")" 'new-window' "proven stale integration marker did not permit recovery"

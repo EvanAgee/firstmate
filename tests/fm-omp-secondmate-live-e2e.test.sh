@@ -13,6 +13,7 @@ fi
 command -v omp >/dev/null 2>&1 || fail "omp not found"
 command -v tmux >/dev/null 2>&1 || fail "tmux not found"
 OMP_BIN=$("$ROOT/bin/fm-omp-capabilities.sh" --print-binary) || fail "OMP capability check failed"
+OMP_BIN=$(fm_test_realpath "$OMP_BIN") || fail "OMP binary realpath could not be resolved"
 REAL_TMUX=$(command -v tmux)
 LAB=$(fm_test_tmproot fm-omp-secondmate-live)
 SOCKET="fm-omp-secondmate-live-$$"
@@ -87,24 +88,34 @@ wait_for() { # <description> <command...>
 }
 
 marker_valid() {
-  local marker="$SECOND_HOME/state/.omp-primary-extension-loaded" version pid lock
+  local marker="$SECOND_HOME/state/.omp-primary-extension-loaded" version pid lock bun bin
   [ -s "$marker" ] || return 1
   version=$(sed -n '1p' "$marker")
   pid=$(sed -n '2p' "$marker")
   lock=$(cat "$SECOND_HOME/state/.lock" 2>/dev/null || true)
+  bun=$(sed -n '3p' "$marker")
+  bin=$(sed -n '4p' "$marker")
   [ "$version" = "$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$SECOND_HOME/.omp/extensions/fm-primary-omp.ts")" ] || return 1
-  [ "$pid" = "$lock" ] && kill -0 "$pid" 2>/dev/null
+  [ "$(wc -l < "$marker" | tr -d '[:space:]')" = 4 ] \
+    && [ "$bun" = "$(sed -n 's/^omp_bun=//p' "$MAIN_STATE/$ID.meta")" ] \
+    && [ "$bin" = "$(sed -n 's/^omp_bin=//p' "$MAIN_STATE/$ID.meta")" ] \
+    && [ "$pid" = "$lock" ] && kill -0 "$pid" 2>/dev/null
 }
 
 agent_state_is() {
   local expected=$1 got
-  got=$(fm_env bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state tmux "$2"' _ "$ROOT" "$TARGET")
+  # shellcheck disable=SC2016  # expansion belongs to the inner bash
+  got=$(fm_env bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state tmux "$2" "$3"' \
+    _ "$ROOT" "$TARGET" "$MAIN_STATE/$ID.meta")
   [ "$got" = "$expected" ]
 }
 
 composer_empty() {
   local got
-  got=$(fm_env bash -c '. "$1/bin/fm-backend.sh"; fm_backend_composer_state tmux "$2" omp' _ "$ROOT" "$TARGET")
+  # shellcheck disable=SC2016  # expansion belongs to the inner bash
+  got=$(fm_env bash -c \
+    '. "$1/bin/fm-backend.sh"; fm_backend_agent_record_identity tmux "$2" "$3" || exit 1; fm_backend_composer_state tmux "$2" omp "$FM_BACKEND_AGENT_OMP_BUN"' \
+      _ "$ROOT" "$TARGET" "$MAIN_STATE/$ID.meta")
   [ "$got" = empty ]
 }
 
