@@ -142,7 +142,7 @@ case "\$parent_exe:\$parent_args" in
     native_probe=0
     native_probe_pane=
     case "\$#:\$*" in
-      "1:agent"|"1:--help"|"3:--session \$session --help") native_probe=1 ;;
+      "1:agent"|"1:--help"|"2:agent --help"|"3:--session \$session --help") native_probe=1 ;;
       3:agent\ get\ *) native_probe_pane=\$3 ;;
       5:--session\ "\$session"\ agent\ get\ *) native_probe_pane=\$5 ;;
     esac
@@ -151,8 +151,8 @@ case "\$parent_exe:\$parent_args" in
       *) native_probe=1 ;;
     esac
     if [ "\$native_probe" -eq 1 ]; then
-      printf '%q ' "\$@" >> "\$log.native-omp-probes"
-      printf '\n' >> "\$log.native-omp-probes"
+      printf -v rendered '%q ' "\$@"
+      printf '%s\n' "\$rendered" >> "\$log.native-omp-probes"
       exit 96
     fi
     ;;
@@ -161,14 +161,12 @@ if [ "\$#" -eq 2 ] && [ "\$1" = status ] && [ "\$2" = --json ] \
   && [ "\${HERDR_SESSION:-}" = "\$session" ]; then
   set -- "\$@" --session "\$session"
 fi
-printf '%q ' "\$@" >> "\$log"
-printf '\n' >> "\$log"
+printf -v rendered '%q ' "\$@"
+printf '%s\n' "\$rendered" >> "\$log"
 argc=\$#
 [ "\$argc" -ge 2 ] || {
-  printf 'args=' >> "\$log.callers"
-  printf '%q ' "\$@" >> "\$log.callers"
-  printf ' parent=' >> "\$log.callers"
-  ps -o args= -p "\$PPID" >> "\$log.callers" 2>/dev/null || printf 'unreadable\n' >> "\$log.callers"
+  parent_call=\$(ps -o args= -p "\$PPID" 2>/dev/null || printf 'unreadable')
+  printf 'args=%s parent=%s\n' "\$rendered" "\$parent_call" >> "\$log.callers"
   echo "OMP Herdr fixture refused a command without explicit session binding" >&2
   exit 96
 }
@@ -177,10 +175,8 @@ penultimate=\${args[\$((argc - 2))]}
 last=\${args[\$((argc - 1))]}
 [ "\$penultimate" = --session ] && [ "\$last" = "\$session" ] \
   || {
-    printf 'args=' >> "\$log.callers"
-    printf '%q ' "\$@" >> "\$log.callers"
-    printf ' parent=' >> "\$log.callers"
-    ps -o args= -p "\$PPID" >> "\$log.callers" 2>/dev/null || printf 'unreadable\n' >> "\$log.callers"
+    parent_call=\$(ps -o args= -p "\$PPID" 2>/dev/null || printf 'unreadable')
+    printf 'args=%s parent=%s\n' "\$rendered" "\$parent_call" >> "\$log.callers"
     echo "OMP Herdr fixture refused a command outside its exact lab session" >&2
     exit 96
   }
@@ -361,7 +357,7 @@ wait_for "worker idle response" file_has "$WORKER_SESSION" 'The idle worker mess
 wait_for "worker idle steering return" agent_is "$WORKER_TARGET" omp 'idle done'
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
-send_task "$WORKER_ID" 'Run this exact bash command: sleep 4. Then reply exactly: The worker completed its timed command.' \
+send_task "$WORKER_ID" 'Run this exact bash command: sleep 10. Then reply exactly: The worker completed its timed command.' \
   || fail "worker busy-turn setup was not submitted"
 wait_for "native working worker state" agent_is "$WORKER_TARGET" omp working
 steer_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
@@ -409,7 +405,7 @@ wait_for "scout idle turn completion" file_exists "$HOME_DIR/state/$SCOUT_ID.tur
 wait_for "scout idle response" file_has "$SCOUT_SESSION" 'The idle scout message was processed.'
 wait_for "scout idle steering return" agent_is "$SCOUT_TARGET" omp 'idle done'
 rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
-scout_busy_prompt='Run this exact bash command: sleep 4. Then reply exactly: The scout completed its timed command.'
+scout_busy_prompt='Run this exact bash command: sleep 10. Then reply exactly: The scout completed its timed command.'
 send_task "$SCOUT_ID" "$scout_busy_prompt" || fail "scout busy-turn setup was not submitted"
 wait_for "native working scout state" agent_is "$SCOUT_TARGET" omp working
 scout_steer_text='After the tool finishes, reply exactly: The busy scout message was processed.'
@@ -515,7 +511,7 @@ env PATH="$WRAPPER_BIN:$BASE_PATH" HERDR_SESSION="$SESSION" FM_BACKEND=herdr \
 # its default-session tripwire.
 [ -s "$WRAPPER_LOG" ] || fail "production role matrix issued no Herdr commands through the wrapper"
 if [ -s "$WRAPPER_LOG.native-omp-probes" ]; then
-  grep -Ev "^(agent |--help |agent get [A-Za-z0-9._:@%+-]+ |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
+  grep -Ev "^(agent |--help |agent --help |agent get [A-Za-z0-9._:@%+-]+ |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
     "$WRAPPER_LOG.native-omp-probes" >/dev/null \
     && fail "an unexpected native OMP Herdr probe escaped quarantine"
 fi
