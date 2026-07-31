@@ -67,6 +67,18 @@ export type PrimaryWatchCore = {
   sessionStart: () => void;
 };
 
+// Single producer of the OMP native process identity pair. Both the loaded
+// marker and FM_OMP_PROCESS_EXPECTED_{BUN,BIN} come from here so the two can
+// never drift apart.
+export function ompNativeProcessIdentity(): { bunPath: string; ompPath: string } {
+  const bunPath = realpathSync(process.execPath);
+  const ompPath = realpathSync(process.argv[1]);
+  if (/\s/u.test(bunPath) || /\s/u.test(ompPath)) {
+    throw new Error("OMP primary identity paths containing whitespace are unsupported");
+  }
+  return { bunPath, ompPath };
+}
+
 function verifiedRuntime(runtime: string, fmRoot: string): runtime is "pi" | "omp" {
   let allowlist = "";
   try {
@@ -163,11 +175,7 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
     mkdirSync(state, { recursive: true });
     let runtimeIdentity = "";
     if (runtime === "omp") {
-      const bunPath = realpathSync(process.execPath);
-      const ompPath = realpathSync(process.argv[1]);
-      if (/\s/u.test(bunPath) || /\s/u.test(ompPath)) {
-        throw new Error("OMP primary identity paths containing whitespace are unsupported");
-      }
+      const { bunPath, ompPath } = ompNativeProcessIdentity();
       runtimeIdentity = `${bunPath}\n${ompPath}\n`;
     }
     const contents = `${extensionVersion}\n${process.pid}\n${runtimeIdentity}`;

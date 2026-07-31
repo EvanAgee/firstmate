@@ -29,23 +29,46 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$SCRIPT_DIR/fm-omp-process-lib.sh"
 
-# Exact-OMP ancestry probe. Innermost wins, exactly like the layer-2 walk
-# below: the moment a nearer ancestor is itself a harness process, this stops
-# and reports no match, so a foreign harness nested inside an OMP tree (an
-# agent started from OMP's bash tool) keeps its own identity instead of
-# inheriting the OMP primary's marker from further up the chain.
-# The walk is skipped outright when this home holds no OMP identity evidence,
-# so non-OMP harnesses pay no ps forks on this frequently called path.
-omp_ancestry_is_exact() {
-  local pid=$$ comm args bc
-  fm_omp_process_identity_available || return 1
+# OMP ancestry probe. Innermost wins, exactly like the layer-2 walk below: the
+# moment a nearer ancestor is itself a harness process, this stops and reports
+# no match, so a foreign harness nested inside an OMP tree (an agent started
+# from OMP's bash tool) keeps its own identity instead of inheriting the OMP
+# marker from further up the chain.
+# Two evidence modes. `exact` requires the launch-bound Bun and OMP realpaths
+# published by the native primary (env pair or the loaded marker bound to the
+# PID). `launch-shape` proves only that the innermost harness ancestor is an
+# OMP process launched the way firstmate launches one - absolute Bun executable
+# followed by an absolute `omp` entrypoint - which is the evidence a spawned OMP
+# worker's own tree carries; it never runs on its own, only to qualify the
+# inherited FM_OMP_HARNESS launch-boundary marker.
+omp_launch_argv_shape() {  # <args>
+  local first second rest bun_path omp_path
+  read -r first second rest <<EOF
+$1
+EOF
+  [ -n "${first:-}" ] && [ -n "${second:-}" ] || return 1
+  case "$first" in /*) ;; *) return 1 ;; esac
+  case "$second" in */omp) ;; *) return 1 ;; esac
+  [ "$(basename -- "$first")" = bun ] || return 1
+  bun_path=$(fm_omp_process_resolve_path "$first") || return 1
+  omp_path=$(fm_omp_process_resolve_path "$second") || return 1
+  fm_omp_process_identity_path_valid "$bun_path" \
+    && fm_omp_process_identity_path_valid "$omp_path"
+}
+
+omp_ancestry_matches() {  # <exact|launch-shape>
+  local mode=$1 pid=$$ comm args bc
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
     bc=$(basename -- "$comm")
     case "$bc" in
       bun|omp)
         args=$(ps -o args= -p "$pid" 2>/dev/null)
-        fm_omp_process_matches "$comm" "$args" "$pid" && return 0
+        if [ "$mode" = exact ]; then
+          fm_omp_process_matches "$comm" "$args" "$pid" && return 0
+        else
+          omp_launch_argv_shape "$args" && return 0
+        fi
         ;;
       *claude*|*codex*|*opencode*|*grok*|kimi|pi|pi-signed) return 1 ;;
       node*|python*)
@@ -60,6 +83,13 @@ omp_ancestry_is_exact() {
   return 1
 }
 
+# The exact walk is skipped outright when this home holds no OMP identity
+# evidence, so non-OMP harnesses pay no ps forks on this frequently called path.
+omp_ancestry_is_exact() {
+  fm_omp_process_identity_available || return 1
+  omp_ancestry_matches exact
+}
+
 detect_own() {
   # Layer 1: environment markers for verified harnesses.
   # Keep marker detection before the layer-2 command-name walk as an explicit
@@ -69,11 +99,17 @@ detect_own() {
   # process that has no nearer harness of another identity above it.
   # Only claude, pi, and grok set verified markers of their own; Firstmate adds
   # the exact FM_OMP_HARNESS=omp marker at a verified OMP worker launch boundary.
+  # That marker is a command-prefix assignment, so every descendant of an OMP
+  # worker inherits it, including a foreign harness started from the worker's
+  # bash tool. It therefore never claims a process on its own: it is qualified
+  # by the same innermost-harness walk, so a nested claude/codex keeps its own
+  # identity while a genuine OMP worker still outranks inherited foreign markers.
   # Codex, OpenCode, and Kimi are markerless, so a foreign marker retained in a terminal
   # multiplexer's stored environment can silently misidentify one of them before
   # ancestry is consulted. This is a precedence hazard, not evidence that
   # CLAUDECODE inheritance into a kimi child was observed; it was not observed.
-  [ "${FM_OMP_HARNESS:-}" = "omp" ] && { echo omp; return; }
+  [ "${FM_OMP_HARNESS:-}" = "omp" ] && omp_ancestry_matches launch-shape \
+    && { echo omp; return; }
   omp_ancestry_is_exact && { echo omp; return; }
   [ "${CLAUDECODE:-}" = "1" ] && { echo claude; return; }
   if [ "${PI_CODING_AGENT:-}" = "true" ]; then

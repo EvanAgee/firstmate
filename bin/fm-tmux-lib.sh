@@ -441,8 +441,8 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [harness] [bas
     case "$state" in
       pending|pending-unproven) ;;
       unknown)
-        if [ "$harness" = omp ] && [ "$baseline_busy" -eq 0 ] \
-           && fm_pane_is_busy "$target" omp; then
+        [ "$harness" = omp ] || { printf '%s' "$state"; return 0; }
+        if [ "$baseline_busy" -eq 0 ] && fm_pane_is_busy "$target" omp; then
           printf 'empty'
           return 0
         fi

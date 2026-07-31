@@ -125,18 +125,22 @@ test_idle_pane_composer_clears_first_try() {
 }
 
 test_busy_pane_unknown_stays_unknown() {
-  local dir fakebin composer vfile
+  local dir fakebin composer sent vfile
   dir="$TMP_ROOT/busy-unknown"
   fakebin=$(make_submit_mock "$dir")
   composer="$dir/composer"
+  sent="$dir/sent.log"
   vfile="$dir/verdict"
   printf '│ > unbounded\n' > "$composer"
+  : > "$sent"
   touch "$dir/.swallow"
-  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_PANE_BUSY=1 \
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_FAKE_SENT="$sent" FM_FAKE_PANE_BUSY=1 \
     FM_FAKE_SWALLOW="$dir/.swallow" FM_FAKE_PERSIST_SWALLOW=1 \
     fm_tmux_submit_enter_core "win" 3 0.05 > "$vfile" 2>/dev/null
   [ "$(cat "$vfile")" = unknown ] \
     || fail "a busy pane must not convert an unsafe composer to empty, got '$(cat "$vfile")'"
+  [ "$(grep -c '^Enter$' "$sent" 2>/dev/null || true)" -eq 1 ] \
+    || fail "an unreadable non-OMP composer must not consume the Enter retry budget"
   pass "fm_tmux_submit_enter_core: busy conversion is limited to proven pending input"
 }
 

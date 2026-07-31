@@ -44,11 +44,69 @@ SH
   chmod +x "$dir/bun"
 }
 
+# Fake process tree for the launch-boundary marker walk: pid 700 is the spawned
+# OMP worker (bun executing an absolute omp entrypoint), pid 500 is a foreign
+# harness nested inside it, and every other pid is a plain tool process whose
+# parent is FM_TEST_HARNESS_PARENT.
+make_marker_fakebin() {
+  local dir=$1 fakebin
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+set -u
+field= pid=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) field=$2; shift 2 ;;
+    -p) pid=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+self_dir=$(cd "$(dirname "$0")" && pwd -P)
+if [ "$pid" = 700 ]; then
+  case "$field" in
+    comm=) printf '%s\n' bun ;;
+    args=) printf '%s %s\n' "$self_dir/bun" "$self_dir/omp --auto-approve" ;;
+    ppid=) printf '%s\n' 1 ;;
+  esac
+  exit 0
+fi
+case "$pid:$field" in
+  500:comm=) printf '%s\n' claude ;;
+  500:args=) printf '%s\n' 'claude --resume' ;;
+  500:ppid=) printf '%s\n' 700 ;;
+  *:comm=) printf '%s\n' bash ;;
+  *:args=) printf '%s\n' 'bash -c firstmate-tool' ;;
+  *:ppid=) printf '%s\n' "${FM_TEST_HARNESS_PARENT:-700}" ;;
+esac
+SH
+  chmod +x "$fakebin/ps"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/bun"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/omp"
+  chmod +x "$fakebin/bun" "$fakebin/omp"
+  printf '%s\n' "$fakebin"
+}
+
 test_launch_boundary_marker_preserves_exact_omp_identity() {
-  local out
-  out=$(env -u PI_CODING_AGENT -u CLAUDECODE -u GROK_AGENT FM_OMP_HARNESS=omp "$ROOT/bin/fm-harness.sh")
+  local fakebin path out
+  fakebin=$(make_marker_fakebin "$TMP_ROOT/marker")
+  path="$fakebin:$(dirname "$(command -v node)"):${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+
+  out=$(PATH="$path" env -u PI_CODING_AGENT -u CLAUDECODE -u GROK_AGENT \
+    FM_OMP_HARNESS=omp "$ROOT/bin/fm-harness.sh")
   [ "$out" = omp ] || fail "exact OMP launch marker resolved '$out'"
-  out=$(env -u PI_CODING_AGENT -u CLAUDECODE -u GROK_AGENT FM_OMP_HARNESS=omp-helper "$ROOT/bin/fm-harness.sh")
+
+  out=$(PATH="$path" env -u PI_CODING_AGENT -u GROK_AGENT CLAUDECODE=1 \
+    FM_OMP_HARNESS=omp "$ROOT/bin/fm-harness.sh")
+  [ "$out" = omp ] || fail "OMP worker lost its identity to an inherited claude marker: $out"
+
+  out=$(PATH="$path" env -u PI_CODING_AGENT -u GROK_AGENT CLAUDECODE=1 \
+    FM_TEST_HARNESS_PARENT=500 FM_OMP_HARNESS=omp "$ROOT/bin/fm-harness.sh")
+  [ "$out" = claude ] \
+    || fail "claude nested inside an OMP worker inherited the launch marker: $out"
+
+  out=$(PATH="$path" env -u PI_CODING_AGENT -u CLAUDECODE -u GROK_AGENT \
+    FM_OMP_HARNESS=omp-helper "$ROOT/bin/fm-harness.sh")
   [ "$out" != omp ] || fail "inexact OMP launch marker was accepted"
   pass "OMP worker tools preserve the exact launch-boundary harness identity"
 }

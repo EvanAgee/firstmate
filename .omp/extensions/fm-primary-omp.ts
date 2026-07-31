@@ -1,7 +1,7 @@
 // Firstmate primary integration for OMP.
 // OMP-native session, stop, tool-call, and shutdown events stay in this adapter.
 import { spawn, spawnSync } from "node:child_process";
-import { realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -11,7 +11,7 @@ import type {
   SessionStopEvent,
   SessionStopEventResult,
 } from "@oh-my-pi/pi-coding-agent";
-import { createPrimaryWatchCore } from "../../bin/fm-primary-watch-core.ts";
+import { createPrimaryWatchCore, ompNativeProcessIdentity } from "../../bin/fm-primary-watch-core.ts";
 
 const extensionFile = fileURLToPath(import.meta.url);
 const root = resolve(dirname(extensionFile), "../..");
@@ -65,11 +65,7 @@ function primaryIntegrationApplies(): boolean {
 }
 
 function publishNativeProcessIdentity(): void {
-  const bunPath = realpathSync(process.execPath);
-  const ompPath = realpathSync(process.argv[1]);
-  if (/\s/u.test(bunPath) || /\s/u.test(ompPath)) {
-    throw new Error("OMP primary identity paths containing whitespace are unsupported");
-  }
+  const { bunPath, ompPath } = ompNativeProcessIdentity();
   process.env.FM_OMP_PROCESS_EXPECTED_BUN = bunPath;
   process.env.FM_OMP_PROCESS_EXPECTED_BIN = ompPath;
 }
