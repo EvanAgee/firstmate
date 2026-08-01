@@ -99,6 +99,10 @@ case "$cmd $sub" in
     printf '%s\n' '{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2"}}}'
     ;;
   "pane get")
+    if [ -n "${FM_FAKE_HERDR_PANE_FLAG:-}" ] && [ ! -f "$FM_FAKE_HERDR_PANE_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"pane_not_found"}}' >&2
+      exit 1
+    fi
     printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s"}}}\n' "${3:-w1:p2}" "${FM_FAKE_PANE_PATH:-}"
     ;;
   "pane run")
@@ -118,8 +122,16 @@ case "$cmd $sub" in
     ;;
   "pane close")
     [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'pane close %s\n' "${3:-}" >> "$FM_FAKE_ENDPOINT_LOG"
+    if [ "${FM_FAKE_HERDR_REFUSE_CLOSE:-0}" = 1 ]; then
+      exit 0
+    fi
+    [ -z "${FM_FAKE_HERDR_PANE_FLAG:-}" ] || rm -f "$FM_FAKE_HERDR_PANE_FLAG"
     ;;
   "agent get")
+    if [ -n "${FM_FAKE_HERDR_PANE_FLAG:-}" ] && [ ! -f "$FM_FAKE_HERDR_PANE_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"agent_not_found"}}' >&2
+      exit 1
+    fi
     printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}'
     ;;
 esac
@@ -191,13 +203,15 @@ make_seeded_secondmate_home() {
 }
 
 run_spawn() {
-  local home=$1 wt=$2 fakebin=$3 launchlog=$4 endpointlog treehouselog rc meta tasktmp
+  local home=$1 wt=$2 fakebin=$3 launchlog=$4 endpointlog treehouselog herdrpaneflag rc meta tasktmp
   shift 4
   endpointlog="${launchlog%/*}/endpoint.log"
   treehouselog="${launchlog%/*}/treehouse.log"
+  herdrpaneflag="${launchlog%/*}/herdr-pane"
   : > "$launchlog"
   : > "$endpointlog"
   : > "$treehouselog"
+  : > "$herdrpaneflag"
   # CLAUDE_CONFIG_DIR is forwarded onto claude launches by fm-spawn, so pin it
   # explicitly (empty by default) instead of leaking the invoking shell's value,
   # which would make launch assertions depend on the developer's environment.
@@ -209,6 +223,8 @@ run_spawn() {
     CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
     FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_ENDPOINT_LOG="$endpointlog" \
     FM_FAKE_TREEHOUSE_LOG="$treehouselog" FM_FAKE_OMP_ACK="${FM_TEST_OMP_ACK:-}" \
+    FM_FAKE_HERDR_PANE_FLAG="$herdrpaneflag" \
+    FM_FAKE_HERDR_REFUSE_CLOSE="${FM_TEST_HERDR_REFUSE_CLOSE:-0}" \
     FM_FAKE_OMP_META_TAMPER="${FM_TEST_OMP_META_TAMPER:-}" \
     GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
@@ -899,6 +915,30 @@ test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts() {
   pass "OMP Herdr spawn failure cleans its proven endpoint, unchanged worktree, and task artifacts"
 }
 
+test_omp_herdr_refused_close_preserves_worktree_and_artifacts() {
+  local rec id out status endpointlog treehouselog
+  id=$(profile_id profile-omp-herdr-refused-z8rr)
+  rec=$(make_spawn_case profile-omp-herdr-refused omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    FM_TEST_HERDR_REFUSE_CLOSE=1 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr)
+  status=$?
+  expect_code 1 "$status" "unacknowledged OMP Herdr launch should fail"
+  assert_contains "$out" "could not confirm its owned endpoint stopped" \
+    "OMP Herdr cleanup trusted a refused pane close as a stopped endpoint"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_grep 'pane close w1:p2' "$endpointlog" "OMP Herdr cleanup never attempted its owned close"
+  assert_no_grep 'return --force' "$treehouselog" \
+    "OMP Herdr cleanup returned the worktree without a confirmed endpoint stop"
+  assert_present "$HOME_DIR/state/$id.meta" "OMP Herdr cleanup deleted metadata for a still-live endpoint"
+  assert_present "$HOME_DIR/state/$id.omp-ext.ts" "OMP Herdr cleanup deleted the extension for a still-live endpoint"
+  assert_present "/tmp/fm-$id" "OMP Herdr cleanup deleted the task temp root for a still-live endpoint"
+  pass "OMP Herdr cleanup preserves the worktree and task artifacts when its close is refused"
+}
+
 test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
   local rec id out status endpointlog treehouselog
   id=$(profile_id profile-omp-unacked-owner-z8s)
@@ -1062,6 +1102,7 @@ test_omp_whitespace_identity_paths_refuse_before_endpoint
 test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata
 test_omp_launch_requires_observable_turn_start_acknowledgement
 test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts
+test_omp_herdr_refused_close_preserves_worktree_and_artifacts
 test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags
