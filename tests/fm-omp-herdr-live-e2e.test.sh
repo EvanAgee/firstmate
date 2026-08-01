@@ -10,6 +10,9 @@ fi
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# shellcheck source=bin/fm-supervision-lib.sh
+. "$ROOT/bin/fm-supervision-lib.sh"
+
 command -v omp >/dev/null 2>&1 || fail "omp not found"
 command -v herdr >/dev/null 2>&1 || fail "herdr not found"
 command -v jq >/dev/null 2>&1 || fail "jq not found"
@@ -272,6 +275,21 @@ wait_for() { # <description> <command...>
   fail "timed out waiting for $description"
 }
 
+watcher_fresh() { # <state>
+  fm_supervision_status "$1" "${FM_GUARD_GRACE:-300}"
+  [ "$FM_SUP_WATCHER_FRESH" = true ]
+}
+
+wait_for_fresh_watcher() { # <description> <state>
+  local description=$1 state=$2 i=0
+  while [ "$i" -lt 1400 ]; do
+    watcher_fresh "$state" && return 0
+    sleep 0.25
+    i=$((i + 1))
+  done
+  fail "timed out waiting for $description"
+}
+
 file_exists() { [ -f "$1" ]; }
 file_nonempty() { [ -s "$1" ]; }
 file_has() { grep -F -- "$2" "$1" >/dev/null 2>&1; }
@@ -323,6 +341,7 @@ PRIMARY_SOCKET=$(lab session list --json | jq -er --arg want "$SESSION" '
 
 # Keep the real primary and its home-scoped watcher alive while it supervises
 # the worker, scout, and secondmate role evidence below.
+wait_for_fresh_watcher "OMP primary fresh watcher beacon" "$PRIMARY_HOME/state"
 
 # --- production worker and scout --------------------------------------------
 printf 'Reply exactly: Herdr worker is ready.\n' > "$HOME_DIR/data/$WORKER_ID/brief.md"
@@ -368,6 +387,10 @@ wait_for "real OMP worker blocked state" agent_is "$WORKER_TARGET" omp blocked
 wait_for "watcher blocked escalation" file_has "$HOME_DIR/state/.wake-queue" "herdr: agent blocked - waiting on human"
 file_has "$HOME_DIR/state/.wake-queue" "$WORKER_TARGET" \
   || fail "blocked escalation did not identify the exact OMP worker target"
+fm_env "$ROOT/bin/fm-wake-drain.sh" >/dev/null \
+  || fail "blocked OMP Herdr escalation queue did not drain before the next guarded send"
+[ ! -s "$HOME_DIR/state/.wake-queue" ] \
+  || fail "blocked OMP Herdr escalation queue retained a notification after drain"
 lab pane send-keys "$(pane_id "$WORKER_TARGET")" enter >/dev/null \
   || fail "could not answer the real OMP ask dialog"
 wait_for "question-induced worker turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
@@ -482,6 +505,7 @@ SECONDMATE_TARGET=$(sed -n 's/^window=//p' "$SECONDMATE_META")
 assert_grep 'harness=omp' "$SECONDMATE_META" "Herdr secondmate metadata lost exact OMP identity"
 assert_grep 'kind=secondmate' "$SECONDMATE_META" "Herdr secondmate metadata lost its role"
 wait_for "secondmate primary integration" file_nonempty "$SECOND_HOME/state/.omp-primary-extension-loaded"
+wait_for_fresh_watcher "secondmate fresh watcher beacon" "$SECOND_HOME/state"
 wait_for "exact idle secondmate identity" agent_is "$SECONDMATE_TARGET" omp 'idle done'
 send_task "$SECONDMATE_ID" 'Return exactly "Herdr secondmate routed reply received." through the correlated parent status path.' \
   || fail "marked secondmate request was not submitted"
