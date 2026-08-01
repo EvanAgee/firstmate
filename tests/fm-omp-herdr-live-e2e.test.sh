@@ -146,6 +146,7 @@ case "\$parent_exe:\$parent_args" in
       "1:agent"|"1:--help"|"2:agent --help"|"3:--session \$session --help") native_probe=1 ;;
       3:agent\ get\ *) native_probe_pane=\$3 ;;
       5:--session\ "\$session"\ agent\ get\ *) native_probe_pane=\$5 ;;
+      7:pane\ read\ *\ --source\ recent-unwrapped\ --lines\ *) native_probe_pane=\$3 ;;
     esac
     case "\$native_probe_pane" in
       ''|*[!A-Za-z0-9._:@%+-]*) ;;

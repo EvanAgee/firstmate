@@ -155,6 +155,9 @@ case "$cmd $sub" in
   "status --json")
     printf '%s\n' '{"client":{"version":"0.7.5","protocol":17},"server":{"running":true}}'
     ;;
+  "session list")
+    printf '%s\n' '{"sessions":[{"name":"fmtest","running":true,"socket_path":"/tmp/fmtest.sock"}]}'
+    ;;
   "workspace list")
     printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"2ndmate-%s"}]}}\n' "$FM_TEST_TASK_ID"
     ;;
