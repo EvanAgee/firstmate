@@ -354,7 +354,8 @@ Observed guarantee: one exact home-local, journal-correlated, one-tab and one-pa
 ### OMP lifecycle
 
 The complete Herdr role matrix reran on 2026-08-01 against OMP 17.1.8 and Herdr 0.7.5 protocol 17 in one guarded non-default lab session.
-The fixture verifies the exact trailing `--session <name>` binding, admits only the read-only production `session list --json` inventory call after stripping that binding, rejects every other `session` subcommand and every `server` operation, and requires the helper's default-session tripwire to survive final teardown.
+The fixture verifies the exact trailing `--session <name>` binding, routes the two bare read-only production client reads (`session list --json` and `api schema --json`) through the named lab helper binding so the event fast-path resolves its socket and capability instead of silently degrading to polling, rejects every other `session` subcommand and every `server` operation, and requires the helper's default-session tripwire to survive final teardown.
+Any production Herdr command the fixture refuses is recorded in the wrapper's callers log and fails the matrix, so a refused call can no longer pass unnoticed as a poll-path fallback.
 
 ```sh
 omp --version
@@ -393,6 +394,7 @@ The worker launch assertion observed the exact production call `session list --j
 The deterministic adapter suite rejects duplicate matching running session entries before trusting the launcher pane, while preserving the existing missing, malformed, mismatched-socket, symlink-parent, and exact-parent cases.
 The role-matrix run emitted queued-wake notices while the isolated evidence homes were being exercised, but it emitted no watcher-down warning, `verdict=unknown`, cleanup ambiguity, missing role, or helper-tripwire failure.
 Native OMP Herdr probes remain intentionally quarantined by this fixture, so this record covers real OMP/Herdr Firstmate backend routing and lifecycle behavior rather than unwrapped native probe behavior.
+The recorded run above predates the callers-log assertion and the two admitted bare client reads; that run reached its blocked escalation through the polling backstop, so the event fast-path needs a rerun of this command to be recorded as observed.
 The corrected-head tmux companion run on 2026-08-01 used the guarded primary, worker/scout, and secondmate live owners and returned four green results, while its fixture processes emitted known task-copy worktree-tangle and shared-supervisor watcher notices that are not evidence about the helper-isolated Herdr matrix.
 No upstream CI checks were run for draft PR https://github.com/kunchenguid/firstmate/pull/1376.
 

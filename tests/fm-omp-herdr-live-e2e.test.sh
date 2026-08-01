@@ -162,6 +162,9 @@ if [ "\$#" -eq 2 ] && [ "\$1" = status ] && [ "\$2" = --json ] \
   && [ "\${HERDR_SESSION:-}" = "\$session" ]; then
   set -- "\$@" --session "\$session"
 fi
+case "\$#:\$*" in
+  "3:session list --json"|"3:api schema --json") set -- "\$@" --session "\$session" ;;
+esac
 printf -v rendered '%q ' "\$@"
 printf '%s\n' "\$rendered" >> "\$log"
 argc=\$#
@@ -542,6 +545,10 @@ if [ -s "$WRAPPER_LOG.native-omp-probes" ]; then
   grep -Ev "^(agent |--help |agent --help |agent get [A-Za-z0-9._:@%+-]+ |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
     "$WRAPPER_LOG.native-omp-probes" >/dev/null \
     && fail "an unexpected native OMP Herdr probe escaped quarantine"
+fi
+if [ -s "$WRAPPER_LOG.callers" ]; then
+  cat "$WRAPPER_LOG.callers" >&2
+  fail "the fixture refused a production Herdr command instead of exercising it"
 fi
 awk -v session="$SESSION" '$(NF - 1) != "--session" || $NF != session { bad = 1 } END { exit bad }' "$WRAPPER_LOG" \
   || fail "a production Herdr command escaped the exact lab session"
