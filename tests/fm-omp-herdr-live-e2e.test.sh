@@ -283,6 +283,34 @@ session_has_text_after() { # <file> <offset> <text>
   tail -c "+$start" "$file" 2>/dev/null | grep -F -- "$text" >/dev/null 2>&1
 }
 
+# An answerable single-choice question is an assistant ask tool call that has no
+# tool result yet, so the agent is genuinely waiting on the operator.
+session_has_open_ask_after() { # <file> <offset>
+  local file=$1 offset=$2 start
+  start=$((offset + 1))
+  tail -c "+$start" "$file" 2>/dev/null \
+    | jq -se '
+        [.[] | select(.type == "message" and .message.role == "assistant")
+          | .message.content[]? | select(.type == "toolCall" and .name == "ask") | .id] as $asks
+        | [.[] | select(.type == "message" and .message.role == "toolResult")
+          | .message.toolCallId] as $answered
+        | any($asks[]; . as $id | $answered | index($id) == null)' \
+      >/dev/null 2>&1
+}
+
+# A routed choice arrives either as an ordinary user message or as the answer
+# recorded against the receiving agent's own open ask tool call.
+session_has_exact_choice_after() { # <file> <offset> <choice>
+  local file=$1 offset=$2 choice=$3 start
+  start=$((offset + 1))
+  tail -c "+$start" "$file" 2>/dev/null \
+    | jq -se --arg choice "$choice" '
+        any(.[] | select(.type == "message") | .message;
+          (.role == "user" and .attribution == "user" and (.content[0].text // "") == $choice)
+          or (.role == "toolResult" and any(.content[]?; (.text // "") == $choice)))' \
+      >/dev/null 2>&1
+}
+
 wait_for() { # <description> <command...>
   local description=$1 i=0
   shift
@@ -318,10 +346,47 @@ primary_wake_arrived() { # <transcript-offset> <wake-text> [signal-file]
   [ -n "${3:-}" ] && file_has "$HOME_DIR/state/.wake-queue" "$3"
 }
 
-await_primary_wake_and_drain() { # <description> <transcript-offset> <wake-text> [signal-file]
+# The primary owns its wake queue. A fixture-side drain that lands before the
+# primary reads the injected wake lets the primary's own later drain consume the
+# next escalation inside that earlier turn, so no second wake is ever injected.
+# Bind every injected wake to the primary's exact completed bin/fm-wake-drain.sh
+# tool call recorded after that wake's own transcript event.
+primary_drained_wake_after() { # <transcript-offset> <wake-text>
+  local offset=$1 text=$2 start
+  start=$((offset + 1))
+  tail -c "+$start" "$PRIMARY_SESSION" 2>/dev/null \
+    | jq -se --arg text "$text" '
+        (to_entries | map(select(.value | tostring | contains($text))) | first | .key) as $wake
+        | if $wake == null then false
+          else
+            .[($wake + 1):] as $rest
+            | [$rest[] | select(.type == "message" and .message.role == "assistant")
+                | .message.content[]?
+                | select(.type == "toolCall" and .name == "bash"
+                    and ((.arguments.command // "") | contains("bin/fm-wake-drain.sh")))
+                | .id] as $calls
+            | [$rest[] | select(.type == "message" and .message.role == "toolResult"
+                and ((.message.isError // false) | not))
+                | .message.toolCallId] as $done
+            | any($calls[]; . as $id | $done | index($id) != null)
+          end' \
+      >/dev/null 2>&1
+}
+
+await_primary_wake_drain() { # <description> <transcript-offset> <wake-text> [signal-file]
   local description=$1 offset=$2 wake_text=$3 signal_file=${4:-}
   wait_for "$description" primary_wake_arrived "$offset" "$wake_text" "$signal_file"
+  wait_for "primary wake drain for $description" primary_drained_wake_after "$offset" "$wake_text"
+}
+
+await_primary_wake_and_drain() { # <description> <transcript-offset> <wake-text> [signal-file]
+  await_primary_wake_drain "$@"
+  wait_for "exact native primary idle after $1" agent_is "$PRIMARY_TARGET" omp 'idle done'
   drain_primary_wakes
+}
+
+primary_ask_open_after() { # <transcript-offset>
+  agent_is "$PRIMARY_TARGET" omp blocked && session_has_open_ask_after "$PRIMARY_SESSION" "$1"
 }
 
 send_task() {
@@ -424,13 +489,25 @@ wait_for "real OMP worker blocked state" agent_is "$WORKER_TARGET" omp blocked
 wait_for "watcher blocked escalation" file_has "$HOME_DIR/state/.wake-queue" "herdr: agent blocked - waiting on human"
 file_has "$HOME_DIR/state/.wake-queue" "$WORKER_TARGET" \
   || fail "blocked escalation did not identify the exact OMP worker target"
-await_primary_wake_and_drain "primary actionable blocked follow-up" "$blocked_wake_offset" \
+# The primary answers this escalation with its own question, so it stays blocked
+# until the operator decides; require exact native idle after that decision, not
+# before it.
+await_primary_wake_drain "primary actionable blocked follow-up" "$blocked_wake_offset" \
   "FIRSTMATE WATCHER WAKE: stale: $WORKER_TARGET (herdr: agent blocked - waiting on human"
 question_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
-lab pane send-keys "$(pane_id "$WORKER_TARGET")" enter >/dev/null \
-  || fail "could not answer the real OMP ask dialog"
+# Firstmate owns the answer route: the captain escalates the worker's
+# single-choice question, the operator takes the default option on the exact
+# primary pane, and the primary forwards that exact choice to the worker.
+# Answering the worker pane directly would prove nothing about that route.
+wait_for "primary escalation question for the blocked worker" primary_ask_open_after "$blocked_wake_offset"
+worker_answer_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
+lab pane send-keys "$(pane_id "$PRIMARY_TARGET")" enter >/dev/null \
+  || fail "could not select the default captain option on the exact primary pane"
+wait_for "exact routed captain choice on the worker" session_has_exact_choice_after \
+  "$WORKER_SESSION" "$worker_answer_offset" Operators
 wait_for "question-induced worker turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
 wait_for "question-induced worker return to idle" agent_is "$WORKER_TARGET" omp 'idle done'
+wait_for "exact native primary idle after the captain decision" agent_is "$PRIMARY_TARGET" omp 'idle done'
 await_primary_wake_and_drain "question turn-end delivery" "$question_wake_offset" \
   "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$WORKER_ID.turn-ended" \
   "$HOME_DIR/state/$WORKER_ID.turn-ended"
