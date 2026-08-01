@@ -86,11 +86,11 @@ set_mtime() {  # <epoch> <file>
 # Signature a primed .seen-* marker must hold so the per-poll signal scan does not
 # fire on a pre-existing status (mirrors fm-watch.sh's stat_sig exactly).
 seen_sig() {
-  if [ "$(uname)" = Darwin ]; then stat -f '%z:%i:%Fm' "$1" 2>/dev/null; else stat -c '%s:%i:%.9Y' "$1" 2>/dev/null; fi
+  if [ "$(uname)" = Darwin ]; then stat -f '%i:%z:%Fm' "$1" 2>/dev/null; else stat -c '%i:%s:%.9Y' "$1" 2>/dev/null; fi
 }
 
 # Prime <file>'s .seen-* suppressor to its CURRENT signature, so the per-poll
-# no-verb signal scan (which watches every *.turn-ended for a size:inode:mtime change)
+# no-verb signal scan (which watches every *.turn-ended for an inode:size:mtime change)
 # treats a just-created or just-backdated turn-ended marker as already seen.
 # Busy-turn-age fixtures create/backdate turn-ended directly (there is no real
 # harness touching it), so without this the marker's own first sighting would

@@ -105,10 +105,10 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # (in-place re-touch keeps the inode) so both same-second forms differ.
 if [ "$(uname)" = Darwin ]; then
   stat_mtime() { stat -f %m "$1" 2>/dev/null; }             # epoch seconds of mtime
-  stat_sig()   { stat -f '%z:%i:%Fm' "$1" 2>/dev/null; }    # size:inode:mtime signature
+  stat_sig()   { stat -f '%i:%z:%Fm' "$1" 2>/dev/null; }    # inode:size:mtime signature
 else
   stat_mtime() { stat -c %Y "$1" 2>/dev/null; }
-  stat_sig()   { stat -c '%s:%i:%.9Y' "$1" 2>/dev/null; }
+  stat_sig()   { stat -c '%i:%s:%.9Y' "$1" 2>/dev/null; }
 fi
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
@@ -444,7 +444,7 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 }
 
 # Layer 2 + 3 signal scan: status files and turn-end markers. Each file is
-# compared against a persisted size:inode:mtime signature (.seen-*) rather than
+# compared against a persisted inode:size:mtime signature (.seen-*) rather than
 # mtime-vs-a-startup-touch, so signals that land while no watcher is running
 # are caught by the next one, and same-second writes cannot slip through a
 # strict -nt comparison. Pure read: prints one "<seen-file>\t<sig>\t<file>"
