@@ -97,7 +97,7 @@ The runs retained exact `harness=omp`, forwarded the selected model and thinking
 Normal `/exit` stopped each OMP process without killing the private tmux server, exact session resume restored prior context, and cleanup removed every generated extension, session, task temp root, worktree, and socket-owned endpoint.
 The same guarded primary, worker/scout, and secondmate live owners reran at the corrected head on 2026-08-01 and returned four green results, while their fixture processes emitted known task-copy worktree-tangle and shared-supervisor watcher notices.
 
-The full OMP contract and both live backend matrices then passed together in one runner invocation on 2026-07-31:
+The full OMP contract and both live backend matrices passed together in one runner invocation on 2026-08-01 at head `0970f85794e1ea1ae0467e94594df1d9a8c471d5`:
 
 ```sh
 FM_OMP_PRIMARY_LIVE_E2E=1 \
@@ -126,19 +126,28 @@ bin/fm-test-run.sh \
   tests/fm-omp-herdr-exit-live-e2e.test.sh
 ```
 
+Bounded output, from the run's first marker through the two Herdr live owners and the final summary:
+
 ```text
-FM_TEST_SUMMARY total=17 failed=0 skipped_gate=0
-FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=3 failed=0
-FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=4 failed=0
-FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 failed=0
-FM_TEST_SUMMARY_FAMILY family=secondmate count=2 failed=0
-FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=2 failed=0
-FM_TEST_SUMMARY_FAMILY family=snapshot-bearings count=1 failed=0
-FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 failed=0
+FM_TEST_BEGIN 2026-08-01T03:05:45Z tests/fm-omp-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+...
+FM_TEST_BEGIN 2026-08-01T03:13:14Z tests/fm-omp-herdr-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
+ok - real Herdr OMP role matrix: primary, worker/scout idle and busy steering, blocked escalation, secondmate, normal exits, recovery, duplicate refusal, and guarded teardown
+FM_TEST_END 2026-08-01T03:16:41Z tests/fm-omp-herdr-live-e2e.test.sh exit=0 duration_ms=206872 gate_skip=false
+FM_TEST_BEGIN 2026-08-01T03:16:41Z tests/fm-omp-herdr-exit-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
+ok - real Herdr OMP /exit: exact native identity, post-offset normal session_exit, pane absence, and guarded tripwire teardown
+FM_TEST_END 2026-08-01T03:16:57Z tests/fm-omp-herdr-exit-live-e2e.test.sh exit=0 duration_ms=15423 gate_skip=false
+FM_TEST_SUMMARY total=17 failed=0 skipped_gate=0 duration_ms=671548
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=3 duration_ms=93963 failed=0
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=4 duration_ms=378230 failed=0
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 duration_ms=2211 failed=0
+FM_TEST_SUMMARY_FAMILY family=secondmate count=2 duration_ms=29820 failed=0
+FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=2 duration_ms=44723 failed=0
+FM_TEST_SUMMARY_FAMILY family=snapshot-bearings count=1 duration_ms=22195 failed=0
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=99813 failed=0
 ```
 
-That combined summary is the 2026-07-31 snapshot, not current-head evidence: the OMP harness, process, primary-scope, watcher-core, tmux, and Herdr fixture corrections that followed changed five of the listed files.
-The current-head live evidence is the corrected 2026-08-01 tmux rerun noted above and the corrected Herdr role-matrix rerun recorded in the Herdr OMP lifecycle section below; the deterministic suites in this list have no recorded at-head rerun.
+Every listed script ran at that head with no gate skip; the live opt-in scripts emitted known queued-wake and shared-supervisor watcher notices without a failure.
 
 Backend applicability was reviewed across every spawn adapter.
 Tmux needs the exact `pi-launcher`, `pi-signed`, `pi`, and `Pi` process identities for recovery-grade liveness.
