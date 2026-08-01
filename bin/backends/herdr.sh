@@ -2849,6 +2849,30 @@ fm_backend_herdr_omp_session_has_message_after() {  # <session-file> <byte-offse
       ' >/dev/null 2>&1
 }
 
+# An OMP agent reported `blocked` is parked on an open ask, not generating, so
+# the text it receives is recorded as the structured answer to that ask
+# (a toolResult with toolName=ask whose details.selectedOptions is exactly the
+# one option sent), never as a steering user record. Accept that shape, and
+# still accept the steering record for a free-text ask that OMP appends as an
+# ordinary steering message. Option display text is never matched.
+fm_backend_herdr_omp_session_has_ask_answer_after() {  # <session-file> <byte-offset> <exact-text>
+  local session_file=$1 offset=$2 text=$3 size start
+  [ -f "$session_file" ] && [ ! -L "$session_file" ] || return 1
+  size=$(wc -c < "$session_file" 2>/dev/null) || return 1
+  case "$size" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$size" -gt "$offset" ] || return 1
+  start=$((offset + 1))
+  tail -c "+$start" "$session_file" 2>/dev/null \
+    | jq -se --arg text "$text" '
+        any(.[] | select(.type == "message") | .message;
+          (.role == "toolResult" and .toolName == "ask"
+            and (.details.selectedOptions // []) == [$text])
+          or (.role == "user" and .steering == true
+            and any(.content[]?; .type == "text" and .text == $text))
+        )
+      ' >/dev/null 2>&1
+}
+
 fm_backend_herdr_omp_session_has_normal_exit_after() {  # <session-file> <byte-offset>
   local session_file=$1 offset=$2 size start
   [ -f "$session_file" ] && [ ! -L "$session_file" ] || return 1
@@ -2867,7 +2891,7 @@ fm_backend_herdr_omp_session_has_normal_exit_after() {  # <session-file> <byte-o
       ' >/dev/null 2>&1
 }
 
-fm_backend_herdr_wait_omp_session_event() {  # <exit|message> <session-file> <byte-offset> <budget-seconds> <polls> [exact-text]
+fm_backend_herdr_wait_omp_session_event() {  # <exit|message|answer> <session-file> <byte-offset> <budget-seconds> <polls> [exact-text]
   local kind=$1 session_file=$2 offset=$3 budget=$4 polls=${5:-1} text=${6:-} interval i
   case "$polls" in ''|*[!0-9]*|0) polls=1 ;; esac
   interval=$(awk -v b="$budget" -v p="$polls" 'BEGIN { d = p - 1; if (d < 1) d = 1; v = b / d; if (v < 0) v = 0; printf "%.4f", v }' 2>/dev/null)
@@ -2879,6 +2903,7 @@ fm_backend_herdr_wait_omp_session_event() {  # <exit|message> <session-file> <by
     case "$kind" in
       exit) fm_backend_herdr_omp_session_has_normal_exit_after "$session_file" "$offset" && return 0 ;;
       message) fm_backend_herdr_omp_session_has_message_after "$session_file" "$offset" "$text" && return 0 ;;
+      answer) fm_backend_herdr_omp_session_has_ask_answer_after "$session_file" "$offset" "$text" && return 0 ;;
       *) return 1 ;;
     esac
   done
@@ -2889,17 +2914,13 @@ fm_backend_herdr_wait_omp_session_exit() {  # <session-file> <byte-offset> <budg
   fm_backend_herdr_wait_omp_session_event exit "$1" "$2" "$3" "${4:-1}"
 }
 
-fm_backend_herdr_wait_omp_session_message() {  # <session-file> <byte-offset> <exact-text> <budget-seconds> <polls>
-  fm_backend_herdr_wait_omp_session_event message "$1" "$2" "$4" "${5:-1}" "$3"
-}
-
 # Echoes empty|pending|unknown|send-failed, a subset of the proof-carrying
 # submit vocabulary. Empty means confirmed submitted for every backend; how
 # each backend confirms it is an internal decision, and herdr's is no longer
 # literally "the composer read empty".
 fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness] [canonical-omp-bun]
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${7:-} bun=${8:-}
-  local i=0 verdict baseline confirm_sleep omp_confirm_sleep omp_session='' omp_offset=''
+  local i=0 verdict baseline confirm_sleep omp_confirm_sleep omp_session='' omp_offset='' omp_status='' omp_event
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   if [ "$harness" = omp ]; then
     fm_backend_herdr_omp_submit_snapshot "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
@@ -2907,6 +2928,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
     baseline=$(fm_backend_herdr_classify_submit_agent_status "$FM_BACKEND_HERDR_OMP_SUBMIT_STATUS")
     omp_session=$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION
     omp_offset=$FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET
+    omp_status=$FM_BACKEND_HERDR_OMP_SUBMIT_STATUS
   fi
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
@@ -2934,8 +2956,15 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
     fi
     if [ "$harness" = omp ] && [ "$baseline" = busy ]; then
       omp_confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP")
-      if fm_backend_herdr_wait_omp_session_message "$omp_session" "$omp_offset" "$text" \
-        "$omp_confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS"; then
+      # A blocked agent records the delivery as its own ask answer, so the
+      # steering predicate alone would report a landed send unconfirmed.
+      if [ "$omp_status" = blocked ]; then
+        omp_event=answer
+      else
+        omp_event=message
+      fi
+      if fm_backend_herdr_wait_omp_session_event "$omp_event" "$omp_session" "$omp_offset" \
+        "$omp_confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS" "$text"; then
         printf 'empty'
       else
         printf 'unknown'
