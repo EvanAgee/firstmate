@@ -146,7 +146,7 @@ case "\$parent_exe:\$parent_args" in
     native_probe=0
     native_probe_pane=
     case "\$#:\$*" in
-      "1:agent"|"1:--help"|"2:agent --help"|"3:--session \$session --help") native_probe=1 ;;
+      "1:agent"|"1:--help"|"2:agent --help"|"2:agent list"|"3:--session \$session --help") native_probe=1 ;;
       3:agent\ get\ *) native_probe_pane=\$3 ;;
       5:--session\ "\$session"\ agent\ get\ *) native_probe_pane=\$5 ;;
       7:pane\ read\ *\ --source\ recent-unwrapped\ --lines\ *) native_probe_pane=\$3 ;;
@@ -222,6 +222,13 @@ fm_env() {
     "$@"
 }
 
+drain_primary_wakes() {
+  fm_env "$ROOT/bin/fm-wake-drain.sh" >/dev/null \
+    || fail "primary OMP Herdr evidence queue did not drain"
+  [ ! -s "$HOME_DIR/state/.wake-queue" ] \
+    || fail "primary OMP Herdr evidence queue retained a notification after drain"
+}
+
 pane_id() { printf '%s' "${1#*:}"; }
 
 agent_json() {
@@ -264,6 +271,12 @@ session_has_exact_steer_after() { # <file> <offset> <text>
       >/dev/null 2>&1
 }
 
+session_has_text_after() { # <file> <offset> <text>
+  local file=$1 offset=$2 text=$3 start
+  start=$((offset + 1))
+  tail -c "+$start" "$file" 2>/dev/null | grep -F -- "$text" >/dev/null 2>&1
+}
+
 wait_for() { # <description> <command...>
   local description=$1 i=0
   shift
@@ -294,7 +307,20 @@ file_exists() { [ -f "$1" ]; }
 file_nonempty() { [ -s "$1" ]; }
 file_has() { grep -F -- "$2" "$1" >/dev/null 2>&1; }
 
+primary_wake_arrived() { # <transcript-offset> <wake-text> [signal-file]
+  session_has_text_after "$PRIMARY_SESSION" "$1" "$2" && return 0
+  [ -n "${3:-}" ] && file_has "$HOME_DIR/state/.wake-queue" "$3"
+}
+
+await_primary_wake_and_drain() { # <description> <transcript-offset> <wake-text> [signal-file]
+  local description=$1 offset=$2 wake_text=$3 signal_file=${4:-}
+  wait_for "$description" primary_wake_arrived "$offset" "$wake_text" "$signal_file"
+  drain_primary_wakes
+}
+
 send_task() {
+  [ ! -s "$HOME_DIR/state/.wake-queue" ] \
+    || fail "guarded OMP Herdr send began with an undrained primary notification: $*"
   fm_env FM_SEND_SLEEP=0.2 FM_SEND_SETTLE=0 "$ROOT/bin/fm-send.sh" "$@" >/dev/null
 }
 
@@ -357,6 +383,7 @@ git -C "$PROJECT" remote add origin "$LAB/project-origin.git"
 git -C "$PROJECT" push -qu origin main
 
 worker_log_start=$(wc -l < "$WRAPPER_LOG" | tr -d '[:space:]')
+worker_start_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 spawn_task "$WORKER_ID" >/dev/null || fail "production OMP Herdr worker spawn failed"
 worker_log_after=$(tail -n "+$((worker_log_start + 1))" "$WRAPPER_LOG")
 printf '%s\n' "$worker_log_after" | grep -Fx -- "session list --json --session $SESSION " >/dev/null \
@@ -379,34 +406,45 @@ wait_for "exact idle worker identity" agent_is "$WORKER_TARGET" omp 'idle done'
 WORKER_SESSION=$(session_file_for "$WORKER_TARGET")
 case "$WORKER_SESSION" in "/tmp/fm-$WORKER_ID/omp-sessions/"*.jsonl) ;; *) fail "worker Herdr identity did not bind its task-owned session" ;; esac
 file_has "$WORKER_SESSION" 'Herdr worker is ready.' || fail "worker launch brief did not complete"
+await_primary_wake_and_drain "worker startup turn-end delivery" "$worker_start_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$WORKER_ID.turn-ended" \
+  "$HOME_DIR/state/$WORKER_ID.turn-ended"
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
 blocked_prompt="Before continuing, use the ask tool for one single-choice question: 'Which audience should the report focus on?' Offer exactly two options, 'Operators' and 'Maintainers', and wait for my selection."
+blocked_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 send_task "$WORKER_ID" "$blocked_prompt" || fail "worker question-induced blocked-state setup was not submitted"
 wait_for "real OMP worker blocked state" agent_is "$WORKER_TARGET" omp blocked
 wait_for "watcher blocked escalation" file_has "$HOME_DIR/state/.wake-queue" "herdr: agent blocked - waiting on human"
 file_has "$HOME_DIR/state/.wake-queue" "$WORKER_TARGET" \
   || fail "blocked escalation did not identify the exact OMP worker target"
-fm_env "$ROOT/bin/fm-wake-drain.sh" >/dev/null \
-  || fail "blocked OMP Herdr escalation queue did not drain before the next guarded send"
-[ ! -s "$HOME_DIR/state/.wake-queue" ] \
-  || fail "blocked OMP Herdr escalation queue retained a notification after drain"
+await_primary_wake_and_drain "primary actionable blocked follow-up" "$blocked_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: stale: $WORKER_TARGET (herdr: agent blocked - waiting on human"
+question_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 lab pane send-keys "$(pane_id "$WORKER_TARGET")" enter >/dev/null \
   || fail "could not answer the real OMP ask dialog"
 wait_for "question-induced worker turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
 wait_for "question-induced worker return to idle" agent_is "$WORKER_TARGET" omp 'idle done'
+await_primary_wake_and_drain "question turn-end delivery" "$question_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$WORKER_ID.turn-ended" \
+  "$HOME_DIR/state/$WORKER_ID.turn-ended"
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
 worker_idle_text='Reply exactly: The idle worker message was processed.'
 worker_idle_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
+worker_idle_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 send_task "$WORKER_ID" "$worker_idle_text" || fail "worker idle steering was not submitted"
 wait_for "worker exact native idle user event" session_has_exact_user_after \
   "$WORKER_SESSION" "$worker_idle_offset" "$worker_idle_text" false
 wait_for "worker idle turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
 wait_for "worker idle response" file_has "$WORKER_SESSION" 'The idle worker message was processed.'
 wait_for "worker idle steering return" agent_is "$WORKER_TARGET" omp 'idle done'
+await_primary_wake_and_drain "worker idle turn-end delivery" "$worker_idle_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$WORKER_ID.turn-ended" \
+  "$HOME_DIR/state/$WORKER_ID.turn-ended"
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
+worker_busy_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 send_task "$WORKER_ID" 'Run this exact bash command: sleep 10. Then reply exactly: The worker completed its timed command.' \
   || fail "worker busy-turn setup was not submitted"
 wait_for "native working worker state" agent_is "$WORKER_TARGET" omp working
@@ -418,6 +456,9 @@ wait_for "worker exact native steering event" session_has_exact_steer_after \
 wait_for "worker busy turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
 wait_for "worker busy response" file_has "$WORKER_SESSION" 'The busy worker message was processed.'
 wait_for "worker return to idle" agent_is "$WORKER_TARGET" omp 'idle done'
+await_primary_wake_and_drain "worker busy turn-end delivery" "$worker_busy_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$WORKER_ID.turn-ended" \
+  "$HOME_DIR/state/$WORKER_ID.turn-ended"
 
 worker_exit_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
 send_task "$WORKER_ID" /exit || fail "production worker /exit was not event-confirmed"
@@ -431,6 +472,7 @@ fm_env "$ROOT/bin/fm-teardown.sh" "$WORKER_ID" >/dev/null \
   || fail "worker cleanup left generated OMP artifacts behind"
 WORKER_WT=
 
+scout_start_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 spawn_task "$SCOUT_ID" --scout >/dev/null || fail "production OMP Herdr scout spawn failed"
 SCOUT_META="$HOME_DIR/state/$SCOUT_ID.meta"
 SCOUT_TARGET=$(sed -n 's/^window=//p' "$SCOUT_META")
@@ -445,17 +487,25 @@ wait_for "scout first turn" file_exists "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 wait_for "exact idle scout identity" agent_is "$SCOUT_TARGET" omp 'idle done'
 SCOUT_SESSION=$(session_file_for "$SCOUT_TARGET")
 file_has "$SCOUT_SESSION" 'Herdr scout is ready.' || fail "scout launch brief did not complete"
+await_primary_wake_and_drain "scout startup turn-end delivery" "$scout_start_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$SCOUT_ID.turn-ended" \
+  "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 scout_idle_text='Reply exactly: The idle scout message was processed.'
 scout_idle_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
+scout_idle_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 send_task "$SCOUT_ID" "$scout_idle_text" || fail "scout idle steering was not submitted"
 wait_for "scout exact native idle user event" session_has_exact_user_after \
   "$SCOUT_SESSION" "$scout_idle_offset" "$scout_idle_text" false
 wait_for "scout idle turn completion" file_exists "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 wait_for "scout idle response" file_has "$SCOUT_SESSION" 'The idle scout message was processed.'
 wait_for "scout idle steering return" agent_is "$SCOUT_TARGET" omp 'idle done'
+await_primary_wake_and_drain "scout idle turn-end delivery" "$scout_idle_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$SCOUT_ID.turn-ended" \
+  "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 scout_busy_prompt='Run this exact bash command: sleep 10. Then reply exactly: The scout completed its timed command.'
+scout_busy_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 send_task "$SCOUT_ID" "$scout_busy_prompt" || fail "scout busy-turn setup was not submitted"
 wait_for "native working scout state" agent_is "$SCOUT_TARGET" omp working
 scout_steer_text='After the tool finishes, reply exactly: The busy scout message was processed.'
@@ -466,6 +516,9 @@ wait_for "scout exact native steering event" session_has_exact_steer_after \
 wait_for "scout busy turn completion" file_exists "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 wait_for "scout busy response" file_has "$SCOUT_SESSION" 'The busy scout message was processed.'
 wait_for "scout busy steering return" agent_is "$SCOUT_TARGET" omp 'idle done'
+await_primary_wake_and_drain "scout busy turn-end delivery" "$scout_busy_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$SCOUT_ID.turn-ended" \
+  "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 scout_exit_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
 send_task "$SCOUT_ID" /exit || fail "production scout /exit was not event-confirmed"
 wait_for "exact scout pane absence" pane_missing "$SCOUT_TARGET"
@@ -507,10 +560,14 @@ assert_grep 'kind=secondmate' "$SECONDMATE_META" "Herdr secondmate metadata lost
 wait_for "secondmate primary integration" file_nonempty "$SECOND_HOME/state/.omp-primary-extension-loaded"
 wait_for_fresh_watcher "secondmate fresh watcher beacon" "$SECOND_HOME/state"
 wait_for "exact idle secondmate identity" agent_is "$SECONDMATE_TARGET" omp 'idle done'
+secondmate_reply_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 send_task "$SECONDMATE_ID" 'Return exactly "Herdr secondmate routed reply received." through the correlated parent status path.' \
   || fail "marked secondmate request was not submitted"
 wait_for "correlated secondmate reply" file_has "$HOME_DIR/state/$SECONDMATE_ID.status" 'Herdr secondmate routed reply received.'
 wait_for "secondmate return to idle" agent_is "$SECONDMATE_TARGET" omp 'idle done'
+await_primary_wake_and_drain "secondmate routed-reply delivery" "$secondmate_reply_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$SECONDMATE_ID.status" \
+  "$HOME_DIR/state/$SECONDMATE_ID.status"
 SECONDMATE_SESSION=$(cat "$SECOND_HOME/state/.omp-session" 2>/dev/null || true)
 case "$SECONDMATE_SESSION" in "$SECOND_HOME/state/omp-sessions/"*.jsonl) ;; *) fail "secondmate did not publish an exact durable OMP session" ;; esac
 send_task "$SECONDMATE_TARGET" /exit || fail "production secondmate /exit was not event-confirmed"
@@ -562,7 +619,7 @@ env PATH="$WRAPPER_BIN:$BASE_PATH" HERDR_SESSION="$SESSION" FM_BACKEND=herdr \
 # its default-session tripwire.
 [ -s "$WRAPPER_LOG" ] || fail "production role matrix issued no Herdr commands through the wrapper"
 if [ -s "$WRAPPER_LOG.native-omp-probes" ]; then
-  grep -Ev "^(agent |--help |agent --help |agent get [A-Za-z0-9._:@%+-]+ |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
+  grep -Ev "^(agent |--help |agent --help |agent list |agent get [A-Za-z0-9._:@%+-]+ |pane read [A-Za-z0-9._:@%+-]+ --source recent-unwrapped --lines [1-9][0-9]* |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
     "$WRAPPER_LOG.native-omp-probes" >/dev/null \
     && fail "an unexpected native OMP Herdr probe escaped quarantine"
 fi

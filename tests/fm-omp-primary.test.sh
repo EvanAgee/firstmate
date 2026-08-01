@@ -336,6 +336,7 @@ count=$(cat "$state/watch-count" 2>/dev/null || printf 0)
 count=$((count + 1))
 printf '%s\n' "$count" > "$state/watch-count"
 [ ! -e "$state/watch-trigger-consumed" ] || : > "$state/watch-successor-ready"
+while [ ! -e "$state/watch-ready" ]; do sleep 0.02; done
 printf 'watcher: started pid=%s\n' "$$"
 trap 'exit 0' TERM INT
 if [ ! -e "$state/watch-trigger-consumed" ]; then
@@ -474,7 +475,15 @@ if (foregroundArm?.block !== true || !foregroundArm.reason.includes("watcher arm
   throw new Error("OMP foreground watcher arm was not blocked");
 }
 
-const toolResult = await tools.get("fm_watch_arm_omp").execute();
+let toolSettled = false;
+const toolPromise = tools.get("fm_watch_arm_omp").execute().then((result) => {
+  toolSettled = true;
+  return result;
+});
+await new Promise(resolve => setTimeout(resolve, 80));
+if (toolSettled) throw new Error("OMP watcher tool reported success before watcher readiness");
+writeFileSync(`${process.env.FM_STATE_OVERRIDE}/watch-ready`, "ready\n");
+const toolResult = await toolPromise;
 if (!toolResult.details.ok || !toolResult.content[0].text.includes("OMP extension")) {
   throw new Error(`OMP watcher tool did not route through the shared core: ${JSON.stringify(toolResult)}`);
 }

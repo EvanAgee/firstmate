@@ -268,7 +268,7 @@ export default function (omp: ExtensionAPI) {
   omp.registerCommand("fm-watch-arm-omp", {
     description: "Arm Firstmate watcher supervision through the OMP primary integration.",
     handler: async (_args, ctx) => {
-      const result = watch.arm();
+      const result = await watch.armAndWait();
       ctx.ui.notify(result.message, result.ok ? "info" : "warning");
     },
   });
@@ -280,7 +280,7 @@ export default function (omp: ExtensionAPI) {
     parameters: omp.zod.object({}),
     approval: "exec",
     async execute() {
-      const result = watch.arm();
+      const result = await watch.armAndWait();
       return {
         content: [{ type: "text", text: result.message }],
         details: result,

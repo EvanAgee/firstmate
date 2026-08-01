@@ -62,6 +62,7 @@ export type PrimaryWatchCoreOptions = {
 export type PrimaryWatchCore = {
   readonly runtime: "pi" | "omp";
   arm: () => ArmResult;
+  armAndWait: () => Promise<ArmResult>;
   markLoaded: () => void;
   sessionShutdown: () => void;
   sessionStart: () => void;
@@ -523,6 +524,20 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
     };
   }
 
+  async function armAndWait(): Promise<ArmResult> {
+    const owner = generation;
+    const result = startArm(owner);
+    if (!result.ok) return result;
+    const armChild = owner.child;
+    if (!armChild || await waitForReadiness(armChild)) return result;
+    return {
+      ok: false,
+      message:
+        `watcher: FAILED - ${runtimeLabel} extension could not verify a ready watcher within ${armReadyTimeoutMs}ms; ` +
+        repairOnlyHint,
+    };
+  }
+
   function sessionStart(): void {
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
@@ -539,6 +554,7 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
   return {
     runtime,
     arm: () => startArm(generation),
+    armAndWait,
     markLoaded,
     sessionShutdown,
     sessionStart,
