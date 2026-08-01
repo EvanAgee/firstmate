@@ -395,6 +395,40 @@ test_turn_ended_not_working_surfaced() {
   pass "a bare turn-end whose crew is not provably working is surfaced (the swallowed-finish fix)"
 }
 
+# A crew reports every finished turn through the SAME 0-byte marker path: the
+# harness removes and recreates state/<id>.turn-ended per turn. Two such turns can
+# land inside one epoch second, so the scan's signature must separate them. Under
+# the former size:whole-second signature both markers read "0:<same second>", the
+# already-advanced .seen-* swallowed the second turn-end, and the crew's real
+# finish was never notified.
+test_turn_ended_recreated_same_second_surfaced() {
+  local dir state fakebin out drain_out marker before after pid
+  dir=$(make_case turn-ended-same-second); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  marker="$state/task.turn-ended"
+  # First turn-end, already seen and absorbed by an earlier cycle; then the next
+  # turn's marker recreated inside the same epoch second (retry across a second
+  # boundary so the same-second condition under test always holds).
+  while :; do
+    : > "$marker"
+    prime_turnend_seen "$marker"
+    before=$(file_mtime "$marker")
+    rm -f "$marker"
+    : > "$marker"
+    after=$(file_mtime "$marker")
+    [ "$before" = "$after" ] && break
+  done
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "watcher did not surface a turn-end recreated within the same epoch second"
+  grep -F "signal: $marker" "$out" >/dev/null || fail "watcher did not print the same-second turn-end signal"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the same-second turn-end failed"
+  grep "$(printf '\tsignal\t')" "$drain_out" | grep -F "$marker" >/dev/null \
+    || fail "same-second turn-end was not queued"
+  pass "a turn-end marker recreated within the same epoch second is surfaced, not swallowed by .seen-*"
+}
+
 test_working_note_not_working_surfaced() {
   local dir state fakebin out drain_out status_file pid
   dir=$(make_case working-note-stopped); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1563,6 +1597,7 @@ test_signal_crew_provably_working_classifier
 test_provably_working_signal_absorbed
 test_turn_ended_provably_working_absorbed
 test_turn_ended_not_working_surfaced
+test_turn_ended_recreated_same_second_surfaced
 test_working_note_not_working_surfaced
 test_actionable_signal_surfaced
 test_terminal_stale_surfaced
