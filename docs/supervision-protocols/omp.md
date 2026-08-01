@@ -9,6 +9,7 @@ When this session owns supervision and away mode is not active:
    Never run `bin/fm-watch-arm.sh` through OMP's bash tool because the primary safety check denies that foreground shape and extension-owned cleanup would be bypassed.
 5. If the extension says no live session holds the lock, run `bin/fm-session-start.sh` to reclaim the session lock, then call `fm_watch_arm_omp` again.
 6. The extension starts `bin/fm-watch-arm.sh --restart`, keeps the child attached to the live OMP process, and owns every later successor launch.
+   The tool and the fallback command return only after that child reports readiness, so a `watcher: FAILED` readiness timeout is a real failure to handle under step 11 rather than a slow success.
 7. OMP `/new` and `/resume` events inject the session-start instruction exactly once for the new conversation, replace the prior extension generation, and restore the watcher without a foreground watcher command.
 8. After an actionable child close, the shared watcher core rechecks session-lock ownership and verifies one successor before it delivers the follow-up notification.
 9. Ordinary work, turn completion, and ordinary notification handling must not call `fm_watch_arm_omp` again because continuity is extension-owned.

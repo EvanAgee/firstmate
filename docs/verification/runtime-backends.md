@@ -95,7 +95,7 @@ ok - real isolated tmux OMP secondmate launch, idle health, marked replies, exit
 
 The runs retained exact `harness=omp`, forwarded the selected model and thinking level, delivered each initial instruction once, and used `/skill:<name>` for the real skill turn.
 Normal `/exit` stopped each OMP process without killing the private tmux server, exact session resume restored prior context, and cleanup removed every generated extension, session, task temp root, worktree, and socket-owned endpoint.
-The guarded primary, worker/scout, and secondmate owners reran at the final source head on 2026-08-01 and returned four green results.
+The guarded primary, worker/scout, and secondmate owners reran on 2026-08-01 at head `ce9ad11eb43c61ef920548370bb9ecd499aff8f9` and returned four green results.
 The Herdr role matrix required each expected turn-end or routed-reply notification to reach the durable queue or the primary follow-up transcript before the fixture drained it.
 
 The full OMP contract and both live backend matrices passed together in one clean-environment runner invocation on 2026-08-01 at head `ce9ad11eb43c61ef920548370bb9ecd499aff8f9`:
@@ -419,8 +419,8 @@ The worker launch assertion observed the exact production call `session list --j
 The deterministic adapter suite rejects duplicate matching running session entries before trusting the launcher pane, while preserving the existing missing, malformed, mismatched-socket, symlink-parent, and exact-parent cases.
 The role-matrix run emitted queued-wake notices while the isolated evidence homes were being exercised, but it emitted no watcher-down warning, `verdict=unknown`, cleanup ambiguity, missing role, or helper-tripwire failure.
 Native OMP Herdr probes remain intentionally quarantined by this fixture, so this record covers real OMP/Herdr Firstmate backend routing and lifecycle behavior rather than unwrapped native probe behavior.
-The transcript above is the corrected fixture at this head: the run finished green with an empty callers log, so no production Herdr command was refused, and the event fast-path resolved both its capability read and its control socket instead of degrading to the polling backstop.
-The corrected-head tmux companion run is recorded in the tmux OMP lifecycle section above; its watcher notices are not evidence about this helper-isolated Herdr matrix.
+The transcript above is the corrected fixture's isolated 01:41Z lab run: it finished green with an empty callers log, so no production Herdr command was refused, and the event fast-path resolved both its capability read and its control socket instead of degrading to the polling backstop.
+Its queued-wake notice predates the event-bound notification drains; the head-bound green rerun of the same two Herdr owners is the combined runner record in the tmux OMP lifecycle section above, whose watcher notices are not evidence about this helper-isolated matrix.
 
 Scope provenance: the OMP implementation and acceptance criteria are [`dnth/firstmate` issues #2-#7](https://github.com/dnth/firstmate/issues/7), while the same-numbered `kunchenguid/firstmate` issues are unrelated historical work.
 The upstream [`kunchenguid/firstmate` issue #723](https://github.com/kunchenguid/firstmate/issues/723) is only the originating feature request; issue #7 requires publishing the implementation branch to `dnth/firstmate` without automatically opening an upstream pull request.
