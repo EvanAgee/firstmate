@@ -570,6 +570,7 @@ await_primary_wake_and_drain "secondmate routed-reply delivery" "$secondmate_rep
   "$HOME_DIR/state/$SECONDMATE_ID.status"
 SECONDMATE_SESSION=$(cat "$SECOND_HOME/state/.omp-session" 2>/dev/null || true)
 case "$SECONDMATE_SESSION" in "$SECOND_HOME/state/omp-sessions/"*.jsonl) ;; *) fail "secondmate did not publish an exact durable OMP session" ;; esac
+secondmate_recovery_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 send_task "$SECONDMATE_TARGET" /exit || fail "production secondmate /exit was not event-confirmed"
 wait_for "exact secondmate pane absence" pane_missing "$SECONDMATE_TARGET"
 
@@ -584,6 +585,16 @@ duplicate_rc=$?
 set -e
 [ "$duplicate_rc" -ne 0 ] || fail "live OMP Herdr secondmate accepted a duplicate launch"
 assert_contains "$duplicate" 'already has a live agent' "secondmate duplicate refusal was not authoritative"
+# The exit, exact-session respawn, and duplicate-refusal probe above are the only
+# supervised steps between the routed-reply drain and this send. A secondmate owns
+# exactly one primary signal - its parent status channel: fm-spawn arms no
+# turn-ended hook for kind=secondmate, and the worker and scout signal files were
+# already removed by their teardowns. So the notification this segment produces is
+# bound to that exact file, and it must be surfaced and drained before the resumed
+# /exit, which send_task still requires to begin from an empty primary queue.
+await_primary_wake_and_drain "secondmate recovery status delivery" "$secondmate_recovery_wake_offset" \
+  "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$SECONDMATE_ID.status" \
+  "$HOME_DIR/state/$SECONDMATE_ID.status"
 send_task "$RESUMED_TARGET" /exit || fail "resumed OMP Herdr secondmate did not exit cleanly"
 wait_for "resumed secondmate pane absence" pane_missing "$RESUMED_TARGET"
 
