@@ -96,12 +96,19 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # appended to that garbage. Arithmetic under `set -u` then aborts on the stray
 # token (e.g. the word "File" read as an unset variable), which silently kills the
 # watcher mid-cycle. Detect the platform once and pick the right form.
+#
+# stat_sig must also distinguish two *different* signals written to the same path
+# within one epoch second. A whole-second size:mtime pair cannot: a 0-byte
+# turn-ended marker that is removed and recreated for the next turn keeps the
+# signature "0:<same second>", so the second real turn-end is never notified.
+# Include the inode (recreation allocates a new one) and sub-second mtime
+# (in-place re-touch keeps the inode) so both same-second forms differ.
 if [ "$(uname)" = Darwin ]; then
-  stat_mtime() { stat -f %m "$1" 2>/dev/null; }        # epoch seconds of mtime
-  stat_sig()   { stat -f '%z:%Fm' "$1" 2>/dev/null; }   # size:mtime signature
+  stat_mtime() { stat -f %m "$1" 2>/dev/null; }             # epoch seconds of mtime
+  stat_sig()   { stat -f '%z:%i:%Fm' "$1" 2>/dev/null; }    # size:inode:mtime signature
 else
   stat_mtime() { stat -c %Y "$1" 2>/dev/null; }
-  stat_sig()   { stat -c '%s:%Y' "$1" 2>/dev/null; }
+  stat_sig()   { stat -c '%s:%i:%.9Y' "$1" 2>/dev/null; }
 fi
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
@@ -437,7 +444,7 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 }
 
 # Layer 2 + 3 signal scan: status files and turn-end markers. Each file is
-# compared against a persisted size:mtime signature (.seen-*) rather than
+# compared against a persisted size:inode:mtime signature (.seen-*) rather than
 # mtime-vs-a-startup-touch, so signals that land while no watcher is running
 # are caught by the next one, and same-second writes cannot slip through a
 # strict -nt comparison. Pure read: prints one "<seen-file>\t<sig>\t<file>"
