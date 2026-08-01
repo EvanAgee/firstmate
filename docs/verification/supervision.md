@@ -245,7 +245,8 @@ tests/fm-pi-primary-types.test.sh
 
 Observed guarantee: after ordinary `session_shutdown` for `/new`, `/resume`, and `/fork`, plus same-instance shutdown-plus-start, the replacement generation armed again without a Pi restart and without the `watcher: not armed - Pi session is shutting down` refusal.
 Stale prior-generation tool callbacks could not mutate the active child, repeated transitions kept exactly one live arm cycle, and terminal `quit` still refused late rearm.
-Plain Pi and pi-signed share the same tracked `.pi/extensions/fm-primary-pi-watch.ts` path, so both inherit the generation owner; other primary harnesses are not applicable because they do not use this Pi extension lifecycle.
+Plain Pi and pi-signed share the same tracked `.pi/extensions/fm-primary-pi-watch.ts` path, so both inherit the generation owner stated once in `bin/fm-primary-watch-core.ts`.
+OMP binds that same core through `.omp/extensions/fm-primary-omp.ts` and is covered by its own `tests/fm-omp-primary.test.sh` and the OMP row above; the remaining primary harnesses are not applicable because they do not use this extension generation lifecycle.
 
 Deterministic entry points:
 
