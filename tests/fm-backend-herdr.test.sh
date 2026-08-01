@@ -53,6 +53,17 @@ if [ "${1:-}" = status ] && [ "${2:-}" = --json ] && [ "${FM_HERDR_SCRIPT_STATUS
   printf '{"client":{"version":"0.7.1","protocol":14},"server":{"running":true}}\n'
   exit 0
 fi
+if [ "${1:-} ${2:-}" = "session list" ]; then
+  n=$next
+  echo "$n" > "$COUNT_FILE"
+  if [ -f "$RESP/$n.out" ]; then
+    cat "$RESP/$n.out"
+  else
+    session=${HERDR_SESSION:-default}
+    printf '{"sessions":[{"name":"%s","running":true,"socket_path":"/tmp/%s.sock"}]}\n' "$session" "$session"
+  fi
+  exit 0
+fi
 n=$next
 echo "$n" > "$COUNT_FILE"
 if [ "${1:-} ${2:-}" = "pane send-keys" ] && [ "${4:-}" = enter ] \
@@ -3224,7 +3235,8 @@ test_send_text_submit_omp_exit_requires_normal_session_event_and_closes_endpoint
   session="$dir/omp-session.jsonl"
   printf '%s\n' '{"type":"session","version":3}' > "$session"
   printf '{"result":{"agent":{"agent":"omp","agent_status":"done","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
-  printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/5.out"
+  printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/7.out"
+  printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
     FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
