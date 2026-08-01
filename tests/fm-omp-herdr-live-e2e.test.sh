@@ -298,8 +298,10 @@ session_has_open_ask_after() { # <file> <offset>
       >/dev/null 2>&1
 }
 
-# A routed choice arrives either as an ordinary user message or as the answer
-# recorded against the receiving agent's own open ask tool call.
+# A routed choice arrives either as an ordinary user message or as the structured
+# answer recorded against the receiving agent's own ask tool call. The structured
+# form is only accepted when the ask tool result selected exactly the one
+# requested option; its display text is never matched.
 session_has_exact_choice_after() { # <file> <offset> <choice>
   local file=$1 offset=$2 choice=$3 start
   start=$((offset + 1))
@@ -307,7 +309,8 @@ session_has_exact_choice_after() { # <file> <offset> <choice>
     | jq -se --arg choice "$choice" '
         any(.[] | select(.type == "message") | .message;
           (.role == "user" and .attribution == "user" and (.content[0].text // "") == $choice)
-          or (.role == "toolResult" and any(.content[]?; (.text // "") == $choice)))' \
+          or (.role == "toolResult" and .toolName == "ask"
+            and (.details.selectedOptions // []) == [$choice]))' \
       >/dev/null 2>&1
 }
 
