@@ -353,18 +353,19 @@ Observed guarantee: one exact home-local, journal-correlated, one-tab and one-pa
 
 ### OMP lifecycle
 
-The complete Herdr role matrix reran on 2026-07-31 against OMP 17.1.8 and Herdr 0.7.5 protocol 17 in one guarded non-default lab session.
-The fixture routes every session-scoped production Herdr command through `bin/fm-herdr-lab.sh`, rejects a missing or inexact named-session binding, and requires the helper's default-session tripwire to survive final teardown.
+The complete Herdr role matrix reran on 2026-08-01 against OMP 17.1.8 and Herdr 0.7.5 protocol 17 in one guarded non-default lab session.
+The fixture verifies the exact trailing `--session <name>` binding, admits only the read-only production `session list --json` inventory call after stripping that binding, rejects every other `session` subcommand and every `server` operation, and requires the helper's default-session tripwire to survive final teardown.
 
 ```sh
 omp --version
 herdr --version
-FM_OMP_HERDR_LIVE_E2E=1 \
+env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
   HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
-  tests/fm-omp-herdr-live-e2e.test.sh
-FM_OMP_HERDR_EXIT_LIVE_E2E=1 \
-  HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
-  tests/fm-omp-herdr-exit-live-e2e.test.sh
+  FM_OMP_HERDR_LIVE_E2E=1 \
+  bin/fm-test-run.sh tests/fm-omp-herdr-live-e2e.test.sh
+env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" PATH="$PATH" LC_ALL=C TERM=dumb SHELL=/bin/bash \
+  FM_OMP_HERDR_EXIT_LIVE_E2E=1 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+  bin/fm-test-run.sh tests/fm-omp-herdr-exit-live-e2e.test.sh
 ```
 
 Observed bounded output:
@@ -373,8 +374,12 @@ Observed bounded output:
 omp/17.1.8
 herdr 0.7.5
 {"client":17,"server":17}
+# abbreviated role-matrix output
 ok - real Herdr OMP role matrix: primary, worker/scout idle and busy steering, blocked escalation, secondmate, normal exits, recovery, duplicate refusal, and guarded teardown
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+# abbreviated /exit output
 ok - real Herdr OMP /exit: exact native identity, post-offset normal session_exit, pane absence, and guarded tripwire teardown
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
 ```
 
 The primary loaded the tracked OMP adapter, acquired its home session lock, completed a guarded turn, and kept its watcher live while the other roles ran.
@@ -384,8 +389,12 @@ A real single-choice OMP question produced native `blocked`, and the watcher que
 The fixture stopped its two exact watcher processes, drained both isolated evidence homes, and required both durable queues to be empty before final lab teardown.
 Each normal `/exit` required a post-offset normal `session_exit`; the focused exit check also required an exact pre-send `agent=omp` plus native-session binding and an independent post-exit `pane get` result of `pane_not_found` rather than relying on server health.
 The secondmate returned a correlated marked reply, exited, recovered the exact retained session, refused a duplicate live launch, and exited again.
-The combined transcript intentionally includes supervision notices while the isolated tmux fixtures run without their own watcher and while the Herdr fixture is still generating the queue events it later verifies.
-Those notices are not claimed absent: the Herdr fixture stopped only its two exact watcher processes, drained both isolated evidence homes, asserted both queues empty, and completed guarded teardown with the default-session tripwire intact; no session-binding violation or leaked lifecycle resource remained.
+The worker launch assertion observed the exact production call `session list --json --session <lab-session>` and matched the worker's recorded `herdr_workspace_id` to the primary pane's live workspace.
+The deterministic adapter suite rejects duplicate matching running session entries before trusting the launcher pane, while preserving the existing missing, malformed, mismatched-socket, symlink-parent, and exact-parent cases.
+The role-matrix run emitted queued-wake notices while the isolated evidence homes were being exercised, but it emitted no watcher-down warning, `verdict=unknown`, cleanup ambiguity, missing role, or helper-tripwire failure.
+Native OMP Herdr probes remain intentionally quarantined by this fixture, so this record covers real OMP/Herdr Firstmate backend routing and lifecycle behavior rather than unwrapped native probe behavior.
+The corrected-head tmux companion run on 2026-08-01 used the guarded primary, worker/scout, and secondmate live owners and returned four green results, while its fixture processes emitted known task-copy worktree-tangle and shared-supervisor watcher notices that are not evidence about the helper-isolated Herdr matrix.
+No upstream CI checks were run for draft PR https://github.com/kunchenguid/firstmate/pull/1376.
 
 Scope provenance: the OMP implementation and acceptance criteria are [`dnth/firstmate` issues #2-#7](https://github.com/dnth/firstmate/issues/7), while the same-numbered `kunchenguid/firstmate` issues are unrelated historical work.
 The upstream [`kunchenguid/firstmate` issue #723](https://github.com/kunchenguid/firstmate/issues/723) is only the originating feature request; issue #7 requires publishing the implementation branch to `dnth/firstmate` without automatically opening an upstream pull request.

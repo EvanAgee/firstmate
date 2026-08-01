@@ -93,6 +93,7 @@ trap cleanup EXIT
 
 mkdir -p "$WRAPPER_BIN" "$PROJECT" "$DRIVER_ROOT" "$HOME_DIR/data/$WORKER_ID" "$HOME_DIR/data/$SCOUT_ID" \
   "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/projects"
+: > "$WRAPPER_LOG"
 git archive HEAD | tar -x -C "$DRIVER_ROOT"
 # The live matrix validates the current branch, including uncommitted issue-fix
 # slices under test, while the driver itself remains a clean committed clone.
@@ -182,9 +183,15 @@ last=\${args[\$((argc - 1))]}
   }
 set -- "\${args[@]:0:\$((argc - 2))}"
 case "\${1:-}" in
-  server|session)
+  server)
     echo "OMP Herdr fixture refused an unguarded lifecycle command" >&2
     exit 97
+    ;;
+  session)
+    if [ "\$#" -ne 3 ] || [ "\$2" != list ] || [ "\$3" != --json ]; then
+      echo "OMP Herdr fixture refused an unguarded lifecycle command" >&2
+      exit 97
+    fi
     ;;
 esac
 exec env FM_HERDR_LAB_INNER=1 PATH="\$wrapper_bin:\$base_path" "\$helper" run "\$session" "\$@"
@@ -204,8 +211,10 @@ lab() {
 }
 
 fm_env() {
-  env PATH="$WRAPPER_BIN:$BASE_PATH" HERDR_SESSION="$SESSION" OMP_SKIP_SETUP=1 \
-    FM_BACKEND=herdr FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$DRIVER_ROOT" \
+  env PATH="$WRAPPER_BIN:$BASE_PATH" HERDR_ENV=1 HERDR_SESSION="$SESSION" \
+    HERDR_PANE_ID="${PRIMARY_PANE:-}" HERDR_TAB_ID="${PRIMARY_TAB:-}" \
+    HERDR_WORKSPACE_ID="${PRIMARY_WORKSPACE:-}" HERDR_SOCKET_PATH="${PRIMARY_SOCKET:-}" \
+    OMP_SKIP_SETUP=1 FM_BACKEND=herdr FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$DRIVER_ROOT" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" \
     "$@"
@@ -301,6 +310,17 @@ wait_for "OMP primary session lock" file_nonempty "$PRIMARY_HOME/state/.lock"
 PRIMARY_SESSION=$(session_file_for "$PRIMARY_TARGET")
 case "$PRIMARY_SESSION" in "$PRIMARY_HOME/sessions/"*.jsonl) ;; *) fail "primary Herdr identity did not bind its controlled native session" ;; esac
 wait_for "OMP primary guarded response" file_has "$PRIMARY_SESSION" 'Herdr primary is ready.'
+PRIMARY_INFO=$(lab pane get "$PRIMARY_PANE") || fail "primary OMP Herdr pane could not be read"
+PRIMARY_TAB=$(printf '%s' "$PRIMARY_INFO" | jq -er '.result.pane.tab_id // empty') \
+  || fail "primary OMP Herdr pane did not publish a live tab"
+PRIMARY_WORKSPACE=$(printf '%s' "$PRIMARY_INFO" | jq -er '.result.pane.workspace_id // empty') \
+  || fail "primary OMP Herdr pane did not publish a live workspace"
+PRIMARY_SOCKET=$(lab session list --json | jq -er --arg want "$SESSION" '
+  [.sessions[]? | select(.name == $want and .running == true)
+   | select((.socket_path | type) == "string" and (.socket_path | length) > 0)
+   | .socket_path]
+  | if length == 1 then .[0] else empty end
+') || fail "primary OMP Herdr session did not publish one live socket"
 
 # Keep the real primary and its home-scoped watcher alive while it supervises
 # the worker, scout, and secondmate role evidence below.
@@ -318,7 +338,11 @@ git init -q --bare "$LAB/project-origin.git"
 git -C "$PROJECT" remote add origin "$LAB/project-origin.git"
 git -C "$PROJECT" push -qu origin main
 
+worker_log_start=$(wc -l < "$WRAPPER_LOG" | tr -d '[:space:]')
 spawn_task "$WORKER_ID" >/dev/null || fail "production OMP Herdr worker spawn failed"
+worker_log_after=$(tail -n "+$((worker_log_start + 1))" "$WRAPPER_LOG")
+printf '%s\n' "$worker_log_after" | grep -Fx -- "session list --json --session $SESSION " >/dev/null \
+  || fail "production worker launch did not issue the exact session list --json inventory call"
 WORKER_META="$HOME_DIR/state/$WORKER_ID.meta"
 WORKER_TARGET=$(sed -n 's/^window=//p' "$WORKER_META")
 WORKER_WT=$(sed -n 's/^worktree=//p' "$WORKER_META")
@@ -326,6 +350,10 @@ WORKER_WT=$(sed -n 's/^worktree=//p' "$WORKER_META")
   || fail "Herdr worker did not acquire a distinct isolated worktree"
 assert_grep 'harness=omp' "$WORKER_META" "Herdr worker metadata lost exact OMP identity"
 assert_grep 'backend=herdr' "$WORKER_META" "Herdr worker metadata lost its backend"
+assert_grep "herdr_session=$SESSION" "$WORKER_META" "Herdr worker metadata lost the exact lab session"
+WORKER_WORKSPACE=$(sed -n 's/^herdr_workspace_id=//p' "$WORKER_META")
+[ -n "$WORKER_WORKSPACE" ] && [ "$WORKER_WORKSPACE" = "$PRIMARY_WORKSPACE" ] \
+  || fail "Herdr worker workspace '$WORKER_WORKSPACE' did not match primary live workspace '$PRIMARY_WORKSPACE'"
 assert_grep "worktree=$WORKER_WT" "$WORKER_META" "Herdr worker did not enter its isolated worktree"
 wait_for "worker extension readiness" file_exists "$HOME_DIR/state/$WORKER_ID.omp-ready"
 wait_for "worker first turn" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"

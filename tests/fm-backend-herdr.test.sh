@@ -356,6 +356,21 @@ test_launcher_identity_resolves_the_exact_pane_tab_and_workspace() {
   pass "fm_backend_herdr_launcher_identity: resolves the launcher's exact workspace even when a same-labeled workspace sorts first"
 }
 
+test_launcher_identity_refuses_duplicate_matching_running_session_entries() {
+  local dir log resp fb out status
+  dir="$TMP_ROOT/launcher-duplicate-session"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '%s\n' '{"sessions":[{"name":"fmtest","running":true,"socket_path":"/tmp/fm-herdr-unit/fmtest.sock"},{"name":"fmtest","running":true,"socket_path":"/tmp/fm-herdr-unit/fmtest.sock"}]}' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
+  status=$?
+  expect_code 1 "$status" "duplicate matching running sessions must refuse rather than guess"
+  assert_contains "$out" "no unambiguous socket" "the duplicate-session refusal did not explain the ambiguous socket"
+  assert_not_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''get' "a duplicate session identity must be refused before trusting the launcher pane"
+  pass "fm_backend_herdr_launcher_identity: rejects duplicate matching running session entries"
+}
+
 test_launcher_identity_refuses_a_pane_from_another_session_name() {
   local dir log resp fb out status
   dir="$TMP_ROOT/launcher-xsession"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -3362,6 +3377,7 @@ test_cli_helper_sets_env_and_appends_trailing_session_flag
 test_launcher_identity_absent_without_a_herdr_pane
 test_launcher_identity_absent_when_herdr_env_alone_is_set
 test_launcher_identity_resolves_the_exact_pane_tab_and_workspace
+test_launcher_identity_refuses_duplicate_matching_running_session_entries
 test_launcher_identity_refuses_a_pane_from_another_session_name
 test_launcher_identity_refuses_a_missing_server_socket
 test_launcher_identity_refuses_a_pane_from_another_server_socket
