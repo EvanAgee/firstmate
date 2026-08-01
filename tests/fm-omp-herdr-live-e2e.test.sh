@@ -235,6 +235,15 @@ drain_primary_wakes() {
     || fail "primary OMP Herdr evidence queue retained a notification after drain"
 }
 
+# The primary owns its wake queue. Where a segment can prove which notification
+# it produced, the fixture drains only after the primary's own bound drain. Where
+# it cannot, require the queue to be empty while the primary is at exact native
+# idle, so a late real notification is left for the primary instead of swallowed.
+primary_settled_empty() {
+  [ ! -s "$HOME_DIR/state/.wake-queue" ] || return 1
+  agent_is "$PRIMARY_TARGET" omp 'idle done'
+}
+
 pane_id() { printf '%s' "${1#*:}"; }
 
 agent_json() {
@@ -730,10 +739,13 @@ assert_contains "$duplicate" 'already has a live agent' "secondmate duplicate re
 # The exit, exact-session respawn, and duplicate-refusal probe above rewrite no
 # signal file: the secondmate's parent status channel keeps the single routed
 # reply already proven and drained above, so this segment owes no second status
-# notification. Only require that the primary settled at exact native idle and
-# that its queue is empty, which send_task still demands for the resumed /exit.
-wait_for "exact native primary idle after secondmate recovery" agent_is "$PRIMARY_TARGET" omp 'idle done'
-drain_primary_wakes
+# notification. So do not drain from the fixture here: that would swallow a late
+# real notification this segment did not predict. Wait instead for the primary to
+# own the queue itself - empty queue observed together with exact native idle,
+# which is what send_task demands for the resumed /exit. Any notification that
+# does arrive stays queued until the primary drains it, or fails the send loudly.
+wait_for "primary-owned empty queue at exact native idle after secondmate recovery" \
+  primary_settled_empty
 send_task "$RESUMED_TARGET" /exit || fail "resumed OMP Herdr secondmate did not exit cleanly"
 wait_for "resumed secondmate pane absence" pane_missing "$RESUMED_TARGET"
 
