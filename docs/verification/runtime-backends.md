@@ -403,7 +403,6 @@ The role-matrix run emitted queued-wake notices while the isolated evidence home
 Native OMP Herdr probes remain intentionally quarantined by this fixture, so this record covers real OMP/Herdr Firstmate backend routing and lifecycle behavior rather than unwrapped native probe behavior.
 The transcript above is the corrected fixture at this head: the run finished green with an empty callers log, so no production Herdr command was refused, and the event fast-path resolved both its capability read and its control socket instead of degrading to the polling backstop.
 The corrected-head tmux companion run is recorded in the tmux OMP lifecycle section above; its watcher notices are not evidence about this helper-isolated Herdr matrix.
-No upstream CI checks were run for draft PR https://github.com/kunchenguid/firstmate/pull/1376.
 
 Scope provenance: the OMP implementation and acceptance criteria are [`dnth/firstmate` issues #2-#7](https://github.com/dnth/firstmate/issues/7), while the same-numbered `kunchenguid/firstmate` issues are unrelated historical work.
 The upstream [`kunchenguid/firstmate` issue #723](https://github.com/kunchenguid/firstmate/issues/723) is only the originating feature request; issue #7 requires publishing the implementation branch to `dnth/firstmate` without automatically opening an upstream pull request.
