@@ -301,8 +301,8 @@ tests/fm-backend-herdr-launcher-workspace-e2e.test.sh
 tests/fm-backend-herdr-presentation-e2e.test.sh
 tests/fm-backend-herdr-eventwait-smoke.test.sh
 tests/fm-omp-secondmate.test.sh
-FM_OMP_HERDR_LIVE_E2E=1 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh tests/fm-omp-herdr-live-e2e.test.sh
-FM_OMP_HERDR_EXIT_LIVE_E2E=1 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh tests/fm-omp-herdr-exit-live-e2e.test.sh
+tests/fm-omp-herdr-live-e2e.test.sh
+tests/fm-omp-herdr-exit-live-e2e.test.sh
 tests/fm-herdr-session-cleanup.test.sh
 tests/fm-herdr-session-cleanup-e2e.test.sh
 tests/fm-afk-inject-herdr-e2e.test.sh
@@ -310,4 +310,5 @@ tests/fm-afk-pi-herdr-return-e2e.test.sh
 ```
 
 Real Herdr tests use the named lab helper and default-session tripwire.
-[`verification/runtime-backends.md`](verification/runtime-backends.md#herdr) records the active version, CLI, projection, event, and lifecycle evidence without task-specific chronology.
+The two OMP live fixtures are opt-in and need an exact guarded environment rather than a bare invocation.
+[`verification/runtime-backends.md`](verification/runtime-backends.md#herdr) records the active version, CLI, projection, event, and lifecycle evidence, including those exact opt-in commands, without task-specific chronology.
