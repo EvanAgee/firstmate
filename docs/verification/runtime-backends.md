@@ -355,7 +355,7 @@ Observed guarantee: one exact home-local, journal-correlated, one-tab and one-pa
 
 The complete Herdr role matrix reran on 2026-08-01 against OMP 17.1.8 and Herdr 0.7.5 protocol 17 in one guarded non-default lab session.
 The fixture verifies the exact trailing `--session <name>` binding, routes the two bare read-only production client reads (`session list --json` and `api schema --json`) through the named lab helper binding so the event fast-path resolves its socket and capability instead of silently degrading to polling, rejects every other `session` subcommand and every `server` operation, and requires the helper's default-session tripwire to survive final teardown.
-Any production Herdr command the fixture refuses is recorded in the wrapper's callers log and fails the matrix, so a refused call can no longer pass unnoticed as a poll-path fallback.
+Every wrapper refusal - unbound, outside the lab session, `server`, and any non-`list` `session` subcommand - is recorded in the wrapper's callers log through one shared refusal path and fails the matrix, so a refused call can no longer pass unnoticed as a poll-path fallback.
 
 ```sh
 omp --version
@@ -375,12 +375,15 @@ Observed bounded output:
 omp/17.1.8
 herdr 0.7.5
 {"client":17,"server":17}
-# abbreviated role-matrix output
+FM_TEST_BEGIN 2026-08-01T01:41:56Z tests/fm-omp-herdr-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
 ok - real Herdr OMP role matrix: primary, worker/scout idle and busy steering, blocked escalation, secondmate, normal exits, recovery, duplicate refusal, and guarded teardown
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
-# abbreviated /exit output
+FM_TEST_END 2026-08-01T01:46:07Z tests/fm-omp-herdr-live-e2e.test.sh exit=0 duration_ms=251807 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=251880
+FM_TEST_BEGIN 2026-08-01T01:46:33Z tests/fm-omp-herdr-exit-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
 ok - real Herdr OMP /exit: exact native identity, post-offset normal session_exit, pane absence, and guarded tripwire teardown
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+FM_TEST_END 2026-08-01T01:46:51Z tests/fm-omp-herdr-exit-live-e2e.test.sh exit=0 duration_ms=18266 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=18323
 ```
 
 The primary loaded the tracked OMP adapter, acquired its home session lock, completed a guarded turn, and kept its watcher live while the other roles ran.
@@ -394,7 +397,7 @@ The worker launch assertion observed the exact production call `session list --j
 The deterministic adapter suite rejects duplicate matching running session entries before trusting the launcher pane, while preserving the existing missing, malformed, mismatched-socket, symlink-parent, and exact-parent cases.
 The role-matrix run emitted queued-wake notices while the isolated evidence homes were being exercised, but it emitted no watcher-down warning, `verdict=unknown`, cleanup ambiguity, missing role, or helper-tripwire failure.
 Native OMP Herdr probes remain intentionally quarantined by this fixture, so this record covers real OMP/Herdr Firstmate backend routing and lifecycle behavior rather than unwrapped native probe behavior.
-The recorded run above predates the callers-log assertion and the two admitted bare client reads; that run reached its blocked escalation through the polling backstop, so the event fast-path needs a rerun of this command to be recorded as observed.
+The transcript above is the corrected fixture at this head: the run finished green with an empty callers log, so no production Herdr command was refused, and the event fast-path resolved both its capability read and its control socket instead of degrading to the polling backstop.
 The corrected-head tmux companion run on 2026-08-01 used the guarded primary, worker/scout, and secondmate live owners and returned four green results, while its fixture processes emitted known task-copy worktree-tangle and shared-supervisor watcher notices that are not evidence about the helper-isolated Herdr matrix.
 No upstream CI checks were run for draft PR https://github.com/kunchenguid/firstmate/pull/1376.
 
