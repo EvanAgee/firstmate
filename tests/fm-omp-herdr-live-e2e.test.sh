@@ -260,12 +260,37 @@ session_file_for() {
   agent_json "$1" | jq -r 'select(.result.agent.agent_session.kind == "path") | .result.agent.agent_session.value // empty' 2>/dev/null
 }
 
+# Every predicate below tails from a recorded byte offset into jq, and OMP is
+# still appending while the offset is taken, so a raw file size can land in the
+# middle of a record. A tail that starts mid-record is invalid JSON forever, so
+# the matching event appended later could never be read. Bind each offset to the
+# end of the last newline-terminated record instead, waiting a bounded time for
+# a partial trailing record to complete rather than rewinding to the previous
+# boundary, which would re-expose an already-appended record to the matcher.
+session_offset() { # <session-file>
+  local file=$1 size i=0
+  while [ "$i" -lt 600 ]; do
+    size=$(wc -c < "$file" 2>/dev/null | tr -d '[:space:]')
+    case "$size" in ''|*[!0-9]*) size= ;; esac
+    if [ -n "$size" ] && { [ "$size" -eq 0 ] || [ "$(tail -c 1 "$file" 2>/dev/null | wc -l)" -eq 1 ]; }; then
+      printf '%s' "$size"
+      return 0
+    fi
+    sleep 0.25
+    i=$((i + 1))
+  done
+  printf 'not ok - timed out waiting for a complete JSONL record boundary in %s\n' "$file" >&2
+  return 1
+}
+
+# OMP records message content as a part list, and the text part is not always
+# first, so match any exact text part instead of assuming content[0].
 session_has_exact_user_after() { # <file> <offset> <text> <steering-json>
   local file=$1 offset=$2 text=$3 steering=$4 start
   start=$((offset + 1))
   tail -c "+$start" "$file" 2>/dev/null \
     | jq -se --arg text "$text" --argjson steering "$steering" \
-      'any(.[]; .type == "message" and .message.role == "user" and .message.attribution == "user" and ((.message.steering // false) == $steering) and .message.content[0].text == $text)' \
+      'any(.[]; .type == "message" and .message.role == "user" and .message.attribution == "user" and ((.message.steering // false) == $steering) and any(.message.content[]?; .type == "text" and .text == $text))' \
       >/dev/null 2>&1
 }
 
@@ -273,7 +298,7 @@ session_has_exact_steer_after() { # <file> <offset> <text>
   local file=$1 offset=$2 text=$3 start
   start=$((offset + 1))
   tail -c "+$start" "$file" 2>/dev/null \
-    | jq -se --arg text "$text" 'any(.[]; .type == "message" and .message.role == "user" and .message.attribution == "user" and .message.steering == true and .message.content[0].text == $text)' \
+    | jq -se --arg text "$text" 'any(.[]; .type == "message" and .message.role == "user" and .message.attribution == "user" and .message.steering == true and any(.message.content[]?; .type == "text" and .text == $text))' \
       >/dev/null 2>&1
 }
 
@@ -308,7 +333,8 @@ session_has_exact_choice_after() { # <file> <offset> <choice>
   tail -c "+$start" "$file" 2>/dev/null \
     | jq -se --arg choice "$choice" '
         any(.[] | select(.type == "message") | .message;
-          (.role == "user" and .attribution == "user" and (.content[0].text // "") == $choice)
+          (.role == "user" and .attribution == "user"
+            and any(.content[]?; .type == "text" and .text == $choice))
           or (.role == "toolResult" and .toolName == "ask"
             and (.details.selectedOptions // []) == [$choice]))' \
       >/dev/null 2>&1
@@ -353,13 +379,20 @@ primary_wake_arrived() { # <transcript-offset> <wake-text> [signal-file]
 # primary reads the injected wake lets the primary's own later drain consume the
 # next escalation inside that earlier turn, so no second wake is ever injected.
 # Bind every injected wake to the primary's exact completed bin/fm-wake-drain.sh
-# tool call recorded after that wake's own transcript event.
+# tool call recorded after that wake's own transcript event. The anchor is the
+# exact delivered watcher user event, not any serialized entry that happens to
+# quote the wake text - the primary's own tool calls and outputs echo it too,
+# and anchoring on one of those would accept a drain that ran before delivery.
 primary_drained_wake_after() { # <transcript-offset> <wake-text>
   local offset=$1 text=$2 start
   start=$((offset + 1))
   tail -c "+$start" "$PRIMARY_SESSION" 2>/dev/null \
     | jq -se --arg text "$text" '
-        (to_entries | map(select(.value | tostring | contains($text))) | first | .key) as $wake
+        (to_entries
+          | map(select(.value.type == "message" and .value.message.role == "user"
+              and .value.message.attribution == "user"
+              and any(.value.message.content[]?; .type == "text" and (.text | contains($text)))))
+          | first | .key) as $wake
         | if $wake == null then false
           else
             .[($wake + 1):] as $rest
@@ -464,7 +497,7 @@ git -C "$PROJECT" remote add origin "$LAB/project-origin.git"
 git -C "$PROJECT" push -qu origin main
 
 worker_log_start=$(wc -l < "$WRAPPER_LOG" | tr -d '[:space:]')
-worker_start_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+worker_start_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 spawn_task "$WORKER_ID" >/dev/null || fail "production OMP Herdr worker spawn failed"
 worker_log_after=$(tail -n "+$((worker_log_start + 1))" "$WRAPPER_LOG")
 printf '%s\n' "$worker_log_after" | grep -Fx -- "session list --json --session $SESSION " >/dev/null \
@@ -493,7 +526,7 @@ await_primary_wake_and_drain "worker startup turn-end delivery" "$worker_start_w
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
 blocked_prompt="Before continuing, use the ask tool for one single-choice question: 'Which audience should the report focus on?' Offer exactly two options, 'Operators' and 'Maintainers', and wait for my selection."
-blocked_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+blocked_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 send_task "$WORKER_ID" "$blocked_prompt" || fail "worker question-induced blocked-state setup was not submitted"
 wait_for "real OMP worker blocked state" agent_is "$WORKER_TARGET" omp blocked
 wait_for "watcher blocked escalation" file_has "$HOME_DIR/state/.wake-queue" "herdr: agent blocked - waiting on human"
@@ -504,7 +537,7 @@ file_has "$HOME_DIR/state/.wake-queue" "$WORKER_TARGET" \
 # before it.
 await_primary_wake_drain "primary actionable blocked follow-up" "$blocked_wake_offset" \
   "FIRSTMATE WATCHER WAKE: stale: $WORKER_TARGET (herdr: agent blocked - waiting on human"
-question_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+question_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 # Firstmate owns the answer route. When the captain escalates the worker's
 # single-choice question, the operator takes the default option on the exact
 # primary pane and the primary forwards that exact choice to the worker. When
@@ -512,7 +545,7 @@ question_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
 # idle, the operator answers the still-blocked worker through the same guarded
 # send path. Both paths must land the exact routed choice on the worker.
 wait_for "primary decision on the blocked worker" primary_blocked_decision_settled "$blocked_wake_offset"
-worker_answer_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
+worker_answer_offset=$(session_offset "$WORKER_SESSION") || exit 1
 if primary_ask_open_after "$blocked_wake_offset"; then
   lab pane send-keys "$(pane_id "$PRIMARY_TARGET")" enter >/dev/null \
     || fail "could not select the default captain option on the exact primary pane"
@@ -532,8 +565,8 @@ await_primary_wake_and_drain "question turn-end delivery" "$question_wake_offset
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
 worker_idle_text='Reply exactly: The idle worker message was processed.'
-worker_idle_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
-worker_idle_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+worker_idle_offset=$(session_offset "$WORKER_SESSION") || exit 1
+worker_idle_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 send_task "$WORKER_ID" "$worker_idle_text" || fail "worker idle steering was not submitted"
 wait_for "worker exact native idle user event" session_has_exact_user_after \
   "$WORKER_SESSION" "$worker_idle_offset" "$worker_idle_text" false
@@ -545,11 +578,11 @@ await_primary_wake_and_drain "worker idle turn-end delivery" "$worker_idle_wake_
   "$HOME_DIR/state/$WORKER_ID.turn-ended"
 
 rm -f "$HOME_DIR/state/$WORKER_ID.turn-ended"
-worker_busy_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+worker_busy_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 send_task "$WORKER_ID" 'Run this exact bash command: sleep 10. Then reply exactly: The worker completed its timed command.' \
   || fail "worker busy-turn setup was not submitted"
 wait_for "native working worker state" agent_is "$WORKER_TARGET" omp working
-steer_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
+steer_offset=$(session_offset "$WORKER_SESSION") || exit 1
 send_task "$WORKER_ID" 'After the tool finishes, reply exactly: The busy worker message was processed.' \
   || fail "worker busy steering was not event-confirmed"
 wait_for "worker exact native steering event" session_has_exact_steer_after \
@@ -561,7 +594,7 @@ await_primary_wake_and_drain "worker busy turn-end delivery" "$worker_busy_wake_
   "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$WORKER_ID.turn-ended" \
   "$HOME_DIR/state/$WORKER_ID.turn-ended"
 
-worker_exit_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
+worker_exit_offset=$(session_offset "$WORKER_SESSION") || exit 1
 send_task "$WORKER_ID" /exit || fail "production worker /exit was not event-confirmed"
 wait_for "exact worker pane absence" pane_missing "$WORKER_TARGET"
 tail -c "+$((worker_exit_offset + 1))" "$WORKER_SESSION" \
@@ -573,7 +606,7 @@ fm_env "$ROOT/bin/fm-teardown.sh" "$WORKER_ID" >/dev/null \
   || fail "worker cleanup left generated OMP artifacts behind"
 WORKER_WT=
 
-scout_start_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+scout_start_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 spawn_task "$SCOUT_ID" --scout >/dev/null || fail "production OMP Herdr scout spawn failed"
 SCOUT_META="$HOME_DIR/state/$SCOUT_ID.meta"
 SCOUT_TARGET=$(sed -n 's/^window=//p' "$SCOUT_META")
@@ -593,8 +626,8 @@ await_primary_wake_and_drain "scout startup turn-end delivery" "$scout_start_wak
   "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 scout_idle_text='Reply exactly: The idle scout message was processed.'
-scout_idle_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
-scout_idle_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+scout_idle_offset=$(session_offset "$SCOUT_SESSION") || exit 1
+scout_idle_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 send_task "$SCOUT_ID" "$scout_idle_text" || fail "scout idle steering was not submitted"
 wait_for "scout exact native idle user event" session_has_exact_user_after \
   "$SCOUT_SESSION" "$scout_idle_offset" "$scout_idle_text" false
@@ -606,11 +639,11 @@ await_primary_wake_and_drain "scout idle turn-end delivery" "$scout_idle_wake_of
   "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 rm -f "$HOME_DIR/state/$SCOUT_ID.turn-ended"
 scout_busy_prompt='Run this exact bash command: sleep 10. Then reply exactly: The scout completed its timed command.'
-scout_busy_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+scout_busy_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 send_task "$SCOUT_ID" "$scout_busy_prompt" || fail "scout busy-turn setup was not submitted"
 wait_for "native working scout state" agent_is "$SCOUT_TARGET" omp working
 scout_steer_text='After the tool finishes, reply exactly: The busy scout message was processed.'
-scout_steer_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
+scout_steer_offset=$(session_offset "$SCOUT_SESSION") || exit 1
 send_task "$SCOUT_ID" "$scout_steer_text" || fail "scout busy steering was not event-confirmed"
 wait_for "scout exact native steering event" session_has_exact_steer_after \
   "$SCOUT_SESSION" "$scout_steer_offset" "$scout_steer_text"
@@ -620,7 +653,7 @@ wait_for "scout busy steering return" agent_is "$SCOUT_TARGET" omp 'idle done'
 await_primary_wake_and_drain "scout busy turn-end delivery" "$scout_busy_wake_offset" \
   "FIRSTMATE WATCHER WAKE: signal: $HOME_DIR/state/$SCOUT_ID.turn-ended" \
   "$HOME_DIR/state/$SCOUT_ID.turn-ended"
-scout_exit_offset=$(wc -c < "$SCOUT_SESSION" | tr -d '[:space:]')
+scout_exit_offset=$(session_offset "$SCOUT_SESSION") || exit 1
 send_task "$SCOUT_ID" /exit || fail "production scout /exit was not event-confirmed"
 wait_for "exact scout pane absence" pane_missing "$SCOUT_TARGET"
 tail -c "+$((scout_exit_offset + 1))" "$SCOUT_SESSION" \
@@ -661,7 +694,7 @@ assert_grep 'kind=secondmate' "$SECONDMATE_META" "Herdr secondmate metadata lost
 wait_for "secondmate primary integration" file_nonempty "$SECOND_HOME/state/.omp-primary-extension-loaded"
 wait_for_fresh_watcher "secondmate fresh watcher beacon" "$SECOND_HOME/state"
 wait_for "exact idle secondmate identity" agent_is "$SECONDMATE_TARGET" omp 'idle done'
-secondmate_reply_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+secondmate_reply_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 send_task "$SECONDMATE_ID" 'Return exactly "Herdr secondmate routed reply received." through the correlated parent status path.' \
   || fail "marked secondmate request was not submitted"
 wait_for "correlated secondmate reply" file_has "$HOME_DIR/state/$SECONDMATE_ID.status" 'Herdr secondmate routed reply received.'
@@ -671,7 +704,7 @@ await_primary_wake_and_drain "secondmate routed-reply delivery" "$secondmate_rep
   "$HOME_DIR/state/$SECONDMATE_ID.status"
 SECONDMATE_SESSION=$(cat "$SECOND_HOME/state/.omp-session" 2>/dev/null || true)
 case "$SECONDMATE_SESSION" in "$SECOND_HOME/state/omp-sessions/"*.jsonl) ;; *) fail "secondmate did not publish an exact durable OMP session" ;; esac
-secondmate_recovery_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+secondmate_recovery_wake_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 send_task "$SECONDMATE_TARGET" /exit || fail "production secondmate /exit was not event-confirmed"
 wait_for "exact secondmate pane absence" pane_missing "$SECONDMATE_TARGET"
 
@@ -699,7 +732,7 @@ await_primary_wake_and_drain "secondmate recovery status delivery" "$secondmate_
 send_task "$RESUMED_TARGET" /exit || fail "resumed OMP Herdr secondmate did not exit cleanly"
 wait_for "resumed secondmate pane absence" pane_missing "$RESUMED_TARGET"
 
-primary_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
+primary_offset=$(session_offset "$PRIMARY_SESSION") || exit 1
 primary_verdict=$(PATH="$WRAPPER_BIN:$BASE_PATH" HERDR_SESSION="$SESSION" \
   bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit "$1" /exit 1 0.2 0 "" omp' \
     "$DRIVER_ROOT" "$PRIMARY_TARGET")
