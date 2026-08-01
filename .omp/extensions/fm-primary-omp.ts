@@ -190,7 +190,9 @@ export default function (omp: ExtensionAPI) {
     repairToolName: "fm_watch_arm_omp",
     encodeOperationalInput,
     sendFollowUp: async (content) => {
-      omp.sendUserMessage(content, { deliverAs: "followUp" });
+      // No explicit deliverAs: OMP starts a turn when idle and steers while
+      // streaming. An explicit deliverAs would queue the notification instead.
+      omp.sendUserMessage(content);
     },
   });
 

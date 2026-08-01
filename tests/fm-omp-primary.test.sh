@@ -494,6 +494,9 @@ for (let i = 0; i < 100 && userMessages.length === 0; i += 1) {
 if (userMessages.length !== 1 || !userMessages[0].content.includes("signal: omp-actionable")) {
   throw new Error(`OMP actionable watcher close was not delivered once: ${JSON.stringify(userMessages)}`);
 }
+if (userMessages[0].options !== undefined) {
+  throw new Error(`OMP watcher notification passed explicit delivery options: ${JSON.stringify(userMessages[0].options)}`);
+}
 if (!existsSync(`${process.env.FM_STATE_OVERRIDE}/watch-successor-ready`)) {
   throw new Error("OMP actionable notification arrived before successor readiness");
 }
