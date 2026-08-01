@@ -85,6 +85,9 @@ case "$cmd $sub" in
   "status --json")
     printf '%s\n' '{"client":{"version":"0.7.5","protocol":17},"server":{"running":true}}'
     ;;
+  "session list")
+    printf '%s\n' '{"sessions":[{"name":"default","running":true,"socket_path":"/tmp/fm-profile-herdr.sock"}]}'
+    ;;
   "workspace list")
     printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"}]}}'
     ;;

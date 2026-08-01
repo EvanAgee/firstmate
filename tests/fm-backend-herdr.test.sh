@@ -934,14 +934,16 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
   printf '{"result":{"tab":{"tab_id":"w9:t2"},"root_pane":{"pane_id":"w9:p2"}}}\n' > "$resp/2.out"
   printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/3.out"
   printf '{"result":{"panes":[{"pane_id":"w9:p1","tab_id":"w9:t1"},{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/4.out"
-  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/5.out"
-  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/6.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1"}}}\n' > "$resp/5.out"
+  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/6.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/7.out"
   # The emptying-close plan's tab list proves the seeded prune is NOT
   # workspace-emptying (the task tab remains), so the close stays plain.
-  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/7.out"
-  printf '{"error":{"code":"pane_not_found"}}\n' > "$resp/9.out"
-  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/10.out"
-  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/11.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/8.out"
+  : > "$resp/9.out"
+  printf '{"error":{"code":"pane_not_found"}}\n' > "$resp/10.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/11.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}\n' > "$resp/12.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
     bash -c '
@@ -981,12 +983,14 @@ test_projection_create_never_closes_a_concurrent_same_label_tab() {
   printf '{"result":{"tab":{"tab_id":"w9:t2"},"root_pane":{"pane_id":"w9:p2"}}}\n' > "$resp/2.out"
   printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/3.out"
   printf '{"result":{"panes":[{"pane_id":"w9:p1","tab_id":"w9:t1"},{"pane_id":"w9:p2","tab_id":"w9:t2"},{"pane_id":"w9:p3","tab_id":"w9:t3"}]}}\n' > "$resp/4.out"
-  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/5.out"
-  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/6.out"
-  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/7.out"
-  printf '{"error":{"code":"pane_not_found"}}\n' > "$resp/9.out"
-  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/10.out"
-  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"},{"pane_id":"w9:p3","tab_id":"w9:t3"}]}}\n' > "$resp/11.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1"}}}\n' > "$resp/5.out"
+  printf '{"error":{"code":"agent_not_found"}}\n' > "$resp/6.out"
+  printf '{"result":{"pane":{"pane_id":"w9:p1","tab_id":"w9:t1","workspace_id":"w9"}}}\n' > "$resp/7.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t1","label":"1","workspace_id":"w9"},{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/8.out"
+  : > "$resp/9.out"
+  printf '{"error":{"code":"pane_not_found"}}\n' > "$resp/10.out"
+  printf '{"result":{"tabs":[{"tab_id":"w9:t2","label":"fm-task-p2","workspace_id":"w9"},{"tab_id":"w9:t3","label":"fm-task-p2","workspace_id":"w9"}]}}\n' > "$resp/11.out"
+  printf '{"result":{"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"},{"pane_id":"w9:p3","tab_id":"w9:t3"}]}}\n' > "$resp/12.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_focus_snapshot() { printf "captain-ws\tcaptain-tab"; }; fm_backend_herdr_projection_focus_restore() { return 0; }; fm_backend_herdr_projection_create_task /tmp/proj label fm-task-p2' "$ROOT" 2>&1)
