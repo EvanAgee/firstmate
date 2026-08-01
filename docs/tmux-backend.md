@@ -58,6 +58,7 @@ Similar or prefixed process names are not accepted through those exact Pi-family
 
 Agent liveness and composer safety are separate checks.
 For a bordered composer, the tmux reader locates the complete box structurally and classifies every content row through the shared ANSI and ghost handling in `bin/fm-composer-lib.sh`.
+The OMP two-row reader is tried only when the caller-supplied harness identity is OMP, because tmux exposes no native agent identity and another harness that happens to render an OMP-shaped row keeps the generic reader it was verified against.
 OMP's independent two-row composer additionally requires exact top/bottom terminal-cell width equality, measured with the canonical `omp_bun` from validated task metadata through the dispatcher and every submit retry; the active primary uses the equivalently validated Bun identity in its four-line marker.
 A fresh `PATH` lookup, a missing binding, a non-executable path, or a runtime/process mismatch cannot authorize geometry and yields `unknown`.
 Real text on any content row is pending, while only an unambiguous box with every row empty is proven empty.

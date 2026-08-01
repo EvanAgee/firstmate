@@ -196,7 +196,9 @@ Text is typed once; only Enter is retried.
 On an idle or done native baseline, ordinary submit confirmation waits for `working` or `blocked` across a bounded polling window.
 On an already active or unreadable baseline, ordinary harnesses fall back to conservative composer clearance.
 OMP is stricter: the adapter binds the exact native OMP session path and pre-send byte offset before typing.
+That offset is always the end of a complete newline-terminated session record; when a partial record is still being appended the adapter waits a bounded time and then refuses rather than rewinding, because a mid-record offset would poison every later read and an earlier boundary could false-confirm an already-appended record.
 A busy OMP steer sends one Enter and succeeds only after an appended exact-text user message carries native `steering:true`; an identical ordinary user message is not acknowledgement, and missing proof returns unknown without redelivery.
+A `blocked` OMP agent is parked on an open ask rather than generating, so its proof is instead a successful post-offset `ask` tool result whose structured `selectedOptions` is exactly the sent text; a steering user record is never accepted there, and an errored answer is a rejection, not delivery.
 OMP `/exit` succeeds only after a post-offset normal `session_exit` event, then closes the exact owned Herdr pane and verifies it is absent; it never falls back to a steering acknowledgement.
 A fully unreadable target stops retrying and reports unknown.
 The poll density bounds the residual possibility of an extremely fast complete turn; a missed ordinary transition can cause only a redundant Enter on an empty composer, never duplicate message text.

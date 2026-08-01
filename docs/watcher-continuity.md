@@ -7,6 +7,8 @@ Must-work continuity now lives above that process boundary instead of depending 
 
 Pi's `.pi/extensions/fm-primary-pi-watch.ts`, OMP's `.omp/extensions/fm-primary-omp.ts`, and OpenCode's `.opencode/plugins/fm-primary-watch-arm.js` own continuous re-arm after an actionable child close.
 Pi and OMP are thin adapters over the shared lifecycle core in `bin/fm-primary-watch-core.ts`; each keeps its own runtime identity, event bindings, and follow-up delivery.
+Because both files decide watcher behavior, a loaded adapter's marker version hashes the adapter and that shared core together - `bin/fm-primary-watch-version-lib.sh` is the one definition verifiers recompute from.
+Editing only the core therefore makes a running session's marker stale, and `bin/fm-session-start.sh` prints the exact restart fallback instead of accepting a live session that still runs the old core.
 Each adapter starts the next arm before delivering the wake prompt, checks current session-lock ownership at launch, preserves one child or scheduled retry at a time, and applies bounded exponential retry after an unexpected or failed close.
 A failed follow-up never cancels continuity restoration.
 Same-process session replacement on Pi and OMP follows the generation-owner contract stated once in `bin/fm-primary-watch-core.ts`.
