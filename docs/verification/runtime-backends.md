@@ -95,10 +95,10 @@ ok - real isolated tmux OMP secondmate launch, idle health, marked replies, exit
 
 The runs retained exact `harness=omp`, forwarded the selected model and thinking level, delivered each initial instruction once, and used `/skill:<name>` for the real skill turn.
 Normal `/exit` stopped each OMP process without killing the private tmux server, exact session resume restored prior context, and cleanup removed every generated extension, session, task temp root, worktree, and socket-owned endpoint.
-The guarded primary, worker/scout, and secondmate owners reran on 2026-08-01 at head `ce9ad11eb43c61ef920548370bb9ecd499aff8f9` and returned four green results.
+The guarded primary, worker/scout, and secondmate owners reran on 2026-08-01 at head `6b5d6bc8161ec4d2d7b09316854c8c92358a4700` and returned four green results.
 The Herdr role matrix required each expected turn-end or routed-reply notification to reach the durable queue or the primary follow-up transcript before the fixture drained it.
 
-The full OMP contract and both live backend matrices passed together in one clean-environment runner invocation on 2026-08-01 at head `ce9ad11eb43c61ef920548370bb9ecd499aff8f9`:
+The full OMP contract and both live backend matrices passed together in one clean-environment runner invocation on 2026-08-01 at head `6b5d6bc8161ec4d2d7b09316854c8c92358a4700`:
 
 ```sh
 env -i \
@@ -134,27 +134,29 @@ Starting from `env -i` left `FM_BUSY_REGEX` unset.
 Bounded output, from the run's first marker through the two Herdr live owners and the final summary:
 
 ```text
-FM_TEST_BEGIN 2026-08-01T10:58:33Z tests/fm-omp-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+FM_TEST_BEGIN 2026-08-01T16:43:08Z tests/fm-omp-harness.test.sh family=pure-contract-unit expected_gate_skip=none
 ...
-FM_TEST_BEGIN 2026-08-01T11:11:11Z tests/fm-omp-herdr-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
+FM_TEST_BEGIN 2026-08-01T16:55:40Z tests/fm-omp-herdr-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
 ok - real Herdr OMP role matrix: primary, worker/scout idle and busy steering, blocked escalation, secondmate, normal exits, recovery, duplicate refusal, and guarded teardown
-FM_TEST_END 2026-08-01T11:18:06Z tests/fm-omp-herdr-live-e2e.test.sh exit=0 duration_ms=415199 gate_skip=false
-FM_TEST_BEGIN 2026-08-01T11:18:06Z tests/fm-omp-herdr-exit-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
+FM_TEST_END 2026-08-01T17:06:55Z tests/fm-omp-herdr-live-e2e.test.sh exit=0 duration_ms=675674 gate_skip=false
+FM_TEST_BEGIN 2026-08-01T17:06:55Z tests/fm-omp-herdr-exit-live-e2e.test.sh family=live-harness-optin expected_gate_skip=optin-env
 warning: herdr task kill could not acquire its session presentation lock; refusing an unlocked pane close
 ok - real Herdr OMP /exit: exact native identity, post-offset normal session_exit, pane absence, and guarded tripwire teardown
-FM_TEST_END 2026-08-01T11:18:20Z tests/fm-omp-herdr-exit-live-e2e.test.sh exit=0 duration_ms=13167 gate_skip=false
-FM_TEST_SUMMARY total=17 failed=0 skipped_gate=0 duration_ms=1186115
-FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=3 duration_ms=388651 failed=0
-FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=4 duration_ms=596246 failed=0
-FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 duration_ms=2155 failed=0
-FM_TEST_SUMMARY_FAMILY family=secondmate count=2 duration_ms=41166 failed=0
-FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=2 duration_ms=41396 failed=0
-FM_TEST_SUMMARY_FAMILY family=snapshot-bearings count=1 duration_ms=21916 failed=0
-FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=94061 failed=0
+FM_TEST_END 2026-08-01T17:07:10Z tests/fm-omp-herdr-exit-live-e2e.test.sh exit=0 duration_ms=14588 gate_skip=false
+FM_TEST_SUMMARY total=17 failed=0 skipped_gate=0 duration_ms=1442237
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=3 duration_ms=392414 failed=0
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=4 duration_ms=841988 failed=0
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 duration_ms=2161 failed=0
+FM_TEST_SUMMARY_FAMILY family=secondmate count=2 duration_ms=44382 failed=0
+FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=2 duration_ms=45019 failed=0
+FM_TEST_SUMMARY_FAMILY family=snapshot-bearings count=1 duration_ms=22841 failed=0
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=92921 failed=0
 ```
 
 Every listed script ran at that head with no gate skip.
 The isolated Herdr role matrix emitted no queued-wake warning.
+The final run retained the fresh-beacon, pending-notification, queue-drain, and bounded-delivery assertions in the Herdr fixture.
+The focused OMP adapter contract also rejected explicit watcher-delivery options, pinning OMP's idle-turn start and streaming steer behavior without weakening the shared watcher continuity owner.
 The tmux role fixtures emitted their expected task-copy worktree and missing-fixture-watcher notices.
 The Herdr exit fixture refused an unlocked presentation close after proving normal process exit, then completed its named guarded teardown.
 
