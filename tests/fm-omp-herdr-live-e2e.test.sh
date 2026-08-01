@@ -150,6 +150,12 @@ case "\$parent_exe:\$parent_args" in
       3:agent\ get\ *) native_probe_pane=\$3 ;;
       5:--session\ "\$session"\ agent\ get\ *) native_probe_pane=\$5 ;;
       7:pane\ read\ *\ --source\ recent-unwrapped\ --lines\ *) native_probe_pane=\$3 ;;
+      7:agent\ read\ *\ --source\ recent-unwrapped\ --lines\ *)
+        case "\$7" in
+          ''|0*|*[!0-9]*) ;;
+          *) native_probe_pane=\$3 ;;
+        esac
+        ;;
     esac
     case "\$native_probe_pane" in
       ''|*[!A-Za-z0-9._:@%+-]*) ;;
@@ -630,7 +636,7 @@ env PATH="$WRAPPER_BIN:$BASE_PATH" HERDR_SESSION="$SESSION" FM_BACKEND=herdr \
 # its default-session tripwire.
 [ -s "$WRAPPER_LOG" ] || fail "production role matrix issued no Herdr commands through the wrapper"
 if [ -s "$WRAPPER_LOG.native-omp-probes" ]; then
-  grep -Ev "^(agent |--help |agent --help |agent list |agent get [A-Za-z0-9._:@%+-]+ |pane read [A-Za-z0-9._:@%+-]+ --source recent-unwrapped --lines [1-9][0-9]* |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
+  grep -Ev "^(agent |--help |agent --help |agent list |agent get [A-Za-z0-9._:@%+-]+ |pane read [A-Za-z0-9._:@%+-]+ --source recent-unwrapped --lines [1-9][0-9]* |agent read [A-Za-z0-9._:@%+-]+ --source recent-unwrapped --lines [1-9][0-9]* |--session $SESSION --help |--session $SESSION agent get [A-Za-z0-9._:@%+-]+ )$" \
     "$WRAPPER_LOG.native-omp-probes" >/dev/null \
     && fail "an unexpected native OMP Herdr probe escaped quarantine"
 fi
