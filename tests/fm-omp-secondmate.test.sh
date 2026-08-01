@@ -211,6 +211,11 @@ case "$cmd $sub" in
     fi
     ;;
   "pane close")
+    # FM_TEST_REFUSE_CLOSE reproduces herdr's real refusal shape: the close is
+    # declined (the pane stays) while the CLI still exits 0.
+    if [ "${FM_TEST_REFUSE_CLOSE:-0}" = 1 ]; then
+      exit 0
+    fi
     rm -f "$FM_TEST_WINDOW_FLAG"
     : > "$FM_TEST_RETIRED_FLAG"
     ;;
@@ -377,6 +382,17 @@ test_herdr_launch_exact_resume_recovery_and_abort() {
   [ -f "$MAIN_STATE/$TASK_ID.meta" ] || fail "OMP Herdr secondmate abort removed recovery metadata"
   [ ! -f "$WINDOW_FLAG" ] || fail "OMP Herdr secondmate abort left its owned endpoint running"
   [ ! -s "$CASE/treehouse.log" ] || fail "OMP Herdr secondmate abort invoked treehouse against a persistent home"
+
+  setup_case herdr-abort-refused-close
+  printf 'preserve me\n' > "$HOME_DIR/state/sentinel"
+  out=$(FM_TEST_SKIP_ACK=1 FM_TEST_REFUSE_CLOSE=1 run_spawn_herdr 2>&1) \
+    && fail "OMP Herdr secondmate launch unexpectedly succeeded without acknowledgement"
+  assert_contains "$out" 'could not confirm its owned endpoint stopped' \
+    "OMP Herdr abort trusted a refused pane close as a stopped endpoint"
+  [ -f "$WINDOW_FLAG" ] || fail "refused herdr close should have left the endpoint present"
+  [ -f "$HOME_DIR/state/sentinel" ] || fail "OMP Herdr abort removed home state after an unconfirmed close"
+  [ -f "$MAIN_STATE/$TASK_ID.meta" ] || fail "OMP Herdr abort removed recovery metadata after an unconfirmed close"
+  [ ! -s "$CASE/treehouse.log" ] || fail "OMP Herdr abort invoked treehouse after an unconfirmed close"
 
   pass "OMP Herdr secondmate launch, exact resume, conservative recovery, and post-ack abort preserve the durable contract"
 }

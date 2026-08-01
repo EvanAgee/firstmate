@@ -311,6 +311,24 @@ spawn_omp_abort_ownership_proven() {  # <meta>
     && grep -Fqx "tasktmp=${TASK_TMP:-}" "$meta"
 }
 
+# spawn_omp_abort_endpoint_stopped: kill the proven-owned endpoint and treat it
+# as stopped only when the backend's recovery classifier agrees. A kill's exit
+# status is not proof: fm_backend_herdr_kill returns 0 after refusing an
+# unlocked pane close when another spawn or teardown holds the session
+# presentation lock. Only an authoritatively missing endpoint - or a backend
+# with no classifier at all - clears the caller's destructive branch; present,
+# agent-less, ambiguous, and unreadable states all preserve everything, exactly
+# like the dead-secondmate recovery check below.
+spawn_omp_abort_endpoint_stopped() {  # <meta>
+  local meta=$1 state
+  fm_backend_kill "$BACKEND" "$T" || return 1
+  state=$(fm_backend_agent_state "$BACKEND" "$T" "$meta" 2>/dev/null) || state=unreadable
+  case "$state" in
+    missing|unverified) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 spawn_abort_cleanup() {
   local status=$? meta current_head dirty
   if [ "$OMP_ABORT_CLEANUP" = 1 ]; then
@@ -321,13 +339,13 @@ spawn_abort_cleanup() {
     elif [ "${KIND:-}" = secondmate ]; then
       if ! grep -Fqx 'kind=secondmate' "$meta" || ! grep -Fqx "home=$WT" "$meta"; then
         echo "warning: OMP secondmate spawn cleanup could not prove persistent-home ownership; preserving its endpoint, home, metadata, and sessions" >&2
-      elif ! fm_backend_kill "$BACKEND" "$T"; then
-        echo "warning: OMP secondmate spawn cleanup could not stop its owned endpoint; preserving its home, metadata, and sessions" >&2
+      elif ! spawn_omp_abort_endpoint_stopped "$meta"; then
+        echo "warning: OMP secondmate spawn cleanup could not confirm its owned endpoint stopped; preserving its home, metadata, and sessions" >&2
       else
         echo "warning: OMP secondmate launch failed after endpoint creation; stopped only its owned endpoint and preserved its persistent home, metadata, and sessions" >&2
       fi
-    elif ! fm_backend_kill "$BACKEND" "$T"; then
-      echo "warning: OMP spawn cleanup could not stop its owned endpoint; preserving its worktree and task artifacts" >&2
+    elif ! spawn_omp_abort_endpoint_stopped "$meta"; then
+      echo "warning: OMP spawn cleanup could not confirm its owned endpoint stopped; preserving its worktree and task artifacts" >&2
     else
       sleep 0.1
       current_head=$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)
