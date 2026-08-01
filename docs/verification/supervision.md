@@ -90,7 +90,7 @@ omp --version
 FM_OMP_PRIMARY_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh
 ```
 
-OMP 17.1.8 repeated the primary lifecycle on 2026-08-01 at head `6b5d6bc8161ec4d2d7b09316854c8c92358a4700`.
+OMP 17.1.8 repeated the primary lifecycle on 2026-08-01 at head `491bc809a38a84f5ea651fd051b509cb511149a1`.
 
 Observed bounded output:
 
