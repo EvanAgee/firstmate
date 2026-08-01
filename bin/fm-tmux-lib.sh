@@ -69,8 +69,8 @@
 
 # Delivery-only rendered busy footers per harness. claude/codex: "esc to
 # interrupt"; opencode: "esc interrupt"; pi: "Working..."; omp:
-# "Working… ⟦esc⟧" or an anchored Braille-spinner "Running … ⟦esc⟧" tool
-# status; grok: "Ctrl+c:cancel".
+# "Working… ⟦esc⟧" or an anchored Braille-spinner "Running … ⟦esc⟧" or
+# "Waiting … ⟦esc⟧" tool status; grok: "Ctrl+c:cancel".
 # Claude's current spinner has a rotating glyph and word, but every active-turn
 # line has an ellipsis followed by a parenthesized elapsed duration. Keep this
 # signature separate from the shared default because that shape is not generic
@@ -90,7 +90,7 @@ FM_TMUX_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]
 FM_TMUX_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
 FM_TMUX_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
 FM_TMUX_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
-FM_TMUX_OMP_BUSY_REGEX_DEFAULT='Working…[[:space:]]+⟦esc⟧|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)[[:space:]]+Running[[:space:]].*[[:space:]]+⟦esc⟧[[:space:]]*$'
+FM_TMUX_OMP_BUSY_REGEX_DEFAULT='Working…[[:space:]]+⟦esc⟧|^[[:space:]]*(⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏)[[:space:]]+(Running|Waiting)[[:space:]].*[[:space:]]+⟦esc⟧[[:space:]]*$'
 FM_TMUX_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
 FM_TMUX_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
 

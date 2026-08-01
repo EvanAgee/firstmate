@@ -291,6 +291,11 @@ test_omp_busy_signature_is_exact_and_scoped() {
     || fail "live OMP Working capture should classify busy"
   printf ' ⠙ Running requested sleep ⟦esc⟧\n' | fm_busy_lines_match omp \
     || fail "live OMP Running-tool capture should classify busy"
+  printf ' ⠦ Waiting thirty seconds ⟦esc⟧\n' | fm_busy_lines_match omp \
+    || fail "live OMP Waiting-tool capture should classify busy"
+  printf '╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project/worker-wt ▶ ⑂ fm/omp-live-worker ▶────╮\n' \
+    | fm_busy_lines_match omp \
+    && fail "live OMP idle status bar must not classify busy"
   printf 'Working...\n' | fm_busy_lines_match omp \
     && fail "OMP must not borrow Pi's ASCII Working signature"
   printf ' ⠸ Working… ⟦esc⟧\n' | fm_busy_lines_match pi \
@@ -301,7 +306,10 @@ test_omp_busy_signature_is_exact_and_scoped() {
     && fail "OMP Running-tool status requires its exact Braille-spinner row"
   printf ' ⠙ Running requested sleep ⟦esc⟧ trailing\n' | fm_busy_lines_match omp \
     && fail "OMP Running-tool status must stay anchored at the row end"
-  printf ' ⠸ Working… ⟦esc⟧\n ⠙ Running requested sleep ⟦esc⟧\n' | fm_busy_lines_match \
+  printf ' ⠦ Waiting thirty seconds ⟦esc⟧ trailing\n' | fm_busy_lines_match omp \
+    && fail "OMP Waiting-tool status must stay anchored at the row end"
+  printf ' ⠸ Working… ⟦esc⟧\n ⠙ Running requested sleep ⟦esc⟧\n ⠦ Waiting thirty seconds ⟦esc⟧\n' \
+    | fm_busy_lines_match \
     || fail "no-harness compatibility fallback should include verified OMP busy states"
   pass "OMP busy detection uses its verified Unicode status rows without widening Pi"
 }
