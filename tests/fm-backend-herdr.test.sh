@@ -3401,6 +3401,74 @@ test_send_text_submit_omp_busy_without_new_event_refuses_without_retry() {
   pass "fm_backend_herdr_send_text_submit: an unacknowledged busy OMP steer stays unknown without any automatic redelivery"
 }
 
+# --- blocked OMP ask answers ------------------------------------------------
+# A blocked OMP agent is parked on an open ask, so the answer it receives is
+# recorded as its own ask tool result, never as a steering user record. These
+# three pin the exact accepted shape: the successful structured result confirms,
+# and neither a same-text steering record nor a failed ask result may.
+
+test_send_text_submit_omp_blocked_confirms_from_structured_ask_result() {
+  local dir log resp fb out enter_count send_count session text
+  dir="$TMP_ROOT/submit-omp-blocked-ask"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  text=Operators
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"blocked","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
+    FM_HERDR_APPEND_SESSION_RECORD="{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"ask\",\"isError\":false,\"details\":{\"selectedOptions\":[\"$text\"]}}}" \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
+  [ "$out" = empty ] || fail "a blocked OMP ask answered with the exact structured selection should confirm, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  send_count=$(grep -c $'\x1f''pane'$'\x1f''send-text'$'\x1f''w1:p2'$'\x1f' "$log")
+  [ "$enter_count" -eq 1 ] && [ "$send_count" -eq 1 ] \
+    || fail "a confirmed blocked OMP ask answer retried delivery (send-text=$send_count enter=$enter_count)"
+  pass "fm_backend_herdr_send_text_submit: a blocked OMP ask confirms from its exact structured selectedOptions result"
+}
+
+test_send_text_submit_omp_blocked_rejects_steering_record_as_ask_answer() {
+  local dir log resp fb out enter_count session text
+  dir="$TMP_ROOT/submit-omp-blocked-steering"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  text=Operators
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"blocked","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
+    FM_HERDR_APPEND_SESSION_RECORD="{\"type\":\"message\",\"message\":{\"role\":\"user\",\"steering\":true,\"content\":[{\"type\":\"text\",\"text\":\"$text\"}]}}" \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
+  [ "$out" = unknown ] || fail "a post-offset steering record must not prove a blocked OMP ask answer, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 1 ] || fail "an unproven blocked OMP ask answer retried Enter, got $enter_count"
+  pass "fm_backend_herdr_send_text_submit: a same-text steering record cannot impersonate a blocked OMP ask answer"
+}
+
+test_send_text_submit_omp_blocked_rejects_failed_ask_result() {
+  local dir log resp fb out enter_count session text
+  dir="$TMP_ROOT/submit-omp-blocked-ask-error"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  session="$dir/omp-session.jsonl"
+  text=Operators
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '{"result":{"agent":{"agent":"omp","agent_status":"blocked","agent_session":{"kind":"path","value":"%s"}}}}\n' "$session" > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_APPEND_SESSION_ON_ENTER="$session" \
+    FM_HERDR_APPEND_SESSION_RECORD="{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolName\":\"ask\",\"isError\":true,\"details\":{\"selectedOptions\":[\"$text\"]}}}" \
+    FM_BACKEND_HERDR_SUBMIT_POLLS=2 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 \
+    FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=0 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0 "" omp' "$ROOT" "$text" )
+  [ "$out" = unknown ] || fail "a failed ask tool result must not confirm a blocked OMP answer, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 1 ] || fail "a failed blocked OMP ask result retried Enter, got $enter_count"
+  pass "fm_backend_herdr_send_text_submit: an isError ask tool result is a rejected answer, not delivery proof"
+}
+
 test_send_text_submit_detects_landed_send() {
   local dir log resp fb out enter_count
   dir="$TMP_ROOT/submit-ok"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -4332,6 +4400,9 @@ test_send_text_submit_omp_busy_steer_requires_matching_new_session_event
 test_send_text_submit_omp_busy_rejects_identical_ordinary_user_event
 test_send_text_submit_omp_busy_default_event_budget_is_bounded_and_long_enough
 test_send_text_submit_omp_busy_without_new_event_refuses_without_retry
+test_send_text_submit_omp_blocked_confirms_from_structured_ask_result
+test_send_text_submit_omp_blocked_rejects_steering_record_as_ask_answer
+test_send_text_submit_omp_blocked_rejects_failed_ask_result
 test_send_text_submit_detects_landed_send
 test_send_text_submit_detects_swallowed_enter
 test_send_text_submit_popup_autocomplete_requires_second_enter

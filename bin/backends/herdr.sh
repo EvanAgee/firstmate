@@ -2850,11 +2850,14 @@ fm_backend_herdr_omp_session_has_message_after() {  # <session-file> <byte-offse
 }
 
 # An OMP agent reported `blocked` is parked on an open ask, not generating, so
-# the text it receives is recorded as the structured answer to that ask
-# (a toolResult with toolName=ask whose details.selectedOptions is exactly the
-# one option sent), never as a steering user record. Accept that shape, and
-# still accept the steering record for a free-text ask that OMP appends as an
-# ordinary steering message. Option display text is never matched.
+# the text it receives is recorded as the structured answer to that ask: a
+# successful toolResult with toolName=ask whose details.selectedOptions is
+# exactly the one option sent. Only that exact shape is delivery proof. A
+# steering user record is never accepted here, because a blocked agent never
+# records the answer that way and an unrelated post-offset steering message
+# would otherwise confirm a send that never landed on the ask. An isError
+# result is a rejected answer, not a landed one, and option display text is
+# never matched.
 fm_backend_herdr_omp_session_has_ask_answer_after() {  # <session-file> <byte-offset> <exact-text>
   local session_file=$1 offset=$2 text=$3 size start
   [ -f "$session_file" ] && [ ! -L "$session_file" ] || return 1
@@ -2865,10 +2868,9 @@ fm_backend_herdr_omp_session_has_ask_answer_after() {  # <session-file> <byte-of
   tail -c "+$start" "$session_file" 2>/dev/null \
     | jq -se --arg text "$text" '
         any(.[] | select(.type == "message") | .message;
-          (.role == "toolResult" and .toolName == "ask"
-            and (.details.selectedOptions // []) == [$text])
-          or (.role == "user" and .steering == true
-            and any(.content[]?; .type == "text" and .text == $text))
+          .role == "toolResult" and .toolName == "ask"
+          and ((.isError // false) | not)
+          and (.details.selectedOptions // []) == [$text]
         )
       ' >/dev/null 2>&1
 }
