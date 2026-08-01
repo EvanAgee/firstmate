@@ -3245,6 +3245,50 @@ test_omp_snapshot_offset_binds_a_complete_record_boundary() {
   pass "OMP submit snapshot binds its offset to a complete JSONL record boundary so later matching events stay readable"
 }
 
+test_omp_snapshot_offset_rejects_a_size_completed_after_the_read() {
+  local dir fb session partial_offset offset real_wc
+  dir="$TMP_ROOT/omp-snapshot-size-toctou"; fb="$dir/fakebin"; session="$dir/session.jsonl"
+  mkdir -p "$fb"
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  # OMP is mid-append: the trailing record has no newline yet.
+  printf '%s' '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"partial"}]' >> "$session"
+  partial_offset=$(wc -c < "$session")
+  real_wc=$(command -v wc)
+  # Deterministically lose the race: OMP completes the partial record between
+  # the size read and the boundary check, exactly once. A boundary check that
+  # reads the file's current last byte then sees a newline and accepts the
+  # stale mid-record size.
+  cat > "$fb/wc" <<SH
+#!/usr/bin/env bash
+if [ "\$#" -eq 1 ] && [ "\$1" = -c ]; then
+  size=\$('$real_wc' -c)
+  if [ ! -e '$dir/completed' ]; then
+    : > '$dir/completed'
+    printf '%s\n' '}}' >> '$session'
+  fi
+  printf '%s\n' "\$size"
+  exit 0
+fi
+exec '$real_wc' "\$@"
+SH
+  chmod +x "$fb/wc"
+  offset=$( PATH="$fb:$PATH" FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL=0.01 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_complete_offset "$1"' "$ROOT" "$session" ) \
+    || fail "snapshot offset refused although the record completed inside the bounded wait"
+  [ -e "$dir/completed" ] || fail "the mid-record completion never ran; the race was not exercised"
+  [ "$offset" -gt "$partial_offset" ] \
+    || fail "snapshot recorded the stale mid-record size $offset read before the record completed"
+  printf '%s\n' '{"type":"message","message":{"role":"user","steering":true,"content":[{"type":"text","text":"steer me"}]}}' >> "$session"
+  bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_has_message_after "$1" "$2" "steer me"' \
+    "$ROOT" "$session" "$offset" \
+    || fail "a steering event appended after the snapshot was unreadable from the recorded offset $offset"
+  if bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_has_message_after "$1" "$2" "steer me"' \
+    "$ROOT" "$session" "$partial_offset"; then
+    fail "expected the raced mid-record offset $partial_offset to be unreadable; the regression no longer reproduces"
+  fi
+  pass "OMP submit snapshot checks the boundary at the recorded size, so a record completed after the size read cannot poison later tails"
+}
+
 test_omp_snapshot_offset_refuses_a_never_completed_record() {
   local dir session
   dir="$TMP_ROOT/omp-snapshot-never-completes"; mkdir -p "$dir"; session="$dir/session.jsonl"
@@ -4392,6 +4436,7 @@ test_wait_for_working_returns_unknown_when_never_readable
 test_wait_for_working_treats_blocked_as_submit_active
 test_omp_session_reader_uses_bsd_tail_compatible_arguments
 test_omp_snapshot_offset_binds_a_complete_record_boundary
+test_omp_snapshot_offset_rejects_a_size_completed_after_the_read
 test_omp_snapshot_offset_refuses_a_never_completed_record
 test_send_text_submit_omp_idle_refuses_missing_native_session_identity
 test_send_text_submit_omp_exit_requires_normal_session_event_and_closes_endpoint
