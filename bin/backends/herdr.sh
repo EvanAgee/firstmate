@@ -2817,13 +2817,18 @@ fm_backend_herdr_omp_submit_snapshot() {  # <session> <pane_id>
 # trailing record to complete. Refuse (caller reports unknown) rather than
 # rewinding to the previous boundary, which would re-expose an already-appended
 # record to the matcher and could false-confirm a stale steer.
+# The boundary check must read the byte at the recorded size, not the file's
+# current last byte: OMP can complete the partial record between the size read
+# and the check, which would accept a mid-record offset and poison every later
+# tail.
 fm_backend_herdr_omp_session_complete_offset() {  # <session-file>
   local file=$1 size i
   for ((i = 0; i < FM_BACKEND_HERDR_OMP_SNAPSHOT_POLLS; i++)); do
     [ "$i" -eq 0 ] || sleep "$FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL"
     size=$(wc -c < "$file" 2>/dev/null) || return 1
     case "$size" in ''|*[!0-9]*) return 1 ;; esac
-    if [ "$size" -eq 0 ] || [ "$(tail -c 1 "$file" 2>/dev/null | wc -l)" -eq 1 ]; then
+    if [ "$size" -eq 0 ] \
+      || [ "$(head -c "$size" "$file" 2>/dev/null | tail -c 1 | wc -l)" -eq 1 ]; then
       printf '%s' "$size"
       return 0
     fi
