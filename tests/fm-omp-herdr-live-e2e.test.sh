@@ -263,24 +263,19 @@ session_file_for() {
 # Every predicate below tails from a recorded byte offset into jq, and OMP is
 # still appending while the offset is taken, so a raw file size can land in the
 # middle of a record. A tail that starts mid-record is invalid JSON forever, so
-# the matching event appended later could never be read. Bind each offset to the
-# end of the last newline-terminated record instead, waiting a bounded time for
-# a partial trailing record to complete rather than rewinding to the previous
+# the matching event appended later could never be read. Production already owns
+# that rule, so bind each fixture offset with the exact production boundary
+# function instead of a fixture copy: it waits a bounded time for a partial
+# trailing record to complete and refuses rather than rewinding to the previous
 # boundary, which would re-expose an already-appended record to the matcher.
 session_offset() { # <session-file>
-  local file=$1 size i=0
-  while [ "$i" -lt 600 ]; do
-    size=$(wc -c < "$file" 2>/dev/null | tr -d '[:space:]')
-    case "$size" in ''|*[!0-9]*) size= ;; esac
-    if [ -n "$size" ] && { [ "$size" -eq 0 ] || [ "$(tail -c 1 "$file" 2>/dev/null | wc -l)" -eq 1 ]; }; then
-      printf '%s' "$size"
-      return 0
-    fi
-    sleep 0.25
-    i=$((i + 1))
-  done
-  printf 'not ok - timed out waiting for a complete JSONL record boundary in %s\n' "$file" >&2
-  return 1
+  local file=$1 offset
+  offset=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_complete_offset "$1"' \
+    "$ROOT" "$file") || {
+    printf 'not ok - production offset owner refused a complete JSONL record boundary in %s\n' "$file" >&2
+    return 1
+  }
+  printf '%s' "$offset"
 }
 
 # OMP records message content as a part list, and the text part is not always
@@ -432,6 +427,17 @@ primary_blocked_decision_settled() { # <transcript-offset>
   primary_ask_open_after "$1" || agent_is "$PRIMARY_TARGET" omp 'idle done'
 }
 
+# An advisory can close the captain's ask between observing it open and the
+# Enter that selects the default option, so that Enter routes no choice. The
+# Enter is settled once the worker recorded the exact routed choice, or once the
+# captain has no open ask left and is back at exact native idle - only that
+# observed race falls through to the idle-captain answer path below.
+primary_enter_settled() { # <primary-transcript-offset> <worker-session> <worker-offset> <choice>
+  session_has_exact_choice_after "$2" "$3" "$4" && return 0
+  primary_ask_open_after "$1" && return 1
+  agent_is "$PRIMARY_TARGET" omp 'idle done'
+}
+
 send_task() {
   [ ! -s "$HOME_DIR/state/.wake-queue" ] \
     || fail "guarded OMP Herdr send began with an undrained primary notification: $*"
@@ -549,7 +555,10 @@ worker_answer_offset=$(session_offset "$WORKER_SESSION") || exit 1
 if primary_ask_open_after "$blocked_wake_offset"; then
   lab pane send-keys "$(pane_id "$PRIMARY_TARGET")" enter >/dev/null \
     || fail "could not select the default captain option on the exact primary pane"
-else
+  wait_for "captain ask resolution after the default selection" primary_enter_settled \
+    "$blocked_wake_offset" "$WORKER_SESSION" "$worker_answer_offset" Operators
+fi
+if ! session_has_exact_choice_after "$WORKER_SESSION" "$worker_answer_offset" Operators; then
   drain_primary_wakes
   send_task "$WORKER_ID" Operators \
     || fail "captain answer for the blocked worker was not submitted"
