@@ -392,6 +392,13 @@ primary_ask_open_after() { # <transcript-offset>
   agent_is "$PRIMARY_TARGET" omp blocked && session_has_open_ask_after "$PRIMARY_SESSION" "$1"
 }
 
+# After the correlated drain the captain may either escalate the worker's
+# question with its own ask or acknowledge it and return to exact native idle.
+# Both are valid model-level handlings, so wait for whichever settles first.
+primary_blocked_decision_settled() { # <transcript-offset>
+  primary_ask_open_after "$1" || agent_is "$PRIMARY_TARGET" omp 'idle done'
+}
+
 send_task() {
   [ ! -s "$HOME_DIR/state/.wake-queue" ] \
     || fail "guarded OMP Herdr send began with an undrained primary notification: $*"
@@ -498,14 +505,22 @@ file_has "$HOME_DIR/state/.wake-queue" "$WORKER_TARGET" \
 await_primary_wake_drain "primary actionable blocked follow-up" "$blocked_wake_offset" \
   "FIRSTMATE WATCHER WAKE: stale: $WORKER_TARGET (herdr: agent blocked - waiting on human"
 question_wake_offset=$(wc -c < "$PRIMARY_SESSION" | tr -d '[:space:]')
-# Firstmate owns the answer route: the captain escalates the worker's
+# Firstmate owns the answer route. When the captain escalates the worker's
 # single-choice question, the operator takes the default option on the exact
-# primary pane, and the primary forwards that exact choice to the worker.
-# Answering the worker pane directly would prove nothing about that route.
-wait_for "primary escalation question for the blocked worker" primary_ask_open_after "$blocked_wake_offset"
+# primary pane and the primary forwards that exact choice to the worker. When
+# the captain instead acknowledges the escalation and returns to exact native
+# idle, the operator answers the still-blocked worker through the same guarded
+# send path. Both paths must land the exact routed choice on the worker.
+wait_for "primary decision on the blocked worker" primary_blocked_decision_settled "$blocked_wake_offset"
 worker_answer_offset=$(wc -c < "$WORKER_SESSION" | tr -d '[:space:]')
-lab pane send-keys "$(pane_id "$PRIMARY_TARGET")" enter >/dev/null \
-  || fail "could not select the default captain option on the exact primary pane"
+if primary_ask_open_after "$blocked_wake_offset"; then
+  lab pane send-keys "$(pane_id "$PRIMARY_TARGET")" enter >/dev/null \
+    || fail "could not select the default captain option on the exact primary pane"
+else
+  drain_primary_wakes
+  send_task "$WORKER_ID" Operators \
+    || fail "captain answer for the blocked worker was not submitted"
+fi
 wait_for "exact routed captain choice on the worker" session_has_exact_choice_after \
   "$WORKER_SESSION" "$worker_answer_offset" Operators
 wait_for "question-induced worker turn completion" file_exists "$HOME_DIR/state/$WORKER_ID.turn-ended"
