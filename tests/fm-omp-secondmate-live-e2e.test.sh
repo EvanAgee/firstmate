@@ -9,6 +9,8 @@ fi
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$ROOT/bin/fm-primary-watch-version-lib.sh"
 
 command -v omp >/dev/null 2>&1 || fail "omp not found"
 command -v tmux >/dev/null 2>&1 || fail "tmux not found"
@@ -95,7 +97,7 @@ marker_valid() {
   lock=$(cat "$SECOND_HOME/state/.lock" 2>/dev/null || true)
   bun=$(sed -n '3p' "$marker")
   bin=$(sed -n '4p' "$marker")
-  [ "$version" = "$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$SECOND_HOME/.omp/extensions/fm-primary-omp.ts")" ] || return 1
+  [ "$version" = "$(fm_primary_watch_version "$SECOND_HOME/.omp/extensions/fm-primary-omp.ts" "$SECOND_HOME")" ] || return 1
   [ "$(wc -l < "$marker" | tr -d '[:space:]')" = 4 ] \
     && [ "$bun" = "$(sed -n 's/^omp_bun=//p' "$MAIN_STATE/$ID.meta")" ] \
     && [ "$bin" = "$(sed -n 's/^omp_bin=//p' "$MAIN_STATE/$ID.meta")" ] \

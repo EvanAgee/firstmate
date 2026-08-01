@@ -180,6 +180,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$SCRIPT_DIR/fm-omp-process-lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$SCRIPT_DIR/fm-primary-watch-version-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
@@ -1082,9 +1084,7 @@ if [ "$KIND" = secondmate ]; then
         exit 1
       fi
       OMP_STALE_LOCK_PID=$(cat "$PROJ_ABS/state/.lock" 2>/dev/null || true)
-      OMP_EXPECTED_MARKER_VERSION=$(node -e \
-        'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs"); process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' \
-        "$OMP_PRIMARY_EXTENSION" 2>/dev/null || true)
+      OMP_EXPECTED_MARKER_VERSION=$(fm_primary_watch_version "$OMP_PRIMARY_EXTENSION" "$PROJ_ABS" 2>/dev/null || true)
       # Legacy two-line markers contain no executable identity and are not safe
       # recovery evidence; preserve the home and require explicit reconciliation.
       if ! fm_omp_primary_marker_read "$OMP_PRIMARY_MARKER" \
@@ -2031,9 +2031,7 @@ if [ "$HARNESS" = omp ]; then
   OMP_ACKED=0
   if [ "$KIND" = secondmate ]; then
     OMP_ACK_POLLS=${FM_OMP_SECONDMATE_ACK_POLLS:-120}
-    OMP_PRIMARY_VERSION=$(node -e \
-      'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs"); process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' \
-      "$OMP_PRIMARY_EXTENSION" 2>/dev/null || true)
+    OMP_PRIMARY_VERSION=$(fm_primary_watch_version "$OMP_PRIMARY_EXTENSION" "$PROJ_ABS" 2>/dev/null || true)
     for _ in $(seq 1 "$OMP_ACK_POLLS"); do
       OMP_MARKER_VERSION=
       OMP_MARKER_PID=

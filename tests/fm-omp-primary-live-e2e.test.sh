@@ -9,6 +9,8 @@ fi
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$ROOT/bin/fm-primary-watch-version-lib.sh"
 
 command -v omp >/dev/null 2>&1 || fail "omp not found"
 command -v tmux >/dev/null 2>&1 || fail "tmux not found"
@@ -74,15 +76,12 @@ wait_text() {
   return 1
 }
 
-hash_file() {
-  local file=$1
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$file" | awk '{print "sha256:" $1}'
-  elif command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$file" | awk '{print "sha256:" $1}'
-  else
-    fail "SHA-256 utility unavailable for OMP adapter marker verification"
-  fi
+hash_file() {  # <adapter> <fm-root>
+  local file=$1 root=$2
+  command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 \
+    || fail "SHA-256 utility unavailable for OMP adapter marker verification"
+  fm_primary_watch_version "$file" "$root" \
+    || fail "could not compute the OMP primary watcher marker version"
 }
 
 wait_pid_change() {
@@ -155,7 +154,7 @@ wait_file_nonempty "$MARKER" || fail "plain OMP did not natively discover the tr
 wait_file_nonempty "$LOCK" || fail "injected startup did not publish the primary session lock"
 first_omp_pid=$(sed -n '2p' "$MARKER")
 [ "$first_omp_pid" = "$(cat "$LOCK")" ] || fail "OMP loaded marker was not tied to the lock owner"
-expected_version=$(hash_file "$PROJECT/.omp/extensions/fm-primary-omp.ts")
+expected_version=$(hash_file "$PROJECT/.omp/extensions/fm-primary-omp.ts" "$PROJECT")
 [ "$(head -n 1 "$MARKER")" = "$expected_version" ] || fail "OMP loaded marker was not tied to the adapter version"
 [ "$(wc -l < "$MARKER" | tr -d '[:space:]')" = 4 ] || fail "OMP loaded marker omitted executable identity"
 [ "$(sed -n '3p' "$MARKER")" = "$(fm_test_realpath "$(command -v bun)")" ] \

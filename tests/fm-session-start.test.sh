@@ -22,6 +22,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../bin/fm-primary-watch-version-lib.sh"
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
@@ -574,15 +576,22 @@ hash_file_for_test() {
   fi
 }
 
+install_primary_watch_core_fixture() {
+  local root=$1
+  mkdir -p "$root/bin"
+  cp "$ROOT/bin/fm-primary-watch-core.ts" "$root/bin/fm-primary-watch-core.ts"
+}
+
 install_omp_primary_extension_fixture() {
   local root=$1
   mkdir -p "$root/.omp/extensions"
   cp "$ROOT/.omp/extensions/fm-primary-omp.ts" "$root/.omp/extensions/fm-primary-omp.ts"
+  install_primary_watch_core_fixture "$root"
 }
 
 write_omp_primary_loaded_marker() {
   local home=$1 root=$2 pid=$3 fakebin=$4 version
-  version=$(hash_file_for_test "$root/.omp/extensions/fm-primary-omp.ts")
+  version=$(fm_primary_watch_version "$root/.omp/extensions/fm-primary-omp.ts" "$root")
   printf '%s\n%s\n%s\n%s\n' "$version" "$pid" "$(fm_test_realpath "$fakebin/bun")" "$(fm_test_realpath "$fakebin/omp")" > "$home/state/.omp-primary-extension-loaded"
 }
 
@@ -596,11 +605,12 @@ install_pi_watch_extension_fixture() {
   local root=$1
   mkdir -p "$root/.pi/extensions"
   cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$root/.pi/extensions/fm-primary-pi-watch.ts"
+  install_primary_watch_core_fixture "$root"
 }
 
 write_pi_watch_loaded_marker() {
   local home=$1 root=$2 pid=$3 version
-  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
+  version=$(fm_primary_watch_version "$root/.pi/extensions/fm-primary-pi-watch.ts" "$root")
   printf '%s\n%s\n' "$version" "$pid" > "$home/state/.pi-watch-extension-loaded"
 }
 
@@ -1500,7 +1510,7 @@ EOF
   install_pi_turnend_extension_fixture "$root"
   install_pi_watch_extension_fixture "$root"
   marker="$home/state/.pi-watch-extension-loaded"
-  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
+  version=$(fm_primary_watch_version "$root/.pi/extensions/fm-primary-pi-watch.ts" "$root")
   printf '%s\n999999\n' "$version" > "$marker"
   write_pi_turnend_loaded_marker "$home" "$root" "$holder_pid"
 

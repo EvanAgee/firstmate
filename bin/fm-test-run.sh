@@ -658,9 +658,11 @@ families_for_changed_path() {
     bin/fm-pi-compatible-lib.sh|bin/fm-pi-compatible-runtimes)
       printf '%s\n' pure-contract-unit
       ;;
-    bin/fm-primary-watch-core.ts)
+    bin/fm-primary-watch-core.ts|bin/fm-primary-watch-version-lib.sh)
       printf '%s\n' pure-contract-unit
       printf '%s\n' watcher-wake-lock
+      printf '%s\n' session-bootstrap
+      printf '%s\n' secondmate
       ;;
     bin/fm-watch*|bin/fm-wake*|\
     bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)

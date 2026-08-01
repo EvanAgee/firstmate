@@ -405,7 +405,10 @@ if (!commands.has("fm-watch-arm-omp") || !tools.has("fm_watch_arm_omp")) {
 }
 
 const marker = `${process.env.FM_STATE_OVERRIDE}/.omp-primary-extension-loaded`;
-const expectedVersion = `sha256:${createHash("sha256").update(readFileSync(process.env.EXTENSION)).digest("hex")}`;
+const expectedVersion = `sha256:${createHash("sha256")
+  .update(readFileSync(process.env.EXTENSION))
+  .update(readFileSync(`${process.env.FIXTURE}/bin/fm-primary-watch-core.ts`))
+  .digest("hex")}`;
 let markerLines = readFileSync(marker, "utf8").trim().split("\n");
 if (markerLines.length !== 4 || markerLines[0] !== expectedVersion || markerLines[1] !== String(process.pid)) {
   throw new Error(`invalid OMP primary marker ${markerLines.join("|")}`);

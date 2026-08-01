@@ -21,6 +21,12 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// The marker version must cover every file the watcher lifecycle is built from:
+// the runtime adapter AND this shared core. Verifiers recompute it from the same
+// two files (bin/fm-primary-watch-version-lib.sh).
+const coreFile = fileURLToPath(import.meta.url);
 
 type LockOwnership = "owned" | "missing" | "other";
 
@@ -135,7 +141,10 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
     sendFollowUp,
   } = options;
   const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
-  const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
+  const extensionVersion = `sha256:${createHash("sha256")
+    .update(readFileSync(extensionFile))
+    .update(readFileSync(coreFile))
+    .digest("hex")}`;
   const retryBaseMs = positiveInteger("FM_WATCH_REARM_RETRY_BASE_MS", 250);
   const retryMaxMs = positiveInteger("FM_WATCH_REARM_RETRY_MAX_MS", 4000);
   const retryLimit = positiveInteger("FM_WATCH_REARM_RETRY_LIMIT", 5);

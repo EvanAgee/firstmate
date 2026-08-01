@@ -6,6 +6,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../bin/fm-primary-watch-version-lib.sh"
 
 BASE_PATH=${FM_TEST_BASE_PATH:-$PATH}
 TMP_ROOT=$(fm_test_tmproot fm-omp-secondmate)
@@ -130,7 +132,7 @@ case "$cmd" in
       session="$FM_TEST_HOME/state/omp-sessions/${FM_TEST_ACK_SESSION:-selected.jsonl}"
       printf '{"type":"session"}\n' > "$session"
       printf '%s\n' "$session" > "$FM_TEST_HOME/state/.omp-session"
-      version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$FM_TEST_HOME/.omp/extensions/fm-primary-omp.ts")
+      version=$(bash -c '. "$1/bin/fm-primary-watch-version-lib.sh"; fm_primary_watch_version "$1/.omp/extensions/fm-primary-omp.ts" "$1"' _ "$FM_TEST_HOME")
       printf '%s\n%s\n%s\n%s\n' "$version" "$FM_TEST_AGENT_PID" "$FM_TEST_OMP_BUN" "$FM_TEST_OMP_BIN" > "$FM_TEST_HOME/state/.omp-primary-extension-loaded"
       printf '%s\n' "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.lock"
     fi
@@ -205,7 +207,7 @@ case "$cmd $sub" in
       session="$FM_TEST_HOME/state/omp-sessions/${FM_TEST_ACK_SESSION:-selected.jsonl}"
       printf '{"type":"session"}\n' > "$session"
       printf '%s\n' "$session" > "$FM_TEST_HOME/state/.omp-session"
-      version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$FM_TEST_HOME/.omp/extensions/fm-primary-omp.ts")
+      version=$(bash -c '. "$1/bin/fm-primary-watch-version-lib.sh"; fm_primary_watch_version "$1/.omp/extensions/fm-primary-omp.ts" "$1"' _ "$FM_TEST_HOME")
       printf '%s\n%s\n%s\n%s\n' "$version" "$FM_TEST_AGENT_PID" "$FM_TEST_OMP_BUN" "$FM_TEST_OMP_BIN" > "$FM_TEST_HOME/state/.omp-primary-extension-loaded"
       printf '%s\n' "$FM_TEST_AGENT_PID" > "$FM_TEST_HOME/state/.lock"
     fi
@@ -475,7 +477,7 @@ test_duplicate_recovery_states() {
 
   setup_case duplicate-malformed-marker
   write_meta
-  version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$HOME_DIR/.omp/extensions/fm-primary-omp.ts")
+  version=$(fm_primary_watch_version "$HOME_DIR/.omp/extensions/fm-primary-omp.ts" "$HOME_DIR")
   printf '%s\n99999999\nunterminated-third-line' "$version" > "$HOME_DIR/state/.omp-primary-extension-loaded"
   printf '99999999\n' > "$HOME_DIR/state/.lock"
   out=$(FM_TEST_STATE_MODE=missing run_spawn 2>&1) && fail "OMP secondmate retired an integration marker with trailing unterminated data"
@@ -484,7 +486,7 @@ test_duplicate_recovery_states() {
 
   setup_case duplicate-owned-stale-marker
   write_meta
-  version=$(node -e 'const {createHash}=require("node:crypto"),{readFileSync}=require("node:fs");process.stdout.write("sha256:"+createHash("sha256").update(readFileSync(process.argv[1])).digest("hex"))' "$HOME_DIR/.omp/extensions/fm-primary-omp.ts")
+  version=$(fm_primary_watch_version "$HOME_DIR/.omp/extensions/fm-primary-omp.ts" "$HOME_DIR")
   printf '%s\n99999999\n%s\n%s\n' "$version" "$TEST_OMP_BUN" "$TEST_OMP_BIN" > "$HOME_DIR/state/.omp-primary-extension-loaded"
   printf '99999999\n' > "$HOME_DIR/state/.lock"
   out=$(FM_TEST_STATE_MODE=missing run_spawn 2>&1) || fail "OMP secondmate did not recover from its proven stale integration marker: $out"
