@@ -3216,6 +3216,47 @@ SH
   pass "OMP session event readers use portable tail -c +N file arguments without GNU-only option termination"
 }
 
+test_omp_snapshot_offset_binds_a_complete_record_boundary() {
+  local dir session partial_offset offset
+  dir="$TMP_ROOT/omp-snapshot-partial"; mkdir -p "$dir"; session="$dir/session.jsonl"
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  # OMP is mid-append: the trailing record has no newline yet.
+  printf '%s' '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"partial"}]' >> "$session"
+  partial_offset=$(wc -c < "$session")
+  (
+    sleep 0.2
+    printf '%s\n' '}}' >> "$session"
+    sleep 0.4
+    printf '%s\n' '{"type":"message","message":{"role":"user","steering":true,"content":[{"type":"text","text":"steer me"}]}}' >> "$session"
+  ) &
+  offset=$( FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL=0.02 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_complete_offset "$1"' "$ROOT" "$session" ) \
+    || fail "snapshot offset refused although the partial record completed inside the bounded wait"
+  wait
+  bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_has_message_after "$1" "$2" "steer me"' \
+    "$ROOT" "$session" "$offset" \
+    || fail "a steering event appended after the snapshot was unreadable from the recorded offset $offset"
+  # The raw wc -c byte the snapshot used to record lands inside that partial
+  # record, so every later tail starts with invalid JSON and the match is lost.
+  if bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_has_message_after "$1" "$2" "steer me"' \
+    "$ROOT" "$session" "$partial_offset"; then
+    fail "expected the raw mid-record byte offset $partial_offset to be unreadable; the regression no longer reproduces"
+  fi
+  pass "OMP submit snapshot binds its offset to a complete JSONL record boundary so later matching events stay readable"
+}
+
+test_omp_snapshot_offset_refuses_a_never_completed_record() {
+  local dir session
+  dir="$TMP_ROOT/omp-snapshot-never-completes"; mkdir -p "$dir"; session="$dir/session.jsonl"
+  printf '%s\n' '{"type":"session","version":3}' > "$session"
+  printf '%s' '{"type":"message","message":{"role":"user"' >> "$session"
+  if FM_BACKEND_HERDR_OMP_SNAPSHOT_POLLS=3 FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL=0.01 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_omp_session_complete_offset "$1"' "$ROOT" "$session"; then
+    fail "snapshot offset accepted a trailing record that never completed"
+  fi
+  pass "OMP submit snapshot refuses within a bounded wait when a partial trailing record never completes"
+}
+
 test_send_text_submit_omp_idle_refuses_missing_native_session_identity() {
   local dir log resp fb out
   dir="$TMP_ROOT/submit-omp-idle-missing-session"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -4282,6 +4323,8 @@ test_wait_for_working_returns_idle_when_never_busy_but_readable
 test_wait_for_working_returns_unknown_when_never_readable
 test_wait_for_working_treats_blocked_as_submit_active
 test_omp_session_reader_uses_bsd_tail_compatible_arguments
+test_omp_snapshot_offset_binds_a_complete_record_boundary
+test_omp_snapshot_offset_refuses_a_never_completed_record
 test_send_text_submit_omp_idle_refuses_missing_native_session_identity
 test_send_text_submit_omp_exit_requires_normal_session_event_and_closes_endpoint
 test_send_text_submit_omp_exit_without_normal_event_never_falls_back_to_steering_ack

@@ -2803,8 +2803,32 @@ fm_backend_herdr_omp_submit_snapshot() {  # <session> <pane_id>
   case "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" in /*.jsonl) : ;; *) return 1 ;; esac
   [ -f "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" ] \
     && [ ! -L "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" ] || return 1
-  FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET=$(wc -c < "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION" 2>/dev/null) || return 1
+  FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET=$(fm_backend_herdr_omp_session_complete_offset \
+    "$FM_BACKEND_HERDR_OMP_SUBMIT_SESSION") || return 1
   case "$FM_BACKEND_HERDR_OMP_SUBMIT_OFFSET" in ''|*[!0-9]*) return 1 ;; esac
+}
+
+# The snapshot runs while OMP is still appending, so the raw file size can land
+# in the middle of a record. Every reader below tails from the recorded offset
+# into jq, and a tail that starts mid-record is invalid JSON forever - the
+# matching event appended later can then never be read, and the send is
+# reported unconfirmed even though it landed. Bind the offset to the end of the
+# last newline-terminated record instead, waiting a bounded time for a partial
+# trailing record to complete. Refuse (caller reports unknown) rather than
+# rewinding to the previous boundary, which would re-expose an already-appended
+# record to the matcher and could false-confirm a stale steer.
+fm_backend_herdr_omp_session_complete_offset() {  # <session-file>
+  local file=$1 size i
+  for ((i = 0; i < FM_BACKEND_HERDR_OMP_SNAPSHOT_POLLS; i++)); do
+    [ "$i" -eq 0 ] || sleep "$FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL"
+    size=$(wc -c < "$file" 2>/dev/null) || return 1
+    case "$size" in ''|*[!0-9]*) return 1 ;; esac
+    if [ "$size" -eq 0 ] || [ "$(tail -c 1 "$file" 2>/dev/null | wc -l)" -eq 1 ]; then
+      printf '%s' "$size"
+      return 0
+    fi
+  done
+  return 1
 }
 
 fm_backend_herdr_omp_session_has_message_after() {  # <session-file> <byte-offset> <exact-text>
@@ -3130,6 +3154,11 @@ FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=${FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP:-0.6}
 # lag Herdr's Enter acknowledgement beyond the normal turn-start window.
 # Waiting longer is safe because this path never sends a second Enter.
 FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=${FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP:-6}
+# How long fm_backend_herdr_omp_session_complete_offset waits for a partial
+# trailing session record to be finished by OMP before refusing to snapshot
+# (polls * interval; a record is one small append, so ~1s is generous).
+FM_BACKEND_HERDR_OMP_SNAPSHOT_POLLS=${FM_BACKEND_HERDR_OMP_SNAPSHOT_POLLS:-20}
+FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL=${FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL:-0.05}
 
 fm_backend_herdr_submit_confirm_budget() {  # <caller-budget-seconds>
   awk -v b="${1:-0}" -v m="$FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP" 'BEGIN {
