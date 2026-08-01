@@ -167,33 +167,28 @@ case "\$#:\$*" in
 esac
 printf -v rendered '%q ' "\$@"
 printf '%s\n' "\$rendered" >> "\$log"
-argc=\$#
-[ "\$argc" -ge 2 ] || {
+refuse() { # <exit-code> <reason>
+  local parent_call
   parent_call=\$(ps -o args= -p "\$PPID" 2>/dev/null || printf 'unreadable')
-  printf 'args=%s parent=%s\n' "\$rendered" "\$parent_call" >> "\$log.callers"
-  echo "OMP Herdr fixture refused a command without explicit session binding" >&2
-  exit 96
+  printf 'args=%s reason=%s parent=%s\n' "\$rendered" "\$2" "\$parent_call" >> "\$log.callers"
+  echo "OMP Herdr fixture refused \$2" >&2
+  exit "\$1"
 }
+argc=\$#
+[ "\$argc" -ge 2 ] || refuse 96 "a command without explicit session binding"
 args=("\$@")
 penultimate=\${args[\$((argc - 2))]}
 last=\${args[\$((argc - 1))]}
 [ "\$penultimate" = --session ] && [ "\$last" = "\$session" ] \
-  || {
-    parent_call=\$(ps -o args= -p "\$PPID" 2>/dev/null || printf 'unreadable')
-    printf 'args=%s parent=%s\n' "\$rendered" "\$parent_call" >> "\$log.callers"
-    echo "OMP Herdr fixture refused a command outside its exact lab session" >&2
-    exit 96
-  }
+  || refuse 96 "a command outside its exact lab session"
 set -- "\${args[@]:0:\$((argc - 2))}"
 case "\${1:-}" in
   server)
-    echo "OMP Herdr fixture refused an unguarded lifecycle command" >&2
-    exit 97
+    refuse 97 "an unguarded lifecycle command"
     ;;
   session)
     if [ "\$#" -ne 3 ] || [ "\$2" != list ] || [ "\$3" != --json ]; then
-      echo "OMP Herdr fixture refused an unguarded lifecycle command" >&2
-      exit 97
+      refuse 97 "an unguarded lifecycle command"
     fi
     ;;
 esac
