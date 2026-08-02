@@ -33,6 +33,7 @@ batched digest rather than per-wake injections.
      Do not wrap it in `nohup ... &` (Codex/herdr can reap fire-and-forget shell children after a tool call returns).
    - **Harness WITHOUT one** (e.g. pi or omp): run `bin/fm-afk-launch.sh start`.
      It is the single owner of the daemon terminal: it creates a NON-VISIBLE tracked terminal for the current backend (a herdr dedicated `--no-focus` workspace or a detached tmux session), records its exact id, and passes the captain pane in as `FM_SUPERVISOR_TARGET` so the daemon injects into the captain, not its own new pane.
+     It also resolves the exact primary harness and carries it plus the resolved state directory into that terminal, so the detached daemon keeps harness-specific delivery semantics and one lifecycle state; a harness identity outside the verified set refuses the start instead of launching a daemon that would guess.
      **Never manufacture a terminal by splitting the captain's active pane** (`herdr pane split`): a split co-tenants the tab and visibly shrinks the captain's pane (docs/herdr-backend.md "Away-mode supervisor support").
    Both paths share `bin/fm-afk-start.sh` as the daemon entry.
    The native path tells it that the launcher already prepared lifecycle state; the terminal-backed path lets the entry perform its existing state setup inside the new terminal.
