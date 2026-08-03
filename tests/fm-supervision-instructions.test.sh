@@ -51,7 +51,11 @@ test_repair_lines() {
 
   out=$(FM_HOME="$home" "$RENDER" --harness claude --queue-pending 1 --repair-line)
   assert_contains "$out" "After draining queued wakes" "queue-pending prefix missing"
-  assert_contains "$out" "Claude Code background task" "claude repair line missing background-task mechanism"
+  assert_contains "$out" "watcher supervision needs Stop-owned automatic recovery" "claude pre-verification repair line is not neutral"
+  assert_not_contains "$out" "is broken" "claude pre-verification repair line claimed a verified mechanism failure"
+  assert_not_contains "$out" "FAILED" "claude pre-verification repair line emitted a verified failure notice"
+  assert_not_contains "$out" "manual background" "claude pre-verification repair line directed a manual background arm"
+  assert_not_contains "$out" "bin/fm-watch-arm.sh" "claude pre-verification repair line directed an arm command"
 
   : > "$home/config/x-mode.env"
   out=$(FM_HOME="$home" FM_CODEX_WATCH_CHECKPOINT=7 "$RENDER" --harness codex --x-mode 1 --repair-line)
@@ -64,6 +68,10 @@ test_repair_lines() {
   out=$(FM_HOME="$home" "$RENDER" --harness pi --repair-line)
   assert_contains "$out" "Pi tool fm_watch_arm_pi" "pi repair line does not direct the model to the extension-owned tool"
   assert_not_contains "$out" "extension command /fm-watch-arm-pi" "pi repair line still directs the model to the human slash command"
+
+  out=$(FM_HOME="$home" "$RENDER" --harness omp --repair-line)
+  assert_contains "$out" "OMP tool fm_watch_arm_omp" "OMP repair line does not direct the model to the native extension tool"
+  assert_contains "$out" "omp -e $ROOT/.omp/extensions/fm-primary-omp.ts" "OMP repair line lost the explicit extension fallback"
   pass "renderer repair-line mode is harness-aware and honors conditional state"
 }
 
@@ -76,6 +84,13 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
   assert_not_contains "$ordinary" "fm_watch_arm_pi" "pi ordinary-wake line incorrectly calls the recovery tool"
   out=$("$RENDER" --harness pi --repair-line)
   assert_contains "$out" "fm_watch_arm_pi" "pi recovery line lost the extension-owned repair tool"
+
+  out=$("$RENDER" --harness omp)
+  ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
+  assert_contains "$ordinary" "OMP primary extension already owns watcher continuity" "OMP ordinary-wake line does not leave continuity to the extension"
+  assert_not_contains "$ordinary" "fm_watch_arm_omp" "OMP ordinary-wake line incorrectly calls the recovery tool"
+  out=$("$RENDER" --harness omp --repair-line)
+  assert_contains "$out" "fm_watch_arm_omp" "OMP recovery line lost the extension-owned repair tool"
 
   out=$("$RENDER" --harness opencode)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
@@ -91,8 +106,9 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
   assert_contains "$ordinary" "do not arm another cycle" "claude ordinary-wake line does not forbid a model re-arm"
   assert_not_contains "$ordinary" "bin/fm-watch-arm.sh" "claude ordinary-wake line incorrectly calls the manual arm"
   out=$("$RENDER" --harness claude --repair-line)
-  assert_contains "$out" "Claude Code background task" "claude recovery line lost its tracked background repair"
-  assert_contains "$out" "bin/fm-watch-arm.sh" "claude recovery line lost the arm command"
+  assert_contains "$out" "watcher supervision needs Stop-owned automatic recovery" "claude recovery line lost its neutral automatic-recovery guidance"
+  assert_not_contains "$out" "is broken" "claude recovery line claimed failure before verification"
+  assert_not_contains "$out" "bin/fm-watch-arm.sh" "claude recovery line must not create a repeatable manual arm loop"
 
   out=$("$RENDER" --harness grok)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
@@ -155,6 +171,20 @@ test_grok_command_sources_effective_config() {
   pass "grok rendered command sources the effective x-mode config"
 }
 
+test_omp_snippet_uses_effective_extension_path() {
+  local home out extension
+  home="$TMP_ROOT/omp-home"
+  extension="$ROOT/.omp/extensions/fm-primary-omp.ts"
+  mkdir -p "$home/state" "$home/config"
+  out=$(FM_HOME="$home" "$RENDER" --harness omp)
+  assert_contains "$out" "Mode: OMP native extension background wake." "OMP snippet did not render the native-extension mode"
+  assert_contains "$out" "omp -e $extension" "OMP snippet did not render the explicit extension launch fallback"
+  assert_contains "$out" "lives at \`$extension\`" "OMP snippet did not render the effective extension path"
+  assert_not_contains "$out" "__FM_OMP_PRIMARY_EXT__" "renderer leaked the OMP primary extension placeholder"
+  assert_not_contains "$out" "fm_watch_arm_pi" "OMP snippet borrowed the Pi watcher tool"
+  pass "OMP supervision snippet renders its native integration path and distinct tool"
+}
+
 test_pi_snippet_uses_effective_extension_path() {
   local home out turnend watch
   home="$TMP_ROOT/pi-home"
@@ -179,4 +209,5 @@ test_cross_harness_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol
 test_grok_is_background_notify
 test_grok_command_sources_effective_config
+test_omp_snippet_uses_effective_extension_path
 test_pi_snippet_uses_effective_extension_path

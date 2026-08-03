@@ -7,7 +7,7 @@
 # bin/fm-afk-start.sh execs the supervise daemon in the FOREGROUND of whatever
 # terminal it is already in. Harnesses with a native in-pane tracked-background
 # tool (claude, grok) run it there directly and it is fine. A harness with NO
-# native background mechanism (pi) has to manufacture a terminal, and doing that
+# native background mechanism (pi, OMP) has to manufacture a terminal, and doing that
 # by SPLITTING the captain's active pane visibly shrinks it - the regression this
 # script fixes. Instead this creates a non-visible tracked terminal (a herdr tab/
 # workspace with --no-focus, or a detached tmux session) that never touches the
@@ -17,7 +17,9 @@
 # from its OWN inherited env (discover_supervisor_target). Running it in a
 # separate terminal would make it discover its OWN pane, so this captures the
 # captain pane FIRST (from the pane this script runs in) and passes it in as
-# FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND explicitly.
+# FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND explicitly. The exact primary
+# harness and resolved state directory are carried with it so the detached
+# daemon cannot lose OMP-specific delivery semantics or split lifecycle state.
 #
 # Usage:
 #   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
@@ -42,7 +44,8 @@
 # Test seam: FM_AFK_LAUNCH_ENTRY overrides the command run in the created
 # terminal (default bin/fm-afk-start.sh), so a topology test can run a harmless
 # placeholder instead of a real daemon. FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND
-# override the captured captain pane/backend (an isolated lab pane in tests).
+# override the captured captain pane/backend (an isolated lab pane in tests),
+# and FM_SUPERVISOR_HARNESS overrides exact primary-harness discovery.
 set -u
 
 FM_AFK_LAUNCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -416,8 +419,8 @@ fm_afk_launch_create_herdr() {  # <captain-target> <captain-backend>
     IFS=$'\t' read -r wsid pane <<< "$recovered"
   fi
   entry=$(fm_afk_launch_entry_cmd)
-  cmd=$(printf 'exec env FM_HOME=%q FM_SUPERVISOR_TARGET=%q FM_SUPERVISOR_BACKEND=%q %q' \
-    "$FM_HOME" "$captain_target" "$captain_backend" "$entry")
+  cmd=$(printf 'exec env FM_HOME=%q FM_STATE_OVERRIDE=%q FM_SUPERVISOR_TARGET=%q FM_SUPERVISOR_BACKEND=%q FM_SUPERVISOR_HARNESS=%q %q' \
+    "$FM_HOME" "$FM_AFK_LAUNCH_STATE" "$captain_target" "$captain_backend" "$FM_SUPERVISOR_HARNESS" "$entry")
   if ! fm_afk_launch_record_write herdr "$session:$pane" "$wsid"; then
     fm_afk_launch_log "failed to persist herdr daemon terminal record; closing $session:$pane"
     fm_afk_launch_close_terminal herdr "$session:$pane"
@@ -443,8 +446,8 @@ fm_afk_launch_create_tmux() {  # <captain-target> <captain-backend>
   nonce="$$-${RANDOM:-0}-$(date '+%s')"
   session="fm-afk-daemon-$hash-$nonce"
   entry=$(fm_afk_launch_entry_cmd)
-  cmd=$(printf 'exec env FM_HOME=%q FM_SUPERVISOR_TARGET=%q FM_SUPERVISOR_BACKEND=%q %q' \
-    "$FM_HOME" "$captain_target" "$captain_backend" "$entry")
+  cmd=$(printf 'exec env FM_HOME=%q FM_STATE_OVERRIDE=%q FM_SUPERVISOR_TARGET=%q FM_SUPERVISOR_BACKEND=%q FM_SUPERVISOR_HARNESS=%q %q' \
+    "$FM_HOME" "$FM_AFK_LAUNCH_STATE" "$captain_target" "$captain_backend" "$FM_SUPERVISOR_HARNESS" "$entry")
   if ! fm_afk_launch_record_write tmux "$session" ""; then
     fm_afk_launch_log "failed to persist planned tmux daemon session '$session'"
     return 1
@@ -461,7 +464,7 @@ fm_afk_launch_create_tmux() {  # <captain-target> <captain-backend>
 }
 
 fm_afk_launch_start() {
-  local captain_target captain_backend backup artifact had_afk=0 result
+  local captain_target captain_backend captain_harness backup artifact had_afk=0 result
   if [ -e "$FM_AFK_LAUNCH_STATE/.afk-return-catchup" ]; then
     fm_afk_launch_log "return catch-up is still pending; run bin/fm-afk-return.sh check before re-entering away mode"
     return 1
@@ -471,6 +474,17 @@ fm_afk_launch_start() {
     fm_afk_launch_log "could not resolve the captain supervisor pane (set FM_SUPERVISOR_TARGET)"; return 1; }
   captain_backend=$(discover_supervisor_backend) || {
     fm_afk_launch_log "could not resolve the captain supervisor backend (set FM_SUPERVISOR_BACKEND)"; return 1; }
+  captain_harness=${FM_SUPERVISOR_HARNESS:-}
+  [ -n "$captain_harness" ] || captain_harness=$("$FM_AFK_LAUNCH_DIR/fm-harness.sh")
+  case "$captain_harness" in
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi) ;;
+    *)
+      fm_afk_launch_log "could not resolve a verified supervisor harness (got '${captain_harness:-empty}')"
+      return 1
+      ;;
+  esac
+  FM_SUPERVISOR_HARNESS=$captain_harness
+  export FM_SUPERVISOR_HARNESS
 
   mkdir -p "$FM_AFK_LAUNCH_STATE"
 
@@ -628,10 +642,15 @@ fm_afk_launch_stop() {
 
 fm_afk_launch_main() {
   local result
-  fm_afk_launch_lock_acquire || return 1
+  # Traps first, lock second. Acquiring before the handlers exist leaves a
+  # window where a signal terminates this process by default action and leaks
+  # the lock directory, which then blocks the next away-mode launch until the
+  # stale-owner reclaim path clears it. fm_afk_launch_lock_release only removes
+  # a lock this process owns, so arming it before acquisition is safe.
   trap fm_afk_launch_lock_release EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  fm_afk_launch_lock_acquire || return 1
   case "${1:-start}" in
     start) fm_afk_launch_start ;;
     start-native) fm_afk_launch_start_native ;;

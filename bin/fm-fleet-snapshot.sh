@@ -477,7 +477,7 @@ task_json_lines() {
     fi
     agent_alive=not_checked
     if [ "$kind" = secondmate ] && [ -n "$target" ]; then
-      agent_alive=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || printf unknown)
+      agent_alive=$(fm_backend_agent_alive "$backend" "$target" "$meta" 2>/dev/null || printf unknown)
     fi
 
     [ -f "$report_path" ] && report_present=1 || report_present=0
@@ -839,7 +839,7 @@ BASH
         | select(startswith("- "))
         | (capture("^- (?<id>[^[:space:]]+)")?) as $id
         | select($id != null)
-        | (capture("\\(home:[[:space:]]*(?<home>[^;)]*);")?) as $home
+        | (capture("^.*\\(home:[[:space:]]*(?<home>[^;)]*);[[:space:]]*scope:[[:space:]]*.*;[[:space:]]*projects:[[:space:]]*[^;)]*;[[:space:]]*added[[:space:]]+[0-9]{4}-[0-9]{2}-[0-9]{2}\\)[[:space:]]*$")?) as $home
         | {id:$id.id,home:($home.home // null),registered:true,
            registry_error:(if $home == null or ($home.home | length) == 0 then "registry entry has no home" else null end)} ]
       | group_by(.id)

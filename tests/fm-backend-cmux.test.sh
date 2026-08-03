@@ -511,6 +511,24 @@ test_target_ready_fails_when_target_absent() {
   pass "fm_backend_cmux_target_ready: fails when the workspace/surface is not found (list-panes structural check)"
 }
 
+test_target_ready_rejects_empty_and_malformed_responses() {
+  local case_id dir fb status
+  for case_id in empty malformed; do
+    dir="$TMP_ROOT/ready-$case_id-response"; mkdir -p "$dir/responses"
+    if [ "$case_id" = empty ]; then
+      : > "$dir/responses/1.out"
+    else
+      printf '%s\n' '{not-json' > "$dir/responses/1.out"
+    fi
+    fb=$(make_cmux_fakebin "$dir")
+    PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+      bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_target_ready "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111"' "$ROOT"
+    status=$?
+    [ "$status" -ne 0 ] || fail "target_ready accepted a $case_id list-panes response"
+  done
+  pass "fm_backend_cmux_target_ready: empty and malformed list-panes responses fail closed"
+}
+
 test_target_ready_checks_expected_label() {
   local dir fb title
   dir="$TMP_ROOT/ready-label-ok"; mkdir -p "$dir/responses"
@@ -1034,6 +1052,7 @@ test_ensure_running_fails_fast_on_unauth_without_launching
 test_create_task_refuses_duplicate_label
 test_create_task_creates_and_parses_ids
 test_target_ready_fails_when_target_absent
+test_target_ready_rejects_empty_and_malformed_responses
 test_target_ready_checks_expected_label
 test_target_ready_rejects_label_mismatch
 test_capture_trims_locally

@@ -78,6 +78,10 @@ add_quota_axi() {
   local fakebin=$1
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  printf '%s\n' "${FM_FAKE_QUOTA_AXI_VERSION:-0.1.16}"
+  exit 0
+fi
 exit 0
 SH
   chmod +x "$fakebin/quota-axi"
@@ -322,6 +326,43 @@ ROWS
   pass "bootstrap enforces no-mistakes minimum version"
 }
 
+# 0.1.16 is the first quota-axi that reports per-credential auth sources and Grok
+# state.authStatus. Before it, a dispatch candidate could not be scoped to its own
+# authentication surface, which is exactly how one harness's expired CLI token
+# produced a captain-facing "log in" claim for a candidate that never read it. A
+# stale install used to pass this check silently, so the fix stayed uninstalled.
+test_quota_axi_min_version() {
+  local label version mode case_dir fakebin out missing n
+  missing='MISSING: quota-axi (install: npm install -g quota-axi)'
+  n=0
+  while IFS='^' read -r label version mode; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    case_dir="$TMP_ROOT/quota-axi-$n"
+    mkdir -p "$case_dir/home/config"
+    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+    fakebin=$(make_fake_toolchain "$case_dir")
+    add_tasks_axi "$fakebin" "0.1.1"
+    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_QUOTA_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
+    case "$mode" in
+      empty)
+        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
+      missing)
+        [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+    esac
+  done <<'ROWS'
+minimum quota-axi version is accepted^0.1.16^empty
+newer quota-axi patch is accepted^0.1.17^empty
+newer quota-axi minor is accepted^0.2.0^empty
+newer quota-axi major is accepted^1.0.0^empty
+older quota-axi patch reports an upgrade^0.1.15^missing
+much older quota-axi minor reports an upgrade^0.0.9^missing
+unparseable quota-axi version reports an upgrade^quota-axi development build^missing
+ROWS
+  pass "bootstrap enforces quota-axi minimum version"
+}
+
 test_git_is_required_with_supported_install_instruction() {
   local case_dir fakebin bash_env out expected
   case_dir="$TMP_ROOT/git-required"
@@ -349,7 +390,7 @@ SH
 }
 
 test_orca_backend_gates_orca_tool_only_when_selected() {
-  local case_dir fakebin out missing_orca
+  local case_dir fakebin out missing_orca no_orca_env
   missing_orca="MISSING: orca (install: brew install orca  # or the platform's package manager)"
 
   case_dir="$TMP_ROOT/orca-backend-selected"
@@ -357,7 +398,18 @@ test_orca_backend_gates_orca_tool_only_when_selected() {
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' orca > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain "$case_dir")
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  no_orca_env="$case_dir/no-orca.bash"
+  cat > "$no_orca_env" <<'SH'
+command() {
+  if [ "${1:-}" = -v ] && [ "${2:-}" = orca ]; then
+    return 1
+  fi
+  builtin command "$@"
+}
+orca() { return 127; }
+SH
+  out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$no_orca_env" \
+    FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   [ "$out" = "$missing_orca" ] || fail "backend=orca should require only the Orca-specific missing tool, got: $out"
 
@@ -655,6 +707,7 @@ make_routine_bootstrap_fixture() {
     printf '%s\n' '.fm-secondmate-home'
     printf '%s\n' 'config/crew-harness'
     printf '%s\n' 'config/crew-dispatch.json'
+    printf '%s\n' 'config/startup-memory-budget'
   } > "$root/.gitignore"
   printf '%s\n' 'instructions' > "$root/AGENTS.md"
   mkdir -p "$root/bin" "$root/.agents/skills"
@@ -769,6 +822,7 @@ unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","us
 unsupported grok xhigh effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:xhigh
 pi max effort is accepted^{"rules":[{"when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
 pi-signed max effort is accepted^{"rules":[{"when":"signed coding","use":{"harness":"pi-signed","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
+omp max effort is accepted^{"rules":[{"when":"OMP coding","use":{"harness":"omp","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
 unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
 kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
 unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high
@@ -792,6 +846,7 @@ ROWS
 
 test_bootstrap_reporting
 test_no_mistakes_min_version
+test_quota_axi_min_version
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux

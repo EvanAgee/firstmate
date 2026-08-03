@@ -14,7 +14,8 @@
 #      explicit per-spawn harness arg still wins.
 #   B) Inheritance. The primary pushes a declared, extensible set of LOCAL
 #      (gitignored) config items - config/crew-dispatch.json, config/crew-harness,
-#      config/backlog-backend, config/backend, and config/herdr-presentation-spaces -
+#      config/backlog-backend, config/backend, config/herdr-presentation-spaces, and
+#      config/startup-memory-budget -
 #      down into each secondmate home's config/, so the secondmate's OWN crewmates,
 #      dispatch profiles, backlog backend, runtime-backend default, and Herdr
 #      presentation opt-in inherit the primary's settings. It is primary-authoritative
@@ -43,6 +44,15 @@ set -u
 . "$ROOT/bin/fm-ff-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-config-inherit-lib.sh"
+
+# The harness-detection cases below fake `ps` so process ancestry is fully
+# controlled, but bin/fm-harness.sh checks verified ENV markers before ancestry.
+# A suite run from inside one of those harnesses inherits its marker, and the
+# highest-precedence one wins over everything these cases set up: with an
+# ambient CLAUDECODE=1, the pi-signed ancestry case resolves "claude". Drop the
+# ambient markers so what this suite asserts does not depend on which harness it
+# was launched from; every case states the marker it means to test.
+unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT
 
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
@@ -159,19 +169,19 @@ esac
 SH
   chmod +x "$fakebin/ps"
 
-  got=$(PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "unmarked shared signed-wrapper ancestry resolved '$got', expected pi"
-  got=$(PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi-signed ] || fail "selected signed wrapper resolved '$got', expected pi-signed"
-  got=$(PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "selected plain Pi resolved '$got', expected pi"
-  got=$(PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed-helper "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_PI_HARNESS=pi-signed-helper "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "inexact signed selection marker resolved '$got', expected pi"
-  got=$(PATH="$fakebin:$BASE_PATH" FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT -u PI_CODING_AGENT PATH="$fakebin:$BASE_PATH" FM_PI_HARNESS=pi-signed "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "signed selection marker without Pi's family marker resolved '$got', expected pi"
-  got=$(PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=plain "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=plain "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "plain Pi marker resolved '$got', expected pi"
-  got=$(PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=helper "$ROOT/bin/fm-harness.sh")
+  got=$(env -u CLAUDECODE -u GROK_AGENT PATH="$fakebin:$BASE_PATH" PI_CODING_AGENT=true FM_TEST_SIGNED_SHAPE=helper "$ROOT/bin/fm-harness.sh")
   [ "$got" = pi ] || fail "unrelated pi-signed-helper ancestry resolved '$got', expected pi"
 
   got=$(PATH="$fakebin:$BASE_PATH" bash -c \
@@ -883,7 +893,7 @@ new_world() {
     printf 'projects/\nstate/\ndata/\n.no-mistakes/\n'
     [ "$dispatch_ignore" = no ] || printf 'config/crew-dispatch.json\n'
     printf 'config/crew-harness\nconfig/secondmate-harness\nconfig/backlog-backend\n'
-    printf 'config/backend\nconfig/herdr-presentation-spaces\n'
+    printf 'config/backend\nconfig/herdr-presentation-spaces\nconfig/startup-memory-budget\n'
   } > "$w/main/.gitignore"
   printf 'v1\n' > "$w/main/AGENTS.md"
   printf 'r1\n' > "$w/main/README.md"
@@ -892,6 +902,18 @@ new_world() {
   git -C "$w/main" add -A
   git -C "$w/main" commit -qm c1
   printf '%s\n' "$w"
+}
+
+record_live_watcher_fixture() {
+  local home=$1 identity
+  identity=$(FM_STATE_OVERRIDE="$home/state" bash -c '. "$1"; fm_pid_identity "$2"' _ \
+    "$ROOT/bin/fm-wake-lib.sh" "$$") || fail "could not identify the live watcher fixture"
+  mkdir "$home/state/.watch.lock"
+  printf '%s\n' "$$" > "$home/state/.watch.lock/pid"
+  printf '%s\n' "$home" > "$home/state/.watch.lock/fm-home"
+  printf '%s\n' "$ROOT/bin/fm-watch.sh" > "$home/state/.watch.lock/watcher-path"
+  printf '%s\n' "$identity" > "$home/state/.watch.lock/pid-identity"
+  touch "$home/state/.last-watcher-beat"
 }
 
 # A live secondmate home as a DETACHED worktree of the primary at <commit>, with
@@ -1176,10 +1198,10 @@ test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home() {
   pass "B9 bootstrap sweep defers new inherited config until the home ignores it"
 }
 
-# Backward-compat: with no inherited config set, the sweep is a no-op for the
-# home's config/ - exactly as before this feature - and ordinary sweep behavior
-# (fast-forward) is unaffected.
-test_bootstrap_sweep_no_inheritance_is_noop() {
+# The primary bootstrap always materializes the startup-memory default, so an
+# otherwise empty inherited surface converges that one visible value while
+# ordinary tracked-file fast-forward behavior remains unchanged.
+test_bootstrap_sweep_materializes_and_inherits_memory_default() {
   local w c1
   w=$(new_world boot-noop)
   c1=$(git -C "$w/main" rev-parse HEAD)
@@ -1193,13 +1215,16 @@ test_bootstrap_sweep_no_inheritance_is_noop() {
 
   run_bootstrap "$w" >/dev/null
 
-  [ -e "$w/sm/config/crew-dispatch.json" ] && fail "no-inheritance sweep created a home crew-dispatch.json"
-  [ -e "$w/sm/config/crew-harness" ] && fail "no-inheritance sweep created a home crew-harness"
-  [ -e "$w/sm/config/backend" ] && fail "no-inheritance sweep created a home backend"
-  [ -e "$w/sm/config" ] && fail "no-inheritance sweep created a home config/ dir"
+  [ -e "$w/sm/config/crew-dispatch.json" ] && fail "default-only sweep created a home crew-dispatch.json"
+  [ -e "$w/sm/config/crew-harness" ] && fail "default-only sweep created a home crew-harness"
+  [ -e "$w/sm/config/backend" ] && fail "default-only sweep created a home backend"
+  [ "$(cat "$w/home/config/startup-memory-budget")" = 7500 ] \
+    || fail "primary bootstrap did not materialize the startup-memory default"
+  [ "$(cat "$w/sm/config/startup-memory-budget")" = 7500 ] \
+    || fail "default-only sweep did not converge startup-memory-budget"
   [ "$(git -C "$w/sm" rev-parse HEAD)" = "$head" ] \
-    || fail "no-inheritance sweep did not still fast-forward the tracked files"
-  pass "B10 bootstrap sweep with no inherited config is a config no-op and still fast-forwards"
+    || fail "default-only sweep did not still fast-forward the tracked files"
+  pass "B10 bootstrap sweep materializes and inherits the startup-memory default while fast-forwarding"
 }
 
 # config/backend: present and absent primary state converges exactly.
@@ -1295,6 +1320,7 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
   printf 'codex\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
   printf 'tmux\n' > "$w/home/config/backend"
+  record_live_watcher_fixture "$w/home"
   err="$w/config-push-basic.err"
   log="$w/config-push-basic.tmux.log"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
@@ -1479,6 +1505,7 @@ test_config_reread_per_home_changed_sets_and_exact_bytes() {
     printf '%s\n' "shared secret preference body that must never appear in a config reread"
   } > "$w/home/data/captain-shared.md"
 
+  record_live_watcher_fixture "$w/home"
   log="$w/config-reread-per-home.tmux.log"
   err="$w/config-reread-per-home.err"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
@@ -2193,6 +2220,7 @@ cat > "$w/main/bin/fm-spawn.sh" <<SH
 . '$w/main/bin/fm-config-inherit-lib.sh'
 printf '%s' spawn >> '$log'
 printf '%s' codex > '$w/sm/config/crew-harness'
+printf '%s\n' 7500 > '$w/sm/config/startup-memory-budget'
 SH
   chmod +x "$w/main/bin/fm-spawn.sh"
   fakebin=$(make_fake_toolchain "$w")
@@ -2317,7 +2345,7 @@ test_spawn_fallback_chain_and_crew_scout_unaffected
 test_bootstrap_sweep_propagates_and_reconverges
 test_bootstrap_sweep_propagates_when_tracked_current
 test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home
-test_bootstrap_sweep_no_inheritance_is_noop
+test_bootstrap_sweep_materializes_and_inherits_memory_default
 test_backend_inheritance_present_and_absent
 test_bootstrap_sweep_surfaces_config_propagation_failure
 test_bootstrap_rereads_after_partial_propagation

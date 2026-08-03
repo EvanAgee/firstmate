@@ -50,11 +50,11 @@ make_fake_root() {
   mkdir -p "$fake/bin/backends" "$fake/state"
   # Symlink the REAL teardown so the test exercises actual code, not a copy.
   ln -s "$TEARDOWN" "$fake/bin/fm-teardown.sh"
-  # fm-backend.sh + its tmux adapter: symlink the REAL files (teardown sources
-  # fm-backend.sh unconditionally, and dispatches the kill call through the
-  # tmux adapter; both are unchanged by this suite's fixture, just newly
-  # required siblings since the P1 backend extraction).
+  # fm-backend.sh + its OMP identity library + tmux adapter: symlink the REAL
+  # files (teardown sources fm-backend.sh unconditionally, and its dispatcher
+  # resolves sibling libraries relative to fake/bin).
   ln -s "$ROOT/bin/fm-backend.sh" "$fake/bin/fm-backend.sh"
+  ln -s "$ROOT/bin/fm-omp-process-lib.sh" "$fake/bin/fm-omp-process-lib.sh"
   ln -s "$ROOT/bin/backends/tmux.sh" "$fake/bin/backends/tmux.sh"
   ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
@@ -64,6 +64,13 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  # fm-public-followup-lib.sh (and the fm-x-lib.sh it sources): teardown sources
+  # it for the relay-activation gate on the promised-public-reply check. Neither
+  # does anything in this fixture, which has no .env, but both are real siblings
+  # teardown now requires.
+  ln -s "$ROOT/bin/fm-public-followup-lib.sh" "$fake/bin/fm-public-followup-lib.sh"
+  ln -s "$ROOT/bin/fm-x-lib.sh" "$fake/bin/fm-x-lib.sh"
+  ln -s "$ROOT/bin/fm-secondmate-registry-lib.sh" "$fake/bin/fm-secondmate-registry-lib.sh"
   # fm-guard.sh: stub (teardown calls it with `|| true`).
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -122,6 +129,7 @@ test_teardown_skips_gracefully_without_tasktmp() {
   mkdir -p "$fake/bin/backends" "$fake/state"
   ln -s "$TEARDOWN" "$fake/bin/fm-teardown.sh"
   ln -s "$ROOT/bin/fm-backend.sh" "$fake/bin/fm-backend.sh"
+  ln -s "$ROOT/bin/fm-omp-process-lib.sh" "$fake/bin/fm-omp-process-lib.sh"
   ln -s "$ROOT/bin/backends/tmux.sh" "$fake/bin/backends/tmux.sh"
   ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
@@ -130,6 +138,13 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  # fm-public-followup-lib.sh (and the fm-x-lib.sh it sources): teardown sources
+  # it for the relay-activation gate on the promised-public-reply check. Neither
+  # does anything in this fixture, which has no .env, but both are real siblings
+  # teardown now requires.
+  ln -s "$ROOT/bin/fm-public-followup-lib.sh" "$fake/bin/fm-public-followup-lib.sh"
+  ln -s "$ROOT/bin/fm-x-lib.sh" "$fake/bin/fm-x-lib.sh"
+  ln -s "$ROOT/bin/fm-secondmate-registry-lib.sh" "$fake/bin/fm-secondmate-registry-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0

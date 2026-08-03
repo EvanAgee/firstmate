@@ -63,6 +63,64 @@ SH
   printf '%s\n' "$fakebin"
 }
 
+make_probe_tmux_omp() {
+  local dir=$1 shape=$2 fakebin args
+  fakebin=$(fm_fakebin "$dir")
+  for name in bun omp omp-helper xomp not-omp.ts; do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/$name"
+    chmod +x "$fakebin/$name"
+  done
+  case "$shape" in
+    exact) args="$fakebin/bun $fakebin/omp --auto-approve" ;;
+    bare-bun) args="bun $fakebin/omp --auto-approve" ;;
+    bare-omp) args="$fakebin/bun omp --auto-approve" ;;
+    helper) args="$fakebin/bun $fakebin/omp-helper" ;;
+    prefixed) args="$fakebin/bun $fakebin/xomp" ;;
+    incidental) args="$fakebin/bun $fakebin/not-omp.ts omp" ;;
+  esac
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  display-message)
+    case "$*" in
+      *pane_current_command*) printf 'bun\n' ;;
+      *pane_pid*) printf '4242\n' ;;
+    esac
+    ;;
+  list-windows) printf 'fm-ompunit\n' ;;
+esac
+SH
+  cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *'tpgid='*) printf '4242\n' ;;
+  *'args='*) printf '%s\n' '$args' ;;
+  *'comm='*) printf 'bun\n' ;;
+esac
+SH
+  cat > "$fakebin/lsof" <<SH
+#!/usr/bin/env bash
+printf 'n%s/bun\n' '$fakebin'
+SH
+  chmod +x "$fakebin/tmux" "$fakebin/ps" "$fakebin/lsof"
+  printf '%s\n' "$fakebin"
+}
+
+write_omp_probe_meta() {  # <fakebin>
+  local fakebin=$1 meta="$TMP_ROOT/ompunit.meta"
+  cat > "$meta" <<EOF
+window=sess:fm-ompunit
+endpoint_task_id=ompunit
+worktree=/tmp/ompunit-worktree
+project=/tmp/ompunit-project
+harness=omp
+kind=secondmate
+omp_bin=$(fm_test_realpath "$fakebin/omp")
+omp_bun=$(fm_test_realpath "$fakebin/bun")
+EOF
+  printf '%s\n' "$meta"
+}
+
 # make_failed_probe_tmux <dir> <inventory>: missing and present fail the pane
 # read, while unreadable returns a misleading fallback node process but fails
 # the inventory that must be authoritative.
@@ -95,7 +153,7 @@ SH
 }
 
 test_tmux_agent_state_classifies() {
-  local fb out
+  local fb out meta shape
 
   for harness in claude codex opencode grok kimi pi pi-signed pi-launcher Pi; do
     fb=$(make_probe_tmux "$TMP_ROOT/tmux-$harness" "$harness")
@@ -107,6 +165,51 @@ test_tmux_agent_state_classifies() {
     fb=$(make_probe_tmux "$TMP_ROOT/tmux-${shell#-}" "$shell")
     out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
     [ "$out" = dead ] || fail "a bare $shell foreground process should classify as dead, got '$out'"
+  done
+
+  fb=$(make_probe_tmux "$TMP_ROOT/tmux-legacy-codex" codex)
+  meta="$TMP_ROOT/legacy-codex.meta"
+  cat > "$meta" <<'EOF'
+window=sess:win
+kind=secondmate
+harness=codex
+home=/tmp/legacy-codex
+EOF
+  out=$(PATH="$fb:$BASE_PATH" bash -c \
+    '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win "$1"' "$ROOT" "$meta")
+  [ "$out" = alive ] \
+    || fail "a legacy non-OMP metadata record should preserve its live verdict, got '$out'"
+
+  fb=$(make_probe_tmux_omp "$TMP_ROOT/tmux-omp" exact)
+  out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:fm-ompunit' "$ROOT")
+  [ "$out" = ambiguous ] || fail "an unbound OMP process must stay ambiguous, got '$out'"
+  meta=$(write_omp_probe_meta "$fb")
+  out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:fm-ompunit "$1"' "$ROOT" "$meta")
+  [ "$out" = alive ] || fail "a metadata-bound exact Bun/OMP process should classify as alive, got '$out'"
+
+  fb=$(make_probe_tmux_omp "$TMP_ROOT/tmux-omp-bare-bun" bare-bun)
+  meta=$(write_omp_probe_meta "$fb")
+  out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:fm-ompunit "$1"' "$ROOT" "$meta")
+  [ "$out" = alive ] \
+    || fail "a bare Bun argv token with an exact actual executable should classify alive, got '$out'"
+
+  fb=$(make_probe_tmux_omp "$TMP_ROOT/tmux-omp-bare-entry" bare-omp)
+  meta=$(write_omp_probe_meta "$fb")
+  out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:fm-ompunit "$1"' "$ROOT" "$meta")
+  [ "$out" = ambiguous ] \
+    || fail "a bare OMP entrypoint resolved only through probe PATH must stay ambiguous, got '$out'"
+
+  fb=$(make_probe_tmux_omp "$TMP_ROOT/tmux-omp-duplicate-meta" exact)
+  meta=$(write_omp_probe_meta "$fb")
+  printf 'omp_bin=%s\n' "$(fm_test_realpath "$fb/omp")" >> "$meta"
+  out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:fm-ompunit "$1"' "$ROOT" "$meta")
+  [ "$out" = unreadable ] || fail "duplicate OMP identity metadata should be unreadable, got '$out'"
+
+  for shape in helper prefixed incidental; do
+    fb=$(make_probe_tmux_omp "$TMP_ROOT/tmux-inexact-$shape" "$shape")
+    meta=$(write_omp_probe_meta "$fb")
+    out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:fm-ompunit "$1"' "$ROOT" "$meta")
+    [ "$out" = ambiguous ] || fail "an inexact metadata-bound OMP process '$shape' should stay ambiguous, got '$out'"
   done
 
   fb=$(make_probe_tmux "$TMP_ROOT/tmux-node" node)
@@ -318,16 +421,27 @@ new_world() {
 # harmless "not a git repo" skip.
 add_sm_home() {
   local w=$1 id=$2 window=$3 harness=${4:-claude}
-  local home="$w/$id"
+  local home="$w/$id" omp_bin="$w/identity/omp" omp_bun="$w/identity/bun"
   mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
   printf '# Firstmate\n' > "$home/AGENTS.md"
   printf 'charter\n' > "$home/data/charter.md"
   {
     printf 'window=%s\n' "$window"
+    printf 'endpoint_task_id=%s\n' "$id"
+    printf 'worktree=%s\n' "$home"
+    printf 'project=%s\n' "$home"
     printf 'kind=secondmate\n'
     printf 'harness=%s\n' "$harness"
     printf 'home=%s\n' "$home"
+    if [ "$harness" = omp ]; then
+      mkdir -p "$w/identity"
+      printf '#!/usr/bin/env bash\nexit 0\n' > "$omp_bin"
+      printf '#!/usr/bin/env bash\nexit 0\n' > "$omp_bun"
+      chmod +x "$omp_bin" "$omp_bun"
+      printf 'omp_bin=%s\n' "$omp_bin"
+      printf 'omp_bun=%s\n' "$omp_bun"
+    fi
   } > "$w/home/state/$id.meta"
 }
 
@@ -408,6 +522,25 @@ test_sweep_respawns_authoritatively_missing_pi_signed_secondmate() {
   assert_not_contains "$(cat "$log")" "kill-window" \
     "an absent pi-signed window should not need a destructive pre-kill"
   pass "sweep: an authoritatively missing pi-signed secondmate window is relaunched"
+}
+
+test_sweep_recognizes_omp_for_missing_recovery() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-missing-omp)
+  printf '%s\n' omp > "$w/home/config/secondmate-harness"
+  add_sm_home "$w" sm1 firstmate:fm-sm1 omp
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" missing "$log")
+
+  assert_not_contains "$out" "recorded harness 'omp' is unverified for recovery" \
+    "startup recovery should recognize the exact OMP secondmate identity"
+  assert_contains "$out" "respawn failed after recorded endpoint confidently missing" \
+    "the fixture's absent OMP executable should fail only after missing state authorizes an exact-runtime relaunch attempt"
+  assert_not_contains "$(cat "$log")" "kill-window" \
+    "an absent OMP window should not need a destructive pre-kill"
+  pass "sweep: an authoritatively missing OMP secondmate reaches exact-runtime recovery instead of unverified fallback"
 }
 
 test_sweep_never_acts_on_ambiguous_existing_process() {
@@ -534,6 +667,7 @@ test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate
+test_sweep_recognizes_omp_for_missing_recovery
 test_sweep_never_acts_on_ambiguous_existing_process
 test_sweep_never_acts_on_transient_unreadability
 test_sweep_reports_missing_endpoint_relaunch_failure

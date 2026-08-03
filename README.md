@@ -48,7 +48,7 @@ Launching a supported harness inside it instantiates your first mate - and makes
 - **Explicit project modes** - each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with an optional `+yolo` autonomy flag.
 - **Optional secondmates** - opt in to persistent second mates that run from isolated firstmate homes with their own `FM_HOME`, state, projects, and session lock, supervising project clones or a project-less firstmate-repo domain, kept on the primary firstmate version by guarded local fast-forwards and checked for live agent processes at session start.
 - **Event-driven, zero-token supervision** - a bash watcher sleeps on the fleet and wakes the first mate only when something needs you; verified primary harnesses also get a turn-end backstop that blocks or follows up on a blind stop when work is under way and supervision is not live.
-- **Optional X mode** - opt in with one local `.env` token so firstmate can answer your public `@myfirstmate` mentions, act on normal reversible mention requests through the same lifecycle as chat requests, acknowledge spawned work, and post up to three public-safe completion follow-ups within seven days for genuine milestones and the final outcome without changing non-X behavior; dry-run preview records would-be replies and dismissals locally before go-live.
+- **Optional X mode** - opt in with one local `.env` token so firstmate can answer your public `@myfirstmate` mentions, act on normal reversible mention requests through the same lifecycle as chat requests, acknowledge spawned work, and post up to three public-safe completion follow-ups within seven days for genuine milestones and the final outcome without changing non-X behavior; a final reply promised in a thread becomes durable state that is reconciled from disk, so a restart or a compacted conversation cannot lose it; dry-run preview records would-be replies and dismissals locally before go-live.
 - **Strict project boundary** - the first mate is read-only over your projects except for the narrow guarded and captain-approved operations authorized by [hard rule 1](AGENTS.md#1-identity-and-prime-directives), including fleet sync's guarded safe branch pruning; crewmates make every other project change behind the configured merge authority.
 - **Restart-proof** - all state lives on disk and in the active session backend (tmux by hard default, herdr or cmux when selected or auto-detected, zellij/orca when explicitly selected); kill the session anytime and the next one reconciles, including confirmed-dead secondmate agents, and carries on.
 
@@ -58,7 +58,7 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 
 ### Requirements
 
-- A verified primary agent harness: Claude Code, Grok, Pi, `pi-signed`, Codex, or OpenCode.
+- A verified primary agent harness: Claude Code, Grok, Pi, `pi-signed`, OMP, Codex, or OpenCode.
 - Git and the GitHub CLI, authenticated through `gh auth login`.
 - The CLI and dependencies for your selected runtime backend; tmux is the reference default.
 
@@ -72,6 +72,8 @@ Claude Code uses a tracked Stop hook for tokenless watcher re-arm and rewake, Gr
 All three have verified turn-end guard paths when launched with their documented setup.
 Pick whichever one matches your subscription and workflow.
 
+OMP is also verified and supported as a distinct primary harness, worker, scout, and second-mate runtime on tmux and Herdr.
+It shares an explicitly allowlisted Pi-compatible core without being recorded or recovered as Pi, discovers its tracked primary extension from `.omp/extensions/`, and refuses when its required capabilities are missing.
 Codex and OpenCode are also verified and supported as primary harnesses; Codex uses bounded foreground checkpoints, and OpenCode uses a TUI plugin, so both carry more harness-specific supervision tradeoffs than the three co-primaries.
 
 ### Install and launch
@@ -104,9 +106,15 @@ pi
 FM_PI_HARNESS=pi-signed pi-signed
 ```
 
+**OMP**
+
+```sh
+omp
+```
+
 For Grok, `--trust` is needed once per clone so project hooks and the turn-end guard load; `/hooks-trust` inside Grok works too.
 For Pi, approve the project trust prompt once per clone on first launch so the tracked `.pi/extensions/*.ts` files auto-load.
-Pi's `/calm` toggle hides supported transcript chrome, including canonically classified Firstmate operational user rows, while retaining native working activity and all model context and session data.
+Pi's `/calm` toggle hides supported transcript chrome, including canonically classified Firstmate operational user rows, and uses a Calm-only animated working boat during active runs while preserving all model context and session data.
 The hidden operational inputs remain ordinary user-role messages with unchanged delivery, ordering, authority, persistence, and exports.
 The preference persists for the effective Firstmate home, and toggling it off restores ordinary rendering.
 [Calm's current behavior and supported limits](docs/calm.md) are separate from its [version-scoped maintainer evidence](docs/calm-mode-feasibility.md).
@@ -165,7 +173,7 @@ Full architecture - the supervision engine, worktree isolation, secondmates, dis
 ## Built-in skills
 
 Firstmate ships these user-invocable built-in skills.
-Claude and grok use the slash form shown here; codex uses the same names with `$`, such as `$afk`.
+Claude and Grok use the slash form shown here, Codex uses the same names with `$`, such as `$afk`, and OMP uses `/skill:<name>`, such as `/skill:afk`.
 
 | Skill              | What it does                                                                                                                                  |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -210,7 +218,7 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/gitlab-merge-watch.md](docs/gitlab-merge-watch.md) - maintainer verification for GitLab merge watching on arbitrary instances.
 - [docs/turnend-guard.md](docs/turnend-guard.md) - the primary session's current "no turn ends blind" backstop, scope, loop safety, and compatibility limits.
 - [docs/verification/supervision.md](docs/verification/supervision.md) - active maintainer verification for session-start, guard, continuity, and wedge integrations.
-- [docs/supervision-protocols/](docs/supervision-protocols/) - rendered primary-harness watcher protocols for Claude, Codex, OpenCode, Pi and `pi-signed`, Grok, and unknown harness fallback.
+- [docs/supervision-protocols/](docs/supervision-protocols/) - rendered primary-harness watcher protocols for Claude, Codex, OpenCode, Pi and `pi-signed`, OMP, Grok, and unknown harness fallback.
 - [docs/scripts.md](docs/scripts.md) - the `bin/` toolbelt reference.
 - [docs/documentation-audiences.md](docs/documentation-audiences.md) - documentation audiences and the machine-checked placement boundary.
 - [`AGENTS.md`](AGENTS.md) - the distro's always-loaded operating contract and routing index for conditional procedures.

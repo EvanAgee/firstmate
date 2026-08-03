@@ -41,6 +41,11 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the her
 # shellcheck source=tests/herdr-test-safety.sh
 . "$ROOT/tests/herdr-test-safety.sh"
 
+# This suite runs against its own isolated lab session, so a Herdr pane
+# inherited from the terminal it was launched in must not follow spawn into it
+# as a cross-session parent identity (tests/herdr-test-safety.sh).
+herdr_forget_inherited_pane
+
 fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
@@ -271,6 +276,7 @@ start_daemon() {
   HERDR_SESSION="$SESSION" \
   FM_STATE_OVERRIDE="$STATE_DIR" \
   FM_SUPERVISOR_BACKEND=herdr \
+  FM_SUPERVISOR_HARNESS=pi \
   FM_SUPERVISOR_TARGET="$SUPERVISOR_TARGET" \
   FM_ESCALATE_BATCH_SECS=0 \
   FM_HOUSEKEEPING_TICK=1 \
@@ -481,6 +487,7 @@ test_scenario_d_max_defer() {
   HERDR_SESSION="$SESSION" \
   FM_STATE_OVERRIDE="$STATE_DIR" \
   FM_SUPERVISOR_BACKEND=herdr \
+  FM_SUPERVISOR_HARNESS=pi \
   FM_SUPERVISOR_TARGET="$SUPERVISOR_TARGET" \
   FM_ESCALATE_BATCH_SECS=99999 \
   FM_HOUSEKEEPING_TICK=1 \

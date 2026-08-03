@@ -99,6 +99,8 @@ test_idle_placeholder_is_empty() {
   # Placeholder after an agent glyph (post-strip match).
   out=$(classify 0 '❯ Type a message...' "$idle")
   [ "$out" = empty ] || fail "the idle placeholder after a glyph should read empty, got '$out'"
+  out=$(LC_ALL=C classify 0 '❯ Type a message...' "$idle")
+  [ "$out" = empty ] || fail "the idle placeholder after a glyph must read empty under LC_ALL=C, got '$out'"
   # Without the idle regex it is just text -> pending.
   out=$(classify 1 'Type a message...')
   [ "$out" = pending ] || fail "without an idle regex the placeholder text is pending, got '$out'"
@@ -119,6 +121,7 @@ test_idle_placeholder_case_mode_is_explicit() {
 test_real_text_is_pending() {
   local out
   out=$(classify 0 '❯ fix findings 1 and 3'); [ "$out" = pending ] || fail "bare '❯ <text>' should be pending, got '$out'"
+  out=$(LC_ALL=C classify 0 '❯ déployer 🚢'); [ "$out" = pending ] || fail "real Unicode text after a prompt glyph must remain pending under LC_ALL=C, got '$out'"
   out=$(classify 1 '> deploy staging now'); [ "$out" = pending ] || fail "bordered '> <text>' should be pending, got '$out'"
   # A slash-command popup argument-hint placeholder is still unsubmitted text.
   out=$(classify 1 '/compact compaction instructions'); [ "$out" = pending ] || fail "a popup placeholder fill should be pending, got '$out'"

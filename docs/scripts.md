@@ -39,6 +39,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-supervision-instructions.sh` | Render the session-start primary-harness supervision block or the one-line repair instruction |
 | `fm-home-seed.sh`        | Transactionally provision a secondmate home and maintain `data/secondmates.md`       |
 | `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
+| `fm-omp-capabilities.sh` | Verify the selected OMP executable's required lifecycle and exact process-ownership surface before a launch |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |
 | `fm-backend-hometag-lib.sh` | Shared per-installation home-tag derivation for zellij tab and cmux workspace titles |
 | `fm-composer-lib.sh`     | Single fleet-wide owner of composer-content classification for all backends          |
@@ -55,6 +56,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-pending-reply-lib.sh` | Parent-owned secondmate pending-reply expectations, recovery, and one-shot escalation |
 | `fm-secondmate-report.sh` | Optional helper to append a correlated parent status or document-pointer report       |
 | `fm-gate-refuse-lib.sh`  | Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints               |
+| `fm-primary-watch-core.ts` | Harness-neutral watcher lifecycle core bound by the Pi and OMP primary extensions (docs/watcher-continuity.md) |
+| `fm-primary-watch-version-lib.sh` | The one definition of a primary watcher marker version, hashing that adapter plus the shared core |
 | `fm-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `fm-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
 | `fm-watch.sh`            | Singleton-safe always-on watcher: absorb benign wakes, queue and exit on actionable ones |
@@ -62,7 +65,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-afk-launch.sh`       | Own away-mode entry, exit, rollback, and any backend terminal lifecycle                 |
 | `fm-afk-return.sh`       | Own deterministic return shutdown, catch-up evidence, and the firstmate-actionable blocker gate |
 | `fm-supervisor-target-lib.sh` | Resolve the shared supervisor target and backend for the daemon and launcher       |
-| `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, escalate batched digests, alert on failed delivery |
+| `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, guard injection by the detected primary harness, escalate batched digests, alert on failed delivery |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
@@ -70,11 +73,15 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inherited local-material propagation and config-reread delivery |
 | `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
+| `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for the bootstrap diagnostic                  |
+| `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes, emit bounded best-effort status-event annotations, then assert watcher liveness |
 | `fm-wake-lib.sh`         | Shared durable wake queue, portable locks, and watcher identity/health helpers       |
 | `fm-classify-lib.sh`     | Shared captain-relevant and declared-external-wait wake classification vocabulary    |
 | `fm-send.sh`             | Send one verified literal line or supported key through the target's recorded backend |
-| `fm-tmux-lib.sh`         | Shared tmux pane primitives for busy detection, composer capture, and verified submit |
+| `fm-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |
+| `fm-busy-event.sh`       | The only writer of a task's semantic busy-state record; arms an incarnation and applies lifecycle events |
+| `fm-tmux-lib.sh`         | Shared tmux pane primitives for composer capture, verified submit, and the submit-time busy check |
 | `fm-peek.sh`             | Print a bounded tail of a crewmate endpoint                                          |
 | `fm-check-register.sh`   | Bind an intentional custom watcher check to its current bytes                       |
 | `fm-check-lib.sh`        | Validate custom-check registrations and prepare private execution snapshots          |
@@ -86,6 +93,9 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task                               |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
+| `fm-pi-compatible-lib.sh` | Shared membership predicate for the verified Pi-compatible harness family            |
+| `fm-pi-compatible-runtimes` | The tracked single owner of that closed family allowlist                          |
+| `fm-omp-process-lib.sh`  | Exact OMP process identity shared by primary ancestry and backend liveness probes    |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared X-mode config, relay, and reply-threading helpers                             |
 | `fm-x-poll.sh`           | One bounded X relay poll: stash newly offered mentions and emit their once-only wake |
@@ -93,3 +103,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-x-dismiss.sh`        | Dismiss a skipped X-mode mention at the relay without replying                       |
 | `fm-x-link.sh`           | Link a spawned task to its originating X-mode mention in task meta                   |
 | `fm-x-followup.sh`       | Detect, post, and cap completion follow-ups for an X-mode-linked task                |
+| `fm-public-followup-lib.sh` | Shared relay-activation gate, O(1) presence checks, and private transport paths for promised public replies |
+| `fm-public-followup.sh`  | Reconcile typed terminal work results into a public commitment and deliver its final reply once |
+| `fm-public-followup-emit.sh` | Report one typed terminal work result into the home that owes the public reply    |

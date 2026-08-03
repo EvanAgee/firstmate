@@ -104,6 +104,12 @@ init_changed_fixture_repo() {
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
     fm-pr-merge.test.sh \
+    fm-omp-harness.test.sh \
+    fm-omp-primary.test.sh \
+    fm-omp-secondmate-live-e2e.test.sh \
+    fm-omp-secondmate.test.sh \
+    fm-pi-compatible-family.test.sh \
+    fm-pi-primary-types.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-afk-return.test.sh \
     fm-bearings-snapshot.test.sh \
@@ -116,13 +122,21 @@ init_changed_fixture_repo() {
   : >"$repo/tests/lib.sh"
   : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
+  : >"$repo/bin/fm-omp-capabilities.sh"
+  : >"$repo/bin/fm-omp-process-lib.sh"
+  : >"$repo/bin/fm-spawn.sh"
+  : >"$repo/bin/fm-session-lock-lib.sh"
+  : >"$repo/bin/fm-pi-compatible-lib.sh"
+  : >"$repo/bin/fm-pi-compatible-runtimes"
+  : >"$repo/bin/fm-primary-watch-core.ts"
   : >"$repo/bin/unmapped-source.sh"
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
   printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
-  mkdir -p "$repo/.agents/skills/example" "$repo/.claude" "$repo/.pi/extensions" "$repo/src"
+  mkdir -p "$repo/.agents/skills/example" "$repo/.claude" "$repo/.omp/extensions" "$repo/.pi/extensions" "$repo/src"
   : >"$repo/.agents/skills/example/SKILL.md"
   : >"$repo/.claude/settings.json"
+  : >"$repo/.omp/extensions/fm-primary-omp.ts"
   : >"$repo/.pi/extensions/fm-primary-pi-watch.ts"
   : >"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
   : >"$repo/src/unmapped.ts"
@@ -158,6 +172,53 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-afk-return.test.sh" "supervisor target selects afk coverage"
   git -C "$repo" add bin/fm-supervisor-target-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm supervisor-change
+
+  printf '\n' >>"$repo/bin/fm-pi-compatible-lib.sh"
+  printf '\n' >>"$repo/bin/fm-pi-compatible-runtimes"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-pi-compatible-family.test.sh" "Pi-compatible sources select exact-family coverage"
+  git -C "$repo" add bin/fm-pi-compatible-lib.sh bin/fm-pi-compatible-runtimes
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm pi-family-change
+
+  printf '\n' >>"$repo/bin/fm-primary-watch-core.ts"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-pi-compatible-family.test.sh" "watcher core selects exact-family coverage"
+  assert_contains "$listed" "tests/fm-pi-primary-types.test.sh" "watcher core selects public-adapter type coverage"
+  assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "watcher core selects runtime-facing watcher coverage"
+  git -C "$repo" add bin/fm-primary-watch-core.ts
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm watch-core-change
+
+  printf '\n' >>"$repo/bin/fm-omp-capabilities.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-harness.test.sh" "OMP capability source selects exact-harness coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate.test.sh" "OMP capability source selects persistent secondmate coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate-live-e2e.test.sh" "OMP capability source selects opt-in persistent lifecycle coverage"
+  git -C "$repo" add bin/fm-omp-capabilities.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-capability-change
+
+  printf '\n' >>"$repo/bin/fm-omp-process-lib.sh"
+  printf '\n' >>"$repo/bin/fm-session-lock-lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-primary.test.sh" "OMP identity sources select primary runtime coverage"
+  assert_contains "$listed" "tests/fm-backend.test.sh" "OMP identity sources select backend coverage"
+  assert_contains "$listed" "tests/fm-session-start.test.sh" "OMP identity sources select session ownership coverage"
+  git -C "$repo" add bin/fm-omp-process-lib.sh bin/fm-session-lock-lib.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-identity-change
+
+  printf '\n' >>"$repo/.omp/extensions/fm-primary-omp.ts"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-primary.test.sh" "OMP native extension selects primary runtime coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate.test.sh" "OMP native extension selects persistent secondmate coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate-live-e2e.test.sh" "OMP native extension selects opt-in persistent lifecycle coverage"
+  git -C "$repo" add .omp/extensions/fm-primary-omp.ts
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-primary-extension-change
+
+  printf '\n' >>"$repo/bin/fm-spawn.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-omp-secondmate.test.sh" "spawn source selects persistent secondmate coverage"
+  assert_contains "$listed" "tests/fm-omp-secondmate-live-e2e.test.sh" "spawn source selects opt-in persistent lifecycle coverage"
+  git -C "$repo" add bin/fm-spawn.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm spawn-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"
@@ -386,8 +447,88 @@ test_portable_shard_union_and_coverage_guard() {
   pass "portable shard union, disjointness, and coverage guard hold"
 }
 
+test_portable_serial_shards_partition_the_serial_lane() {
+  local lanes count serial shard listed union dups shard_lane total cap
+  lanes=$("$RUNNER" --list-lanes)
+  count=$(printf '%s\n' "$lanes" | grep -c '^portable-serial-[0-9]*of[0-9]*$')
+  [ "$count" -ge 2 ] || fail "expected at least two portable serial shard lanes, got $count"
+  printf '%s\n' "$lanes" | grep -q "^portable-serial-1of${count}\$" \
+    || fail "shard lane names must carry the shard count ${count}: $lanes"
+
+  serial=$("$RUNNER" --list --lane portable-serial | LC_ALL=C sort)
+  union=""
+  shard=1
+  while [ "$shard" -le "$count" ]; do
+    shard_lane="portable-serial-${shard}of${count}"
+    listed=$("$RUNNER" --list --lane "$shard_lane")
+    [ -n "$listed" ] || fail "$shard_lane selected no tests"
+    union=$(printf '%s\n%s' "$union" "$listed")
+    shard=$((shard + 1))
+  done
+  union=$(printf '%s\n' "$union" | grep -v '^$' || true)
+
+  dups=$(printf '%s\n' "$union" | LC_ALL=C sort | uniq -d || true)
+  [ -z "$dups" ] || fail "portable serial shards run the same script twice: $dups"
+  [ "$(printf '%s\n' "$union" | LC_ALL=C sort)" = "$serial" ] \
+    || fail "portable serial shards must exactly cover the portable serial lane"
+
+  # Every shard carries a real share of the lane, so no degenerate partition
+  # leaves one runner doing nearly all of the work the split exists to spread.
+  total=$(printf '%s\n' "$serial" | wc -l | tr -d ' ')
+  cap=$((total * 6 / 10))
+  shard=1
+  while [ "$shard" -le "$count" ]; do
+    listed=$("$RUNNER" --list --lane "portable-serial-${shard}of${count}" | wc -l | tr -d ' ')
+    [ "$listed" -ge 2 ] \
+      || fail "portable-serial-${shard}of${count} holds only $listed script(s)"
+    [ "$listed" -le "$cap" ] \
+      || fail "portable-serial-${shard}of${count} holds $listed of $total scripts"
+    shard=$((shard + 1))
+  done
+
+  # Assignment is deterministic across invocations.
+  [ "$("$RUNNER" --list --lane "portable-serial-1of${count}")" = \
+    "$("$RUNNER" --list --lane "portable-serial-1of${count}")" ] \
+    || fail "portable serial shard membership must be deterministic"
+  pass "portable serial shards are a deterministic disjoint cover of the serial lane"
+}
+
+test_portable_serial_shard_lane_refusals() {
+  local tmp count rc other
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-shard-lane.XXXXXX")
+  count=$("$RUNNER" --list-lanes | grep -c '^portable-serial-[0-9]*of[0-9]*$')
+  other=$((count + 1))
+
+  # A lane built for a different shard count must refuse rather than run a
+  # partial suite: this is what keeps a CI matrix from silently dropping tests.
+  set +e
+  "$RUNNER" --list --lane "portable-serial-1of${other}" >"$tmp/out" 2>"$tmp/err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 2 ] || fail "mismatched shard count must refuse (exit 2), got $rc"
+  [ ! -s "$tmp/out" ] || fail "mismatched shard count must not list tests"
+  grep -Fq "configured for $count" "$tmp/err" \
+    || fail "mismatch refusal must name the configured count: $(cat "$tmp/err")"
+
+  set +e
+  "$RUNNER" --list --lane "portable-serial-$((count + 1))of${count}" >"$tmp/out2" 2>"$tmp/err2"
+  rc=$?
+  set -e
+  [ "$rc" -eq 2 ] || fail "out-of-range shard index must refuse (exit 2), got $rc"
+  grep -Fq "outside 1..$count" "$tmp/err2" \
+    || fail "range refusal message missing: $(cat "$tmp/err2")"
+
+  set +e
+  "$RUNNER" --list --lane portable-serial-1 >"$tmp/out3" 2>"$tmp/err3"
+  rc=$?
+  set -e
+  [ "$rc" -eq 2 ] || fail "shard lane without a count must refuse (exit 2), got $rc"
+  rm -rf "$tmp"
+  pass "portable serial shard lanes refuse mismatched, out-of-range, and countless names"
+}
+
 test_jobs_requires_proven_isolated() {
-  local tmp rc
+  local tmp rc shard_lane
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-jobs.XXXXXX")
   set +e
   "$RUNNER" --jobs 2 --lane portable-serial >"$tmp/out" 2>"$tmp/err"
@@ -401,6 +542,15 @@ test_jobs_requires_proven_isolated() {
   rc=$?
   set -e
   [ "$rc" -eq 2 ] || fail "--jobs on watcher-lock must refuse, got $rc"
+  # Sharding across runners never relaxes the serial rule inside one shard.
+  shard_lane=$("$RUNNER" --list-lanes | grep -m1 '^portable-serial-[0-9]*of[0-9]*$')
+  set +e
+  "$RUNNER" --jobs 2 --lane "$shard_lane" >"$tmp/out3" 2>"$tmp/err3"
+  rc=$?
+  set -e
+  [ "$rc" -eq 2 ] || fail "--jobs with a portable serial shard must refuse, got $rc"
+  grep -Fq 'not in the proven-isolated set' "$tmp/err3" \
+    || fail "shard --jobs refusal message missing: $(cat "$tmp/err3")"
   rm -rf "$tmp"
   pass "--jobs refuses non-proven / stateful selections"
 }
@@ -430,28 +580,42 @@ if [ "$1" = "-f" ] && [ "$2" = "%Lp" ]; then
 fi
 exit 1
 SH
+  # The slow fixture blocks on the replacement fixture's own signal rather than
+  # a wall-clock sleep, so a loaded machine cannot let it finish first and turn
+  # a correct scheduler into a failure. The bounded deadline is only there so a
+  # scheduler that really does wait for the oldest worker still reports instead
+  # of hanging.
   cat >"$repo/$a" <<'SH'
 #!/usr/bin/env bash
-sleep 0.5
+if [ -n "${SCHED_WAIT_FOR_REPLACEMENT:-}" ]; then
+  waited=0
+  while [ ! -e "$SCHED_EVIDENCE/replacement-started" ] && [ "$waited" -lt 600 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+fi
 touch "$SCHED_EVIDENCE/slow-done"
 echo "ok - slow fixture"
 SH
   cat >"$repo/$b" <<'SH'
 #!/usr/bin/env bash
-sleep 0.05
 echo "ok - fast fixture"
 SH
   cat >"$repo/$c" <<'SH'
 #!/usr/bin/env bash
+# Read the evidence before releasing the slow fixture, so the release can never
+# race ahead of the check it is being used to make.
 if [ -e "$SCHED_EVIDENCE/slow-done" ]; then
+  touch "$SCHED_EVIDENCE/replacement-started"
   echo "not ok - scheduler waited for oldest worker"
   exit 1
 fi
+touch "$SCHED_EVIDENCE/replacement-started"
 echo "ok - replacement fixture started before slow fixture finished"
 SH
   chmod +x "$runner" "$repo/$a" "$repo/$b" "$repo/$c" "$fake_bin/stat"
   set +e
-  PATH="$fake_bin:$PATH" SCHED_EVIDENCE="$evidence" \
+  PATH="$fake_bin:$PATH" SCHED_EVIDENCE="$evidence" SCHED_WAIT_FOR_REPLACEMENT=1 \
     "$runner" --jobs 2 --json "$tmp/timing.json" \
     "$a" "$b" "$c" >"$tmp/out" 2>"$tmp/err"
   rc=$?
@@ -579,6 +743,8 @@ test_gate_skip_accounting
 test_fail_on_gate_skip_token
 test_exclude_family
 test_portable_shard_union_and_coverage_guard
+test_portable_serial_shards_partition_the_serial_lane
+test_portable_serial_shard_lane_refusals
 test_jobs_requires_proven_isolated
 test_jobs_parallel_scheduler_and_failure_propagation
 test_aggregate_json

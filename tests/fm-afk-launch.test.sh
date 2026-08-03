@@ -24,6 +24,9 @@ LAUNCH="$ROOT/bin/fm-afk-launch.sh"
 START="$ROOT/bin/fm-afk-start.sh"
 
 FAILED=0
+# Launcher tests run outside a harness process in CI. Pin a verified identity
+# explicitly so the production launcher can remain conservative.
+export FM_SUPERVISOR_HARNESS=pi
 fail() { printf 'not ok - %s\n' "$1" >&2; FAILED=1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
@@ -296,12 +299,23 @@ unit_signal_exits_with_lock_cleanup() {
     : > "$2"
   ' _ "$LAUNCH" "$marker" &
   child=$!
-  for _ in $(seq 1 40); do
-    [ -d "$st/state/.afk-launch.lock" ] && break
+  # Signal only once the lifecycle actually holds its lock. Killing before the
+  # lock exists tests nothing, and on a loaded machine it used to race: the
+  # lock could be created just after the kill and outlive the process.
+  local locked=0 _
+  for _ in $(seq 1 100); do
+    if [ -d "$st/state/.afk-launch.lock" ]; then locked=1; break; fi
     sleep 0.05
   done
+  [ "$locked" = 1 ] || fail "launcher signal: lifecycle never acquired its lock to interrupt"
   kill -TERM "$child" 2>/dev/null || true
   wait "$child" 2>/dev/null || true
+  # The signal handler releases the lock as it exits; give that removal a
+  # bounded settle rather than sampling the instant `wait` returns.
+  for _ in $(seq 1 100); do
+    [ -e "$st/state/.afk-launch.lock" ] || break
+    sleep 0.05
+  done
   if [ ! -e "$marker" ] && [ ! -e "$st/state/.afk-launch.lock" ]; then
     pass "launcher signal: TERM exits and releases the lifecycle lock"
   else
@@ -876,6 +890,43 @@ e2e_herdr() {
 # E2E tmux: topology invariant (captain window untouched; daemon in a separate
 # detached session).
 # ---------------------------------------------------------------------------
+e2e_tmux_child_receives_exact_state_and_harness() {
+  command -v tmux >/dev/null 2>&1 || { pass "tmux child env: skipped (tmux absent)"; return 0; }
+  local root home state probe entry cap_session cap_pane rec
+  root=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-child-env.XXXXXX")
+  home="$root/home"
+  state="$root/separate-state"
+  probe="$root/child-env"
+  entry="$root/entry.sh"
+  mkdir -p "$home" "$state"
+  cat > "$entry" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n%s\\n' "\${FM_STATE_OVERRIDE:-}" "\${FM_SUPERVISOR_HARNESS:-}" > '$probe'
+exec sleep 600
+EOF
+  chmod +x "$entry"
+  cap_session="fm-afk-child-env-cap-$$"
+  tmux new-session -d -s "$cap_session" 2>/dev/null || { fail "tmux child env: captain session creation failed"; rm -rf "$root"; return 0; }
+  TRACK_TMUX_SESSIONS="$TRACK_TMUX_SESSIONS $cap_session"
+  cap_pane=$(tmux display-message -p -t "$cap_session" '#{pane_id}')
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET="$cap_pane" \
+    FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_HARNESS=omp FM_AFK_LAUNCH_ENTRY="$entry" \
+    "$LAUNCH" start >/dev/null 2>&1 || fail "tmux child env: launcher start failed"
+  rec=$(cut -f2 "$state/.afk-daemon-terminal" 2>/dev/null || true)
+  [ -z "$rec" ] || TRACK_TMUX_SESSIONS="$TRACK_TMUX_SESSIONS $rec"
+  for _ in $(seq 1 40); do [ -s "$probe" ] && break; sleep 0.1; done
+  if [ "$(cat "$probe" 2>/dev/null)" = "$state"$'\n'"omp" ]; then
+    pass "tmux child env: detached daemon receives the exact resolved state directory and OMP harness"
+  else
+    fail "tmux child env: detached daemon lost state or harness ($(cat "$probe" 2>/dev/null || true))"
+  fi
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_SUPERVISOR_TARGET="$cap_pane" \
+    FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_HARNESS=omp "$LAUNCH" stop >/dev/null 2>&1 || true
+  tmux kill-session -t "$cap_session" 2>/dev/null || true
+  rm -rf "$root"
+}
+
 e2e_tmux() {
   command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found (tmux e2e)"; return 0; }
   local cap_session home_tmp cap_pane before during after rec
@@ -941,6 +992,7 @@ unit_confirmed_absence_succeeds
 unit_incomplete_restore_retains_backup
 unit_flag_write_failure_aborts
 e2e_herdr
+e2e_tmux_child_receives_exact_state_and_harness
 e2e_tmux
 
 [ "$FAILED" -eq 0 ] || exit 1

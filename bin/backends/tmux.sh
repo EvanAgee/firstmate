@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/backends/tmux.sh through bin/fm-backend.sh.
 # bin/backends/tmux.sh - the tmux session-provider adapter.
 #
 # Reference backend (AGENTS.md section 8; data/fm-backend-design-d7). P1 moves
@@ -20,6 +21,8 @@
 # duplicating it, so the two consumers cannot drift apart.
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$FM_BACKEND_LIB_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$FM_BACKEND_LIB_DIR/fm-omp-process-lib.sh"
 
 # fm_backend_tmux_resolve_bare_selector: the live-window-listing fallback for a
 # selector that is neither an explicit target nor a task selector routed
@@ -50,8 +53,8 @@ fm_backend_tmux_send_key() {  # <target> <key>
 # submit with Enter, retried (Enter only, never retyped) until the composer
 # clears. Re-exports fm_tmux_submit_core (bin/fm-tmux-lib.sh) verbatim; see
 # that file for the composer-verification contract and echoed verdicts.
-fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
-  fm_tmux_submit_core "$@"
+fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness] [canonical-omp-bun]
+  fm_tmux_submit_core "$1" "$2" "$3" "$4" "$5" "${7:-}" "${8:-}"
 }
 
 # fm_backend_tmux_container_ensure: reuse the current tmux session when
@@ -148,6 +151,31 @@ fm_backend_tmux_current_command() {  # <target>
   tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null
 }
 
+fm_backend_tmux_bun_agent_state() {  # <target> <comm> [bun-realpath] [omp-realpath] -> alive|ambiguous|unreadable
+  local target=$1 comm=$2 expected_bun=${3:-} expected_omp=${4:-} pane_pid foreground_pid args
+  pane_pid=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null) || {
+    printf 'unreadable'
+    return 0
+  }
+  case "$pane_pid" in ''|*[!0-9]*) printf 'unreadable'; return 0 ;; esac
+  foreground_pid=$(ps -o tpgid= -p "$pane_pid" 2>/dev/null | tr -d '[:space:]') || {
+    printf 'unreadable'
+    return 0
+  }
+  case "$foreground_pid" in ''|*[!0-9]*|0|1) printf 'unreadable'; return 0 ;; esac
+  args=$(ps -o args= -p "$foreground_pid" 2>/dev/null) || {
+    printf 'unreadable'
+    return 0
+  }
+  if [ -n "$expected_bun" ] && [ -n "$expected_omp" ] \
+     && FM_OMP_PROCESS_EXPECTED_BUN="$expected_bun" FM_OMP_PROCESS_EXPECTED_BIN="$expected_omp" \
+       fm_omp_process_matches "$comm" "$args" "$foreground_pid"; then
+    printf 'alive'
+  else
+    printf 'ambiguous'
+  fi
+}
+
 # fm_backend_tmux_agent_state: recovery-grade harness-agent state for one
 # recorded target. See bin/fm-backend.sh's fm_backend_agent_state for the
 # shared state vocabulary and docs/tmux-backend.md "Agent liveness probe" for
@@ -157,8 +185,8 @@ fm_backend_tmux_current_command() {  # <target>
 # An omitted window or a definitive missing-session/server response is
 # `missing`; any other inventory or pane read failure is `unreadable`, so a
 # transient tmux problem never licenses a duplicate.
-fm_backend_tmux_agent_state() {  # <target>
-  local target=$1 comm session window windows inventory_status
+fm_backend_tmux_agent_state() {  # <target> [bun-realpath] [omp-realpath]
+  local target=$1 expected_bun=${2:-} expected_omp=${3:-} comm session window windows inventory_status
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
     *:*) ;;
@@ -194,6 +222,7 @@ fm_backend_tmux_agent_state() {  # <target>
   comm=${comm#-}
   case "$comm" in
     *claude*|*codex*|*opencode*|*grok*|*kimi*|pi|pi-signed|pi-launcher|Pi) printf 'alive' ;;
+    bun|omp) fm_backend_tmux_bun_agent_state "$target" "$comm" "$expected_bun" "$expected_omp" ;;
     zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'dead' ;;
     '') printf 'unreadable' ;;
     *) printf 'ambiguous' ;;

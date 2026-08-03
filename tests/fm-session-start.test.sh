@@ -22,6 +22,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../bin/fm-primary-watch-version-lib.sh"
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
@@ -160,6 +162,48 @@ exit 1
 SH
   chmod +x "$fakebin/ps"
   printf '%s\n' "$harness" > "$fakebin/.harness-name"
+}
+
+prepare_fake_omp_holder_bins() {
+  local fakebin=$1 real_bun
+  # Keep the deterministic portable lane independent of a host OMP/Bun install;
+  # the fake process inventory still exposes the exact launch-bound identities.
+  real_bun=$(fm_test_realpath "$(command -v node)")
+  ln -sf "$real_bun" "$fakebin/bun"
+  cat > "$fakebin/omp" <<'JS'
+#!/usr/bin/env bun
+if (process.argv.includes("--hold")) setInterval(() => {}, 60_000);
+JS
+  chmod +x "$fakebin/omp"
+}
+
+make_fake_ps_omp_holder() {
+  local fakebin=$1 holder_pid=$2 bun omp
+  bun="$fakebin/bun"
+  omp="$fakebin/omp"
+  cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+set -u
+pid=""
+prev=""
+for arg in "\$@"; do
+  [ "\$prev" = "-p" ] && pid="\$arg"
+  prev="\$arg"
+done
+case "\$*" in
+  *"comm="*)
+    if [ "\$pid" = "$holder_pid" ]; then printf '%s\n' "$bun"; else printf '/bin/zsh\n'; fi
+    exit 0
+    ;;
+  *"args="*)
+    if [ "\$pid" = "$holder_pid" ]; then printf '%s %s\n' "$bun" "$omp"; else printf 'zsh\n'; fi
+    exit 0
+    ;;
+  *"ppid="*) printf '%s\n' "$holder_pid"; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/ps"
 }
 
 make_fake_ps_pi_holder() {
@@ -313,6 +357,9 @@ SH
 
 make_fake_herdr_secondmate_recovery() {
   local fakebin=$1
+  # The recovery kill now requires the shared named-session lock and an exact
+  # focus snapshot. Keep a focused sibling tab so this test's husk close is
+  # provably non-workspace-emptying and never needs to signal a fake shell pid.
   cat > "$fakebin/herdr" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -326,16 +373,19 @@ case "${1:-} ${2:-}" in
   "status --json")
     printf '%s\n' '{"client":{"protocol":14,"version":"test"},"server":{"running":true}}'
     ;;
+  "session list")
+    printf '{"sessions":[{"name":"default","running":true,"socket_path":"%s.sock"}]}\n' "$state"
+    ;;
   "workspace list")
-    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2ndmate-%s"}]}}\n' "$mate_id"
+    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2ndmate-%s","focused":true,"active_tab_id":"t-focus"}]}}\n' "$mate_id"
     ;;
   "tab list")
     if [ -e "$spawned" ]; then
-      printf '{"result":{"tabs":[{"tab_id":"t-new","workspace_id":"ws1","label":"fm-%s"}]}}\n' "$mate_id"
+      printf '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true},{"tab_id":"t-new","workspace_id":"ws1","label":"fm-%s","focused":false}]}}\n' "$mate_id"
     elif [ -e "$killed" ]; then
-      printf '%s\n' '{"result":{"tabs":[]}}'
+      printf '%s\n' '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true}]}}'
     else
-      printf '{"result":{"tabs":[{"tab_id":"t-old","workspace_id":"ws1","label":"fm-%s"}]}}\n' "$mate_id"
+      printf '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true},{"tab_id":"t-old","workspace_id":"ws1","label":"fm-%s","focused":false}]}}\n' "$mate_id"
     fi
     ;;
   "tab create")
@@ -354,9 +404,9 @@ case "${1:-} ${2:-}" in
   "pane get")
     pane=${3:-}
     if [ "$pane" = p-new ] && [ -e "$spawned" ]; then
-      printf '%s\n' '{"result":{"pane":{"pane_id":"p-new"}}}'
+      printf '%s\n' '{"result":{"pane":{"pane_id":"p-new","tab_id":"t-new","workspace_id":"ws1"}}}'
     elif [ "$pane" = p-old ] && [ ! -e "$killed" ]; then
-      printf '%s\n' '{"result":{"pane":{"pane_id":"p-old"}}}'
+      printf '%s\n' '{"result":{"pane":{"pane_id":"p-old","tab_id":"t-old","workspace_id":"ws1"}}}'
     else
       printf '%s\n' '{"error":{"code":"pane_not_found"}}' >&2
       exit 1
@@ -445,6 +495,9 @@ EOF
   touch "$home/state/.last-watcher-beat"
   {
     printf 'window=firstmate:fm-%s\n' "$id"
+    printf 'endpoint_task_id=%s\n' "$id"
+    printf 'worktree=%s\n' "$mate"
+    printf 'project=%s\n' "$mate"
     printf 'kind=secondmate\n'
     printf 'harness=pi\n'
     printf 'home=%s\n' "$mate"
@@ -485,6 +538,9 @@ EOF
   touch "$home/state/.last-watcher-beat"
   {
     printf 'window=default:p-old\n'
+    printf 'endpoint_task_id=%s\n' "$id"
+    printf 'worktree=%s\n' "$mate"
+    printf 'project=%s\n' "$mate"
     printf 'kind=secondmate\n'
     printf 'harness=pi\n'
     printf 'home=%s\n' "$mate"
@@ -520,6 +576,25 @@ hash_file_for_test() {
   fi
 }
 
+install_primary_watch_core_fixture() {
+  local root=$1
+  mkdir -p "$root/bin"
+  cp "$ROOT/bin/fm-primary-watch-core.ts" "$root/bin/fm-primary-watch-core.ts"
+}
+
+install_omp_primary_extension_fixture() {
+  local root=$1
+  mkdir -p "$root/.omp/extensions"
+  cp "$ROOT/.omp/extensions/fm-primary-omp.ts" "$root/.omp/extensions/fm-primary-omp.ts"
+  install_primary_watch_core_fixture "$root"
+}
+
+write_omp_primary_loaded_marker() {
+  local home=$1 root=$2 pid=$3 fakebin=$4 version
+  version=$(fm_primary_watch_version "$root/.omp/extensions/fm-primary-omp.ts" "$root")
+  printf '%s\n%s\n%s\n%s\n' "$version" "$pid" "$(fm_test_realpath "$fakebin/bun")" "$(fm_test_realpath "$fakebin/omp")" > "$home/state/.omp-primary-extension-loaded"
+}
+
 install_pi_turnend_extension_fixture() {
   local root=$1
   mkdir -p "$root/.pi/extensions"
@@ -530,11 +605,12 @@ install_pi_watch_extension_fixture() {
   local root=$1
   mkdir -p "$root/.pi/extensions"
   cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$root/.pi/extensions/fm-primary-pi-watch.ts"
+  install_primary_watch_core_fixture "$root"
 }
 
 write_pi_watch_loaded_marker() {
   local home=$1 root=$2 pid=$3 version
-  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
+  version=$(fm_primary_watch_version "$root/.pi/extensions/fm-primary-pi-watch.ts" "$root")
   printf '%s\n%s\n' "$version" "$pid" > "$home/state/.pi-watch-extension-loaded"
 }
 
@@ -1258,6 +1334,68 @@ EOF
   pass "session start emits exactly one detected harness block and reports Pi extension load state"
 }
 
+test_omp_primary_diagnostic_and_protocol() {
+  local rec root home fakebin out holder_pid
+  rec=$(new_world omp-supervision-block)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  prepare_fake_omp_holder_bins "$fakebin"
+  "$fakebin/bun" "$fakebin/omp" --hold &
+  holder_pid=$!
+  make_fake_ps_omp_holder "$fakebin" "$holder_pid"
+
+  out=$(FM_OMP_PROCESS_EXPECTED_BUN="$(fm_test_realpath "$fakebin/bun")" \
+    FM_OMP_PROCESS_EXPECTED_BIN="$(fm_test_realpath "$fakebin/omp")" \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp" \
+    "OMP supervision block missing"
+  assert_contains "$out" "Mode: OMP native extension background wake." \
+    "OMP native supervision protocol missing"
+  assert_contains "$out" "OMP_PRIMARY_EXTENSION: not loaded or stale" \
+    "OMP primary integration diagnostic missing"
+  assert_contains "$out" "restart plain omp from $root so $root/.omp/extensions/fm-primary-omp.ts auto-loads" \
+    "OMP primary diagnostic omitted the native project-discovery recovery"
+  assert_contains "$out" "restart with omp -e $root/.omp/extensions/fm-primary-omp.ts" \
+    "OMP primary diagnostic omitted the explicit extension fallback"
+
+  pass "session start reports the native OMP supervision and actionable integration recovery"
+}
+
+test_omp_primary_marker_is_bound_to_lock_owner() {
+  local rec root home fakebin out holder_pid marker
+  rec=$(new_world omp-loaded-marker)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  prepare_fake_omp_holder_bins "$fakebin"
+  "$fakebin/bun" "$fakebin/omp" --hold &
+  holder_pid=$!
+  make_fake_ps_omp_holder "$fakebin" "$holder_pid"
+  install_omp_primary_extension_fixture "$root"
+  write_omp_primary_loaded_marker "$home" "$root" "$holder_pid" "$fakebin"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "OMP_PRIMARY_EXTENSION: not loaded or stale" \
+    "OMP diagnostic rejected the current version-bound owning-session marker"
+
+  marker="$home/state/.omp-primary-extension-loaded"
+  printf 'stale-extension-version\n%s\n%s\n%s\n' "$holder_pid" \
+    "$(fm_test_realpath "$fakebin/bun")" "$(fm_test_realpath "$fakebin/omp")" > "$marker"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+  assert_contains "$out" "OMP_PRIMARY_EXTENSION: not loaded or stale" \
+    "OMP diagnostic trusted a stale marker from the current lock owner"
+
+  pass "session start binds OMP primary readiness to adapter version and live lock ownership"
+}
+
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization() {
   local rec root home fakebin out
   rec=$(new_world pi-signed-supervision-block)
@@ -1372,7 +1510,7 @@ EOF
   install_pi_turnend_extension_fixture "$root"
   install_pi_watch_extension_fixture "$root"
   marker="$home/state/.pi-watch-extension-loaded"
-  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
+  version=$(fm_primary_watch_version "$root/.pi/extensions/fm-primary-pi-watch.ts" "$root")
   printf '%s\n999999\n' "$version" > "$marker"
   write_pi_turnend_loaded_marker "$home" "$root" "$holder_pid"
 
@@ -1408,6 +1546,8 @@ test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
 test_supervision_block_exactly_one_and_pi_diagnostic
+test_omp_primary_diagnostic_and_protocol
+test_omp_primary_marker_is_bound_to_lock_owner
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
 test_pi_diagnostic_rejects_stale_loaded_marker
 test_pi_diagnostic_accepts_prelock_loaded_marker

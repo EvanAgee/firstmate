@@ -46,9 +46,8 @@
 #                       script points back to the emitted harness supervision
 #                       block and deliberately never arms the watcher itself.
 #
-# On a Pi primary, the supervision-block step also checks whether Pi's two
-# tracked primary extensions are loaded and prints a PI_WATCH_EXTENSION
-# reminder line when one is missing.
+# On Pi-family and OMP primaries, the supervision-block step also validates the tracked native integration marker against the lock-owning process.
+# It prints a harness-specific recovery line when the required integration is missing or stale.
 #
 # Why lock first: the old documented order (bootstrap, THEN lock) let a
 # SECOND concurrent session run bootstrap's mutating sweeps - fast-forwarding
@@ -103,6 +102,10 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-public-followup-lib.sh
+. "$SCRIPT_DIR/fm-public-followup-lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$SCRIPT_DIR/fm-primary-watch-version-lib.sh"
 
 STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
@@ -231,11 +234,18 @@ hash_file() {
   fi
 }
 
-pi_extension_loaded() {
-  local marker=$1 expected_version=$2 lock=$3 marker_version marker_pid lock_pid
-  [ -f "$marker" ] && [ -f "$lock" ] && [ -n "$expected_version" ] || return 1
-  marker_version=$(sed -n '1p' "$marker")
-  marker_pid=$(sed -n '2p' "$marker")
+primary_extension_loaded() {
+  local marker=$1 expected_version=$2 lock=$3 runtime=${4:-pi} marker_version marker_pid lock_pid
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ -f "$lock" ] && [ ! -L "$lock" ] \
+    && [ -n "$expected_version" ] || return 1
+  if [ "$runtime" = omp ]; then
+    fm_omp_primary_marker_read "$marker" || return 1
+    marker_version=$FM_OMP_MARKER_VERSION
+    marker_pid=$FM_OMP_MARKER_PID
+  else
+    marker_version=$(sed -n '1p' "$marker")
+    marker_pid=$(sed -n '2p' "$marker")
+  fi
   lock_pid=$(sed -n '1p' "$lock")
   [ -n "$marker_pid" ] || return 1
   [ "$marker_version" = "$expected_version" ] && [ "$marker_pid" = "$lock_pid" ]
@@ -319,11 +329,19 @@ if [ "$PRIMARY_HARNESS" = pi ] || [ "$PRIMARY_HARNESS" = pi-signed ]; then
   PI_LOCK="$STATE/.lock"
   PI_RESTART_COMMAND=$PRIMARY_HARNESS
   [ "$PRIMARY_HARNESS" != pi ] || PI_RESTART_COMMAND='plain pi'
-  PI_WATCH_VERSION=$(hash_file "$PI_EXT" || printf '')
+  PI_WATCH_VERSION=$(fm_primary_watch_version "$PI_EXT" "$FM_ROOT" || printf '')
   PI_TURNEND_VERSION=$(hash_file "$PI_TURNEND_EXT" || printf '')
-  if ! pi_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" \
-    || ! pi_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
+  if ! primary_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" \
+    || ! primary_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
     printf 'PI_WATCH_EXTENSION: not loaded - approve Pi project trust once per clone, then restart %s so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$PI_RESTART_COMMAND" "$PI_TURNEND_EXT" "$PI_EXT" "$PI_TURNEND_EXT" "$PI_EXT"
+  fi
+fi
+if [ "$PRIMARY_HARNESS" = omp ]; then
+  OMP_PRIMARY_EXT="$FM_ROOT/.omp/extensions/fm-primary-omp.ts"
+  OMP_PRIMARY_MARKER="$STATE/.omp-primary-extension-loaded"
+  OMP_PRIMARY_VERSION=$(fm_primary_watch_version "$OMP_PRIMARY_EXT" "$FM_ROOT" || printf '')
+  if ! primary_extension_loaded "$OMP_PRIMARY_MARKER" "$OMP_PRIMARY_VERSION" "$STATE/.lock" omp; then
+    printf 'OMP_PRIMARY_EXTENSION: not loaded or stale - restart plain omp from %s so %s auto-loads; if native project discovery is unavailable, restart with omp -e %s\n' "$FM_ROOT" "$OMP_PRIMARY_EXT" "$OMP_PRIMARY_EXT"
   fi
 fi
 "$SCRIPT_DIR/fm-supervision-instructions.sh" \
@@ -392,6 +410,23 @@ if [ -e "$STATE/.afk" ]; then
   printf 'present - away-mode supervision is active; the daemon owns the watcher.\n'
 else
   printf 'absent\n'
+fi
+
+# Public commitments made through the myfirstmate relay. A promise to reply in a
+# public thread must survive compaction and restart, so it is surfaced from disk
+# here rather than from conversation memory. fm-public-followup-lib.sh owns both
+# gates: a home that never opted into the relay runs one [ -f ] test, prints no
+# subsection, and never reaches fm-public-followup.sh.
+if fm_pf_relay_active "$FM_HOME" \
+  && { fm_pf_has_registrations "$STATE" || fm_pf_has_events "$STATE"; }; then
+  PUBLIC_FOLLOWUP=$("$SCRIPT_DIR/fm-public-followup.sh" pending 2>/dev/null) || PUBLIC_FOLLOWUP=
+  if [ -n "$PUBLIC_FOLLOWUP" ]; then
+    subsection "Public commitments awaiting delivery"
+    printf '%s\n' "$PUBLIC_FOLLOWUP"
+    printf '\nEach line is a public reply this home still owes. Reconcile terminal results with\n'
+    printf '%s/bin/fm-public-followup.sh consume, then deliver a ready one with\n' "$FM_ROOT"
+    printf '%s/bin/fm-public-followup.sh deliver <id>. Load fmx-respond for the procedure.\n' "$FM_ROOT"
+  fi
 fi
 
 # --- 6. closing reminder -----------------------------------------------
