@@ -4,11 +4,13 @@
 //
 // Session-generation ownership (stated once here): one generation is bound per
 // runtime session activation. Only the active live generation may start, stop,
-// rearm, or clear the arm child. A runtime-specific replacement event activates
-// a new live generation so monitoring can arm without restarting the process.
-// Terminal shutdown leaves the final generation stopped so late callbacks cannot
-// rearm. Stale callbacks from an earlier generation are no-ops against the active
-// replacement.
+// rearm, or clear the arm child. A runtime-specific replacement event or a
+// fresh factory bind activates a new live generation so monitoring can arm
+// without restarting the process. Terminal shutdown leaves the final generation
+// stopped so late callbacks cannot rearm. Stale callbacks from an earlier
+// generation, including callbacks retained by a superseded core instance, are
+// no-ops against the active replacement. The active generation and the
+// process-exit fallback are process-wide, not per-core-instance.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -121,6 +123,48 @@ function actionableLine(output: string): string {
   const lines = output.split(/\r?\n/);
   return lines.find((line) => /^(signal:|stale:|check:|heartbeat($|:))/.test(line)) || "";
 }
+let nextGenerationId = 0;
+let activeGeneration: SessionGeneration | null = null;
+let exitFallbackInstalled = false;
+
+function createGeneration(): SessionGeneration {
+  return {
+    id: ++nextGenerationId,
+    stopping: false,
+    child: null,
+    retryTimer: null,
+    retryFailures: 0,
+    restoring: false,
+    seq: 0,
+  };
+}
+
+function activateGeneration(owner: SessionGeneration): void {
+  if (activeGeneration && activeGeneration !== owner) stopGeneration(activeGeneration);
+  activeGeneration = owner;
+}
+
+function generationIsLive(owner: SessionGeneration): boolean {
+  return activeGeneration === owner && !owner.stopping;
+}
+
+function stopGeneration(owner: SessionGeneration): void {
+  owner.stopping = true;
+  clearTimeout(owner.retryTimer ?? undefined);
+  owner.retryTimer = null;
+  if (owner.child) owner.child.kill("SIGTERM");
+  owner.child = null;
+}
+
+function cleanupOnProcessExit(): void {
+  if (activeGeneration) stopGeneration(activeGeneration);
+}
+
+function installExitFallback(): void {
+  if (exitFallbackInstalled) return;
+  exitFallbackInstalled = true;
+  process.once("exit", cleanupOnProcessExit);
+}
 
 export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): PrimaryWatchCore {
   if (!verifiedRuntime(options.runtime, options.fmRoot)) {
@@ -157,8 +201,6 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
     `call ${repairToolName} again only after a later notification says the cycle is missing, failed, or unhealthy`;
   const shuttingDownMessage = `watcher: not armed - ${runtimeLabel} session is shutting down`;
 
-  let nextGenerationId = 0;
-  let activeGeneration: SessionGeneration | null = null;
   let generation = createGeneration();
   const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
   const armClose = new WeakMap<ChildProcess, Promise<void>>();
@@ -252,34 +294,6 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
       kind: "failure",
       message: `watcher: FAILED - ${runtimeLabel} extension arm cycle ended without an actionable reason`,
     };
-  }
-
-  function createGeneration(): SessionGeneration {
-    return {
-      id: ++nextGenerationId,
-      stopping: false,
-      child: null,
-      retryTimer: null,
-      retryFailures: 0,
-      restoring: false,
-      seq: 0,
-    };
-  }
-
-  function activateGeneration(owner: SessionGeneration): void {
-    activeGeneration = owner;
-  }
-
-  function generationIsLive(owner: SessionGeneration): boolean {
-    return activeGeneration === owner && !owner.stopping;
-  }
-
-  function stopGeneration(owner: SessionGeneration): void {
-    owner.stopping = true;
-    if (owner.retryTimer) clearTimeout(owner.retryTimer);
-    owner.retryTimer = null;
-    if (owner.child) owner.child.kill("SIGTERM");
-    owner.child = null;
   }
 
   async function sendWake(owner: SessionGeneration, message: string): Promise<void> {
@@ -558,7 +572,7 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
   }
 
   activateGeneration(generation);
-  process.once("exit", sessionShutdown);
+  installExitFallback();
 
   return {
     runtime,

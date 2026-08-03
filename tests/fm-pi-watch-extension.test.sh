@@ -1062,6 +1062,137 @@ EOF
   [ -z "$out" ] || fail "Pi session-transition generation owner test printed output: $out"
   pass "Pi session transitions use a generation owner across /new /resume /fork, stale callbacks, and quit"
 }
+test_pi_rebind_without_shutdown_supersedes_prior_binding() {
+  local repo home plugin child_pid_file arm_log out status
+  repo="$TMP_ROOT/pi-rebind-root"
+  home="$TMP_ROOT/pi-rebind-home"
+  child_pid_file="$TMP_ROOT/pi-rebind-child.pid"
+  arm_log="$TMP_ROOT/pi-rebind-arm.log"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'watcher: started pid=%s\n' "$$"
+printf '%s\n' "$$" > "${FM_CHILD_PID_FILE:?}"
+printf 'arm pid=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+trap 'exit 0' TERM INT
+while :; do sleep 0.2; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_CHILD_PID_FILE="$child_pid_file" FM_ARM_LOG="$arm_log" FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+function makePi() {
+  const handlers = new Map();
+  let tool = null;
+  const pi = {
+    on(event, handler) {
+      handlers.set(event, handler);
+    },
+    registerCommand() {},
+    registerTool(candidate) {
+      if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+    },
+    sendUserMessage: async () => {},
+    events: { on() {} },
+  };
+  return { pi, handlers, getTool: () => tool };
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(pred, label, attempts = 250) {
+  for (let i = 0; i < attempts; i += 1) {
+    if (pred()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`timeout waiting for ${label}`);
+}
+
+function liveArmPids() {
+  if (!existsSync(process.env.FM_ARM_LOG)) return [];
+  return readFileSync(process.env.FM_ARM_LOG, "utf8")
+    .trim()
+    .split(/\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const match = /pid=(\d+)/.exec(line);
+      return match ? match[1] : "";
+    })
+    .filter(Boolean)
+    .filter(pidAlive);
+}
+
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const before = process.listenerCount("exit");
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+
+const first = makePi();
+mod.default(first.pi);
+if (process.listenerCount("exit") !== before + 1) {
+  throw new Error("first factory bind did not install exactly one process-exit fallback");
+}
+await first.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {});
+const firstArm = await first.getTool().execute("first-bind", {}, undefined, undefined, {});
+if (!firstArm.details?.ok) throw new Error(`first bind arm failed: ${JSON.stringify(firstArm.details)}`);
+await waitFor(() => existsSync(process.env.FM_CHILD_PID_FILE), "first bind child");
+const firstChild = readFileSync(process.env.FM_CHILD_PID_FILE, "utf8").trim();
+const staleTool = first.getTool();
+
+// Fresh factory bind without a preceding session_shutdown.
+const second = makePi();
+mod.default(second.pi);
+if (process.listenerCount("exit") !== before + 1) {
+  throw new Error("a fresh factory bind duplicated the process-exit fallback");
+}
+
+// The superseded binding retires: its arm child is stopped and its retained tool refuses.
+await waitFor(() => !pidAlive(firstChild), "superseded bind child exit");
+const stale = await staleTool.execute("stale-binding", {}, undefined, undefined, {});
+if (stale.details?.ok !== false || !String(stale.details.message).includes("shutting down")) {
+  throw new Error(`superseded binding did not refuse: ${JSON.stringify(stale.details)}`);
+}
+if (liveArmPids().length !== 0) {
+  throw new Error(`superseded binding left live arm children: ${liveArmPids().join(",") || "(none)"}`);
+}
+
+const secondArm = await second.getTool().execute("second-bind", {}, undefined, undefined, {});
+if (!secondArm.details?.ok || String(secondArm.details.message).includes("shutting down")) {
+  throw new Error(`fresh binding could not arm: ${JSON.stringify(secondArm.details)}`);
+}
+await waitFor(() => {
+  if (!existsSync(process.env.FM_CHILD_PID_FILE)) return false;
+  const child = readFileSync(process.env.FM_CHILD_PID_FILE, "utf8").trim();
+  return child !== firstChild && pidAlive(child);
+}, "fresh binding child");
+if (liveArmPids().length !== 1) {
+  throw new Error(`fresh binding expected one live arm child, got ${liveArmPids().join(",") || "(none)"}`);
+}
+
+// A third bind still keeps the fallback singular.
+const third = makePi();
+mod.default(third.pi);
+if (process.listenerCount("exit") !== before + 1) {
+  throw new Error("repeated factory binds accumulated process-exit fallbacks");
+}
+await waitFor(() => liveArmPids().length === 0, "third bind retires the prior arm child");
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "A fresh factory bind must supersede the prior binding and keep one exit fallback"
+  [ -z "$out" ] || fail "Pi re-bind supersession test printed output: $out"
+  pass "Pi factory re-bind without shutdown retires the prior generation and exit fallback stays singular"
+}
+
 
 test_pi_process_exit_cleanup_listener_lifecycle() {
   local repo home plugin out status
@@ -2139,6 +2270,7 @@ test_pi_established_empty_close_honors_retry_limit
 test_pi_actionable_close_rechecks_session_lock
 test_pi_arm_distinguishes_session_lock_ownership
 test_pi_session_transition_generation_owner
+test_pi_rebind_without_shutdown_supersedes_prior_binding
 test_pi_process_exit_cleanup_listener_lifecycle
 test_pi_process_exit_cleanup_stops_arm_child
 test_opencode_plugin_package_boundary_is_explicit_esm
