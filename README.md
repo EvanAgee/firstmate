@@ -24,6 +24,9 @@
   <img alt="firstmate - talk to one agent, ship with a crew" src="assets/banner.png" width="100%" />
 </p>
 
+> **Fork note:** this is `dnth/firstmate`, a fork of [kunchenguid/firstmate](https://github.com/kunchenguid/firstmate).
+> It adds native OMP support, so you can run firstmate with OMP as your primary harness and crew runtime.
+
 ## What it is
 
 You can run one coding agent easily.
@@ -80,7 +83,7 @@ Codex and OpenCode are also verified and supported as primary harnesses; Codex u
 
 ```sh
 gh auth login
-git clone https://github.com/kunchenguid/firstmate
+git clone https://github.com/dnth/firstmate
 cd firstmate
 ```
 
