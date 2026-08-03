@@ -1177,6 +1177,29 @@ await waitFor(() => {
 if (liveArmPids().length !== 1) {
   throw new Error(`fresh binding expected one live arm child, got ${liveArmPids().join(",") || "(none)"}`);
 }
+const secondChild = readFileSync(process.env.FM_CHILD_PID_FILE, "utf8").trim();
+
+// A retained session-switch on the superseded binding must not reclaim ownership.
+await first.handlers.get("session_shutdown")?.({ type: "session_shutdown" }, {});
+await first.handlers.get("session_start")?.({ type: "session_start", reason: "switch" }, {});
+await new Promise((resolve) => setTimeout(resolve, 100));
+if (!pidAlive(secondChild)) {
+  throw new Error("stale session_start on the superseded binding killed the live arm child");
+}
+if (liveArmPids().length !== 1) {
+  throw new Error(`stale session_start changed live arm children: ${liveArmPids().join(",") || "(none)"}`);
+}
+const staleAfterSwitch = await staleTool.execute("stale-switch", {}, undefined, undefined, {});
+if (staleAfterSwitch.details?.ok !== false || !String(staleAfterSwitch.details.message).includes("shutting down")) {
+  throw new Error(`superseded binding armed after a stale session_start: ${JSON.stringify(staleAfterSwitch.details)}`);
+}
+const liveAfterSwitch = await second.getTool().execute("live-after-switch", {}, undefined, undefined, {});
+if (!liveAfterSwitch.details?.ok || String(liveAfterSwitch.details.message).includes("shutting down")) {
+  throw new Error(`live binding lost ownership after a stale session_start: ${JSON.stringify(liveAfterSwitch.details)}`);
+}
+if (liveArmPids().length !== 1) {
+  throw new Error(`live binding duplicated arm children: ${liveArmPids().join(",") || "(none)"}`);
+}
 
 // A third bind still keeps the fallback singular.
 const third = makePi();

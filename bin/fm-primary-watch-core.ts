@@ -125,6 +125,7 @@ function actionableLine(output: string): string {
 }
 let nextGenerationId = 0;
 let activeGeneration: SessionGeneration | null = null;
+let activeBinding: symbol | null = null;
 let exitFallbackInstalled = false;
 
 function createGeneration(): SessionGeneration {
@@ -201,6 +202,7 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
     `call ${repairToolName} again only after a later notification says the cycle is missing, failed, or unhealthy`;
   const shuttingDownMessage = `watcher: not armed - ${runtimeLabel} session is shutting down`;
 
+  const binding = Symbol(`${runtime}-primary-watch-binding`);
   let generation = createGeneration();
   const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
   const armClose = new WeakMap<ChildProcess, Promise<void>>();
@@ -562,15 +564,18 @@ export function createPrimaryWatchCore(options: PrimaryWatchCoreOptions): Primar
   }
 
   function sessionStart(): void {
+    if (activeBinding !== binding) return;
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     markLoaded();
   }
 
   function sessionShutdown(): void {
+    if (activeBinding !== binding) return;
     stopGeneration(generation);
   }
 
+  activeBinding = binding;
   activateGeneration(generation);
   installExitFallback();
 
