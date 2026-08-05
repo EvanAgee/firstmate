@@ -23,6 +23,8 @@
 . "$FM_BACKEND_LIB_DIR/fm-tmux-lib.sh"
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$FM_BACKEND_LIB_DIR/fm-omp-process-lib.sh"
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$FM_BACKEND_LIB_DIR/fm-session-lock-lib.sh"
 
 # fm_backend_tmux_resolve_bare_selector: the live-window-listing fallback for a
 # selector that is neither an explicit target nor a task selector routed

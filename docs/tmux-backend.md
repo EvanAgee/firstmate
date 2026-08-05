@@ -44,8 +44,10 @@ Verify setup by spawning a small task and confirming its `fm-<id>` window appear
 
 ## Current behavior and safety
 
+### Agent liveness probe
+
 A target-existence check proves only that the pane exists.
-The deeper tmux agent-liveness probe first verifies exact window membership, then reads `#{pane_current_command}` to distinguish a running harness process from a bare idle shell.
+The deeper tmux agent-liveness probe first verifies exact window membership, then reads process names to distinguish a running harness from a bare idle shell.
 It classifies recognized Claude, Codex, OpenCode, Pi, pi-signed, Grok, and Kimi process names as `alive`, common shells as `dead`, an authoritatively absent window as `missing`, unreadable state as `unreadable`, and every other process as `ambiguous`.
 OMP is the interpreter exception: recovery first validates its task-bound metadata, requires the actual foreground executable to equal the canonical Bun realpath, and requires the OMP entrypoint argv token to be an absolute path equal to the canonical launch identity.
 A bare Bun argv token is accepted only when its basename agrees and the independent PID executable check proves the recorded Bun binary; a bare OMP token, `comm=omp`, or a fresh `PATH` lookup is never identity evidence.
@@ -53,8 +55,19 @@ The canonical `omp_bun` and `omp_bin` identities must be absolute, executable, a
 The primary adapter refuses unsupported paths before marker publication and replaces its marker atomically so a pre-existing symlink is never followed to its target.
 Only `dead` and `missing` authorize recovery because a false dead result could launch a duplicate agent.
 
-The verified Pi Launcher path reports the exact foreground command `pi-launcher` for both pi and pi-signed, while direct executable identities `pi`, `pi-signed`, and `Pi` remain accepted exactly.
-Similar or prefixed process names are not accepted through those exact Pi-family entries.
+For positive attribution, the probe combines two independent name sources rather than making either one load-bearing.
+`#{pane_current_command}` and the pane tty foreground process group's kernel `comm` values expose different name fields, and which one retains executable identity is platform-dependent.
+The foreground probe also reads argv[0] so an exact harness install-path component can carry the verdict when the other fields expose a rewritten process name.
+Either source naming a verified harness is enough for `alive`, because a false `dead` is the one verdict that can start a duplicate agent on a live worktree, while a readable foreground process group settles the negative verdicts.
+
+Scoping the second source to the foreground process group rather than to the pane's descendants is deliberate: a harness-named process left running in the background of an otherwise idle pane must not read as an agent.
+The same scoping covers multi-process launchers without a special case, so the Pi Launcher path is attributed through its `pi-signed` wrapper and `pi` engine even though its title is the exact foreground command `pi-launcher`.
+Direct executable identities `pi`, `pi-signed`, and `Pi` remain accepted exactly, and similar or prefixed process names are not accepted through those exact Pi-family entries.
+
+The CI-enforced portable regression and opt-in real-harness drift guard follow the split owned by `.agents/skills/firstmate-coding-guidelines/SKILL.md`.
+Run the real-harness guard after any harness upgrade and before trusting refreshed evidence.
+
+### Composer, busy state, and delivery
 
 Agent liveness and composer safety are separate checks.
 For a bordered composer, the tmux reader locates the complete box structurally and classifies every content row through the shared ANSI and ghost handling in `bin/fm-composer-lib.sh`.
