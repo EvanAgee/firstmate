@@ -2,12 +2,10 @@
 # Lavish adapter for the generic process-to-event runner.
 #
 # Usage:
-#   fm-procevent-lavish.sh arm <artifact.html> [--decisions-origin <origin-id>]
+#   fm-procevent-lavish.sh arm <artifact.html>
 #   fm-procevent-lavish.sh classify <result-file>
 #   fm-procevent-lavish.sh terminal <result-file>
 #   fm-procevent-lavish.sh answers <result-file>
-#   fm-procevent-lavish.sh close-decisions <result-file>
-#   fm-procevent-lavish.sh autohandle <source-id> <sequence> <result-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
 #
@@ -23,27 +21,16 @@
 # and how to read a completed result. Ownership, durable capture, publication,
 # and restart recovery all belong to bin/fm-procevent.sh.
 #
-# ANSWER-TIME DECISION CLOSURE. A Lavish review is the channel a captain answers
-# durable decision holds through, and the deck's own structured `question` slug is
-# already the hold's decision key. `--decisions-origin` records that binding at arm
-# time, and from then on the act that CAPTURES the captain's answer is the act that
-# CLOSES its hold - the same answerer-closes property bin/fm-send.sh --resolve-key
-# gives the live status-log ledger. Without the flag nothing here touches a hold, so
-# an unbound deck behaves exactly as it always did.
+# `answers` is this adapter's half of the generic keyed-answer contract in
+# bin/fm-procevent.sh. It reports what the captain actually chose, as
+# `<decision-key>\t<answer>\t<label>` lines, and stops there. It maps nothing to a
+# hold, records no decision, and closes nothing: a captain answer is not special to
+# Lavish, so every rule about what a keyed answer DOES belongs to the one intake in
+# bin/fm-decision-hold.sh, which the runner feeds. A Lavish review is just an
+# ephemeral discussion format that happens to carry answers.
 #
-# `answers` prints one `key<TAB>answer<TAB>label` line per structured choice the
-# captain submitted. Only rows tagged `choice` are read: a freeform captain message
-# is prose that may contain anything, and must never be able to forge a decision key.
-# `close-decisions` maps each of those keys to `<bound-origin>-decision-<key>` and
-# closes it through `bin/fm-decision-hold.sh answer`, which owns every safety rule
-# that close obeys. It can only ever touch holds of the ONE bound origin, it is
-# idempotent because the decision text it writes is a pure function of the captured
-# result, and it skips - never forces - a key whose hold is absent, already closed,
-# or still blocking routed work, leaving that one for `resolve` exactly as today.
-# `autohandle` is the runner's own entry into `close-decisions`. It deliberately
-# NEVER reports full handling: recording the captain's answer is transcription, but
-# ACTING on it is firstmate's judgement, so the result stays unacknowledged and its
-# `check` wake still reaches the handler exactly as before.
+# Only rows tagged `choice` are read. A freeform captain message is prose that may
+# contain anything, and must never be able to forge a decision key.
 #
 # It wraps ONLY the currently published interface, verified against 0.1.45:
 #   Usage: lavish-axi poll <html-file> [--agent-reply "..."]
@@ -71,12 +58,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # shellcheck source=bin/fm-procevent-lib.sh
 . "$SCRIPT_DIR/fm-procevent-lib.sh"
 
-STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
-BINDING_DIR="$STATE/lavish-decisions"
-BINDING_SCHEMA=fm-lavish-decisions.v1
-
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,60p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,47p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # Canonical identity is physical, not the path string: Lavish itself keys a
 # session on the realpath of the artifact, so two names for one file are one
@@ -95,74 +78,24 @@ cmd_source_id() {
   fi
 }
 
-binding_path() { printf '%s/%s.origin\n' "$BINDING_DIR" "$1"; }
-
-# The decision origin this source's captain answers belong to, or empty when the
-# deck was armed without one. An unreadable or wrong-schema binding is a hard
-# error rather than a silent "no origin": closing nothing is the safe direction
-# only when it is a deliberate choice, never when it is a corrupted record.
-read_binding_origin() {  # <source-id>
-  local path origin schema
-  path=$(binding_path "$1")
-  [ -e "$path" ] || return 0
-  [ -f "$path" ] && [ ! -L "$path" ] || die "decision binding is unsafe: $path"
-  schema=$(sed -n 's/^schema=//p' "$path" | head -1)
-  [ "$schema" = "$BINDING_SCHEMA" ] || die "decision binding has an incompatible schema: $path"
-  origin=$(sed -n 's/^origin=//p' "$path" | head -1)
-  case "$origin" in
-    ''|*[!A-Za-z0-9._-]*) die "decision binding has an invalid origin id: $path" ;;
-  esac
-  printf '%s\n' "$origin"
-}
-
-write_binding_origin() {  # <source-id> <origin-id>
-  local id=$1 origin=$2 tmp dest
-  (umask 077; mkdir -p "$BINDING_DIR") || die "cannot create $BINDING_DIR"
-  [ -d "$BINDING_DIR" ] && [ ! -L "$BINDING_DIR" ] || die "decision binding dir is unsafe: $BINDING_DIR"
-  dest=$(binding_path "$id")
-  tmp=$(umask 077; mktemp "$BINDING_DIR/.origin.XXXXXX") || die "cannot stage the decision binding"
-  if ! { printf 'schema=%s\norigin=%s\n' "$BINDING_SCHEMA" "$origin" > "$tmp" \
-    && chmod 0600 "$tmp" && mv -f -- "$tmp" "$dest"; }; then
-    rm -f -- "$tmp"
-    die "cannot record the decision binding for $id"
-  fi
-}
-
 cmd_arm() {
-  local artifact=${1-} id real origin=''
+  local artifact=${1-} id real
   [ -n "$artifact" ] || usage
-  shift
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --decisions-origin) shift; origin=${1-} ;;
-      *) usage ;;
-    esac
-    shift
-  done
-  if [ -n "$origin" ]; then
-    case "$origin" in
-      *[!A-Za-z0-9._-]*) die "--decisions-origin must be a privacy-safe slug: $origin" ;;
-    esac
-  fi
+  [ "$#" -eq 1 ] || usage
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
   id=$(cmd_source_id "$artifact") || exit 1
   real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
     || die "cannot resolve the artifact path: $artifact"
-  # Bind BEFORE registering: a source that can start producing answers must never
-  # exist without the binding that tells this adapter where those answers belong.
-  [ -z "$origin" ] || write_binding_origin "$id" "$origin"
   # The plain blocking form: no --timeout-ms, so completion is a server event.
   "$SCRIPT_DIR/fm-procevent.sh" register lavish "$id" -- lavish-axi poll "$real" || exit 1
   printf 'armed: %s\n' "$id"
   printf 'artifact: %s\n' "$real"
-  [ -z "$origin" ] || printf 'decisions-origin: %s\n' "$origin"
 }
 
 cmd_retire() {
   local artifact=${1-} id
   [ -n "$artifact" ] || usage
   id=$(cmd_source_id "$artifact") || exit 1
-  rm -f -- "$(binding_path "$id")"
   "$SCRIPT_DIR/fm-procevent.sh" retire "$id"
 }
 
@@ -296,73 +229,6 @@ cmd_answers() {
   ' "$file"
 }
 
-# The captain decision text recorded on the hold. It is a pure function of the
-# captured result, which is what makes a replayed capture an idempotent no-op
-# rather than a rejected "different captain decision".
-decision_text() {  # <source-id> <sequence> <key> <answer> <label>
-  printf 'Captain answered this decision in a Lavish review.\n'
-  printf 'Captured result: %s sequence %s\n' "$1" "$2"
-  printf 'Decision key: %s\n' "$3"
-  printf 'Answer: %s\n' "$4"
-  [ -z "$5" ] || printf 'Answer as shown to the captain: %s\n' "$5"
-}
-
-# Close every captain hold this captured result answers. One line per key:
-# `closed:` when the hold is now durably resolved, `skipped:` with the reason
-# otherwise. Skipping is never a failure of this command - a hold that is absent,
-# closed outside this path, or still blocking routed work is exactly the case
-# fm-decision-hold refuses to force, and it stays open for the handler.
-cmd_close_decisions() {
-  local file=${1-} sid seq origin key answer label hold tmp closed=0 skipped=0 err
-  [ -n "$file" ] || usage
-  [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
-  sid=$(fm_procevent_result_source_id "$file")
-  seq=$(fm_procevent_result_sequence "$file")
-  fm_procevent_source_id_valid "$sid" || die "result path does not name a valid source: $file"
-  case "$seq" in ''|*[!0-9]*) die "result path does not name a sequence: $file" ;; esac
-  origin=$(read_binding_origin "$sid") || exit 1
-  if [ -z "$origin" ]; then
-    printf 'no-decisions-origin: %s\n' "$sid"
-    return 1
-  fi
-  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-lavish-decision.XXXXXX") || die "cannot stage the captain decision"
-  err=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-lavish-decision-err.XXXXXX") \
-    || { rm -f -- "$tmp"; die "cannot stage the captain decision diagnostics"; }
-  while IFS=$'\t' read -r key answer label; do
-    [ -n "$key" ] || continue
-    hold="$origin-decision-$key"
-    decision_text "$sid" "$seq" "$key" "$answer" "$label" > "$tmp" \
-      || die "cannot stage the captain decision for $hold"
-    if FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-decision-hold.sh" answer "$origin" "$key" \
-      --decision-file "$tmp" >/dev/null 2>"$err"; then
-      printf 'closed: %s\n' "$hold"
-      closed=$((closed + 1))
-    else
-      printf 'skipped: %s (%s)\n' "$hold" "$(tr -d '\n' < "$err" | sed 's/^fm-decision-hold: //')"
-      skipped=$((skipped + 1))
-    fi
-  done < <(cmd_answers "$file")
-  rm -f -- "$tmp" "$err"
-  printf 'decisions: closed=%s skipped=%s origin=%s\n' "$closed" "$skipped" "$origin"
-  [ "$skipped" -eq 0 ]
-}
-
-# The runner's entry into cmd_close_decisions. It applies the captain's answers
-# and then ALWAYS reports incomplete handling, because acknowledging the result
-# here would retire the `check` wake firstmate needs in order to act on those
-# answers. See the answer-time-closure note in the header.
-cmd_autohandle() {
-  local sid=${1-} seq=${2-} file=${3-}
-  [ "$#" -eq 3 ] || usage
-  fm_procevent_source_id_valid "$sid" || die "source id must be path-safe: $sid"
-  case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer: $seq" ;; esac
-  [ "$(fm_procevent_result_source_id "$file")" = "$sid" ] \
-    && [ "$(fm_procevent_result_sequence "$file")" = "$seq" ] \
-    || die "result file does not belong to $sid sequence $seq: $file"
-  cmd_close_decisions "$file" >/dev/null 2>&1 || true
-  return 1
-}
-
 case "${1-}" in
   arm)       shift; cmd_arm "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
@@ -370,8 +236,6 @@ case "${1-}" in
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
-  close-decisions) shift; cmd_close_decisions "$@" ;;
-  autohandle) shift; cmd_autohandle "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac

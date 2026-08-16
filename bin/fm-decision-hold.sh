@@ -25,6 +25,10 @@
 #   fm-decision-hold.sh resolve <origin-id> <decision-key> \
 #     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...]
 #   fm-decision-hold.sh answer <origin-id> <decision-key> --decision-file <path>
+#   fm-decision-hold.sh answers <origin-id> --source <provenance>   (keyed answers on stdin)
+#   fm-decision-hold.sh bind <source-id> <origin-id>
+#   fm-decision-hold.sh unbind <source-id>
+#   fm-decision-hold.sh binding <source-id>
 #   fm-decision-hold.sh decline <origin-id> <decision-key> --decision-file <path>
 #   fm-decision-hold.sh repair <origin-id> <decision-key> --decision-file <path>
 #
@@ -60,6 +64,37 @@
 # goes through `resolve` and the routed-vs-unrouted distinction survives. It says
 # only that the captain answered; `decline` still says the captain answered with
 # no follow-up work at all.
+#
+# ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
+# "A keyed answer closes its matching hold" is a single capability, owned here
+# and nowhere else. `answers` is its channel-agnostic entry point: it reads
+# `<decision-key>\t<answer>\t<label>` lines on stdin, maps each key to this
+# origin's `<origin-id>-decision-<key>` hold, and closes it through the very same
+# `answer` path above, so every guard applies identically no matter which channel
+# the answer arrived on. `--source` is provenance text recorded in the durable
+# decision, never a behavior switch: this command has no per-channel branch and
+# no knowledge of chat, review decks, or any transport.
+#
+# A channel's ONLY job is to turn whatever it received into those keyed lines and
+# pipe them here. It must never map keys to holds, build decision records, decide
+# resolve-versus-decline, or close a hold itself. A future channel needs no change
+# here at all.
+#
+# The decision text is a pure function of (source, key, answer, label), which is
+# what makes a replayed delivery an idempotent no-op rather than a rejected
+# "different captain decision". A key whose hold is absent, already closed, or
+# still blocking routed work is reported as `skipped:` and left for `resolve`;
+# skipping is never forced closure, and the command exits nonzero when any key
+# was skipped.
+#
+# `bind`, `unbind`, and `binding` record which origin a captured-answer SOURCE
+# belongs to, for any channel whose answers arrive detached from the origin (a
+# process-event source id, for example). The binding is a private record under
+# `state/decision-bindings/`; a source with no binding feeds nothing, so this
+# whole path is opt-in per source and an unbound source behaves as if it did not
+# exist. `bind` deliberately does not require the source to exist yet, so a
+# channel can be bound BEFORE it is armed and never produce an answer that has
+# nowhere to go.
 #
 # `decline` is the unrouted path for a decision the captain answered with no
 # follow-up work. It takes no --routed-to task, records `(none)` as the routed
@@ -635,6 +670,126 @@ command_answer() {
   close_unrouted_hold answered answered "$@"
 }
 
+# --- the one keyed-answer intake, and the source bindings that feed it --------
+
+BINDING_DIR="$STATE/decision-bindings"
+BINDING_SCHEMA=fm-decision-binding.v1
+
+validate_source_id() {  # <source-id>
+  validate_slug source-id "$1"
+  [ "${#1}" -le 64 ] || fail "source-id must be at most 64 characters: $1"
+}
+
+binding_path() { printf '%s/%s.origin\n' "$BINDING_DIR" "$1"; }
+
+# The origin a captured-answer source belongs to, or empty when it is unbound.
+# An unreadable or wrong-schema record is a hard error rather than a silent
+# "unbound": feeding nothing is the safe direction only when it is a deliberate
+# choice, never when it is a corrupted record.
+read_binding() {  # <source-id>
+  local path origin schema
+  path=$(binding_path "$1")
+  [ -e "$path" ] || return 0
+  [ -f "$path" ] && [ ! -L "$path" ] || fail "decision binding is unsafe: $path"
+  schema=$(sed -n 's/^schema=//p' "$path" | head -1)
+  [ "$schema" = "$BINDING_SCHEMA" ] || fail "decision binding has an incompatible schema: $path"
+  origin=$(sed -n 's/^origin=//p' "$path" | head -1)
+  case "$origin" in
+    ''|*[!A-Za-z0-9._-]*) fail "decision binding has an invalid origin id: $path" ;;
+  esac
+  printf '%s\n' "$origin"
+}
+
+command_bind() {
+  local source=${1:-} origin=${2:-} dest tmp
+  [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+  validate_source_id "$source"
+  validate_slug origin-id "$origin"
+  (umask 077; mkdir -p "$BINDING_DIR") || fail "cannot create $BINDING_DIR"
+  [ -d "$BINDING_DIR" ] && [ ! -L "$BINDING_DIR" ] || fail "decision binding dir is unsafe: $BINDING_DIR"
+  dest=$(binding_path "$source")
+  tmp=$(umask 077; mktemp "$BINDING_DIR/.origin.XXXXXX") || fail "cannot stage the decision binding"
+  if ! { printf 'schema=%s\norigin=%s\n' "$BINDING_SCHEMA" "$origin" > "$tmp" \
+    && chmod 0600 "$tmp" && mv -f -- "$tmp" "$dest"; }; then
+    rm -f -- "$tmp"
+    fail "cannot record the decision binding for $source"
+  fi
+  printf 'bound: %s -> %s\n' "$source" "$origin"
+}
+
+command_unbind() {
+  local source=${1:-}
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  validate_source_id "$source"
+  rm -f -- "$(binding_path "$source")"
+  printf 'unbound: %s\n' "$source"
+}
+
+command_binding() {
+  local source=${1:-} origin
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  validate_source_id "$source"
+  origin=$(read_binding "$source") || exit 1
+  [ -n "$origin" ] || return 1
+  printf '%s\n' "$origin"
+}
+
+# The durable captain decision one keyed answer records. Pure function of its
+# inputs, so the same answer delivered twice is idempotent rather than a
+# conflicting decision.
+keyed_decision_text() {  # <source> <key> <answer> <label>
+  printf 'Captain answered this decision through %s.\n' "$1"
+  printf 'Decision key: %s\n' "$2"
+  printf 'Answer: %s\n' "$3"
+  [ -z "$4" ] || printf 'Answer as shown to the captain: %s\n' "$4"
+}
+
+sanitize_field() {  # <text>
+  printf '%s' "$1" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177' | cut -c1-512
+}
+
+command_answers() {
+  local origin=${1:-} source='' key answer label hold tmp err closed=0 skipped=0 reason
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --source) shift; source=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug origin-id "$origin"
+  [ -n "$source" ] || fail "--source provenance is required so the durable decision records where the answer came from"
+  source=$(sanitize_field "$source")
+  require_tasks_axi
+  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-keyed-decision.XXXXXX") || fail "cannot stage the captain decision"
+  err=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-keyed-decision-err.XXXXXX") \
+    || { rm -f -- "$tmp"; fail "cannot stage the captain decision diagnostics"; }
+  while IFS=$'\t' read -r key answer label; do
+    [ -n "${key:-}" ] || continue
+    case "$key" in *[!A-Za-z0-9._-]*) continue ;; esac
+    [ "${#key}" -le 64 ] || continue
+    answer=$(sanitize_field "${answer:-}")
+    [ -n "$answer" ] || continue
+    label=$(sanitize_field "${label:-}")
+    hold="$origin-decision-$key"
+    keyed_decision_text "$source" "$key" "$answer" "$label" > "$tmp" \
+      || fail "cannot stage the captain decision for $hold"
+    if "$0" answer "$origin" "$key" --decision-file "$tmp" >/dev/null 2>"$err"; then
+      printf 'closed: %s\n' "$hold"
+      closed=$((closed + 1))
+    else
+      reason=$(tr -d '\n' < "$err" | sed 's/^fm-decision-hold: //')
+      printf 'skipped: %s (%s)\n' "$hold" "$reason"
+      skipped=$((skipped + 1))
+    fi
+  done
+  rm -f -- "$tmp" "$err"
+  printf 'answers: closed=%s skipped=%s origin=%s\n' "$closed" "$skipped" "$origin"
+  [ "$skipped" -eq 0 ]
+}
+
 command_decline() {
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   close_unrouted_hold declined declined "$@"
@@ -684,6 +839,10 @@ case "${1:-}" in
   verify) shift; command_verify "$@" ;;
   resolve) shift; command_resolve "$@" ;;
   answer) shift; command_answer "$@" ;;
+  answers) shift; command_answers "$@" ;;
+  bind) shift; command_bind "$@" ;;
+  unbind) shift; command_unbind "$@" ;;
+  binding) shift; command_binding "$@" ;;
   decline) shift; command_decline "$@" ;;
   repair) shift; command_repair "$@" ;;
   -h|--help) usage ;;

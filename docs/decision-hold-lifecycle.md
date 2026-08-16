@@ -45,15 +45,29 @@ It also requires the identity to carry the captain-hold provenance that tasks-ax
 The live status-log decision ledger has always had answer-time closure through `bin/fm-send.sh --resolve-key`: answering a keyed decision closes it in the same act.
 The durable hold ledger did not, so an answer could be captured, believed, and even implemented while its hold stayed open, and the captain could then be asked to re-answer a decision already on disk.
 
-`bin/fm-procevent-lavish.sh` closes that gap for the channel that carries those answers.
-`arm --decisions-origin <origin-id>` records a private per-source binding under `state/lavish-decisions/`, written before the source is registered so a source that can produce answers never exists without it.
-Its `answers` command reads the published poll response's `prompts[N]{...}` block by declared field order and yields one `key`, `answer`, and label per row tagged `choice`.
-Rows tagged `message` are freeform captain prose and are never a source of decision keys, so prose cannot forge one.
-Its `close-decisions` command maps each key to `<bound-origin>-decision-<key>` and closes it through `fm-decision-hold.sh answer`, which keeps every guard that close already had.
-The decision text it writes is a pure function of the captured result, so replaying a capture is idempotent rather than a rejected different decision.
-A key whose hold is absent, already closed, or still blocking routed work is reported as skipped and left for `resolve`; skipping is never forced closure.
-Its `autohandle` command is the runner's own entry into `close-decisions` and deliberately never reports full handling, because recording the answer is transcription while acting on it is firstmate's judgement, so the captured result stays unacknowledged and its `check` wake still reaches the handler.
-A deck armed without `--decisions-origin` touches no hold at all.
+"A keyed answer closes its matching hold" is now one capability with one owner.
+`answers` is its channel-agnostic entry point: it reads `<decision-key>`, answer, and label lines on stdin, maps each key to `<origin-id>-decision-<key>`, and closes it through the same `answer` path, so every guard applies identically no matter which channel the answer arrived on.
+`--source` is provenance text recorded in the durable decision, never a behavior switch, and the command carries no per-channel branch and no knowledge of chat, review decks, or any transport.
+A channel's only job is to turn whatever it received into those keyed lines and pipe them in; it never maps keys to holds, builds decision records, chooses between the close paths, or closes a hold itself.
+The decision text is a pure function of source, key, answer, and label, which is what makes a replayed delivery an idempotent no-op rather than a rejected different decision.
+A key whose hold is absent, already closed, or still blocking routed work is reported as skipped and left for `resolve`, and the command exits nonzero when any key was skipped.
+
+`bind`, `unbind`, and `binding` record which origin a captured-answer source belongs to, for a channel whose answers arrive detached from the origin.
+The binding is a private record under `state/decision-bindings/`, and a source with no binding feeds nothing, so the path is opt-in per source.
+`bind` deliberately does not require the source to exist yet, so a channel can be bound before it is armed and never produce an answer that has nowhere to go.
+
+Two channels feed that one intake today, and both are ordinary callers rather than special cases.
+
+`bin/fm-send.sh --resolve-key` is the chat channel.
+Its existing status-log close is unchanged for a key the status log still owns.
+For a key the status log no longer owns it checks whether that key names an active captain hold on the target task, and feeds the answer as one keyed line if so, which is what lets chat answer a decision already transferred to its hold.
+A key open in neither ledger is still refused before anything is sent.
+Because `complete` closes the live status copy at the moment it transfers a decision to its hold, the two ledgers are the two sides of one transfer and never both own a key at once, so the common path still performs no backlog read.
+
+`bin/fm-procevent.sh` is the captured-result channel, and its wiring is generic.
+After capture, a bound source has its result passed to `bin/fm-procevent-<adapter>.sh answers <result-file>` and whatever that prints is piped into the intake, so any adapter with an `answers` command works and the runner names no adapter, parses no result, and carries no decision rule.
+Feeding is independent of handling: it never acknowledges a result and never suppresses a wake, so recording the captain's answer cannot retire the notification firstmate needs in order to act on it.
+`bin/fm-procevent-lavish.sh answers` is one such adapter command; it reports the structured choices a review captured and stops there, reading only rows tagged `choice` so freeform captain prose can never forge a decision key.
 
 ## Structured read surfaces
 
@@ -85,9 +99,11 @@ An unanswered decision still blocks completion and teardown, and neither `declin
 `repair` also refuses a closed captain-kind task that was never held for the captain.
 
 Three answer-time closure regressions run against the published poll response shape, with synthetic `sample` identities.
-A review deck armed with `--decisions-origin` exposes six holds, and a single captured Send & End carrying five structured choices plus one freeform message closes the four whose answers route no work, skips the one that still blocks routed work so `resolve` can still route it, and never closes the sixth whose key appears only inside the freeform prose.
-The runner's `autohandle` entry applies those closures and still leaves the capture unacknowledged, so the wake firstmate needs in order to act on the answers is never retired.
-A replayed capture closes nothing new and is not rejected as a different decision, a deck armed with no decision origin closes nothing at all, and the `answer` subcommand itself refuses an empty or missing decision file, an absent hold, and a drifted retry.
+A bound source whose origin exposes six holds captures one review carrying five structured choices plus one freeform message, and the runner feeds it through a fixture adapter that is not the review adapter at all, so what is proven is that any bound channel with an `answers` command gets closure rather than that one channel is wired specially.
+Four holds whose answers route no work close, the one still blocking routed work is skipped and stays available to `resolve`, and the one whose key appears only inside the freeform prose never closes.
+The capture is left unacknowledged throughout, so the wake firstmate needs in order to act on the answers is never retired.
+A replayed delivery closes nothing new and is not rejected as a different decision, a source with no binding closes nothing at all, and the `answer` subcommand itself refuses an empty or missing decision file, an absent hold, and a drifted retry.
+A separate regression drives the real `fm-send` over a stubbed transport to prove the chat channel reaches the same intake for a decision already transferred to its hold, which the status ledger alone can no longer close.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -105,9 +121,10 @@ ok - resolved findings and decision-like prose do not create false holds
 ok - terminal single-owner stale status decisions do not block empty inventory
 ok - main-home and secondmate-home captain holds remain correctly routed
 ok - resolve matches first/middle/last in quoted blocked_by and rejects a genuinely absent id
-ok - a captured Lavish answer closes its captain hold at answer time
-ok - a review armed with no decision origin closes nothing
+ok - a bound channel's captured answers close their captain holds at answer time
+ok - a channel source with no decision binding closes nothing
 ok - the answer path keeps every guard the unrouted close path already had
+ok - the chat channel feeds the same keyed-answer intake a captured review does
 
 $ bash tests/fm-fleet-snapshot-view.test.sh
 ok - backlog normalization preserves strict roles and resolves every blocker compatibly
@@ -119,6 +136,11 @@ ok - a completed scout with decision-like report prose is a pointer, not pending
 ok - an authoritative captain hold surfaces end-to-end
 ok - action-free items (working/done/queued/landed) do not leak into Captain's Call
 ok - main and secondmate captain actionability use the same blocker readiness
+
+$ bash tests/fm-send-resolve-key.test.sh
+ok - fm-send --resolve-key: the answer send itself closes the open decision
+ok - fm-send --resolve-key: a key that is not open refuses loudly before anything is sent
+(13 assertions total; the status-log ledger's behavior is unchanged)
 
 $ bash tests/fm-brief.test.sh
 ok - fm-brief.sh: investigation and visual-review completions load the shared decision policy
