@@ -24,6 +24,7 @@
 #   fm-decision-hold.sh verify <origin-id>
 #   fm-decision-hold.sh resolve <origin-id> <decision-key> \
 #     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...]
+#   fm-decision-hold.sh answer <origin-id> <decision-key> --decision-file <path>
 #   fm-decision-hold.sh decline <origin-id> <decision-key> --decision-file <path>
 #   fm-decision-hold.sh repair <origin-id> <decision-key> --decision-file <path>
 #
@@ -35,17 +36,30 @@
 # `verify` is read-only and is called by scout teardown so teardown cannot erase a
 # source before this gate has succeeded.
 #
-# `resolve` and `decline` close active holds; `repair` attests a hold already closed
-# outside this script. All three paths require a non-empty captain decision file of
-# at most 8192 bytes, record the same durable resolution block in the hold body, and
-# store the decision digest plus routed identities so an exact retry is idempotent
-# while a changed decision or, for `resolve`, routed set is rejected. New records
-# include a `Resolution mode:` naming their path; older routed records remain valid.
+# `resolve`, `answer`, and `decline` close active holds; `repair` attests a hold
+# already closed outside this script. All four paths require a non-empty captain
+# decision file of at most 8192 bytes, record the same durable resolution block in
+# the hold body, and store the decision digest plus routed identities so an exact
+# retry is idempotent while a changed decision or, for `resolve`, routed set is
+# rejected. New records include a `Resolution mode:` naming their path; older
+# routed records remain valid.
 #
 # `resolve` is the routed path. It requires every --routed-to task to exist and to
 # be blocked by the hold. It writes the captain decision and routed identities into
 # the hold body, clears those dependency edges, and only then marks the hold Done.
 # A failure before the final step leaves the captain hold open.
+#
+# `answer` is the answer-time closure path, the hold ledger's counterpart to
+# `fm-send.sh --resolve-key`: it exists so the act that carries the captain's
+# answer is the act that closes the hold, instead of leaving closure to a
+# separate later call nobody is forced to make. It records the captain's answer
+# on an actively held hold, records `(none)` as the routed identities because no
+# follow-up work has been routed behind the hold yet, and closes it. It shares
+# every guard `decline` has, including the refusal while any task is still
+# blocked by the hold, so a decision whose follow-up work is already routed still
+# goes through `resolve` and the routed-vs-unrouted distinction survives. It says
+# only that the captain answered; `decline` still says the captain answered with
+# no follow-up work at all.
 #
 # `decline` is the unrouted path for a decision the captain answered with no
 # follow-up work. It takes no --routed-to task, records `(none)` as the routed
@@ -573,10 +587,14 @@ parse_decision_only_flags() {  # <args...>; prints the --decision-file value
   printf '%s' "$decision_file"
 }
 
-command_decline() {
-  local origin=${1:-} key=${2:-} decision_file id body hold_show hold_body state dependents
-  [ "$#" -ge 2 ] || { usage >&2; exit 2; }
-  shift 2
+# The one unrouted close path, shared by `answer` and `decline`. They differ only
+# in the resolution mode they record and the outcome word they print; every
+# guard - the captain decision file, the active-hold requirement, the retry
+# identity, and the refusal to release still-routed work - is identical, so
+# neither can drift into a weaker close than the other.
+close_unrouted_hold() {  # <mode> <outcome-word> <origin-id> <decision-key> <flag-args...>
+  local mode=$1 outcome=$2 origin=$3 key=$4 decision_file id body hold_show hold_body state dependents
+  shift 4
   decision_file=$(parse_decision_only_flags "$@") || exit 2
   validate_slug origin-id "$origin"
   validate_slug decision-key "$key"
@@ -587,7 +605,7 @@ command_decline() {
     hold_show=$(task_show "$id")
     hold_body=$(show_field "$hold_show" body)
     verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$ROUTED_NONE"
-    printf 'declined: %s\n' "$id"
+    printf '%s: %s\n' "$outcome" "$id"
     return 0
   fi
   hold_show=$(task_show "$id") || fail "captain hold $id is absent from $FM_HOME/data/backlog.md"
@@ -604,12 +622,22 @@ command_decline() {
   dependents=$(tasks_blocked_by "$id") || exit 1
   [ -z "$dependents" ] \
     || fail "captain hold $id still blocks routed work ($dependents); use resolve to record that work"
-  body=$(resolution_body declined "$ROUTED_NONE")
+  body=$(resolution_body "$mode" "$ROUTED_NONE")
   tasks_axi update "$id" --body "$body" >/dev/null \
     || fail "could not record the captain decision on $id"
-  tasks_axi "done" "$id" >/dev/null || fail "could not close declined captain hold $id"
+  tasks_axi "done" "$id" >/dev/null || fail "could not close $mode captain hold $id"
   verify_hold_resolved "$id" || fail "captain hold $id did not retain its durable resolution record"
-  printf 'declined: %s\n' "$id"
+  printf '%s: %s\n' "$outcome" "$id"
+}
+
+command_answer() {
+  [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+  close_unrouted_hold answered answered "$@"
+}
+
+command_decline() {
+  [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+  close_unrouted_hold declined declined "$@"
 }
 
 command_repair() {
@@ -655,6 +683,7 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   resolve) shift; command_resolve "$@" ;;
+  answer) shift; command_answer "$@" ;;
   decline) shift; command_decline "$@" ;;
   repair) shift; command_repair "$@" ;;
   -h|--help) usage ;;

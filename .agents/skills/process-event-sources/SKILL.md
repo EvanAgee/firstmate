@@ -31,6 +31,15 @@ For a Lavish review artifact:
 bin/fm-procevent-lavish.sh arm <artifact.html>
 ```
 
+When that review carries captain decisions that already have durable holds, arm it bound to their origin instead, and key each structured question form by the hold's decision key:
+
+```sh
+bin/fm-procevent-lavish.sh arm <artifact.html> --decisions-origin <origin-id>
+```
+
+The captured answer then closes its hold at capture time, and still wakes you to act on it.
+`decision-hold-lifecycle` owns when that binding is required and what the keys must be.
+
 A configured remote secondmate reply source is armed and handled through `bin/fm-procevent-remote-reply.sh`.
 Its header owns exact commands, while the adapter owns cursor continuity, validated deduplicated status ingest, path-confined document fetch, acknowledgement, and re-arming after a good delta.
 A continuity break is escalated once and stays unarmed until an operator deliberately rebases it.

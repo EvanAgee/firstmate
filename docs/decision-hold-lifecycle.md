@@ -23,21 +23,37 @@ For an open keyed status decision, it appends a `captain-held [key=<key>]: ...` 
 Scout teardown calls the script's read-only `verify` subcommand after checking for the report and before removing any source state.
 The `--force` path remains the explicit captain-approved discard escape hatch.
 
-The `resolve` and `decline` subcommands close active holds, while `repair` attests a hold already closed outside the script.
-All three require a non-empty captain decision file and record the same resolution block in the hold body with the decision digest, routed identities, and a `Resolution mode:` naming the path.
+The `resolve`, `answer`, and `decline` subcommands close active holds, while `repair` attests a hold already closed outside the script.
+All four require a non-empty captain decision file and record the same resolution block in the hold body with the decision digest, routed identities, and a `Resolution mode:` naming the path.
 An exact retry is idempotent, while a changed decision or, for `resolve`, a changed routed-task set is rejected.
 
 The `resolve` subcommand is the routed path and additionally requires at least one existing dependent task whose structured `blocked-by` edge points to the hold.
 It clears each dependency edge through tasks-axi and marks the hold Done only after those writes succeed.
 An exact retry can finish a partial routing operation, and a failed intermediate step leaves the hold open.
 
-The `decline` subcommand closes a hold whose captain answer routes no follow-up work, recording `(none)` as the routed identities.
-It refuses while any task in the same backlog is still blocked by the hold, because releasing routed work without recording it is `resolve`'s job.
+The `answer` and `decline` subcommands share one unrouted close implementation and differ only in the `Resolution mode:` they record and the outcome word they print, so neither can drift into a weaker close than the other.
+Both record `(none)` as the routed identities and refuse while any task in the same backlog is still blocked by the hold, because releasing routed work without recording it is `resolve`'s job.
 Every candidate found in the listing prefilter is confirmed against its own structured record before the refusal is reported.
+`answer` exists so the act carrying a captain answer can also be the act that closes its hold; `decline` continues to mean the stronger claim that the answer routes no follow-up work at all.
 
 The `repair` subcommand records the resolution block on a hold that was already closed outside the script, such as by a direct `tasks-axi done`, so an origin whose decision was genuinely answered stops failing `verify`.
 It refuses a hold that is still actively held, never reopens a closed hold, and never clears a dependency edge, so an unanswered decision keeps blocking teardown until the captain's word closes it.
 It also requires the identity to carry the captain-hold provenance that tasks-axi preserves through a close, so an ordinary captain-kind task that was never held cannot be repaired into a resolved decision.
+
+## Answer-time closure
+
+The live status-log decision ledger has always had answer-time closure through `bin/fm-send.sh --resolve-key`: answering a keyed decision closes it in the same act.
+The durable hold ledger did not, so an answer could be captured, believed, and even implemented while its hold stayed open, and the captain could then be asked to re-answer a decision already on disk.
+
+`bin/fm-procevent-lavish.sh` closes that gap for the channel that carries those answers.
+`arm --decisions-origin <origin-id>` records a private per-source binding under `state/lavish-decisions/`, written before the source is registered so a source that can produce answers never exists without it.
+Its `answers` command reads the published poll response's `prompts[N]{...}` block by declared field order and yields one `key`, `answer`, and label per row tagged `choice`.
+Rows tagged `message` are freeform captain prose and are never a source of decision keys, so prose cannot forge one.
+Its `close-decisions` command maps each key to `<bound-origin>-decision-<key>` and closes it through `fm-decision-hold.sh answer`, which keeps every guard that close already had.
+The decision text it writes is a pure function of the captured result, so replaying a capture is idempotent rather than a rejected different decision.
+A key whose hold is absent, already closed, or still blocking routed work is reported as skipped and left for `resolve`; skipping is never forced closure.
+Its `autohandle` command is the runner's own entry into `close-decisions` and deliberately never reports full handling, because recording the answer is transcription while acting on it is firstmate's judgement, so the captured result stays unacknowledged and its `check` wake still reaches the handler.
+A deck armed without `--decisions-origin` touches no hold at all.
 
 ## Structured read surfaces
 
@@ -55,6 +71,7 @@ Verification date: 2026-07-14.
 Additional quoted `blocked_by` regression verification date: 2026-07-17.
 Plural blocker-readiness and mixed-home projection verification date: 2026-07-22.
 Unrouted close-path verification date: 2026-08-13.
+Answer-time closure verification date: 2026-08-16.
 
 The focused end-to-end regression uses only synthetic `sample` identities and decision text.
 It begins with a completed investigation and visual review whose genuine unresolved choice exists only in the report.
@@ -66,6 +83,11 @@ A declined decision closes with a recorded answer, satisfies `verify`, leaves Be
 A hold closed by a direct `tasks-axi done` reproduces the shape that fails `verify` and blocks teardown, and `repair` with a captain decision file clears both.
 An unanswered decision still blocks completion and teardown, and neither `decline` nor `repair` can close a hold that is still actively held or supply an answer with a missing or empty decision file.
 `repair` also refuses a closed captain-kind task that was never held for the captain.
+
+Three answer-time closure regressions run against the published poll response shape, with synthetic `sample` identities.
+A review deck armed with `--decisions-origin` exposes six holds, and a single captured Send & End carrying five structured choices plus one freeform message closes the four whose answers route no work, skips the one that still blocks routed work so `resolve` can still route it, and never closes the sixth whose key appears only inside the freeform prose.
+The runner's `autohandle` entry applies those closures and still leaves the capture unacknowledged, so the wake firstmate needs in order to act on the answers is never retired.
+A replayed capture closes nothing new and is not rejected as a different decision, a deck armed with no decision origin closes nothing at all, and the `answer` subcommand itself refuses an empty or missing decision file, an absent hold, and a drifted retry.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -83,6 +105,9 @@ ok - resolved findings and decision-like prose do not create false holds
 ok - terminal single-owner stale status decisions do not block empty inventory
 ok - main-home and secondmate-home captain holds remain correctly routed
 ok - resolve matches first/middle/last in quoted blocked_by and rejects a genuinely absent id
+ok - a captured Lavish answer closes its captain hold at answer time
+ok - a review armed with no decision origin closes nothing
+ok - the answer path keeps every guard the unrouted close path already had
 
 $ bash tests/fm-fleet-snapshot-view.test.sh
 ok - backlog normalization preserves strict roles and resolves every blocker compatibly
@@ -105,7 +130,7 @@ $ bin/fm-lint.sh
 fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
 
 $ bin/fm-doc-audience-check.sh
-fm-doc-audience-check: ok surfaces=67 local_links=243
+fm-doc-audience-check: ok surfaces=68 local_links=253
 
 $ git diff --check
 (no output)

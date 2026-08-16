@@ -478,6 +478,12 @@ Exit 0 means the adapter fully applied and acknowledged the result; a missing co
 Announcement ordering is adapter-declared through `bin/fm-procevent-<adapter>.sh self-announcing`: an adapter that answers exit 0 declares that every result its autohandle fully applies is announced through a durable downstream channel of its own, so the runner applies first and publishes a `check` wake only for what remains unhandled afterwards; every other adapter keeps the strict publish-before-apply order, and its autohandle runs only when this capture's own wake was successfully appended to the durable queue.
 The remote-secondmate reply adapter declares itself self-announcing: a captured reply reaches its local status mirror and settles its correlated pending-reply expectation without any handler step, the mirrored status bytes are the single wake for one remote note through the same signal classification a local secondmate's append gets, a byte-identical replayed capture adds no bytes and stays quiet, and only a capture the adapter could not fully apply is published as a `check` wake, whose adapter handling remains idempotent.
 
+The Lavish adapter uses that same seam for a narrower purpose and is deliberately not self-announcing.
+A review armed with `--decisions-origin <origin-id>` records a private binding under `state/lavish-decisions/`, and its autohandle closes the durable captain decision holds the captured structured answers name, so a captain answer that reaches disk cannot leave its hold open.
+Recording the answer is transcription, but acting on it is firstmate's judgement, so that autohandle never reports full handling: the capture stays unacknowledged and its `check` wake reaches the handler exactly as before.
+A review armed without the flag touches no hold at all.
+`bin/fm-procevent-lavish.sh --help` owns the commands, and `.agents/skills/decision-hold-lifecycle/SKILL.md` owns when a deck must be bound.
+
 Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
 Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).
 Each claim binds its home and runner PID to a process identity, unique claim generation, and exact registration-file generation.
