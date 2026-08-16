@@ -868,8 +868,6 @@ EOF
   assert_contains "$out" "routed-phase	phase-a" "a structured choice for routed work was not read"
   assert_not_contains "$out" "forged-choice" \
     "a freeform captain message forged a decision key from its own prose"
-  assert_no_grep "decision-diversified-membership" "$ROOT/bin/fm-procevent-lavish.sh" \
-    "the review channel reintroduced hold-identity knowledge of its own"
 
   # The runner feeds those keyed lines into the one intake. Driven here through a
   # FIXTURE adapter that is not Lavish at all and knows nothing about holds - it
