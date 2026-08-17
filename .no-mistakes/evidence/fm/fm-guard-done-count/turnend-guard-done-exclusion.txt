@@ -1,0 +1,22 @@
+Real bin/fm-turnend-guard.sh run against two fleets. FM_HOME set, stop_hook_active=false.
+This is exactly what the Stop hook fires at turn end.
+
+==========================================================
+SCENARIO A: fleet of 3 done-but-unmerged workers (PRs open)
+  each state/<id>.status ends with a 'done:' line
+==========================================================
+guard exit code : 0
+guard output    : <empty - SILENT, no TURN WOULD END BLIND>
+RESULT: PASS - all-done fleet is parked, guard stays silent (the bug is fixed).
+
+==========================================================
+SCENARIO B: same fleet, but charlie is still 'working:'
+==========================================================
+guard exit code : 2
+guard output    :
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+    ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESULT: PASS - guard fires, and reports '1 task(s) in flight' (only charlie counted).
