@@ -26,7 +26,7 @@ An unmarked checkout or invalid marker falls through to the git-dir check.
 That check keeps crewmate and scout linked worktrees inert because their git dir differs from their git common dir.
 It also requires `AGENTS.md`, `bin/`, and the effective state directory.
 
-For an in-scope primary, the guard counts in-flight work from `state/*.meta`.
+For an in-scope primary, the guard counts in-flight work from `state/*.meta`, excluding any task whose `state/<id>.status` last line is `done:`, because a done task waiting for merge is parked, not in flight; a task with no status file yet still counts.
 Registered `state/procevent/*.source` records also require supervision even though they have no task metadata.
 The default cross-harness mode exits silently with no supervision need.
 Every mode treats `state/x-watch.check.sh` as supervision need, so Relay polling remains guarded without an in-flight task.
