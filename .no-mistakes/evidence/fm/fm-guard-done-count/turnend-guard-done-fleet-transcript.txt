@@ -1,0 +1,25 @@
+SCENARIO: A fleet of 3 workers. Every worker has reported done: with an
+open PR and is parked waiting for merge approval. No watcher is running.
+This is the exact condition that used to fire TURN WOULD END BLIND every turn.
+
+State layout:
+  state/worker1.status  (last line):
+    done: PR https://github.com/acme/app/pull/1 open, checks green, awaiting merge
+  state/worker2.status  (last line):
+    done: PR https://github.com/acme/app/pull/2 open, checks green, awaiting merge
+  state/worker3.status  (last line):
+    done: PR https://github.com/acme/app/pull/3 open, checks green, awaiting merge
+
+===================================================================
+BASELINE (code at base commit e518906 - before the fix):
+===================================================================
+  FM_SUP_IN_FLIGHT = 3
+  FM_SUP_NEEDED    = true
+  => guard WOULD fire: ● TURN WOULD END BLIND (3 tasks in flight, no live watcher)
+
+===================================================================
+FIXED (code at target commit 50a8bf9 - with the done-exclusion):
+===================================================================
+  FM_SUP_IN_FLIGHT = 0
+  FM_SUP_NEEDED    = false
+  => guard stays SILENT. Turn ends cleanly. No false alarm.
