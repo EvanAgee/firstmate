@@ -1,0 +1,106 @@
+======================================================================
+ Firstmate 'keep landing work while GitHub is down' - end-to-end demo
+ Real scripts, real git repos, scripted reachability verdict.
+======================================================================
+
+### SETUP: project 'proj' on main, origin even with main, lane branch 'feature/new-thing' one commit ahead.
+
+$ git -C /tmp/fm-outage-demo.L20Xz3/proj log --oneline --all --decorate
+012e0cc (feature/new-thing) the green work
+09602a5 (HEAD -> main, origin/main) init
+
+======================================================================
+ STEP 1 - GitHub is UP. Baseline: probe is silent, PR-bound landing REFUSED.
+======================================================================
+
+### 1a. transition on a first-ever reachable baseline: silent, sets no flag.
+
+$ env FM_STATE_OVERRIDE=/tmp/fm-outage-demo.L20Xz3/state FM_GH_HEALTH_PROBE_CMD=true /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M087V6MC5JR8XT456ZBGSEMY/bin/fm-github-health.sh transition
+
+$ env FM_STATE_OVERRIDE=/tmp/fm-outage-demo.L20Xz3/state /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M087V6MC5JR8XT456ZBGSEMY/bin/fm-github-health.sh status
+up
+
+### 1b. try to land the PR-bound task while GitHub is up: it must be REFUSED.
+
+/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M087V6MC5JR8XT456ZBGSEMY/bin/fm-merge-local.sh: line 63: /tmp/fm-outage-demo.L20Xz3/inert/bin/fm-guard.sh: No such file or directory
+error: task t1 is mode=no-mistakes; a PR-bound task lands locally only while GitHub is unreachable (state/.github-down present).
+GitHub is reachable, so merge its PR with bin/fm-pr-merge.sh <id> <PR url> after approval instead.
+(exit: )
+
+
+======================================================================
+ STEP 1 (clean re-run) - GitHub UP: PR-bound landing is REFUSED
+======================================================================
+$ fm-merge-local.sh t1     # GitHub is up -> must refuse
+error: task t1 is mode=no-mistakes; a PR-bound task lands locally only while GitHub is unreachable (state/.github-down present).
+GitHub is reachable, so merge its PR with bin/fm-pr-merge.sh <id> <PR url> after approval instead.
+(exit: 1  <- refused as expected; main untouched, still even with origin)
+
+======================================================================
+ STEP 2 - GitHub goes DOWN: the probe confirms and parks the fleet
+======================================================================
+$ fm-github-health.sh transition   # majority of probes fail -> DOWN
+down
+$ fm-github-health.sh status
+down
+$ cat state/.github-down   # durable flag with first-seen timestamp
+first_seen=2026-08-17T16:17:18Z
+
+$ fm-github-health.sh transition   # still down -> silent (report once)
+(printed: ''  <- empty: the captain is told exactly once per transition)
+
+======================================================================
+ STEP 3 - During the outage: green yolo=on work AUTO-LANDS locally
+          (requires the adversarial-review proof; without it, refused)
+======================================================================
+$ fm-merge-local.sh t1     # yolo=on, outage flag set, but NO review proof
+error: task t1 is an autonomous outage auto-land (mode=no-mistakes, yolo=on) but no adversarial review was recorded.
+An outage auto-land requires a second independent agent to adversarially review and clear the change first; pass --adversarial-review-passed <ref> once that review clears.
+(exit: 1  <- refused: an auto-land needs a second independent review)
+
+$ fm-merge-local.sh t1 --deferred-checks a11y.yml,e2e.yml \
+      --adversarial-review-passed report:data/adversarial-t1/report.md
+merged feature/new-thing into local main (09602a5 -> 012e0cc) in /tmp/fm-outage-demo.L20Xz3/proj
+recorded outage landing for proj in /tmp/fm-outage-demo.L20Xz3/state/outage-landings/proj.log (deferred checks: a11y.yml,e2e.yml, review: report:data/adversarial-t1/report.md)
+
+main before: 09602a58251f000984ced4b9f3c33f6d7d63c7d1
+main after:  012e0cc7e0ce15276460268025cc1a2f11b85646   <- fast-forwarded to the lane
+$ git -C proj log --oneline -1 main
+012e0cc the green work
+
+$ cat state/outage-landings/proj.log   # the reconciliation ledger
+2026-08-17T16:17:19Z	t1	/tmp/fm-outage-demo.L20Xz3/proj	feature/new-thing	09602a58251f000984ced4b9f3c33f6d7d63c7d1	012e0cc7e0ce15276460268025cc1a2f11b85646	a11y.yml,e2e.yml	report:data/adversarial-t1/report.md
+
+(origin/main is still behind - the landing has not reached GitHub yet)
+$ git -C origin rev-parse main   ; local main:
+09602a58251f000984ced4b9f3c33f6d7d63c7d1
+012e0cc7e0ce15276460268025cc1a2f11b85646
+
+======================================================================
+ STEP 4 - GitHub returns: sync pushes the landing + dispatches deferred
+======================================================================
+$ fm-github-health.sh transition   # reachable again -> UP (reported once)
+up
+$ fm-outage-sync.sh        # walk the ledger, ff-push, dispatch deferred
+/tmp/fm-outage-demo.L20Xz3/proj: pushed local main to origin/main (landing 012e0cc7e0ce15276460268025cc1a2f11b85646)
+  dispatched deferred workflow a11y.yml on main
+  dispatched deferred workflow e2e.yml on main
+
+$ git -C origin rev-parse main   # origin now fast-forwarded to the landing
+012e0cc7e0ce15276460268025cc1a2f11b85646
+(matches local main above)
+
+$ cat gh.log   # the schedule-only deferred workflows, dispatched on return
+gh-axi workflow run a11y.yml --ref main
+gh-axi workflow run e2e.yml --ref main
+
+$ ls state/outage-landings/   # ledger entry cleared after a confirmed push
+
+$ fm-outage-sync.sh        # idempotent re-run: nothing to push or dispatch
+no outage landings to sync
+(gh.log after idempotent re-run - empty means nothing re-dispatched:)
+       0
+
+======================================================================
+ DEMO COMPLETE - full outage lifecycle exercised with real scripts.
+======================================================================
