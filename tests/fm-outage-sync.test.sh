@@ -33,8 +33,11 @@ make_landed_project() {  # <name>
   proj="$dir/proj"
   origin="$dir/origin.git"
   mkdir -p "$dir"
+  # Force the bare origin's HEAD to main so a later `git clone` of it checks out
+  # main regardless of the runner's init.defaultBranch (CI may default to master).
   git init -q --bare "$origin"
-  git -C "$proj" 2>/dev/null init -q "$proj" || git init -q "$proj"
+  git -C "$origin" symbolic-ref HEAD refs/heads/main
+  git init -q "$proj"
   git -C "$proj" -c user.name=t -c user.email=t@e.invalid commit -q --allow-empty -m init
   git -C "$proj" branch -M main
   git -C "$proj" remote add origin "$origin"
@@ -130,9 +133,12 @@ test_diverged_main_escalates_never_forces() {
   make_gh_recorder "$dir" >/dev/null
   state="$dir/state"
 
-  # Advance origin/main independently via a second clone -> divergence.
+  # Advance origin/main independently via a second clone -> divergence. The
+  # origin's HEAD is main (set in make_landed_project), so the clone checks out
+  # main; force it explicitly too so the push target is unambiguous on any runner.
   other="$dir/other"
   git clone -q "$origin" "$other"
+  git -C "$other" checkout -q -B main
   git -C "$other" -c user.name=t -c user.email=t@e.invalid commit -q --allow-empty -m "someone else"
   git -C "$other" push -q origin main
   origin_before=$(git -C "$origin" rev-parse main)
