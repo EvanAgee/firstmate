@@ -55,7 +55,7 @@ Regardless of yolo: the merge is fast-forward-only and refuses a diverged branch
 The browser end-to-end tests and the accessibility scan cannot run during the outage because GitHub dispatches them even to self-hosted runners; they are deferred and run retroactively on return.
 State that thinner-verification caveat to the captain; the adversarial review is the extra safety net for it, not a replacement for those checks.
 
-Each outage landing records one line in the reconciliation ledger `state/outage-landings/<project>.log` (written by `bin/fm-merge-local.sh`): what landed, the before and after default-branch SHAs, the deferred workflows, and the review evidence.
+Each outage landing records one tab-separated line in the reconciliation ledger `state/outage-landings/<project>.log` (written by `bin/fm-merge-local.sh`): landed-at, task id, project path, lane branch, the before and after default-branch SHAs, the deferred workflows, and the review evidence.
 The ledger is a record of what already safely happened; it gates and drives nothing.
 
 ## When GitHub comes back
