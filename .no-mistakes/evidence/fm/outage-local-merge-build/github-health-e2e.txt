@@ -1,0 +1,23 @@
+### End-to-end: fm-github-health detection (Part A)
+# Real product knobs: FM_STATE_OVERRIDE (state dir) + FM_GH_HEALTH_PROBE_CMD (probe seam).
+# 'transition' is what bin/fm-watch.sh calls once per poll; it reports ONLY on a real change,
+# so the captain is woken once per down/up flip, never per poll.
+
+1) baseline, GitHub reachable -> silent
+   $ transition (probe OK)      report='<silent>'  flag=absent
+
+2) GitHub goes DOWN (all probes fail) -> report once, set flag with first-seen
+   $ transition (probe FAIL)    report='down'  flag=present
+   flag file: first_seen=2026-08-17T17:28:39Z
+
+3) still down next poll -> dedup, silent, first-seen preserved
+   $ transition (probe FAIL)    report='<silent>'  first-seen unchanged=YES
+
+4) GitHub RECOVERS -> report once, clear flag
+   $ transition (probe OK)      report='up'  flag=absent
+
+5) majority guard: within one probe, attempt 1 FAILS then 2 SUCCEED (2-of-3 needed to declare down)
+   $ probe (fail,pass,pass)     status=up  -> stayed UP, one bad request never parks the fleet
+
+6) bounded: real curl against a black-hole address, 1s cap
+   $ probe (unreachable host)   elapsed=1s  status=down  -> returned fast, cannot hang the fleet

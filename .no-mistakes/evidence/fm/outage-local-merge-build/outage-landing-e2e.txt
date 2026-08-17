@@ -1,0 +1,42 @@
+==================================================================
+ Part B - local landing + sync during a GitHub outage
+==================================================================
+
+--- 1) GitHub is UP: a PR-bound task is REFUSED locally ---
+exit=1  (non-zero = refused)
+message: lands locally only while GitHub is unreachable (state/.github-down present).
+points to normal flow: fm-pr-merge.sh
+main moved? no (untouched)
+
+--- 2) GitHub is DOWN: yolo=on auto-land REFUSED without adversarial review ---
+exit=1  (non-zero = refused)
+message: adversarial review was recorded.
+main unchanged? YES  (deterministic backstop: no auto-land on one review)
+
+--- 3) GitHub is DOWN: yolo=on auto-land ACCEPTED with review proof, ledger written ---
+main: d7a0302b014b1e41fcd6beb6bae6a169e1923c73  ->  0de6f22bcf965325fb391d53e3b71df93dc32f63   (fast-forwarded onto ticket-2)
+lane on main now? YES
+ledger file: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.kEh0pr4gPf/outage/state/outage-landings/proj.log
+ledger line:
+   2026-08-17T17:30:14Z	t2	/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.kEh0pr4gPf/outage/proj	ticket-2	d7a0302b014b1e41fcd6beb6bae6a169e1923c73	0de6f22bcf965325fb391d53e3b71df93dc32f63	a11y.yml,smoke.yml	report:data/adversarial-t2/report.md
+
+  fields present: after-SHA=1  deferred-checks=1  review-proof=1
+
+--- 4) diverged branch ESCALATES, never force-pushes ---
+exit=1  (non-zero = escalated)
+message: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.kEh0pr4gPf/div/err:diverged in 
+origin/main unchanged? YES  (never force-pushed)
+ledger entry kept for manual rebase? YES
+
+--- 5) GitHub RETURNS: sync fast-forward-pushes, dispatches deferred workflows, clears ledger ---
+origin/main: f7869b1c900d97f2c17e35f625c3d58e61c5fcba  ->  c53c985c61c8fdcd2ee086c39838b2971ccf6f81
+pushed the outage landing? YES   (plain fast-forward, no --force)
+deferred workflows dispatched via gh-axi:
+   gh-axi workflow run a11y.yml --ref main
+   gh-axi workflow run smoke.yml --ref main
+ledger cleared? YES
+
+--- 6) sync is idempotent: a re-run after success is a no-op ---
+commit already on origin -> re-dispatched workflows? no (no double-fire)
+surfaced the undispatched deferred checks once? deferred checks  (noted)
+ledger cleared? YES
