@@ -883,6 +883,23 @@ while :; do
   # never run until the fleet went quiet. Checks are due only every
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+    # Fleet-wide GitHub reachability, once per CHECK_INTERVAL. bin/fm-github-health.sh
+    # owns the durable state/.github-down flag, the 2-of-3 confirmation, and the
+    # "report once per transition" dedup: its `transition` command probes, updates
+    # the flag, and prints the new verdict ONLY on a real down<->up change. So this
+    # block just wakes when it prints something. It runs before the per-task checks
+    # so a rare simultaneous PR-poll wake (which exits the cycle) cannot starve an
+    # outage transition of its own report.
+    if [ -x "$SCRIPT_DIR/fm-github-health.sh" ]; then
+      gh_health_change=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        "$SCRIPT_DIR/fm-github-health.sh" transition 2>/dev/null || echo "")
+      if [ -n "$gh_health_change" ]; then
+        reason="check: github-health: $gh_health_change"
+        fm_wake_append check github-health "$reason" || exit 1
+        touch "$STATE/.last-check"
+        wake "$reason"
+      fi
+    fi
     rejected_checks=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
