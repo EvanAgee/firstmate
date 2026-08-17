@@ -98,6 +98,61 @@ test_predicate_source_needs_supervision() {
   pass "fm_supervision_unhealthy: source-only home needs supervision"
 }
 
+test_predicate_done_excluded_from_inflight() {
+  local state="$TMP_ROOT/pred-done/state"
+  mkdir -p "$state"
+  : > "$state/task1.meta"
+  printf 'working: implementing fix\n' > "$state/task1.status"
+  printf 'done: PR https://example.com/pr/1 checks green\n' >> "$state/task1.status"
+  fm_supervision_status "$state" 300
+  [ "$FM_SUP_IN_FLIGHT" -eq 0 ] || fail "a done task should not count as in-flight, got $FM_SUP_IN_FLIGHT"
+  [ "$FM_SUP_NEEDED" = false ] || fail "a fleet of all-done tasks should not need supervision"
+  pass "fm_supervision_status: a done-but-unmerged task is excluded from in-flight"
+}
+
+test_predicate_non_done_verbs_still_inflight() {
+  local state="$TMP_ROOT/pred-mixed/state"
+  mkdir -p "$state"
+  # No status file: brand new, still in flight.
+  : > "$state/new1.meta"
+  # needs-decision: parked at a gate, still in flight.
+  : > "$state/dec1.meta"
+  printf 'needs-decision: [key=x] what to do\n' > "$state/dec1.status"
+  # blocked: stuck, still in flight.
+  : > "$state/blk1.meta"
+  printf 'blocked: missing dependency\n' > "$state/blk1.status"
+  # working: actively working, still in flight.
+  : > "$state/wrk1.meta"
+  printf 'working: implementing\n' > "$state/wrk1.status"
+  # paused: deliberate wait, still in flight.
+  : > "$state/psd1.meta"
+  printf 'paused: waiting on upstream\n' > "$state/psd1.status"
+  # done: NOT in flight.
+  : > "$state/don1.meta"
+  printf 'done: PR ready\n' > "$state/don1.status"
+  fm_supervision_status "$state" 300
+  [ "$FM_SUP_IN_FLIGHT" -eq 5 ] || fail "expected 5 in-flight (new+decision+blocked+working+paused), got $FM_SUP_IN_FLIGHT"
+  [ "$FM_SUP_NEEDED" = true ] || fail "fleet with non-done tasks should need supervision"
+  pass "fm_supervision_status: only done excluded; no-status/needs-decision/blocked/working/paused still count"
+}
+
+test_predicate_done_must_be_last_line() {
+  local state="$TMP_ROOT/pred-last-line/state"
+  mkdir -p "$state"
+  # done: followed by needs-decision: last line is needs-decision -> in flight.
+  : > "$state/rev1.meta"
+  printf 'done: PR ready\nneeds-decision: [key=x] new question\n' > "$state/rev1.status"
+  # needs-decision: followed by done: last line is done -> NOT in flight.
+  : > "$state/rev2.meta"
+  printf 'needs-decision: [key=y] old question\ndone: PR ready\n' > "$state/rev2.status"
+  # Trailing blank lines do not change the verdict: last non-blank is done.
+  : > "$state/blank1.meta"
+  printf 'done: PR ready\n\n\n' > "$state/blank1.status"
+  fm_supervision_status "$state" 300
+  [ "$FM_SUP_IN_FLIGHT" -eq 1 ] || fail "only the task whose LAST non-blank line is done should be excluded, got $FM_SUP_IN_FLIGHT"
+  pass "fm_supervision_status: only the last non-blank status line determines done exclusion"
+}
+
 # --- HOOK: bin/fm-turnend-guard.sh ------------------------------------------
 #
 # Each scenario gets its own directory carrying a copy of the two guard scripts
@@ -114,6 +169,7 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-harness.sh" "$dir/bin/fm-harness.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
+  cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/fm-classify-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
   mkdir -p "$dir/docs"
@@ -1120,6 +1176,7 @@ install_integrated_autoarm() {
   cp "$ROOT/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-claude-stop-autoarm.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
+  cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/fm-classify-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
   cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
@@ -1608,6 +1665,9 @@ test_predicate_healthy_fresh_beacon
 test_predicate_queue_pending_flag
 test_predicate_x_mode_needs_supervision
 test_predicate_source_needs_supervision
+test_predicate_done_excluded_from_inflight
+test_predicate_non_done_verbs_still_inflight
+test_predicate_done_must_be_last_line
 test_hook_silent_when_no_work_in_flight
 test_hook_blocks_when_fresh_beacon_has_no_live_lock
 test_hook_blocks_source_only_home
