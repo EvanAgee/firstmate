@@ -70,6 +70,6 @@ A retroactive check that now fails on main is a real red-on-main situation to fi
 ## Owners
 
 - `bin/fm-github-health.sh --help` owns the probe, the flag, and the transition contract.
-- `bin/fm-merge-local.sh --help` owns the local-landing guards, the outage gate, the review gate, and the ledger format.
+- `bin/fm-merge-local.sh` (its header comment) owns the local-landing guards, the outage gate, the review gate, and the ledger format.
 - `bin/fm-outage-sync.sh --help` owns the sync-on-return steps, the divergence refusal, and idempotency.
 - `data/outage-local-merge-design/` and its `captain-decision.md` record the design and the auto-land decision.
