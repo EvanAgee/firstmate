@@ -23,9 +23,14 @@ set -u
 HARNESS="$ROOT/bin/fm-harness.sh"
 
 # Run fm-harness.sh with a clean slate plus the given env markers.
+# FM_CONFIG_OVERRIDE points at an empty dir so crew/secondmate resolution
+# tests the detection logic, not the operator's local config/crew-harness
+# (which may pin a specific adapter and mask the "default mirrors own" path).
+DETECT_CONFIG=$(fm_test_tmproot omp-detect-config)
 detect_with() {
   env -u CLAUDECODE -u OMPCODE -u PI_CODING_AGENT -u GROK_AGENT \
       -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u FM_PI_HARNESS \
+      FM_CONFIG_OVERRIDE="$DETECT_CONFIG" \
       "$@" "$HARNESS"
 }
 
