@@ -32,6 +32,10 @@ export function encodeFirstmateOperationalInput(root, kind, content) {
       }
       reject(new Error(stderr.trim() || `operational-input encoder exited ${code ?? "unknown"}`));
     });
+    // A child that exits before reading stdin raises EPIPE on this socket; an
+    // unhandled stream error would crash the whole host process. The close
+    // handler still rejects with the encoder's real exit status.
+    child.stdin.on("error", () => {});
     child.stdin.end(content);
   });
 }

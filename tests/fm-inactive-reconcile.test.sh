@@ -329,7 +329,10 @@ test_nonterminal_and_captain_held_states_do_not_report() {
 }
 
 # The actual watcher poll invokes the helper, while an idle secondmate remains
-# exempt from wedge escalation and emits no false wake.
+# exempt from wedge escalation and emits no false wake. Both watcher runs pin
+# the GitHub reachability probe to "up": the fakebin curl always fails, so an
+# unpinned probe would report a first-observation outage - an actionable wake
+# that exits the watcher and has nothing to do with this test's subject.
 test_watcher_hook_and_idle_secondmate_exemption() {
   local out pid i
   make_world watcher; write_child "$MAIN" child 'done: green'; prime_seen "$MAIN/state" "$MAIN/state/child.status"
@@ -337,6 +340,7 @@ test_watcher_hook_and_idle_secondmate_exemption() {
   PATH="$WORLD/fakebin:$PATH" FM_HOME="$MAIN" FM_STATE_OVERRIDE="$MAIN/state" \
     FM_INACTIVE_RECONCILE_SECS=60 FM_INACTIVE_CREW_STATE_BIN="$WORLD/fakebin/fm-crew-state.sh" \
     FM_FORGE_LOG="$WORLD/forge.log" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_GH_HEALTH_PROBE_CMD=true \
     FM_FAKE_CREW_STATE='done' "$WATCH" > "$out" 2>&1 &
   pid=$!
   i=0
@@ -351,7 +355,8 @@ test_watcher_hook_and_idle_secondmate_exemption() {
 
   make_world idle-secondmate; bind_secondmate local; write_mate_meta; prime_seen "$MAIN/state" "$MAIN/state/mate.status"
   PATH="$WORLD/fakebin:$PATH" FM_HOME="$MAIN" FM_STATE_OVERRIDE="$MAIN/state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$WORLD/idle.out" 2>&1 &
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_GH_HEALTH_PROBE_CMD=true \
+    "$WATCH" > "$WORLD/idle.out" 2>&1 &
   pid=$!; sleep 2; kill -0 "$pid" 2>/dev/null || fail "idle secondmate watcher exited unexpectedly"; reap "$pid"
   grep -F 'stale:' "$WORLD/idle.out" >/dev/null && fail "idle secondmate was treated as a wedge"
   [ ! -s "$MAIN/state/.wake-queue" ] || fail "idle secondmate emitted a false wake"
@@ -380,7 +385,11 @@ SH
   [ "$elapsed" -le 3 ] || fail "stalled state read exceeded aggregate scan budget (${elapsed}s)"
 
   write_child "$MAIN" b 'done: green'
-  FM_INACTIVE_RECONCILE_BUDGET_SECS=1 run_reconcile "$MAIN" --startup
+  # The killed first scan leaves its scan-lock holder behind until the OS reaps
+  # it; while it is an unreaped zombie, kill -0 still reports it alive and the
+  # lock is not yet reclaimable. This scan proves cursor resume, not the tight
+  # budget (the first scan owns that assertion), so give it reclaim headroom.
+  FM_INACTIVE_RECONCILE_BUDGET_SECS=5 run_reconcile "$MAIN" --startup
   grep -Fq 'child=b state=done' "$MAIN/state/.wake-queue" \
     || fail "next bounded scan did not resume with the following child"
   pass "stalled state reads are bounded without starving later children"
