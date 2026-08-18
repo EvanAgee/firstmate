@@ -281,6 +281,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/omp-adapter-verification.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
@@ -314,6 +318,10 @@
     },
     {
       "path": "docs/supervision-protocols/opencode.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/supervision-protocols/omp.md",
       "audience": "agent-runtime"
     },
     {
