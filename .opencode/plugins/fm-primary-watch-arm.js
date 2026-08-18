@@ -334,12 +334,14 @@ function spawnArm(paths, sessionID, client, predecessorArmPid = "") {
     const recovery = `${stdout}\n${stderr}`.match(/^watcher: started pid=([0-9]+).* recovery-generation=([A-Za-z0-9._-]+)$/m);
     if (recovery) armRecovery.set(armChild, { watcherPid: recovery[1], generation: recovery[2] });
   };
-  armChild.stdout.on("data", (chunk) => {
+  // stdio can be null when the spawn itself fails; the close/error handlers
+  // still classify such an arm, so a missing pipe must not throw here.
+  armChild.stdout?.on("data", (chunk) => {
     stdout += chunk.toString();
     observeRecovery();
     observeArmOutput(stdout, stderr, settleReadiness);
   });
-  armChild.stderr.on("data", (chunk) => {
+  armChild.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
     observeRecovery();
     observeArmOutput(stdout, stderr, settleReadiness);
@@ -410,9 +412,14 @@ function armAttempt(status, armChild, includeArmChild) {
 }
 
 async function ensureArm(paths, sessionID, client, predecessorArmPid = "", includeArmChild = false) {
+  // Never reject: callers void this promise (session.idle, the retry timer) or
+  // await it without a catch (the turn-end guard coordinator), so a rejection
+  // here - e.g. a transient spawn failure - would crash the whole host process
+  // as an unhandled rejection instead of reading as one failed arm attempt.
   let launchResult = null;
   if (!launchInFlight) {
-    const launch = beginArm(paths, sessionID, client, predecessorArmPid);
+    const launch = beginArm(paths, sessionID, client, predecessorArmPid)
+      .catch(() => ({ status: "launch-failed", armChild: null }));
     launchInFlight = launch;
     try {
       launchResult = await launch;

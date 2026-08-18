@@ -213,7 +213,7 @@ test_pi_redundant_tool_call_is_owned_noop() {
 printf 'arm\n' >> "${FM_ARM_LOG:?}"
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" node --input-type=module 2>&1 <<'EOF'
@@ -343,7 +343,7 @@ if [ "$count" -eq 1 ]; then
 fi
 printf 'watcher: started pid=%s (beacon fresh) recovery-generation=fixture-generation\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" node --input-type=module 2>&1 <<'EOF'
@@ -499,7 +499,7 @@ if [ "$count" -eq 0 ]; then
 fi
 trap '' TERM INT
 printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
-while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
+i=0; while [ ! -e "$FM_RELEASE_FILE" ]; do [ "$i" -lt 300 ] || exit 0; sleep 0.1; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_PI_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
@@ -571,13 +571,13 @@ fi
 if [ "$count" -eq 2 ]; then
   trap 'printf "retired\\n" > "${FM_UNRETIRED_RETIRE_FILE:?}"' TERM INT
   printf 'ready\n' > "${FM_UNRETIRED_READY_FILE:?}"
-  while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.02; done
+  i=0; while [ ! -e "$FM_RELEASE_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
   [ "$FM_LATE_KIND" = actionable ] && printf 'signal: late wake\n'
   exit 0
 fi
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
     chmod +x "$repo/bin/fm-watch-arm.sh"
     out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_PI_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
@@ -659,7 +659,7 @@ count=$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')
 if [ "$count" -eq 1 ]; then exit 0; fi
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
@@ -765,7 +765,7 @@ test_pi_actionable_close_rechecks_session_lock() {
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
-while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_RELEASE_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 printf 'signal: lock handoff\n'
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
@@ -905,8 +905,10 @@ test_pi_session_transition_generation_owner() {
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'watcher: started pid=%s\n' "$$"
-printf '%s\n' "$$" > "${FM_CHILD_PID_FILE:?}"
+# Append the arm-log line BEFORE publishing the pid file: the harness waits on
+# the pid file and then asserts on the log, so the log must already be complete.
 printf 'arm pid=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+printf '%s\n' "$$" > "${FM_CHILD_PID_FILE:?}"
 trap 'exit 0' TERM INT
 while :; do sleep 0.2; done
 SH
@@ -1344,8 +1346,11 @@ if (existsSync(process.env.FM_ARM_LOG)) {
   process.exit(1);
 }
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
-await hooks.event(event);
+// Keep re-delivering the idle event: a single event races the first (denied)
+// launch attempt - ensureArm coalesces onto an in-flight launch, so one event
+// sent while that attempt is still resolving would be swallowed for good.
 for (let i = 0; i < 250 && !existsSync(process.env.FM_ARM_LOG); i += 1) {
+  await hooks.event(event);
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 if (!existsSync(process.env.FM_ARM_LOG)) {
@@ -1433,7 +1438,7 @@ if [ "$count" -eq 1 ]; then
 fi
 printf 'watcher: started pid=%s (beacon fresh) recovery-generation=fixture-generation\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" node 2>&1 <<'EOF'
@@ -1524,12 +1529,12 @@ fi
 if [ "$count" -eq 2 ]; then
   printf 'signal: pre-ready successor wake\n'
   trap 'printf "retired\\n" > "${FM_PRE_READY_RETIRED_FILE:?}"; exit 0' TERM INT
-  while [ ! -e "$FM_PRE_READY_RELEASE_FILE" ]; do sleep 0.02; done
+  i=0; while [ ! -e "$FM_PRE_READY_RELEASE_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
   exit 0
 fi
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_PRE_READY_RELEASE_FILE="$release" FM_PRE_READY_RETIRED_FILE="$retired" FM_STOP_FILE="$stop" FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
@@ -1676,7 +1681,7 @@ if [ "$count" -eq 0 ]; then
 fi
 trap '' TERM INT
 printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
-while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
+i=0; while [ ! -e "$FM_RELEASE_FILE" ]; do [ "$i" -lt 300 ] || exit 0; sleep 0.1; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_OPENCODE_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
@@ -1750,13 +1755,13 @@ fi
 if [ "$count" -eq 2 ]; then
   trap 'printf "retired\\n" > "${FM_UNRETIRED_RETIRE_FILE:?}"' TERM INT
   printf 'ready\n' > "${FM_UNRETIRED_READY_FILE:?}"
-  while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.02; done
+  i=0; while [ ! -e "$FM_RELEASE_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
   [ "$FM_LATE_KIND" = actionable ] && printf 'signal: late wake\n'
   exit 0
 fi
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
     chmod +x "$repo/bin/fm-watch-arm.sh"
     out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_OPENCODE_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
@@ -1840,7 +1845,7 @@ count=$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')
 if [ "$count" -eq 1 ]; then exit 0; fi
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 trap 'exit 0' TERM INT
-while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_STOP_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
@@ -1949,7 +1954,7 @@ test_opencode_actionable_close_rechecks_session_lock() {
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
-while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.02; done
+i=0; while [ ! -e "$FM_RELEASE_FILE" ]; do [ "$i" -lt 1500 ] || exit 0; sleep 0.02; i=$((i + 1)); done
 printf 'signal: lock handoff\n'
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
