@@ -212,6 +212,16 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
+    assert_grep "# Project workflow" "$brief" \
+      "$id: brief missing the project workflow section"
+    assert_grep "Run \`npx unslop\` on every changed file and fix all findings before any PR." "$brief" \
+      "$id: brief missing the unconditional unslop gate"
+    assert_grep "Check \`.agents/skills/\` for \`to-tickets\`, \`implement\`, \`tdd\`, and \`diagnosing-bugs\`; use each installed skill when applicable." "$brief" \
+      "$id: brief missing project workflow skill discovery"
+    assert_grep "Use \`to-tickets\` for multi-slice work, \`implement\` and \`tdd\` for the build, and \`diagnosing-bugs\` when reproducing a bug." "$brief" \
+      "$id: brief missing project workflow skill routing"
+    assert_grep "If a named skill is absent, proceed normally." "$brief" \
+      "$id: brief missing the absent-skill fallback"
     assert_grep "After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid." "$brief" \
       "$id: brief missing the PR review-feedback definition-of-done rule"
     assert_grep "Before reporting done for any PR with user-visible UI changes, use the exact upload command supplied by the project brief to upload viewport screenshots and embed them in the PR body; local paths do not count." "$brief" \

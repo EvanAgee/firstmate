@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Scaffold a crewmate brief or persistent secondmate charter at
 # data/<task-id>/brief.md under the active firstmate home.
-# For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
-# filled in. Firstmate then replaces the {TASK} placeholder with the task
-# description, acceptance criteria, and context, and may adjust other sections
-# when the task genuinely deviates (e.g. working an existing external PR instead
-# of shipping a new one).
+# For ordinary tasks, the standard Setup, Project workflow, Rules, and Definition
+# of done sections are filled in. Firstmate then replaces the {TASK} placeholder
+# with the task description, acceptance criteria, and context, and may adjust
+# other sections when the task genuinely deviates (e.g. working an existing
+# external PR instead of shipping a new one).
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
@@ -425,6 +425,12 @@ The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+
+# Project workflow
+Run \`npx unslop\` on every changed file and fix all findings before any PR.
+Check \`.agents/skills/\` for \`to-tickets\`, \`implement\`, \`tdd\`, and \`diagnosing-bugs\`; use each installed skill when applicable.
+Use \`to-tickets\` for multi-slice work, \`implement\` and \`tdd\` for the build, and \`diagnosing-bugs\` when reproducing a bug.
+If a named skill is absent, proceed normally.
 
 # Rules
 $RULE1
