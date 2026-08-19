@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Scaffold a crewmate brief or persistent secondmate charter at
 # data/<task-id>/brief.md under the active firstmate home.
-# For ordinary tasks, the standard Setup, Project workflow, Rules, and Definition
-# of done sections are filled in. Firstmate then replaces the {TASK} placeholder
-# with the task description, acceptance criteria, and context, and may adjust
-# other sections when the task genuinely deviates (e.g. working an existing
-# external PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+# For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
+# filled in. Firstmate then replaces the {TASK} placeholder with the task
+# description, acceptance criteria, and context, and may adjust other sections
+# when the task genuinely deviates (e.g. working an existing external PR instead
+# of shipping a new one).
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab] [--matt-flow]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -27,6 +27,8 @@
 #   The flag must be explicit because {TASK} is filled after scaffolding and the
 #   caller-supplied repo string cannot reliably identify this repo. Briefs made
 #   without it carry a loud declaration so an omitted contract cannot be silent.
+#   --matt-flow applies only to ship briefs whose task explicitly adopts the
+#   Matt flow. It adds one thin flow trigger; the installed skills own every phase.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -104,6 +106,7 @@ fi
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
+MATT_FLOW=0
 MODE=
 MODE_SET=0
 POS=()
@@ -124,6 +127,7 @@ for a in "$@"; do
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
     --herdr-lab) HERDR_LAB=1 ;;
+    --matt-flow) MATT_FLOW=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
@@ -152,6 +156,11 @@ if [ "$KIND" = ship ]; then
   esac
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
+  exit 1
+fi
+
+if [ "$MATT_FLOW" -eq 1 ] && [ "$KIND" != ship ]; then
+  echo "error: --matt-flow applies only to ship briefs" >&2
   exit 1
 fi
 ID=${POS[0]}
@@ -409,6 +418,19 @@ esac
 # briefs stay byte-identical to the historical Bash 5 output.
 DOD=${DOD%$'\n'}
 
+MATT_FLOW_SECTION=
+if [ "$MATT_FLOW" -eq 1 ]; then
+IFS= read -r -d '' MATT_FLOW_SECTION <<'EOF' || true
+# Matt-flow
+This brief declares this task a Matt-flow task.
+Enter at the project-installed `to-spec` skill, or `triage` for bug work.
+Follow the flow's own instructions phase by phase through `code-review`, without skipping phases.
+Leave each phase's natural artifact (spec file, tickets folder, failing-test commit, and review notes) and append one status line at every phase transition.
+EOF
+MATT_FLOW_SECTION=${MATT_FLOW_SECTION%$'\n'}
+MATT_FLOW_SECTION=$'\n'"$MATT_FLOW_SECTION"$'\n'
+fi
+
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -426,12 +448,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
 
-# Project workflow
-Run \`npx unslop\` on every changed file and fix all findings before any PR.
-Check \`.agents/skills/\` for \`to-tickets\`, \`implement\`, \`tdd\`, and \`diagnosing-bugs\`; use each installed skill when applicable.
-Use \`to-tickets\` for multi-slice work, \`implement\` and \`tdd\` for the build, and \`diagnosing-bugs\` when reproducing a bug.
-If a named skill is absent, proceed normally.
-
+$MATT_FLOW_SECTION
 # Rules
 $RULE1
 2. Stay inside this worktree; modify nothing outside it.
@@ -459,6 +476,7 @@ $RULE1
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 8. After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid.
 9. Before reporting done for any PR with user-visible UI changes, use the exact upload command supplied by the project brief to upload viewport screenshots and embed them in the PR body; local paths do not count.
+10. Run \`npx unslop\` on every changed file and fix all findings before any PR.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.

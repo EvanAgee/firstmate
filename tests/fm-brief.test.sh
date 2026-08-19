@@ -173,6 +173,8 @@ PERL
 test_help_includes_entire_header() {
   local help
   help=$("$ROOT/bin/fm-brief.sh" --help)
+  assert_contains "$help" "[--matt-flow]" "fm-brief.sh --help omitted the Matt-flow ship option"
+  assert_contains "$help" "adds one thin flow trigger" "fm-brief.sh --help omitted the Matt-flow ownership boundary"
   assert_contains "$help" "Refuses to overwrite an existing brief." "fm-brief.sh --help omitted its header terminator"
   pass "fm-brief.sh: --help renders the complete header"
 }
@@ -212,16 +214,14 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"
-    assert_grep "# Project workflow" "$brief" \
-      "$id: brief missing the project workflow section"
     assert_grep "Run \`npx unslop\` on every changed file and fix all findings before any PR." "$brief" \
       "$id: brief missing the unconditional unslop gate"
-    assert_grep "Check \`.agents/skills/\` for \`to-tickets\`, \`implement\`, \`tdd\`, and \`diagnosing-bugs\`; use each installed skill when applicable." "$brief" \
-      "$id: brief missing project workflow skill discovery"
-    assert_grep "Use \`to-tickets\` for multi-slice work, \`implement\` and \`tdd\` for the build, and \`diagnosing-bugs\` when reproducing a bug." "$brief" \
-      "$id: brief missing project workflow skill routing"
-    assert_grep "If a named skill is absent, proceed normally." "$brief" \
-      "$id: brief missing the absent-skill fallback"
+    assert_no_grep "Matt-flow" "$brief" \
+      "$id: ordinary ship brief unexpectedly declared Matt-flow"
+    assert_no_grep "\`to-spec\`" "$brief" \
+      "$id: ordinary ship brief unexpectedly mentioned a Matt-flow skill"
+    assert_no_grep "\`code-review\`" "$brief" \
+      "$id: ordinary ship brief unexpectedly mentioned a Matt-flow terminal phase"
     assert_grep "After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid." "$brief" \
       "$id: brief missing the PR review-feedback definition-of-done rule"
     assert_grep "Before reporting done for any PR with user-visible UI changes, use the exact upload command supplied by the project brief to upload viewport screenshots and embed them in the PR body; local paths do not count." "$brief" \
@@ -229,6 +229,31 @@ test_ship_modes_generate_clean_briefs() {
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
+}
+
+test_matt_flow_is_explicit_and_thin() {
+  local home id brief
+  home="$TMP_ROOT/matt-flow-home"
+  mkdir -p "$home/data"
+  id="brief-matt-flow-a4"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "Matt-flow brief was not scaffolded"
+  assert_grep "# Matt-flow" "$brief" \
+    "Matt-flow brief missing its thin trigger section"
+  assert_grep "This brief declares this task a Matt-flow task." "$brief" \
+    "Matt-flow brief missing its explicit declaration"
+  assert_grep "Enter at the project-installed \`to-spec\` skill, or \`triage\` for bug work." "$brief" \
+    "Matt-flow brief missing its normal and bug entry points"
+  assert_grep "Follow the flow's own instructions phase by phase through \`code-review\`, without skipping phases." "$brief" \
+    "Matt-flow brief duplicated phase instructions instead of delegating to the flow"
+  assert_grep "Leave each phase's natural artifact (spec file, tickets folder, failing-test commit, and review notes) and append one status line at every phase transition." "$brief" \
+    "Matt-flow brief missing its artifact and phase-transition status contract"
+  assert_no_grep "\`to-tickets\`" "$brief" \
+    "Matt-flow brief retained the superseded per-skill guidance"
+  assert_no_grep "\`diagnosing-bugs\`" "$brief" \
+    "Matt-flow brief retained the superseded bug-skill guidance"
+  pass "fm-brief.sh: Matt-flow is explicit, complete, and thin"
 }
 
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
@@ -300,8 +325,10 @@ yolo on a ship brief|brief-refused-b1 some-proj --mode direct-PR --yolo on|--yol
 yolo=value form on a ship brief|brief-refused-b2 some-proj --mode direct-PR --yolo=off|--yolo is not a brief input
 mode on a scout brief|brief-refused-b3 some-proj --scout --mode direct-PR|--mode applies only to ship briefs
 mode on a secondmate charter|brief-refused-b4 --secondmate --no-projects --mode no-mistakes|--mode applies only to ship briefs
+Matt-flow on a scout brief|brief-refused-b5 some-proj --scout --matt-flow|--matt-flow applies only to ship briefs
+Matt-flow on a secondmate charter|brief-refused-b6 --secondmate --no-projects --matt-flow|--matt-flow applies only to ship briefs
 ROWS
-  pass "fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped"
+  pass "fm-brief.sh: ship-only delivery flags are refused elsewhere, never silently dropped"
 }
 
 test_faster_paths_use_configured_authority_without_stacked_review() {
@@ -728,6 +755,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_matt_flow_is_explicit_and_thin
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
