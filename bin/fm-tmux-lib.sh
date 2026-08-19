@@ -85,11 +85,11 @@ fm_tmux_composer_caps() {
 }
 
 # fm_tmux_composer_identity: the tmux agent-identity probe backing the
-# separated (pi) composer shape, tmux's analogue of herdr's native
-# `agent get`. It answers only for pi, from two live signals:
+# separated Pi-family composer shape, tmux's analogue of herdr's native
+# `agent get`. It answers for pi, pi-signed, and omp from two live signals:
 #   - identity: the pane tty's FOREGROUND process group (pgid = tpgid, the
 #     same scoping as fm_backend_tmux_foreground_comms) contains a pi-family
-#     process (pi, pi-signed, pi-launcher - docs/verification/
+#     process (omp, pi, pi-signed, pi-launcher - docs/verification/
 #     runtime-backends.md "Agent liveness name sources"), falling back to
 #     tmux's own foreground-derived #{pane_current_command}. A pane whose
 #     agent died to a shell has no pi foreground process and gets NO identity,
@@ -108,7 +108,7 @@ fm_tmux_composer_identity() {  # <target>
         [ -n "$comm" ] || continue
         [ "$pgid" = "$tpgid" ] || continue
         case "${comm##*/}" in
-          pi|pi-signed|pi-launcher|Pi) found=1 ;;
+          omp|pi|pi-signed|pi-launcher|Pi) found=1 ;;
         esac
       done <<EOF
 $(LC_ALL=C ps -t "${tty#/dev/}" -o pid=,pgid=,tpgid=,comm= 2>/dev/null)
@@ -118,7 +118,7 @@ EOF
   if [ "$found" -ne 1 ]; then
     comm=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null) || comm=
     case "${comm##*/}" in
-      pi|pi-signed|pi-launcher) found=1 ;;
+      omp|pi|pi-signed|pi-launcher) found=1 ;;
     esac
   fi
   [ "$found" -eq 1 ] || return 1

@@ -293,10 +293,11 @@ test_matrix_pi_separated_needs_identity() {
   # exactly what the strict rule refuses; only structure PLUS a live
   # idle/done/blocked pi identity proves the composer (herdr's rule, now
   # fleet-wide; tmux supplies identity from its foreground-process probe).
-  local screen typed pi_idle pi_working none
+  local screen typed pi_idle pi_working omp_idle none
   screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
-  pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); none=$(printf 'zsh\t')
+  pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); omp_idle=$(printf 'omp\tidle'); none=$(printf 'zsh\t')
   assert_screen "pi idle with identity" empty "$CAPS_STYLED" "$screen" '' "$pi_idle"
+  assert_screen "omp idle with Pi-family identity" empty "$CAPS_STYLED" "$screen" '' "$omp_idle"
   assert_screen "pi idle on tmux with identity" empty "$CAPS_TMUX" "$screen" 2 "$pi_idle"
   assert_screen "pi idle on zellij" unknown "$CAPS_STYLED_NOID" "$screen"
   # Identity-capable but unfetched: the adapter is asked to probe lazily.

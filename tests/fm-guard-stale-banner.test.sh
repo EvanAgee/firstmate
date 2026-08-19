@@ -120,6 +120,24 @@ record_pi_extension_session() {
   return 0
 }
 
+record_omp_extension_session() {
+  local dir=$1 session_pid=$2 home root pair source marker version
+  home=$(case_home "$dir")
+  root=$(case_root "$dir")
+  mkdir -p "$root/.pi/extensions"
+  for pair in \
+    "fm-primary-omp-watch.ts:.omp-watch-extension-loaded" \
+    "fm-primary-omp-turnend-guard.ts:.omp-turnend-extension-loaded"; do
+    source=${pair%%:*}
+    marker=${pair#*:}
+    printf '// omp extension for %s\n' "$(basename "$dir")" > "$root/.pi/extensions/$source"
+    version=$(FM_STATE_OVERRIDE="$home/state" bash -c '. "$1"; fm_pi_extension_version "$2"' \
+      _ "$ROOT/bin/fm-wake-lib.sh" "$root/.pi/extensions/$source") || return 1
+    printf '%s\n%s\n' "$version" "$session_pid" > "$home/state/$marker"
+  done
+  printf '%s\n' "$session_pid" > "$home/state/.lock"
+}
+
 count_text() {
   local haystack=$1 needle=$2
   awk -v needle="$needle" 'index($0, needle) { c++ } END { print c + 0 }' <<EOF
@@ -680,9 +698,31 @@ test_pi_harness_routes_itself_to_the_extension_model() {
   pass "fm-guard stale banner: Pi and pi-signed primaries route themselves to the extension model"
 }
 
+test_omp_harness_routes_to_its_own_extension_evidence() {
+  local dir home out pid
+  dir=$(make_guard_case harness-routing-omp)
+  home=$(case_home "$dir")
+  sleep 60 &
+  pid=$!
+  record_omp_extension_session "$dir" "$pid" || fail "could not record the omp extension session"
+  touch "$home/state/.last-watcher-beat"
+  out=$(env -u CLAUDECODE -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GROK_AGENT -u PI_CODING_AGENT \
+    -u FM_SUPERVISION_MODEL OMPCODE=1 \
+    FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+    FM_HOME="$home" \
+    FM_GUARD_GRACE=999 \
+    "$ROOT/bin/fm-guard.sh" 2>&1)
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ -z "$out" ] \
+    || fail "an omp primary must route to its own extension ownership proof, got: $out"
+  pass "fm-guard stale banner: omp routes to its own extension model and markers"
+}
+
 test_first_stale_call_prints_full_banner
 test_repeated_same_episode_prints_reminder_only
 test_pi_harness_routes_itself_to_the_extension_model
+test_omp_harness_routes_to_its_own_extension_evidence
 test_extension_handoff_with_live_session_is_healthy
 test_extension_handoff_with_empty_lock_is_healthy
 test_extension_held_unhealthy_locks_stay_alarm
