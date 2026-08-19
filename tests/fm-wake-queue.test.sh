@@ -731,15 +731,26 @@ test_self_held_lock_reclaims_instead_of_deadlocking() {
     [ ! -e "$lock" ] && [ ! -L "$lock" ] || exit 12
   ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" || rc=$?
   [ "$rc" -eq 0 ] || fail "self-held lock was not reclaimed cleanly (rc=$rc)"
-  rc=0
-  FM_STATE_OVERRIDE="$state" bash -c '
-    . "$1"
-    lock="$2/.fixture2.lock"
-    fm_lock_acquire_wait "$lock" || exit 10
-    ( fm_lock_try_acquire "$lock" && exit 13; exit 0 ) || exit 13
-    fm_lock_release "$lock"
-  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" || rc=$?
-  [ "$rc" -eq 0 ] || fail "a subshell reclaimed its parent's live hold (rc=$rc)"
+  # The second leg proves a SUBSHELL cannot reclaim its parent's live hold.
+  # That distinction needs a per-subshell pid, which only BASHPID provides.
+  # bash 3.2 (the macOS system bash) has no BASHPID, so ${BASHPID:-$$} collapses
+  # to $$ - identical in a subshell and its parent - and the reclaim guard has
+  # no signal to separate them. The guarantee is genuinely unavailable there, so
+  # gate this leg on a real BASHPID rather than assert a distinction the shell
+  # cannot make.
+  if [ -z "${BASHPID:-}" ]; then
+    printf 'skip: subshell-vs-parent lock hold needs BASHPID (bash >= 4); this bash has none\n'
+  else
+    rc=0
+    FM_STATE_OVERRIDE="$state" bash -c '
+      . "$1"
+      lock="$2/.fixture2.lock"
+      fm_lock_acquire_wait "$lock" || exit 10
+      ( fm_lock_try_acquire "$lock" && exit 13; exit 0 ) || exit 13
+      fm_lock_release "$lock"
+    ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" || rc=$?
+    [ "$rc" -eq 0 ] || fail "a subshell reclaimed its parent's live hold (rc=$rc)"
+  fi
   pass "an abandoned same-process lock hold is reclaimed; a parent's live hold is not"
 }
 
