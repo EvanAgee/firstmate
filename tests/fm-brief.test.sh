@@ -222,6 +222,11 @@ test_ship_modes_generate_clean_briefs() {
       "$id: ordinary ship brief unexpectedly mentioned a Matt-flow skill"
     assert_no_grep "\`code-review\`" "$brief" \
       "$id: ordinary ship brief unexpectedly mentioned a Matt-flow terminal phase"
+    awk '
+      $0 == "# Rules" { found = 1; good = (blank == 1); exit }
+      { blank = ($0 == "" ? blank + 1 : 0) }
+      END { exit !(found && good) }
+    ' "$brief" || fail "$id: ordinary ship brief changed spacing before the Rules section"
     assert_grep "After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid." "$brief" \
       "$id: brief missing the PR review-feedback definition-of-done rule"
     assert_grep "Before reporting done for any PR with user-visible UI changes, use the exact upload command supplied by the project brief to upload viewport screenshots and embed them in the PR body; local paths do not count." "$brief" \
@@ -232,11 +237,13 @@ test_ship_modes_generate_clean_briefs() {
 }
 
 test_matt_flow_is_explicit_and_thin() {
-  local home id brief
+  local home id brief status
   home="$TMP_ROOT/matt-flow-home"
   mkdir -p "$home/data"
   id="brief-matt-flow-a4"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow >/dev/null 2>&1
+  status=$?
+  expect_code 0 "$status" "Matt-flow brief generation should exit 0"
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "Matt-flow brief was not scaffolded"
   assert_grep "# Matt-flow" "$brief" \
