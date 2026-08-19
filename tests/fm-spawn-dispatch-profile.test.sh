@@ -76,6 +76,7 @@ SH
   chmod +x "$fakebin/timeout" "$fakebin/cursor-agent"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
+  fm_fake_exit0 "$fakebin" omp
   printf '%s\n' "$fakebin"
 }
 
@@ -611,6 +612,35 @@ test_opencode_threads_model_and_ignores_effort_axis() {
   pass "opencode receives --model and omits the unsupported effort axis"
 }
 
+test_omp_threads_model_and_records_omitted_effort_axis() {
+  local rec id out status launch ext gen
+  id=profile-omp-z7b
+  rec=$(make_spawn_case profile-omp omp "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+    --model glm52-phala --effort high)
+  status=$?
+  expect_code 0 "$status" "omp spawn with model and recorded effort should succeed"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" omp glm52-phala high
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "'$FAKEBIN_DIR/omp' --auto-approve --model 'glm52-phala' -e" \
+    "omp launch did not thread the verified model and autonomy flag"
+  assert_not_contains "$launch" "--thinking" \
+    "omp launch must omit thinking for glm52-phala, which advertises no thinking levels"
+  assert_present "$HOME_DIR/state/$id.busy-gen" "omp spawn did not arm the busy-state contract"
+  assert_contains "$(cat "$HOME_DIR/state/$id.busy-state")" "state=busy source=fm-spawn" \
+    "omp spawn did not seed the busy-state record from the launch brief"
+  ext=$(cat "$HOME_DIR/state/$id.omp-ext.ts")
+  gen=$(cat "$HOME_DIR/state/$id.busy-gen")
+  assert_contains "$ext" 'omp.on("agent_start"' "omp extension lost the semantic agent_start busy edge"
+  assert_contains "$ext" 'omp.on("agent_end"' "omp extension lost the semantic agent_end idle edge"
+  assert_contains "$ext" 'event.willContinue' "omp extension no longer guards continuing runs"
+  assert_contains "$ext" "\"--gen\", \"$gen\"" "omp extension does not carry the armed incarnation gen"
+  assert_contains "$ext" '"--source", "omp-ext"' "omp extension does not attribute its semantic source"
+  pass "omp receives its model, records effort intent, omits thinking, and arms semantic busy state"
+}
+
 test_pi_threads_model_and_max_effort() {
   local rec id out status launch
   id=profile-pi-z8
@@ -847,6 +877,7 @@ test_cursor_threads_model_workspace_and_omits_effort_axis
 test_cursor_refuses_model_absent_from_live_catalog
 test_cursor_failed_catalog_probe_does_not_block_spawn
 test_opencode_threads_model_and_ignores_effort_axis
+test_omp_threads_model_and_records_omitted_effort_axis
 test_pi_threads_model_and_max_effort
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity

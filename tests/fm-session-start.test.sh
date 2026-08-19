@@ -2293,6 +2293,29 @@ EOF
   pass "session start preserves pi-signed primary identity while applying Pi extension guarantees"
 }
 
+test_omp_primary_reports_missing_explicit_extensions() {
+  local rec root home fakebin out
+  rec=$(new_world omp-supervision-block)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_harness "$fakebin" omp
+
+  out=$(run_named_harness_session_start omp "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp" \
+    "session start did not render the omp supervision block"
+  assert_contains "$out" "Mode: omp extension background wake." \
+    "omp primary did not use its extension-owned supervision protocol"
+  assert_contains "$out" "OMP_WATCH_EXTENSION: not loaded" \
+    "omp primary skipped explicit extension validation"
+  assert_contains "$out" "-e $root/.pi/extensions/fm-primary-omp-turnend-guard.ts -e $root/.pi/extensions/fm-primary-omp-watch.ts" \
+    "omp extension diagnostic lost the exact restart paths"
+
+  pass "session start reports missing omp primary extensions"
+}
+
 test_pi_diagnostic_rejects_stale_loaded_marker() {
   local rec root home fakebin out marker holder_pid
   rec=$(new_world pi-stale-loaded-marker)
@@ -2430,6 +2453,7 @@ test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
 test_supervision_block_exactly_one_and_pi_diagnostic
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
+test_omp_primary_reports_missing_explicit_extensions
 test_pi_diagnostic_rejects_stale_loaded_marker
 test_pi_diagnostic_accepts_prelock_loaded_marker
 test_pi_diagnostic_rejects_missing_turnend_guard_marker

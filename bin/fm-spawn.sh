@@ -2333,7 +2333,7 @@ if [ "$KIND" != secondmate ]; then
       ;;
   esac
   case "$HARNESS" in
-    claude*|opencode*|pi|pi-signed)
+    claude*|opencode*|omp|pi|pi-signed)
       BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
         echo "error: failed to arm the busy-state contract for $ID" >&2
         exit 1
@@ -2798,6 +2798,7 @@ if [ "$KIND" = secondmate ]; then
   # turns, so a fresh beacon with no live watcher is their healthy mid-turn state.
   case "$HARNESS" in
     claude|cursor) supervision_model=autoarm ;;
+    omp) supervision_model=extension ;;
     *) supervision_model=persistent ;;
   esac
   # Deliver the primary's EFFECTIVE trace-context decision as a normalized on/off
