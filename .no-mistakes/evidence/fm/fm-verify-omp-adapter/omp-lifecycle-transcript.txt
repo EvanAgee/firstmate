@@ -1,0 +1,45 @@
+### omp first-class harness — live spawn + busy/idle lifecycle
+
+1) spawn omp task -> generated per-task extension written at:
+   $STATE/omp-evid-1.omp-ext.ts
+
+----- generated omp extension (product artifact) -----
+// Firstmate semantic busy-state events + turn-end notification; written by
+// fm-spawn under the contract owned by bin/fm-busy-lib.sh.
+// omp event mapping: agent_start -> busy; agent_end (willContinue=false) ->
+// idle; turn_end -> touch turn-end marker. omp has no agent_settled+isIdle;
+// agent_end.willContinue is the settled guard (auto-retry/compaction keep it
+// true, so only a genuine terminal settle marks idle).
+import { execFile } from "node:child_process";
+const busyEvent = (state: string, event: string) =>
+  new Promise<void>((resolve) => {
+    execFile("/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0E19N5GJ0BEVHJK7E3S6N0K/bin/fm-busy-event.sh", [
+      "apply", "/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-busy-adapter-wiring.T62qp0/omp-evid/home/state", "omp-evid-1", state,
+      "--gen", "g1787178018.74104.13405", "--source", "omp-ext", "--event", event,
+    ], () => resolve());
+  });
+export default function (omp: any) {
+  omp.on("agent_start", () => busyEvent("busy", "agent-start"));
+  omp.on("agent_end", (event: any) => {
+    if (event && event.willContinue) return;
+    return busyEvent("idle", "agent-end");
+  });
+  omp.on("turn_end", () => execFile("touch", ["/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-busy-adapter-wiring.T62qp0/omp-evid/home/state/omp-evid-1.turn-ended"]));
+}
+------------------------------------------------------
+
+2) state right after spawn:
+   classify => busy fm-spawn   (expect: busy fm-spawn)
+
+3) fire turn_end handler (notification only, not a state edge):
+   turn-ended marker present? yes
+   classify => busy fm-spawn   (expect: still busy fm-spawn)
+
+4) fire agent_end willContinue=true (agent keeps working):
+   classify => busy fm-spawn   (expect: still busy)
+
+5) fire agent_end willContinue=false (terminal, agent done):
+   classify => idle omp-ext   (expect: idle omp-ext)
+
+6) fire agent_start (new run begins):
+   classify => busy omp-ext   (expect: busy omp-ext)
