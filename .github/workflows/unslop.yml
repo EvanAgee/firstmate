@@ -1,0 +1,88 @@
+name: Unslop
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unslop:
+    name: Changed-code AI slop gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Find changed supported code
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          file_list="$RUNNER_TEMP/unslop-files"
+          : > "$file_list"
+
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.mts|*.cts)
+                printf './%s\0' "$file" >> "$file_list"
+                ;;
+            esac
+          done < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA...$HEAD_SHA" --)
+
+          if [ -s "$file_list" ]; then
+            echo "has_code=true" >> "$GITHUB_OUTPUT"
+            echo "Supported code changed; unslop will run."
+          else
+            echo "has_code=false" >> "$GITHUB_OUTPUT"
+            echo "No supported code files changed; skipping unslop."
+          fi
+
+      - name: Set up Node.js
+        if: steps.changed.outputs.has_code == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Restore npm download cache
+        if: steps.changed.outputs.has_code == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-unslop-0.1.7-oxlint-1.50.0
+          restore-keys: |
+            npm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install pinned analyzers
+        if: steps.changed.outputs.has_code == 'true'
+        run: |
+          set -eu
+          npm install --global --no-audit --no-fund unslop@0.1.7 oxlint@1.50.0
+          unslop --version
+          oxlint --version
+
+      - name: Report findings and gate errors
+        if: steps.changed.outputs.has_code == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t changed_files < "$RUNNER_TEMP/unslop-files"
+          printf 'Scanning %d changed code file(s):\n' "${#changed_files[@]}"
+          printf '  %q\n' "${changed_files[@]}"
+
+          report="$RUNNER_TEMP/unslop.json"
+          set +e
+          unslop --format json --fail-on exact-clone,dead-code "${changed_files[@]}" > "$report"
+          unslop_exit=$?
+          set -e
+
+          jq 'if . == null then [] else . end' "$report"
+          if [ "$unslop_exit" -ne 0 ]; then
+            echo "::error::unslop found gateable error-tier slop or could not complete the scan"
+          fi
+          exit "$unslop_exit"
