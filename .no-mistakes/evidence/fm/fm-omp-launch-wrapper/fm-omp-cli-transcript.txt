@@ -1,9 +1,19 @@
-$ FM_OMP_BIN=/bin/echo bin/fm-omp.sh --model demo-model --resume session-42
--e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G7467RTCJ89AKKWVXD5SW0/.pi/extensions/fm-primary-omp-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G7467RTCJ89AKKWVXD5SW0/.pi/extensions/fm-primary-omp-watch.ts --model demo-model --resume session-42
+Bare argv capture (no wrapper):
+--model review model --resume
 
-$ FM_ROOT_OVERRIDE=/tmp/firstmate-root-without-extensions FM_OMP_BIN=/bin/echo bin/fm-omp.sh
-error: missing turn-end guard extension: /tmp/firstmate-root-without-extensions/.pi/extensions/fm-primary-omp-turnend-guard.ts
-exit=1
+Canonical primary launch through bin/fm-omp.sh:
+-e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G8VXWYDSMN4AXP628AN8TN/.pi/extensions/fm-primary-omp-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G8VXWYDSMN4AXP628AN8TN/.pi/extensions/fm-primary-omp-watch.ts --model review model --resume
 
-$ FM_HOME=/tmp/fm-omp-evidence-home bin/fm-supervision-instructions.sh --harness omp --repair-line
-repair a missing or failed watcher cycle with the omp tool fm_watch_arm_omp, or relaunch with bin/fm-omp.sh, or restart omp with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G7467RTCJ89AKKWVXD5SW0/.pi/extensions/fm-primary-omp-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G7467RTCJ89AKKWVXD5SW0/.pi/extensions/fm-primary-omp-watch.ts if the extensions are not loaded.
+Operator-facing recovery instruction:
+repair a missing or failed watcher cycle with the omp tool fm_watch_arm_omp, or relaunch with bin/fm-omp.sh, or restart omp with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G8VXWYDSMN4AXP628AN8TN/.pi/extensions/fm-primary-omp-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G8VXWYDSMN4AXP628AN8TN/.pi/extensions/fm-primary-omp-watch.ts if the extensions are not loaded.
+
+Missing extension failure (FM_ROOT_OVERRIDE points at an empty root):
+error: missing turn-end guard extension: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.dRSpezctxA/empty-root/.pi/extensions/fm-primary-omp-turnend-guard.ts
+exit_status=1
+
+Missing omp failure with PATH isolated from host omp binaries:
+error: omp not found on PATH
+exit_status=1
+
+Real installed omp smoke through the canonical wrapper:
+17.4.0
