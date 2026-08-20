@@ -23,6 +23,5 @@ When this session owns supervision and away mode is not active:
 
 The turn-end guard extension lives at `__FM_OMP_TURNEND_EXT__`.
 The watcher extension lives at `__FM_OMP_EXT__`.
-Both are project-local `.pi/extensions/*.ts` files; `bin/fm-omp.sh` is the canonical primary launch.
 `bin/fm-session-start.sh` reports when the running omp session has not loaded both required extensions.
 omp fires `session_stop` (not Pi's `agent_settled`) when a turn is about to settle, and the guard runs there.
