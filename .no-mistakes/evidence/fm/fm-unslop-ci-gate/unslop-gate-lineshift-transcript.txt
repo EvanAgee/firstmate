@@ -1,0 +1,93 @@
+==================================================================
+LINESHIFT with new gate script (BASE=f883cbed1 HEAD=8e6aeb417)
+==================================================================
+Supported code changed; unslop will run.
+Scanning 2 changed code file(s):
+  ./lib/invoices.js
+  ./lib/orders.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js:3>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js",
+        "startLine": 3,
+        "startCol": 0,
+        "endLine": 25,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js:3>",
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js:1>"
+    ]
+  }
+]
+No newly introduced error-tier gateable findings; pre-existing findings stay report-only.
+-- new gate exit code: 0 (expected 0)
+LINESHIFT new: OK
+==================================================================
+LINESHIFT with old gate script (BASE=f883cbed1 HEAD=8e6aeb417)
+==================================================================
+Supported code changed; unslop will run.
+Scanning 2 changed code file(s):
+  ./lib/invoices.js
+  ./lib/orders.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js:3>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js",
+        "startLine": 3,
+        "startCol": 0,
+        "endLine": 25,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js:3>",
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js:1>"
+    ]
+  }
+]
+Preparing worktree (detached HEAD f883cbe)
+HEAD is now at f883cbe base with pre-existing exact-clone slop
+Error-tier gateable findings not present in these files at base commit f883cbed1b75f4916c7d14c5eb999f1982404ab8:
+{"rule":"exact-clone","message":"Exact duplicate: <export@lib/orders.js:3>","files":["lib/invoices.js","lib/orders.js"]}
+::error::This pull request introduces new error-tier gateable AI-slop findings
+-- old gate exit code: 1 (expected 1)
+LINESHIFT old: OK
+LINESHIFT SCENARIOS PASSED

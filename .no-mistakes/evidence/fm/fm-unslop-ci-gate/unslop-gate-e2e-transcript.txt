@@ -1,0 +1,204 @@
+extracted run scripts
+==================================================================
+SCENARIO rename (BASE=f883cbed1 HEAD=beb51dbd5)
+==================================================================
+Supported code changed; unslop will run.
+Scanning 2 changed code file(s):
+  ./lib/invoices.js
+  ./src/orders.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test.yUHTPk/repo/src/orders.js:1>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/src/orders.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/src/orders.js:1>",
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js:1>"
+    ]
+  }
+]
+No newly introduced error-tier gateable findings; pre-existing findings stay report-only.
+-- gate step exit code: 0 (expected 0)
+SCENARIO rename: OK
+==================================================================
+SCENARIO preexisting (BASE=f883cbed1 HEAD=0be1dc90d)
+==================================================================
+Supported code changed; unslop will run.
+Scanning 2 changed code file(s):
+  ./lib/invoices.js
+  ./lib/orders.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js:1>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js:1>",
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/orders.js:1>"
+    ]
+  }
+]
+No newly introduced error-tier gateable findings; pre-existing findings stay report-only.
+-- gate step exit code: 0 (expected 0)
+SCENARIO preexisting: OK
+==================================================================
+SCENARIO newslop (BASE=f883cbed1 HEAD=fd74a3dfc)
+==================================================================
+Supported code changed; unslop will run.
+Scanning 2 changed code file(s):
+  ./lib/copy_one.js
+  ./lib/copy_two.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test.yUHTPk/repo/lib/copy_two.js:1>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/copy_two.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/copy_one.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/copy_two.js:1>",
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/copy_one.js:1>"
+    ]
+  }
+]
+Error-tier gateable findings not present in these files at base commit f883cbed1b75f4916c7d14c5eb999f1982404ab8:
+{"rule":"exact-clone","message":"Exact duplicate: <export>","files":["lib/copy_one.js","lib/copy_two.js"]}
+::error::This pull request introduces new error-tier gateable AI-slop findings
+-- gate step exit code: 1 (expected 1)
+SCENARIO newslop: OK
+==================================================================
+SCENARIO nocode (BASE=f883cbed1 HEAD=f95812157)
+==================================================================
+No supported code files changed; skipping unslop.
+-- gate step skipped: has_code=false (expected skipped)
+SCENARIO nocode: OK
+==================================================================
+SCENARIO analyzer-fail (BASE=f883cbed1 HEAD=beb51dbd5)
+==================================================================
+Supported code changed; unslop will run.
+Scanning 2 changed code file(s):
+  ./lib/invoices.js
+  ./src/orders.js
+unslop: simulated crash
+::error::unslop could not produce a machine-readable report (scan of /tmp/unslop-gate-test.yUHTPk/repo exited with status 3); the slop gate did not evaluate this pull request and is passing without gating it
+-- gate step exit code: 0 (expected 0)
+SCENARIO analyzer-fail: OK
+==================================================================
+REGRESSION CHECK: old gate script on the rename scenario
+==================================================================
+==================================================================
+SCENARIO rename-oldscript (BASE=f883cbed1 HEAD=beb51dbd5)
+==================================================================
+Supported code changed; unslop will run.
+Scanning 2 changed code file(s):
+  ./lib/invoices.js
+  ./src/orders.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test.yUHTPk/repo/src/orders.js:1>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/src/orders.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 23,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/src/orders.js:1>",
+      "<export@/tmp/unslop-gate-test.yUHTPk/repo/lib/invoices.js:1>"
+    ]
+  }
+]
+Preparing worktree (detached HEAD f883cbe)
+HEAD is now at f883cbe base with pre-existing exact-clone slop
+Error-tier gateable findings not present in these files at base commit f883cbed1b75f4916c7d14c5eb999f1982404ab8:
+{"rule":"exact-clone","message":"Exact duplicate: <export@src/orders.js:1>","files":["lib/invoices.js","src/orders.js"]}
+::error::This pull request introduces new error-tier gateable AI-slop findings
+-- gate step exit code: 1 (expected 1)
+SCENARIO rename-oldscript: OK
+ALL SCENARIOS PASSED
