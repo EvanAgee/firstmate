@@ -1,0 +1,28 @@
+===== mode=no-mistakes : Definition of done section from generated brief =====
+# Definition of done
+Delivery contract: mode=no-mistakes
+The task is complete only when committed on your branch.
+When you believe it is complete, run /no-mistakes to validate and ship a PR.
+Do not stop and wait for firstmate to instruct you - proceed directly to validation.
+
+You drive no-mistakes by responding to its gates, not by implementing fixes.
+Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and `no-mistakes axi run --help` plus the `help` lines in each `axi` response are authoritative and version-matched to the installed binary.
+
+===== mode=direct-pr : Definition of done section from generated brief =====
+
+===== mode=local-only : Definition of done section from generated brief =====
+# Definition of done
+Delivery contract: mode=local-only
+This task ships **local-only**: no remote, no PR, no pipeline.
+The task is complete only when committed on your branch `fm/brief-evi-local-only`. Do NOT push, do NOT open a PR, do NOT merge.
+Keep your branch a clean fast-forward onto the current default branch - if `main` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+When it is implemented and committed, append `done: ready in branch fm/brief-evi-local-only` to the status file and stop.
+The configured merge authority approves the ready branch, then firstmate merges it into local `main` through the guarded fast-forward path.
+
+===== mode=direct-PR : Definition of done section from generated brief =====
+# Definition of done
+Delivery contract: mode=direct-PR
+This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+The task is complete only when committed on your branch.
+When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and stop.
+Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
