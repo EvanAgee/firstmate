@@ -148,7 +148,7 @@ repair_line() {
       printf '%s%s%s%s%s%s\n' "$prefix" 'repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e ' "$pi_turnend_ext" ' -e ' "$pi_ext" ' if the extensions are not loaded.'
       ;;
     omp)
-      printf '%s%s%s%s%s%s\n' "$prefix" 'repair a missing or failed watcher cycle with the omp tool fm_watch_arm_omp, or restart omp with -e ' "$omp_turnend_ext" ' -e ' "$omp_ext" ' if the extensions are not loaded.'
+      printf '%s%s%s%s%s%s\n' "$prefix" 'repair a missing or failed watcher cycle with the omp tool fm_watch_arm_omp, or relaunch with bin/fm-omp.sh, or restart omp with -e ' "$omp_turnend_ext" ' -e ' "$omp_ext" ' if the extensions are not loaded.'
       ;;
     opencode)
       printf '%s%s\n' "$prefix" 'repair missing watcher supervision by letting the OpenCode TUI plugin arm after idle; use bin/fm-watch-arm.sh only as a manual recovery probe if the plugin reports failure.'

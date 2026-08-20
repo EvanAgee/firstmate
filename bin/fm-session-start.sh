@@ -752,7 +752,7 @@ elif [ "$PRIMARY_HARNESS" = omp ]; then
   OMP_TURNEND_VERSION=$(fm_pi_extension_version "$OMP_TURNEND_EXT" || printf '')
   if ! fm_pi_extension_loaded "$OMP_WATCH_MARKER" "$OMP_WATCH_VERSION" "$OMP_LOCK" \
     || ! fm_pi_extension_loaded "$OMP_TURNEND_MARKER" "$OMP_TURNEND_VERSION" "$OMP_LOCK"; then
-    printf 'OMP_WATCH_EXTENSION: not loaded - restart omp with -e %s -e %s so both explicit extensions provide turn-end guard and background wake coverage\n' "$OMP_TURNEND_EXT" "$OMP_EXT"
+    printf 'OMP_WATCH_EXTENSION: not loaded - relaunch with bin/fm-omp.sh, or restart omp with -e %s -e %s so both explicit extensions provide turn-end guard and background wake coverage\n' "$OMP_TURNEND_EXT" "$OMP_EXT"
   fi
 fi
 "$SCRIPT_DIR/fm-supervision-instructions.sh" \

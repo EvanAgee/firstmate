@@ -2312,6 +2312,8 @@ EOF
     "omp primary skipped explicit extension validation"
   assert_contains "$out" "-e $root/.pi/extensions/fm-primary-omp-turnend-guard.ts -e $root/.pi/extensions/fm-primary-omp-watch.ts" \
     "omp extension diagnostic lost the exact restart paths"
+  assert_contains "$out" "bin/fm-omp.sh" \
+    "omp extension diagnostic lost the canonical relaunch wrapper"
 
   pass "session start reports missing omp primary extensions"
 }

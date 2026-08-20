@@ -73,6 +73,7 @@ test_repair_lines() {
   assert_contains "$out" "omp tool fm_watch_arm_omp" "omp repair line does not direct the model to its extension-owned tool"
   assert_contains "$out" "fm-primary-omp-turnend-guard.ts" "omp repair line lost its explicit turn-end extension"
   assert_contains "$out" "fm-primary-omp-watch.ts" "omp repair line lost its explicit watcher extension"
+  assert_contains "$out" "bin/fm-omp.sh" "omp repair line lost the canonical relaunch wrapper"
   pass "renderer repair-line mode is harness-aware and honors conditional state"
 }
 
@@ -196,6 +197,7 @@ test_omp_snippet_uses_effective_extension_path() {
   mkdir -p "$home/state" "$home/config"
   out=$(FM_HOME="$home" "$RENDER" --harness omp)
   assert_contains "$out" "-e $turnend -e $watch" "omp snippet did not render both effective extension launch paths"
+  assert_contains "$out" "bin/fm-omp.sh" "omp snippet lost the canonical primary launch wrapper"
   assert_contains "$out" "The turn-end guard extension lives at \`$turnend\`" "omp snippet did not render the turn-end guard extension path"
   assert_contains "$out" "The watcher extension lives at \`$watch\`" "omp snippet did not render the watcher extension path"
   assert_not_contains "$out" "__FM_OMP_EXT__" "renderer leaked the omp extension path placeholder"
