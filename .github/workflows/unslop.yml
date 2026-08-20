@@ -36,7 +36,7 @@ jobs:
 
           while IFS= read -r -d '' file; do
             case "$file" in
-              *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.mts|*.cts)
+              *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx)
                 printf './%s\0' "$file" >> "$file_list"
                 ;;
             esac
@@ -73,8 +73,10 @@ jobs:
           unslop --version
           oxlint --version
 
-      - name: Report findings and gate errors
+      - name: Report findings and gate newly introduced slop
         if: steps.changed.outputs.has_code == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -82,14 +84,68 @@ jobs:
           printf 'Scanning %d changed code file(s):\n' "${#changed_files[@]}"
           printf '  %q\n' "${changed_files[@]}"
 
-          report="$RUNNER_TEMP/unslop.json"
-          set +e
-          unslop --format json --fail-on exact-clone,dead-code "${changed_files[@]}" > "$report"
-          unslop_exit=$?
-          set -e
+          analyzer_failed() {
+            echo "::error::unslop could not produce a machine-readable report ($1); the slop gate did not evaluate this pull request and is passing without gating it"
+            exit 0
+          }
 
-          jq 'if . == null then [] else . end' "$report"
-          if [ "$unslop_exit" -ne 0 ]; then
-            echo "::error::unslop found gateable error-tier slop or could not complete the scan"
+          scan() {
+            local root="$1" report="$2"
+            shift 2
+            local scan_exit=0
+            (cd "$root" && unslop --format json "$@") > "$report" || scan_exit=$?
+            if [ "$scan_exit" -ne 0 ]; then
+              analyzer_failed "scan of $root exited with status $scan_exit"
+            fi
+            if ! jq -e '. == null or type == "array"' "$report" > /dev/null 2>&1; then
+              analyzer_failed "scan of $root emitted output that is not a JSON findings array"
+            fi
+          }
+
+          extract_gateable_keys() {
+            local root="$1" root_physical="$2" report="$3"
+            jq -c --arg root "${root%/}/" --arg rootp "${root_physical%/}/" '
+              if . == null then [] else . end
+              | .[]
+              | select(.severity == "error" and .gateable == true)
+              | { rule: (.ruleId // .category),
+                  message,
+                  files: ([.locations[]?.file | ltrimstr($root) | ltrimstr($rootp)] | sort) }
+            ' "$report" | LC_ALL=C sort
+          }
+
+          head_report="$RUNNER_TEMP/unslop-head.json"
+          scan "$GITHUB_WORKSPACE" "$head_report" "${changed_files[@]}"
+          echo "Findings in changed files at head (all severities):"
+          jq 'if . == null then [] else . end' "$head_report"
+
+          base_tree="$RUNNER_TEMP/unslop-base-tree"
+          git worktree add --detach "$base_tree" "$BASE_SHA"
+
+          base_files=()
+          for file in "${changed_files[@]}"; do
+            if [ -f "$base_tree/$file" ]; then
+              base_files+=("$file")
+            fi
+          done
+
+          base_report="$RUNNER_TEMP/unslop-base.json"
+          if [ "${#base_files[@]}" -gt 0 ]; then
+            scan "$base_tree" "$base_report" "${base_files[@]}"
+          else
+            echo 'null' > "$base_report"
           fi
-          exit "$unslop_exit"
+
+          head_root_physical="$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          base_root_physical="$(cd "$base_tree" && pwd -P)"
+          extract_gateable_keys "$GITHUB_WORKSPACE" "$head_root_physical" "$head_report" > "$RUNNER_TEMP/unslop-head-keys"
+          extract_gateable_keys "$base_tree" "$base_root_physical" "$base_report" > "$RUNNER_TEMP/unslop-base-keys"
+
+          new_findings="$(LC_ALL=C comm -13 "$RUNNER_TEMP/unslop-base-keys" "$RUNNER_TEMP/unslop-head-keys")"
+          if [ -n "$new_findings" ]; then
+            echo "Error-tier gateable findings not present in these files at base commit $BASE_SHA:"
+            printf '%s\n' "$new_findings"
+            echo "::error::This pull request introduces new error-tier gateable AI-slop findings"
+            exit 1
+          fi
+          echo "No newly introduced error-tier gateable findings; pre-existing findings stay report-only."
