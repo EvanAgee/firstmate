@@ -109,7 +109,7 @@ jobs:
               | .[]
               | select(.severity == "error" and .gateable == true)
               | { rule: (.ruleId // .category),
-                  message,
+                  message: (.message | split($root) | join("") | split($rootp) | join("")),
                   files: ([.locations[]?.file | ltrimstr($root) | ltrimstr($rootp)] | sort) }
             ' "$report" | LC_ALL=C sort
           }
