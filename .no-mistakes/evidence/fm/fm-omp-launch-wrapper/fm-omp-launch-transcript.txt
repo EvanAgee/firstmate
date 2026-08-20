@@ -1,0 +1,21 @@
+=== DEMO 1: bare relaunch (what an operator runs) ===
+$ FM_OMP_BIN=<omp> bin/fm-omp.sh
+omp launched by fm-omp.sh with these arguments:
+  [1] -e
+  [2] /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G5RTM22AFHEC689Z2S3P7F/.pi/extensions/fm-primary-omp-turnend-guard.ts
+  [3] -e
+  [4] /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G5RTM22AFHEC689Z2S3P7F/.pi/extensions/fm-primary-omp-watch.ts
+
+=== DEMO 2: with passthrough args ===
+$ FM_OMP_BIN=<omp> bin/fm-omp.sh --resume "my session"
+omp launched by fm-omp.sh with these arguments:
+  [1] -e
+  [2] /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G5RTM22AFHEC689Z2S3P7F/.pi/extensions/fm-primary-omp-turnend-guard.ts
+  [3] -e
+  [4] /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0G5RTM22AFHEC689Z2S3P7F/.pi/extensions/fm-primary-omp-watch.ts
+  [5] --resume
+  [6] my session
+
+=== DEMO 3: loud failure when an extension is missing ===
+$ FM_ROOT_OVERRIDE=<repo-without-turnend-guard> bin/fm-omp.sh
+(exit status: 1)
