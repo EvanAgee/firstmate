@@ -16,8 +16,8 @@ detection regression stays green.
 
 - All live-omp runs use scratch dirs, `--session-dir` temp, `FM_STATE_OVERRIDE`
   temp, `--auto-approve`, smol model, `-p` print mode unless a case needs TUI.
-- Extensions loaded explicitly with repeatable `-e` (never rely on auto-discovery
-  in tests).
+- Primary live runs launch through `bin/fm-omp.sh`; its header owns the required extension argv.
+- Test-only probe extensions still load with repeatable `-e` rather than auto-discovery.
 - Test-only probe extension: `tests/fixtures/omp-event-probe.ts` — logs every
   event (`session_start`, `session_switch`, `session_branch`, `session_shutdown`,
   `session_compact`, `session_stop`, `tool_call`, `agent_start`, `agent_end`) and
@@ -70,7 +70,7 @@ explicit `omp`; secondmate chain unchanged. Usage header lists omp.
 ## 4. Live omp extension behavior (real omp, `-p`, scratch dirs)
 
 ### A. Load and arm
-`omp -p -e tests/fixtures/omp-event-probe.ts -e .pi/extensions/fm-primary-omp-watch.ts -e .pi/extensions/fm-primary-omp-turnend-guard.ts --session-dir <tmp> --auto-approve "call the fm_watch_arm_omp tool and report its exact output"`
+`bin/fm-omp.sh -p -e tests/fixtures/omp-event-probe.ts --session-dir <tmp> --auto-approve "call the fm_watch_arm_omp tool and report its exact output"`
 
 Assert: extensions load without errors; tool registered and callable;
 `watcher: started pid=<N> (beacon fresh)` output; beacon
@@ -118,8 +118,8 @@ settle/guard wake; the guard fires only on the true final settle.
 
 ## 6. E2E crew run under omp (real proof)
 
-Scratch project; `FM_ROOT_OVERRIDE` = worktree; primary omp interactive (or
-scripted `-p` + probe). Spawn a real 2-task crew (e.g. "write a module + test").
+Scratch project; `FM_ROOT_OVERRIDE` = worktree; primary omp launched through `bin/fm-omp.sh` interactively (or with scripted `-p` plus the probe).
+Spawn a real 2-task crew (e.g. "write a module + test").
 Assert the full loop:
 
 1. spawn launches omp crewmate with extensions
