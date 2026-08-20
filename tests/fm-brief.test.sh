@@ -302,7 +302,7 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+  assert_grep "run /no-mistakes to validate and ship a PR" "$brief" \
     "explicit no-mistakes brief did not render the pipeline definition of done"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
@@ -400,6 +400,28 @@ test_no_mistakes_dod_wording() {
   assert_grep "firstmate's authority check" "$brief" \
     "no-mistakes DOD lost the apostrophe prose that the structural fix makes parse-safe"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe"
+}
+
+# The no-mistakes DOD must send the worker straight into validation instead
+# of stopping at a "done: built" line to wait for firstmate to hand across
+# the /no-mistakes instruction. That hand-off added a supervisor round trip
+# on every ship task. Pin the new direct-validation prose and the absence of
+# the old wait-for-firstmate line so the round trip cannot silently return.
+test_no_mistakes_dod_self_drives_into_validation() {
+  local home id brief
+  home="$TMP_ROOT/selfdrive-home"
+  mkdir -p "$home/data"
+  id="brief-selfdrive-d1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "brief was not scaffolded"
+  assert_grep "run /no-mistakes to validate and ship a PR" "$brief" \
+    "no-mistakes DOD must tell the worker to run /no-mistakes directly"
+  assert_grep "proceed directly to validation" "$brief" \
+    "no-mistakes DOD must tell the worker not to wait for firstmate"
+  assert_no_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+    "no-mistakes DOD must not keep the old wait-for-firstmate round-trip line"
+  pass "fm-brief.sh: no-mistakes DOD self-drives into validation"
 }
 
 test_ship_project_memory_wording() {
@@ -768,6 +790,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_no_mistakes_dod_self_drives_into_validation
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
