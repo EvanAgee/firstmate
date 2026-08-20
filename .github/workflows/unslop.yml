@@ -77,6 +77,7 @@ jobs:
         if: steps.changed.outputs.has_code == 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -109,7 +110,7 @@ jobs:
               | .[]
               | select(.severity == "error" and .gateable == true)
               | { rule: (.ruleId // .category),
-                  message: (.message | split($root) | join("") | split($rootp) | join("") | gsub("@[^>]*"; "")),
+                  message: (.message | split($root) | join("") | split($rootp) | join("") | gsub("@[^>]*>"; ">")),
                   files: ([.locations[]?.file | ltrimstr($root) | ltrimstr($rootp)] | sort) }
             ' "$report" | LC_ALL=C sort
           }
