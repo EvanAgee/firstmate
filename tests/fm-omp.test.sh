@@ -105,11 +105,17 @@ assert_contains "$err" "fm-primary-omp-watch.ts" "missing watcher extension did 
 assert_absent "$TMP_ROOT/ran" "missing watcher extension still exec'd omp"
 pass "wrapper fails loud when the watcher extension is missing"
 
-# Missing omp binary fails before any launch.
+# Missing omp binary fails before any launch. PATH must not sweep in a host
+# omp from /usr/bin, so it carries only the dirname the wrapper needs.
+host_min="$TMP_ROOT/host-min"
+mkdir -p "$host_min"
+for tool in env bash dirname; do
+  ln -sf "$(command -v "$tool")" "$host_min/$tool"
+done
 rm -f "$TMP_ROOT/ran"
 set +e
 err=$(
-  PATH="/usr/bin:/bin" env -u FM_OMP_BIN "$WRAPPER" 2>&1
+  PATH="$host_min" env -u FM_OMP_BIN "$WRAPPER" 2>&1
 )
 rc=$?
 set -e
