@@ -109,7 +109,7 @@ jobs:
               | .[]
               | select(.severity == "error" and .gateable == true)
               | { rule: (.ruleId // .category),
-                  message: (.message | split($root) | join("") | split($rootp) | join("")),
+                  message: (.message | split($root) | join("") | split($rootp) | join("") | gsub("@[^>]*"; "")),
                   files: ([.locations[]?.file | ltrimstr($root) | ltrimstr($rootp)] | sort) }
             ' "$report" | LC_ALL=C sort
           }
@@ -120,11 +120,32 @@ jobs:
           jq 'if . == null then [] else . end' "$head_report"
 
           base_tree="$RUNNER_TEMP/unslop-base-tree"
-          git worktree add --detach "$base_tree" "$BASE_SHA"
+          mkdir -p "$base_tree"
+
+          # A renamed file lives at a different path in the base commit. Map each
+          # changed file's head path to its base path so the base scan reads the
+          # pre-rename content, then write that content at the head path in the
+          # base tree so the dedupe keys compare like for like with no extra
+          # path rewriting. Copied files are genuinely new and stay unmapped.
+          declare -A base_path_for
+          while IFS= read -r -d '' st; do
+            if [[ "$st" == R* || "$st" == C* ]]; then
+              IFS= read -r -d '' old; IFS= read -r -d '' new
+              if [[ "$st" == R* ]]; then
+                base_path_for["$new"]="$old"
+              fi
+            else
+              IFS= read -r -d '' _
+            fi
+          done < <(git diff --name-status -z "$BASE_SHA...$HEAD_SHA")
 
           base_files=()
           for file in "${changed_files[@]}"; do
-            if [ -f "$base_tree/$file" ]; then
+            rel="${file#./}"
+            bp="${base_path_for["$rel"]:-$rel}"
+            if git cat-file -e "$BASE_SHA:$bp" 2>/dev/null; then
+              mkdir -p "$base_tree/$(dirname "$file")"
+              git show "$BASE_SHA:$bp" > "$base_tree/$file"
               base_files+=("$file")
             fi
           done
