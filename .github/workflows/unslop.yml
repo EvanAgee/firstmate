@@ -1,0 +1,151 @@
+name: Unslop
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unslop:
+    name: Changed-code AI slop gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Find changed supported code
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          file_list="$RUNNER_TEMP/unslop-files"
+          changed_paths="$RUNNER_TEMP/unslop-changed-paths"
+          : > "$file_list"
+
+          if ! git diff --name-only --diff-filter=ACMR -z "$BASE_SHA...$HEAD_SHA" -- > "$changed_paths"; then
+            echo "::error::Could not determine changed files"
+            exit 1
+          fi
+
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx)
+                printf './%s\0' "$file" >> "$file_list"
+                ;;
+            esac
+          done < "$changed_paths"
+
+          if [ -s "$file_list" ]; then
+            echo "has_code=true" >> "$GITHUB_OUTPUT"
+            echo "Supported code changed; unslop will run."
+          else
+            echo "has_code=false" >> "$GITHUB_OUTPUT"
+            echo "No supported code files changed; skipping unslop."
+          fi
+
+      - name: Set up Node.js
+        if: steps.changed.outputs.has_code == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Restore npm download cache
+        if: steps.changed.outputs.has_code == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-unslop-0.1.7-oxlint-1.50.0
+          restore-keys: |
+            npm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install pinned analyzers
+        if: steps.changed.outputs.has_code == 'true'
+        run: |
+          set -eu
+          npm install --global --no-audit --no-fund unslop@0.1.7 oxlint@1.50.0
+          unslop --version
+          oxlint --version
+
+      - name: Report findings and gate newly introduced slop
+        if: steps.changed.outputs.has_code == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t changed_files < "$RUNNER_TEMP/unslop-files"
+          printf 'Scanning %d changed code file(s):\n' "${#changed_files[@]}"
+          printf '  %q\n' "${changed_files[@]}"
+
+          analyzer_failed() {
+            echo "::error::unslop could not produce a machine-readable report ($1); the slop gate did not evaluate this pull request and is passing without gating it"
+            exit 0
+          }
+
+          scan() {
+            local root="$1" report="$2"
+            shift 2
+            local scan_exit=0
+            (cd "$root" && unslop --format json "$@") > "$report" || scan_exit=$?
+            if [ "$scan_exit" -ne 0 ]; then
+              analyzer_failed "scan of $root exited with status $scan_exit"
+            fi
+            if ! jq -e '. == null or type == "array"' "$report" > /dev/null 2>&1; then
+              analyzer_failed "scan of $root emitted output that is not a JSON findings array"
+            fi
+          }
+
+          extract_gateable_keys() {
+            local root="$1" root_physical="$2" report="$3"
+            jq -c --arg root "${root%/}/" --arg rootp "${root_physical%/}/" '
+              if . == null then [] else . end
+              | .[]
+              | select(.severity == "error" and .gateable == true)
+              | { rule: (.ruleId // .category),
+                  message: (.message | split($root) | join("") | split($rootp) | join("")),
+                  files: ([.locations[]?.file | ltrimstr($root) | ltrimstr($rootp)] | sort) }
+            ' "$report" | LC_ALL=C sort
+          }
+
+          head_report="$RUNNER_TEMP/unslop-head.json"
+          scan "$GITHUB_WORKSPACE" "$head_report" "${changed_files[@]}"
+          echo "Findings in changed files at head (all severities):"
+          jq 'if . == null then [] else . end' "$head_report"
+
+          base_tree="$RUNNER_TEMP/unslop-base-tree"
+          git worktree add --detach "$base_tree" "$BASE_SHA"
+
+          base_files=()
+          for file in "${changed_files[@]}"; do
+            if [ -f "$base_tree/$file" ]; then
+              base_files+=("$file")
+            fi
+          done
+
+          base_report="$RUNNER_TEMP/unslop-base.json"
+          if [ "${#base_files[@]}" -gt 0 ]; then
+            scan "$base_tree" "$base_report" "${base_files[@]}"
+          else
+            echo 'null' > "$base_report"
+          fi
+
+          head_root_physical="$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          base_root_physical="$(cd "$base_tree" && pwd -P)"
+          extract_gateable_keys "$GITHUB_WORKSPACE" "$head_root_physical" "$head_report" > "$RUNNER_TEMP/unslop-head-keys"
+          extract_gateable_keys "$base_tree" "$base_root_physical" "$base_report" > "$RUNNER_TEMP/unslop-base-keys"
+
+          new_findings="$(LC_ALL=C comm -13 "$RUNNER_TEMP/unslop-base-keys" "$RUNNER_TEMP/unslop-head-keys")"
+          if [ -n "$new_findings" ]; then
+            echo "Error-tier gateable findings not present in these files at base commit $BASE_SHA:"
+            printf '%s\n' "$new_findings"
+            echo "::error::This pull request introduces new error-tier gateable AI-slop findings"
+            exit 1
+          fi
+          echo "No newly introduced error-tier gateable findings; pre-existing findings stay report-only."
