@@ -1,0 +1,163 @@
+==============================================
+SCENARIO: preexisting-pass
+==============================================
+Supported code changed; unslop will run.
+-- changed-step exit: 0 ; outputs: has_code=true
+Scanning 2 changed code file(s):
+  ./a.js
+  ./b.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test/preexisting-pass/repo/a.js:16>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test/preexisting-pass/repo/a.js",
+        "startLine": 16,
+        "startCol": 0,
+        "endLine": 31,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test/preexisting-pass/repo/b.js",
+        "startLine": 16,
+        "startCol": 0,
+        "endLine": 31,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test/preexisting-pass/repo/a.js:16>",
+      "<export@/tmp/unslop-gate-test/preexisting-pass/repo/b.js:16>"
+    ]
+  },
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test/preexisting-pass/repo/a.js:1>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test/preexisting-pass/repo/a.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 14,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test/preexisting-pass/repo/b.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 14,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test/preexisting-pass/repo/a.js:1>",
+      "<export@/tmp/unslop-gate-test/preexisting-pass/repo/b.js:1>"
+    ]
+  }
+]
+Preparing worktree (detached HEAD dcab958)
+HEAD is now at dcab958 base
+No newly introduced error-tier gateable findings; pre-existing findings stay report-only.
+-- gate-step exit: 0
+==============================================
+SCENARIO: new-slop-fail
+==============================================
+Supported code changed; unslop will run.
+-- changed-step exit: 0 ; outputs: has_code=true
+Scanning 2 changed code file(s):
+  ./c.js
+  ./d.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test/new-slop-fail/repo/c.js:16>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test/new-slop-fail/repo/c.js",
+        "startLine": 16,
+        "startCol": 0,
+        "endLine": 31,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test/new-slop-fail/repo/d.js",
+        "startLine": 16,
+        "startCol": 0,
+        "endLine": 31,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test/new-slop-fail/repo/c.js:16>",
+      "<export@/tmp/unslop-gate-test/new-slop-fail/repo/d.js:16>"
+    ]
+  },
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/tmp/unslop-gate-test/new-slop-fail/repo/c.js:1>",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test/new-slop-fail/repo/c.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 14,
+        "endCol": 1
+      },
+      {
+        "file": "/tmp/unslop-gate-test/new-slop-fail/repo/d.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 14,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/tmp/unslop-gate-test/new-slop-fail/repo/c.js:1>",
+      "<export@/tmp/unslop-gate-test/new-slop-fail/repo/d.js:1>"
+    ]
+  }
+]
+Preparing worktree (detached HEAD 088d3cd)
+HEAD is now at 088d3cd base
+Error-tier gateable findings not present in these files at base commit 088d3cdc79f8b3972dd9de02459b1d739a61fa8c:
+{"rule":"exact-clone","message":"Exact duplicate: <export@c.js:16>","files":["c.js","d.js"]}
+{"rule":"exact-clone","message":"Exact duplicate: <export@c.js:1>","files":["c.js","d.js"]}
+::error::This pull request introduces new error-tier gateable AI-slop findings
+-- gate-step exit: 1
+==============================================
+SCENARIO: docs-only-noop
+==============================================
+No supported code files changed; skipping unslop.
+-- changed-step exit: 0 ; outputs: has_code=false
+-- gate-step skipped (fast no-op)

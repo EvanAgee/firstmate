@@ -1,0 +1,26 @@
+# BUG EVIDENCE: pre-existing error-tier finding wrongly fails the gate
+# Scenario B: base commit already contains an exact clone (clone_a.js == clone_b.js).
+# The PR only appends a comment to both files - no new slop. Expected: pass. Actual: exit 1.
+
+## Gate output (tail)
+]
+Preparing worktree (detached HEAD 82b6952)
+HEAD is now at 82b6952 base with pre-existing exact clone
+Error-tier gateable findings not present in these files at base commit 82b6952a827bf63caa38f81ae8c0ab8104212322:
+{"rule":"exact-clone","message":"Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:15>","files":["clone_a.js","clone_b.js"]}
+{"rule":"exact-clone","message":"Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:1>","files":["clone_a.js","clone_b.js"]}
+::error::This pull request introduces new error-tier gateable AI-slop findings
+GATE_STEP_EXIT=1
+
+## Root cause: the dedupe key includes the finding message, and unslop embeds
+## the absolute scan-root path in the message. Head scans in GITHUB_WORKSPACE;
+## base scans in RUNNER_TEMP/unslop-base-tree. Same finding, different key:
+
+head key:
+{"rule":"exact-clone","message":"Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:15>","files":["clone_a.js","clone_b.js"]}
+base key:
+{"rule":"exact-clone","message":"Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/scratch-b2/unslop-base-tree/clone_a.js:15>","files":["clone_a.js","clone_b.js"]}
+
+# Impact: firstmate already has 16 pre-existing exact-clone error+gateable findings
+# across .opencode/plugins/* and .pi/extensions/*. Any PR touching two cloned
+# siblings together will fail the gate even when it introduces nothing new.

@@ -1,0 +1,10 @@
+# Wake-queue lock test: cross-platform fix verified on macOS bash 3.2
+
+## Old test file (base commit b8e7201) on this Mac:
+not ok - a subshell reclaimed its parent's live hold (rc=13)
+
+## Fixed test file (target commit 7666f66) on this Mac:
+skip: subshell-vs-parent lock hold needs BASHPID (bash >= 4); this bash has none
+ok - an abandoned same-process lock hold is reclaimed; a parent's live hold is not
+
+## Full suite result at target commit: all 19 tests ok in ~45s

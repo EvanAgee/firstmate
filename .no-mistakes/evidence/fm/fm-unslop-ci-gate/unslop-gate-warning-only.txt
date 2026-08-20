@@ -1,0 +1,35 @@
+=== Scenario D: PR introduces a NEW warning-only finding (empty catch) — must pass ===
+==============================================
+SCENARIO: warning-only-pass
+==============================================
+Supported code changed; unslop will run.
+-- changed-step exit: 0 ; outputs: has_code=true
+Scanning 1 changed code file(s):
+  ./warn.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "error-handling",
+    "engine": "practices",
+    "message": "Empty catch block swallows errors silently",
+    "locations": [
+      {
+        "file": "/tmp/unslop-gate-test/warning-only-pass/repo/warn.js",
+        "startLine": 4,
+        "startCol": 4,
+        "endLine": 4,
+        "endCol": 16
+      }
+    ],
+    "confidence": 0.92,
+    "similarity": 0,
+    "ruleId": "empty-catch",
+    "suggestion": "Handle the error explicitly or propagate it.",
+    "tier": "A",
+    "severity": "warning"
+  }
+]
+Preparing worktree (detached HEAD be94a98)
+HEAD is now at be94a98 base
+No newly introduced error-tier gateable findings; pre-existing findings stay report-only.
+-- gate-step exit: 0

@@ -1,0 +1,30 @@
+=== Own-branch diff (b8e7201...b8ac5a4): changed-file detection step, run as the workflow would ===
+No supported code files changed; skipping unslop.
+step exit: 0 ; GITHUB_OUTPUT: has_code=false
+
+=== Fail-closed check: same step run outside a git repository (git diff fails) ===
+::error::Could not determine changed files
+step exit: 1
+
+=== Wake-queue test (tests/fm-wake-queue.test.sh) on macOS bash 3.2 ===
+skip: subshell-vs-parent lock hold needs BASHPID (bash >= 4); this bash has none
+ok - an abandoned same-process lock hold is reclaimed; a parent's live hold is not
+ok - self-announced appends suppress only their own bytes and fail toward waking
+ok - historical annotations replay nothing already announced and keep everything new
+ok - concurrent append plus drain preserves durable records through acknowledgement
+ok - signal written while no watcher runs is caught on next run
+ok - stale wake is queued before suppressor state is advanced
+ok - a not-provably-working stale wake is queued before its suppressor is advanced
+ok - registered custom check output is queued before cadence suppression
+ok - concurrent drains replay until one post-handling acknowledgement consumes records
+ok - drain collapses obvious duplicate heartbeat and signal records
+ok - drain asserts watcher liveness: warns on a lapse, stays silent for a live watcher with a fresh beacon
+ok - structural signal enrichment is separate, deduped, home-local, and tier-zero for other wakes
+ok - every readable unread status line is annotated in full while invalid status files preserve their raw wakes
+ok - slow annotation releases the append lock and a deleted status file fails open
+ok - wake append publishes atomic recovery evidence before durable rows
+ok - wake drain: generation-less legacy wakes are adopted and acknowledged
+ok - wake drain: a stale acknowledgement cannot retire or consume a newer recovery episode
+ok - wake drain: recovery acknowledgement failures are explicit and retryable
+ok - interruptions preserve durable rows until post-handling acknowledgement
+suite exit: 0

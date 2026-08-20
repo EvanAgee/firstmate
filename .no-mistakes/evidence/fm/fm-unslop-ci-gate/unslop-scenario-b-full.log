@@ -1,0 +1,77 @@
+Supported code changed; unslop will run.
+--- outputs: has_code=true
+Scanning 2 changed code file(s):
+  ./clone_a.js
+  ./clone_b.js
+Findings in changed files at head (all severities):
+[
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:15>",
+    "locations": [
+      {
+        "file": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js",
+        "startLine": 15,
+        "startCol": 0,
+        "endLine": 21,
+        "endCol": 1
+      },
+      {
+        "file": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_b.js",
+        "startLine": 15,
+        "startCol": 0,
+        "endLine": 21,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:15>",
+      "<export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_b.js:15>"
+    ]
+  },
+  {
+    "category": "exact-clone",
+    "engine": "clone",
+    "message": "Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:1>",
+    "locations": [
+      {
+        "file": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 13,
+        "endCol": 1
+      },
+      {
+        "file": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_b.js",
+        "startLine": 1,
+        "startCol": 0,
+        "endLine": 13,
+        "endCol": 1
+      }
+    ],
+    "confidence": 0.99,
+    "similarity": 0,
+    "ruleId": "exact-clone",
+    "tier": "A",
+    "severity": "error",
+    "gateable": true,
+    "fragmentNames": [
+      "<export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:1>",
+      "<export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_b.js:1>"
+    ]
+  }
+]
+Preparing worktree (detached HEAD 82b6952)
+HEAD is now at 82b6952 base with pre-existing exact clone
+Error-tier gateable findings not present in these files at base commit 82b6952a827bf63caa38f81ae8c0ab8104212322:
+{"rule":"exact-clone","message":"Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:15>","files":["clone_a.js","clone_b.js"]}
+{"rule":"exact-clone","message":"Exact duplicate: <export@/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/unslop-e2e-75096/repo-b/clone_a.js:1>","files":["clone_a.js","clone_b.js"]}
+::error::This pull request introduces new error-tier gateable AI-slop findings
+GATE_STEP_EXIT=1
