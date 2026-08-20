@@ -739,7 +739,7 @@ test_self_held_lock_reclaims_instead_of_deadlocking() {
   # gate this leg on a real BASHPID rather than assert a distinction the shell
   # cannot make.
   if [ -z "${BASHPID:-}" ]; then
-    printf 'skip: subshell-vs-parent lock hold needs BASHPID (bash >= 4); this bash has none\n'
+    pass "same-process lock reclaim verified; subshell-vs-parent leg skipped (needs BASHPID, bash >= 4)"
   else
     rc=0
     FM_STATE_OVERRIDE="$state" bash -c '
@@ -750,8 +750,8 @@ test_self_held_lock_reclaims_instead_of_deadlocking() {
       fm_lock_release "$lock"
     ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" || rc=$?
     [ "$rc" -eq 0 ] || fail "a subshell reclaimed its parent's live hold (rc=$rc)"
+    pass "an abandoned same-process lock hold is reclaimed; a parent's live hold is not"
   fi
-  pass "an abandoned same-process lock hold is reclaimed; a parent's live hold is not"
 }
 
 # Drain-time historical annotation staleness: a turn-ended-only wake row must
