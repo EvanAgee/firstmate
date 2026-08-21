@@ -30,9 +30,11 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent).
-#   relaunch   Transactionally replace the running agent with a new one, in the
-#              SAME endpoint and SAME worktree, on the same or a newly chosen
+#              Already-stopped, including a missing endpoint, is success
+#              (idempotent).
+#   relaunch   Transactionally replace the agent with a new one in the SAME
+#              worktree, reusing the SAME endpoint when it still exists or
+#              recreating a gone one, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
 #              of this verb. With no explicit axis, a secondmate re-resolves its
 #              durable config/secondmate-harness pin (harness plus its optional
