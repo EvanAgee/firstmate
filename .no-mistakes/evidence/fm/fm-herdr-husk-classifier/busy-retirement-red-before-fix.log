@@ -1,0 +1,23 @@
+===== RED PROBE (pre-fix behavior: already-stopped path does not call retire_busy_incarnation) =====
+=== dead-agent BEFORE ===
+busy-gen=g1787345834.16660.29152
+busy-state=v1 gen=g1787345834.16660.29152 seq=1 state=busy source=fm-spawn event=launch-brief ts=1787345834
+=== dead-agent EXIT rc=0 ===
+already-stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//busy-retire-probe.NwXnQf/dead-agent/wt-t1
+=== dead-agent AFTER ===
+busy-gen-present=g1787345834.16660.29152
+busy-state-present=v1 gen=g1787345834.16660.29152 seq=1 state=busy source=fm-spawn event=launch-brief ts=1787345834
+literals=
+RESULT dead-agent: FAIL (busy wiring leftover or unexpected exit outcome)
+
+=== missing-endpoint BEFORE ===
+busy-gen=g1787345835.17232.6653
+busy-state=v1 gen=g1787345835.17232.6653 seq=1 state=busy source=fm-spawn event=launch-brief ts=1787345835
+=== missing-endpoint EXIT rc=0 ===
+already-stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//busy-retire-probe.NwXnQf/missing-endpoint/wt-t1
+=== missing-endpoint AFTER ===
+busy-gen-present=g1787345835.17232.6653
+busy-state-present=v1 gen=g1787345835.17232.6653 seq=1 state=busy source=fm-spawn event=launch-brief ts=1787345835
+literals=
+RESULT missing-endpoint: FAIL (busy wiring leftover or unexpected exit outcome)
+RED_PROBE_RC=1

@@ -1,0 +1,4 @@
+===== husk classifier subset =====
+ok - fm_backend_herdr_pane_agent_state: a stale done binding over a bare shell is the no-agent husk a relaunch replaces
+ok - fm_backend_herdr_pane_agent_state: a done binding with a live agent foreground stays live (relaunch refused)
+ok - fm_backend_herdr_pane_agent_state: a closed pane is the missing endpoint a relaunch recreates

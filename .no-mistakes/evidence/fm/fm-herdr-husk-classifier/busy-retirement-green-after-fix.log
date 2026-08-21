@@ -1,0 +1,23 @@
+===== GREEN PROBE (post-fix behavior: already-stopped path retires busy wiring) =====
+=== dead-agent BEFORE ===
+busy-gen=g1787345836.18470.16457
+busy-state=v1 gen=g1787345836.18470.16457 seq=1 state=busy source=fm-spawn event=launch-brief ts=1787345836
+=== dead-agent EXIT rc=0 ===
+already-stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//busy-retire-probe.rsvLgs/dead-agent/wt-t1
+=== dead-agent AFTER ===
+busy-gen-present=ABSENT
+busy-state-present=ABSENT
+literals=
+RESULT dead-agent: PASS (already-stopped and busy wiring retired)
+
+=== missing-endpoint BEFORE ===
+busy-gen=g1787345836.19508.23653
+busy-state=v1 gen=g1787345836.19508.23653 seq=1 state=busy source=fm-spawn event=launch-brief ts=1787345836
+=== missing-endpoint EXIT rc=0 ===
+already-stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//busy-retire-probe.rsvLgs/missing-endpoint/wt-t1
+=== missing-endpoint AFTER ===
+busy-gen-present=ABSENT
+busy-state-present=ABSENT
+literals=
+RESULT missing-endpoint: PASS (already-stopped and busy wiring retired)
+GREEN_PROBE_RC=0

@@ -1,0 +1,44 @@
+# fm_backend_herdr_pane_agent_state: classify <pane_id> in <session> as one of
+# dead|no-agent|live|unknown, from the JSON bodies of its read-only herdr
+# calls plus, for a non-working registered binding, the shared idle-shell
+# proof's local `ps` read - never from process exit status, since a
+# business-logic "not found" response is a normal, expected outcome here,
+# not a call failure (real herdr 0.7.1 exits 1 for it; the canned-response
+# test fakes exit 0; parsing only the JSON keeps this function correct
+# against either).
+#
+#   dead     - `pane get` responds with error code pane_not_found: the pane
+#              itself is gone (closed, or its process died and herdr already
+#              reaped it - verified empirically: killing a pane's shell pid
+#              on a live server makes herdr immediately drop both the pane
+#              and its tab from `pane get`/`tab list`).
+#   no-agent - `pane get` succeeds (the pane structurally exists) but `agent
+#              get` responds with error code agent_not_found: nothing is
+#              registered in it - exactly what a herdr session-layout restore
+#              produces (verified empirically: `session stop` + fresh `herdr
+#              server` restart leaves the pane alive, agent_status "unknown",
+#              agent get -> agent_not_found - docs/herdr-backend.md "ID
+#              stability across a server restart"), and what a future
+#              `resume_agents_on_restore = false` restore would produce too
+#              (a plain shell, never an agent).
+#   live     - `agent get` reports `working`, OR reports `idle`/`done`/
+#              `blocked` while the pane's foreground is NOT a lone bare shell:
+#              a genuine still-registered agent (at rest), never a
+#              close-and-replace candidate. An idle or blocked agent still
+#              owns the foreground process, so it reads live.
+#   no-agent - `agent get` reports `idle`/`done`/`blocked` BUT the pane
+#              provably holds a lone bare shell
+#              (fm_backend_herdr_pane_idle_shell_sample succeeds): no agent
+#              process is running, so the registered binding is stale. This is
+#              the provider-death husk - a worker's model provider died mid-
+#              task, the omp TUI exited and left a bare shell, and herdr kept
+#              the dead binding - and it IS relaunchable and closeable.
+#              `working` never reaches this check: an actively generating
+#              agent is foreground by definition, so a working binding is
+#              trusted as live without the shell recheck.
+#   unknown  - anything else: an unparseable/unexpected response from either
+#              call, or a `pane get` success whose own echoed pane_id does not
+#              round-trip (guards against misreading a herdr response shape
+#              change as "the pane exists"). The caller must fail safe toward
+#              refusal here, never toward closing - this is the conservative
+#              backstop the husk check depends on.
