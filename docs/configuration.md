@@ -117,6 +117,20 @@ An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisel
 A missing or failing channel logs and falls through to the next, never crashing the daemon.
 See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
+## Session odometer thresholds (config/session-odometer)
+
+A long-lived primary session degrades as conversation-context compaction drops standing instructions; `bin/fm-anchor-lib.sh`'s odometer tracks the session's age and handled-wake count privately in `state/.session-odometer` and, past a threshold, adds one advice line to the drain's heartbeat ANCHOR block telling firstmate to recommend a fresh session.
+There is no automatic restart: per the supervision contract a restart is already a designed non-event, and the call stays with the captain.
+The file holds two whitespace-separated numbers on its first line: session-age limit in seconds (default 21600) and handled-wake record limit (default 200); unparseable values fall back to the defaults.
+See `bin/fm-anchor-lib.sh`'s header for the full anchor and odometer contract.
+
+## Session odometer (config/session-odometer)
+
+`config/session-odometer` is a local, gitignored file carrying two whitespace-separated base-10 numbers on its first line: the maximum session age in seconds and the maximum handled-wake count before the drain's heartbeat ANCHOR block advises starting a fresh session.
+Missing or unparseable values fall back to the defaults (21600 seconds, 200 wakes), and `FM_ODOMETER_MAX_AGE` / `FM_ODOMETER_MAX_WAKES` override them for tests and focused tuning.
+The odometer counters (`state/.session-odometer`) are written only by `bin/fm-anchor-lib.sh` via `bin/fm-wake-drain.sh`, and they reset whenever the session-lock holder changes.
+The threshold breach prints one advice line in the ANCHOR block; nothing restarts anything automatically.
+
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
 The optional local, gitignored `config/trace-context` presence flag enables default-off native W3C trace-context propagation.
