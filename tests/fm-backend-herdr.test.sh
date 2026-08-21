@@ -2982,6 +2982,105 @@ test_busy_state_unknown_on_no_agent() {
   pass "fm_backend_herdr_busy_state: unparseable/absent agent state reports unknown, the regex-fallback cue"
 }
 
+# --- provider-death husk classifier (stale done binding over a bare shell) --
+#
+# When a worker's model provider dies mid-task, the omp TUI can exit and leave
+# a bare shell in its herdr pane while herdr keeps a stale native binding that
+# still reports done/idle/blocked. Before this fix, fm_backend_herdr_pane_agent_state
+# trusted any registered status as live, so fm-control relaunch and fm-spawn
+# --relaunch both refused on the dead husks they exist to replace. These pin
+# the three acceptance cases: a done binding over a bare shell is the
+# relaunchable no-agent husk; a done binding with a live agent foreground
+# stays live (refused); a closed pane is the missing endpoint a relaunch
+# recreates. The idle-shell proof (fm_backend_herdr_pane_idle_shell_sample) is
+# the single owner reused to tell a bare shell from a live agent foreground.
+
+# live_agent_process_info_fixture: the inverse of death_process_info_fixture -
+# the pane's foreground is a real agent process (omp) with its own process
+# group, not the shell. fm_backend_herdr_pane_idle_shell_sample fails this at
+# the foreground-process-group check (it expects the shell itself foreground),
+# so the binding is trusted as live. No fake ps is needed: the sample refuses
+# before reaching the process-table checks.
+live_agent_process_info_fixture() {  # <pane> <shell-pid> <agent-pid>
+  printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"omp","argv0":"omp"}]}}}\n' "$1" "$2" "$3" "$3"
+}
+
+test_pane_agent_state_done_binding_bare_shell_is_husk() {
+  local dir log resp fb out pid=4242
+  dir="$TMP_ROOT/husk-done-bare-shell"; mkdir -p "$dir/responses"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # pane get -> structurally present; agent get -> stale done binding; the
+  # pane foreground is a lone bare zsh shell (the omp TUI has exited). The
+  # fake ps matches the literal pid argument, so a fixed pid stands in for a
+  # real shell process with no background job to capture or clean up. Both
+  # the classifier and its recovery-grade mapper run in one subshell against
+  # six canned responses (the three-call proof twice).
+  printf '%s\n' '{"result":{"pane":{"pane_id":"w1:p2"}}}' > "$resp/1.out"
+  printf '%s\n' '{"result":{"agent":{"agent_status":"done"}}}' > "$resp/2.out"
+  death_process_info_fixture w1:p2 "$pid" > "$resp/3.out"
+  cp "$resp/1.out" "$resp/4.out"
+  cp "$resp/2.out" "$resp/5.out"
+  cp "$resp/3.out" "$resp/6.out"
+  make_death_lab "$dir" "$pid"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_PS_BIN="$dir/ps" HERDR_SESSION=fmtest \
+    bash -c '. "$0/bin/backends/herdr.sh";
+      fm_backend_herdr_pane_agent_state fmtest w1:p2;
+      echo;
+      fm_backend_herdr_agent_state fmtest:w1:p2' "$ROOT")
+  [ "$out" = $'no-agent\ndead' ] \
+    || fail "a stale done binding over a bare shell should classify no-agent and map to dead (relaunchable), got '$out'"
+  pass "fm_backend_herdr_pane_agent_state: a stale done binding over a bare shell is the no-agent husk a relaunch replaces"
+}
+
+test_pane_agent_state_done_binding_live_agent_refuses() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/husk-done-live-agent"; mkdir -p "$dir/responses"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # Same done binding, but the pane foreground is a live omp agent (its own
+  # process group), not a bare shell - the binding is genuine, not a husk.
+  printf '%s\n' '{"result":{"pane":{"pane_id":"w1:p2"}}}' > "$resp/1.out"
+  printf '%s\n' '{"result":{"agent":{"agent_status":"done"}}}' > "$resp/2.out"
+  live_agent_process_info_fixture w1:p2 100 200 > "$resp/3.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    HERDR_SESSION=fmtest \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_pane_agent_state fmtest w1:p2' "$ROOT")
+  [ "$out" = live ] \
+    || fail "a done binding with a live agent foreground should classify as live (refused), got '$out'"
+  rm -f "$resp/.count"
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    HERDR_SESSION=fmtest \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_agent_state fmtest:w1:p2' "$ROOT") \
+    || fail "agent_state failed for the live-agent done binding"
+  [ "$out" = alive ] \
+    || fail "a done binding with a live agent should map to alive (refused), got '$out'"
+  pass "fm_backend_herdr_pane_agent_state: a done binding with a live agent foreground stays live (relaunch refused)"
+}
+
+test_pane_agent_state_missing_endpoint_is_relaunchable() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/husk-missing-endpoint"; mkdir -p "$dir/responses"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # pane get -> pane_not_found: the pane is closed (the endpoint is gone).
+  printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    HERDR_SESSION=fmtest \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_pane_agent_state fmtest w1:p2' "$ROOT")
+  [ "$out" = dead ] \
+    || fail "a closed pane should classify as dead (pane gone), got '$out'"
+  rm -f "$resp/.count"
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    HERDR_SESSION=fmtest \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_agent_state fmtest:w1:p2' "$ROOT") \
+    || fail "agent_state failed for the missing endpoint"
+  [ "$out" = missing ] \
+    || fail "a closed pane should map to missing (relaunchable, recreates the endpoint), got '$out'"
+  pass "fm_backend_herdr_pane_agent_state: a closed pane is the missing endpoint a relaunch recreates"
+}
+
 # --- composer_state: structural border-row classification --------------------
 
 test_composer_state_bare_prompt_is_empty() {
@@ -4428,6 +4527,9 @@ test_current_path_reads_cwd
 test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle
 test_busy_state_unknown_on_no_agent
+test_pane_agent_state_done_binding_bare_shell_is_husk
+test_pane_agent_state_done_binding_live_agent_refuses
+test_pane_agent_state_missing_endpoint_is_relaunchable
 test_composer_state_bare_prompt_is_empty
 test_composer_state_styled_placeholder_draft_is_pending
 test_composer_state_real_text_is_pending

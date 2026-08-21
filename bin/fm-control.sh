@@ -437,12 +437,18 @@ do_exit() {
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
-    dead)
+    dead|missing)
+      # `dead` (endpoint exists, agent-free) and `missing` (endpoint
+      # authoritatively gone, e.g. a closed pane) both mean there is no
+      # running agent to stop: exit is idempotent. Treating `missing` as
+      # already-stopped lets a relaunch recreate a gone endpoint instead of
+      # deadlocking on a reconcile demand for an endpoint that no longer
+      # exists. A mid-operation disappearance after interrupt is still
+      # refused below, where it cannot be proven safe.
       printf 'already-stopped'
       return 0
       ;;
     alive) ;;
-    missing) die "task $ID's recorded endpoint is gone, so there is no agent to stop; reconcile the task before any further control action" ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint" ;;
   esac
   # A busy agent is interrupted first before the exit command is submitted.
