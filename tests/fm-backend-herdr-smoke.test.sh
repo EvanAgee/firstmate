@@ -119,8 +119,10 @@ pass "real herdr: create_task prunes the freshly-created workspace's seeded defa
 # $PANE_ID/$TARGET (this suite's primary task, which the rest of the file
 # still depends on) so neither scenario disturbs it.
 
-# 1. A genuinely LIVE duplicate (a real registered agent, via herdr's own
-#    `pane report-agent`) must still refuse exactly as before.
+# 1. A genuinely LIVE duplicate (a working registered agent, via herdr's own
+#    `pane report-agent`) must still refuse. A working binding is trusted
+#    live without the idle-shell recheck; idle/done/blocked over a bare
+#    shell is the provider-death husk and is no longer a live fixture.
 LIVE_DUP_LABEL="fm-smoke-livedup"
 LIVE_DUP_IDS=$(fm_backend_herdr_create_task "$CONTAINER" "$LIVE_DUP_LABEL" /tmp) || fail "could not create the live-duplicate scenario's tab"
 read -r LIVE_DUP_TAB_ID LIVE_DUP_PANE_ID <<EOF
@@ -129,10 +131,10 @@ EOF
 if [ -z "$LIVE_DUP_TAB_ID" ] || [ -z "$LIVE_DUP_PANE_ID" ]; then
   fail "live-duplicate scenario tab creation did not return ids"
 fi
-herdr pane report-agent "$LIVE_DUP_PANE_ID" --source fm-smoke-test --agent fm-smoke-live-agent --state idle --session "$SESSION" >/dev/null 2>&1 \
+herdr pane report-agent "$LIVE_DUP_PANE_ID" --source fm-smoke-test --agent fm-smoke-live-agent --state working --session "$SESSION" >/dev/null 2>&1 \
   || fail "could not register a live agent on the live-duplicate scenario's pane"
 if fm_backend_herdr_create_task "$CONTAINER" "$LIVE_DUP_LABEL" /tmp >/dev/null 2>&1; then
-  fail "REGRESSION: create_task should refuse a duplicate label whose pane hosts a genuinely live registered agent (idle counts as live)"
+  fail "REGRESSION: create_task should refuse a duplicate label whose pane hosts a genuinely live registered agent"
 fi
 herdr pane get "$LIVE_DUP_PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
   || fail "REGRESSION: the live-duplicate scenario's pane should have survived the refused create_task call untouched"

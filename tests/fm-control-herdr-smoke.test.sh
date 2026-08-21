@@ -9,9 +9,10 @@
 # an agent is running, and therefore whether a lifecycle verb may act at all,
 # comes from herdr's own agent registry.
 #
-# No real agent is launched. herdr's `pane report-agent` is the same registry
-# the adapter reads, so registering and not registering an agent on a plain
-# shell pane exercises exactly the classification the control plane gates on.
+# No real agent process is launched. herdr's `pane report-agent` is the same
+# registry the adapter reads. A working binding is trusted live without the
+# idle-shell recheck; idle/done/blocked over this plain shell would be the
+# provider-death husk, so the live fixture uses working.
 #
 # Always runs on a private, named, throwaway lab session, never the default
 # one (tests/herdr-test-safety.sh; the 2026-07-02 incident). Skips cleanly
@@ -116,7 +117,7 @@ pass "real herdr: interrupt refuses when herdr's own agent registry reports no a
 # --- a registered agent: classification flips, and the verbs follow ---------
 
 herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
-  --state idle --session "$SESSION" >/dev/null 2>&1 \
+  --state working --session "$SESSION" >/dev/null 2>&1 \
   || fail "could not register a live agent on the task pane"
 
 STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
