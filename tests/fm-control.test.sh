@@ -641,6 +641,42 @@ test_missing_endpoint_is_already_stopped() {
   pass "fm-control exit: a vanished endpoint is already-stopped so relaunch can recreate it"
 }
 
+test_already_stopped_exit_retires_busy_wiring() {
+  local dir out rc gen
+  dir=$(new_case already-stopped-busy)
+  add_task "$dir" t1 claude
+  alive_as "$dir" zsh
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  [ -e "$dir/home/state/t1.busy-gen" ] && [ -e "$dir/home/state/t1.busy-state" ] \
+    || fail "precondition: already-stopped fixture must start with armed busy wiring"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exiting an already-stopped agent should succeed"$'\n'"$out"
+  assert_contains "$out" "already-stopped t1" "the outcome should say it was already stopped"
+  [ -z "$(literals "$dir")" ] || fail "an already-stopped agent must not be sent an exit command"
+  [ ! -e "$dir/home/state/t1.busy-gen" ] && [ ! -e "$dir/home/state/t1.busy-state" ] \
+    || fail "already-stopped exit should retire leftover busy wiring, not leave the prior incarnation armed"
+  pass "fm-control exit: already-stopped retires leftover busy wiring"
+}
+
+test_missing_endpoint_exit_retires_busy_wiring() {
+  local dir out rc gen
+  dir=$(new_case gone-busy)
+  add_task "$dir" t1 claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  : > "$dir/fake/windows"
+  [ -e "$dir/home/state/t1.busy-gen" ] && [ -e "$dir/home/state/t1.busy-state" ] \
+    || fail "precondition: missing-endpoint fixture must start with armed busy wiring"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "a missing endpoint should be already-stopped"$'\n'"$out"
+  assert_contains "$out" "already-stopped t1" "a gone endpoint is recreatable, not a reconcile refusal"
+  [ -z "$(literals "$dir")" ] || fail "a missing endpoint must not be sent an exit command"
+  [ ! -e "$dir/home/state/t1.busy-gen" ] && [ ! -e "$dir/home/state/t1.busy-state" ] \
+    || fail "already-stopped missing-endpoint exit should retire leftover busy wiring"
+  pass "fm-control exit: a vanished endpoint retires leftover busy wiring"
+}
+
 test_interrupt_refuses_when_no_agent_runs() {
   local dir out rc
   dir=$(new_case nointerrupt)
@@ -894,6 +930,8 @@ test_resume_is_refused_with_its_reason
 test_relaunch_only_flags_are_rejected_on_other_verbs
 test_already_stopped_exit_is_idempotent
 test_missing_endpoint_is_already_stopped
+test_already_stopped_exit_retires_busy_wiring
+test_missing_endpoint_exit_retires_busy_wiring
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
 test_busy_agent_is_interrupted_before_the_exit_command

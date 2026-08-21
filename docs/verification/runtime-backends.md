@@ -573,8 +573,8 @@ ok - real herdr: no control verb removed the endpoint or the task's local copy
 ok - real herdr: an agent that does not stop fails closed instead of being reported as stopped
 ```
 
-The registry read through `herdr pane report-agent` is the same source `fm_backend_herdr_agent_state` classifies, so registering and not registering an agent on a plain shell pane exercises exactly the gate every lifecycle verb depends on, with no real agent launched.
-That command is the guard that refreshes this record; run it after every Herdr upgrade rather than trusting the version above.
+The smoke live fixture registers a `working` binding through `herdr pane report-agent` on a plain shell pane; a non-working binding over that shell is no longer a live fixture ([Restart and liveness behavior](../herdr-backend.md#restart-and-liveness-behavior)).
+`tests/fm-control-herdr-smoke.test.sh` is the guard that refreshes this record; run it after every Herdr upgrade rather than trusting the version above.
 
 ### Away-mode transport
 
