@@ -820,6 +820,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  PRIOR_HERDR_WORKSPACE_ID=$(fm_meta_get "$META" herdr_workspace_id)
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -829,6 +830,8 @@ do_relaunch() {
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
   fi
 
+  T=$(fm_meta_get "$META" window)
+  [ -n "$T" ] || T=$FM_BACKEND_VALIDATED_TARGET
   state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
   }
@@ -836,7 +839,15 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+  RELAUNCH_NOTE=
+  if [ "$BACKEND" = herdr ]; then
+    NEW_HERDR_WORKSPACE_ID=$(fm_meta_get "$META" herdr_workspace_id)
+    if [ -n "$PRIOR_HERDR_WORKSPACE_ID" ] && [ -n "$NEW_HERDR_WORKSPACE_ID" ] \
+       && [ "$NEW_HERDR_WORKSPACE_ID" != "$PRIOR_HERDR_WORKSPACE_ID" ]; then
+      RELAUNCH_NOTE=" herdr_workspace=$NEW_HERDR_WORKSPACE_ID (fresh/flat; recorded disposable workspace $PRIOR_HERDR_WORKSPACE_ID was gone)"
+    fi
+  fi
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT$RELAUNCH_NOTE"
 }
 
 # --- verbs ------------------------------------------------------------------

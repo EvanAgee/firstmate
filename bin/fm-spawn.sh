@@ -1863,6 +1863,7 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
 }
 
 W="fm-$ID"
+RELAUNCH_HERDR_WORKSPACE_CHANGED=0
 if [ "$RELAUNCH" -eq 1 ]; then
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
@@ -1870,9 +1871,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   if [ "$RELAUNCH_STATE" = missing ] && [ "$BACKEND" = herdr ]; then
     # Only a proven-gone pane recreates. A present husk (dead) still adopts
     # the recorded target below so relaunch never mints a second copy of a
-    # still-open pane. The new pane is created in the recorded workspace with
-    # cwd set to the recorded worktree, so the replacement starts where the
-    # work already lives.
+    # still-open pane. If the recorded workspace is still present, the new pane
+    # is minted there. If that workspace is gone (typical after last-tab close
+    # of a disposable presentation space), re-ensure the home's live/flat
+    # workspace and mint there instead. Either way cwd is the recorded worktree.
     [ -n "$HERDR_SES" ] && [ -n "$HERDR_WORKSPACE_ID" ] || {
       echo "error: task $ID has no recorded herdr session/workspace; refusing to recreate a missing endpoint" >&2
       exit 1
@@ -1881,7 +1883,40 @@ if [ "$RELAUNCH" -eq 1 ]; then
       echo "error: herdr session for task $ID could not be ensured; refusing to recreate a missing endpoint" >&2
       exit 1
     }
-    HERDR_TASK_IDS=$(fm_backend_herdr_create_task "$HERDR_SES:$HERDR_WORKSPACE_ID" "$W" "$WT") || exit 1
+    HERDR_RECORDED_WORKSPACE_ID=$HERDR_WORKSPACE_ID
+    HERDR_WS_PRESENCE=$(fm_backend_herdr_workspace_presence_state "$HERDR_SES" "$HERDR_WORKSPACE_ID")
+    HERDR_SEEDED_DEFAULT_TAB_ID=
+    case "$HERDR_WS_PRESENCE" in
+      present) ;;
+      dead)
+        HERDR_LABEL_HOME=$FM_HOME
+        HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+        if [ "$KIND" = secondmate ]; then
+          HERDR_LABEL_HOME=$PROJ_ABS
+          HERDR_LAUNCHER_RELATIONSHIP=other-home
+        fi
+        HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$WT" "$HERDR_LAUNCHER_RELATIONSHIP") || {
+          echo "error: herdr workspace for task $ID could not be re-ensured; refusing to recreate a missing endpoint" >&2
+          exit 1
+        }
+        CONTAINER=${HERDR_CONTAINER_RAW%%$'\t'*}
+        HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
+        HERDR_SES=${CONTAINER%%:*}
+        HERDR_WORKSPACE_ID=${CONTAINER#*:}
+        if [ -z "$HERDR_SES" ] || [ -z "$HERDR_WORKSPACE_ID" ]; then
+          echo "error: herdr did not return a live workspace for task $ID; refusing to recreate a missing endpoint" >&2
+          exit 1
+        fi
+        if [ "$HERDR_WORKSPACE_ID" != "$HERDR_RECORDED_WORKSPACE_ID" ]; then
+          RELAUNCH_HERDR_WORKSPACE_CHANGED=1
+        fi
+        ;;
+      *)
+        echo "error: herdr workspace for task $ID reads '$HERDR_WS_PRESENCE'; refusing to recreate a missing endpoint without a proven container" >&2
+        exit 1
+        ;;
+    esac
+    HERDR_TASK_IDS=$(fm_backend_herdr_create_task "$HERDR_SES:$HERDR_WORKSPACE_ID" "$W" "$WT" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
     read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
@@ -2927,4 +2962,8 @@ fi
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"
-echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT"
+SPAWN_RELAUNCH_NOTE=
+if [ "$RELAUNCH" -eq 1 ] && [ "${RELAUNCH_HERDR_WORKSPACE_CHANGED:-0}" -eq 1 ]; then
+  SPAWN_RELAUNCH_NOTE=" herdr_workspace=$HERDR_WORKSPACE_ID (fresh/flat; recorded disposable workspace was gone)"
+fi
+echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_RELAUNCH_NOTE"
