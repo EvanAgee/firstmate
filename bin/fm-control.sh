@@ -30,9 +30,11 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent).
-#   relaunch   Transactionally replace the running agent with a new one, in the
-#              SAME endpoint and SAME worktree, on the same or a newly chosen
+#              Already-stopped, including a missing endpoint, is success
+#              (idempotent).
+#   relaunch   Transactionally replace the agent with a new one in the SAME
+#              worktree, reusing the SAME endpoint when it still exists or
+#              recreating a gone one, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
 #              of this verb. With no explicit axis, a secondmate re-resolves its
 #              durable config/secondmate-harness pin (harness plus its optional
@@ -437,12 +439,21 @@ do_exit() {
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
-    dead)
+    dead|missing)
+      # `dead` (endpoint exists, agent-free) and `missing` (endpoint
+      # authoritatively gone, e.g. a closed pane) both mean there is no
+      # running agent to stop: exit is idempotent. Treating `missing` as
+      # already-stopped lets a relaunch recreate a gone endpoint instead of
+      # deadlocking on a reconcile demand for an endpoint that no longer
+      # exists. A mid-operation disappearance after interrupt is still
+      # refused below, where it cannot be proven safe. The incarnation's
+      # busy wiring is retired here exactly as the stopped path does, so no
+      # stale record or orphaned generation survives an already-dead agent.
+      retire_busy_incarnation
       printf 'already-stopped'
       return 0
       ;;
     alive) ;;
-    missing) die "task $ID's recorded endpoint is gone, so there is no agent to stop; reconcile the task before any further control action" ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint" ;;
   esac
   # A busy agent is interrupted first before the exit command is submitted.
@@ -814,6 +825,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  PRIOR_HERDR_WORKSPACE_ID=$(fm_meta_get "$META" herdr_workspace_id)
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -823,6 +835,8 @@ do_relaunch() {
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
   fi
 
+  T=$(fm_meta_get "$META" window)
+  [ -n "$T" ] || T=$FM_BACKEND_VALIDATED_TARGET
   state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
   }
@@ -830,7 +844,15 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+  RELAUNCH_NOTE=
+  if [ "$BACKEND" = herdr ]; then
+    NEW_HERDR_WORKSPACE_ID=$(fm_meta_get "$META" herdr_workspace_id)
+    if [ -n "$PRIOR_HERDR_WORKSPACE_ID" ] && [ -n "$NEW_HERDR_WORKSPACE_ID" ] \
+       && [ "$NEW_HERDR_WORKSPACE_ID" != "$PRIOR_HERDR_WORKSPACE_ID" ]; then
+      RELAUNCH_NOTE=" herdr_workspace=$NEW_HERDR_WORKSPACE_ID (fresh/flat; recorded disposable workspace $PRIOR_HERDR_WORKSPACE_ID was gone)"
+    fi
+  fi
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT$RELAUNCH_NOTE"
 }
 
 # --- verbs ------------------------------------------------------------------

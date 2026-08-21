@@ -159,12 +159,12 @@ WS_COUNT=$(printf '%s' "$WS_TABS" | jq -r '.result.tabs? // [] | length')
 pass "fixed: the workspace holds exactly the 2 replacement tabs after both respawns - no leaked husk tabs, no destroyed workspace"
 
 # --- 4. a GENUINELY live duplicate still refuses, unchanged -----------------
-# Register a real agent (herdr's own native registration primitive) on one of
-# the freshly-respawned panes, then confirm a further same-labeled spawn
-# attempt refuses exactly as before - the husk fix must never touch a pane
-# that actually has something registered in it.
+# Register a working agent (herdr's own native registration primitive) on one
+# of the freshly-respawned panes, then confirm a further same-labeled spawn
+# attempt refuses. A working binding is trusted live without the idle-shell
+# recheck; idle/done/blocked over a bare shell is the provider-death husk.
 
-herdr pane report-agent "$NEW_CREW_PANE_ID" --source fm-respawn-e2e --agent fm-respawn-live-agent --state idle --session "$SESSION" >/dev/null 2>&1 \
+herdr pane report-agent "$NEW_CREW_PANE_ID" --source fm-respawn-e2e --agent fm-respawn-live-agent --state working --session "$SESSION" >/dev/null 2>&1 \
   || fail "could not register a live agent on the respawned crewmate-shaped pane"
 
 if fm_backend_herdr_create_task "$CONTAINER" "$CREW_LABEL" "$PROJ_CWD" >/dev/null 2>&1; then
