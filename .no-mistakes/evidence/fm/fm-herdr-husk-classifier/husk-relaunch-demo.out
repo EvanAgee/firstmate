@@ -1,0 +1,33 @@
+HERDR HUSK CLASSIFIER (public backend functions)
+
+== done binding + bare shell (provider-death husk) ==
+pane_agent_state=no-agent
+recovery_state=dead
+
+== done binding + live omp foreground (must still refuse) ==
+pane_agent_state=live
+recovery_state=alive
+
+== closed pane / missing endpoint (recreate) ==
+pane_agent_state=dead
+recovery_state=missing
+
+CONTROL PLANE (public CLIs, no --force)
+
+== fm-control gone1 exit (missing window list) ==
+exit=0
+already-stopped gone1 harness=claude backend=tmux endpoint=fmses:fm-gone1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//husk-relaunch-demo.zCFxZY/control-missing/wt
+
+== fm-spawn live1 --relaunch (live agent, no --force) ==
+exit=1
+error: task live1's endpoint reads 'alive'; a relaunch requires an agent-free endpoint (stop the agent first with bin/fm-control.sh live1 exit) or a gone endpoint it can recreate
+
+== fm-control husk1 relaunch --note ... (agent-free pane, no --force) ==
+exit=0
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//husk-relaunch-demo.zCFxZY/control-husk/home/data/husk1/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+relaunched husk1 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-husk1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//husk-relaunch-demo.zCFxZY/control-husk/wt
+
+== fm-spawn dead1 --relaunch (agent-free pane, no --force) ==
+exit=0
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//husk-relaunch-demo.zCFxZY/spawn-dead/home/data/dead1/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned dead1 harness=claude kind=ship mode=no-mistakes yolo=off window=fmses:fm-dead1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//husk-relaunch-demo.zCFxZY/spawn-dead/wt
