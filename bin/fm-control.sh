@@ -446,7 +446,10 @@ do_exit() {
       # already-stopped lets a relaunch recreate a gone endpoint instead of
       # deadlocking on a reconcile demand for an endpoint that no longer
       # exists. A mid-operation disappearance after interrupt is still
-      # refused below, where it cannot be proven safe.
+      # refused below, where it cannot be proven safe. The incarnation's
+      # busy wiring is retired here exactly as the stopped path does, so no
+      # stale record or orphaned generation survives an already-dead agent.
+      retire_busy_incarnation
       printf 'already-stopped'
       return 0
       ;;

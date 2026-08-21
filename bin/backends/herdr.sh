@@ -1856,11 +1856,13 @@ fm_backend_herdr_explicit_close_pane_confirmed() {  # <session> <pane_id>
 }
 
 # fm_backend_herdr_pane_agent_state: classify <pane_id> in <session> as one of
-# dead|no-agent|live|unknown, purely from the JSON bodies of its read-only
-# calls - never from process exit status, since a business-logic "not found"
-# response is a normal, expected outcome here, not a call failure (real herdr
-# 0.7.1 exits 1 for it; the canned-response test fakes exit 0; parsing only
-# the JSON keeps this function correct against either).
+# dead|no-agent|live|unknown, from the JSON bodies of its read-only herdr
+# calls plus, for a non-working registered binding, the shared idle-shell
+# proof's local `ps` read - never from process exit status, since a
+# business-logic "not found" response is a normal, expected outcome here,
+# not a call failure (real herdr 0.7.1 exits 1 for it; the canned-response
+# test fakes exit 0; parsing only the JSON keeps this function correct
+# against either).
 #
 #   dead     - `pane get` responds with error code pane_not_found: the pane
 #              itself is gone (closed, or its process died and herdr already
