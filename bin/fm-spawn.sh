@@ -1864,16 +1864,42 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
 
 W="fm-$ID"
 if [ "$RELAUNCH" -eq 1 ]; then
-  # Adopt the recorded endpoint instead of creating one. This is what keeps a
-  # relaunch a REPLACEMENT rather than a second copy of the task: no new
-  # terminal, no second worktree, and every uncommitted change left exactly
-  # where the previous agent left it.
-  T=$RELAUNCH_TARGET
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
+  if [ "$RELAUNCH_STATE" = missing ] && [ "$BACKEND" = herdr ]; then
+    # Only a proven-gone pane recreates. A present husk (dead) still adopts
+    # the recorded target below so relaunch never mints a second copy of a
+    # still-open pane. The new pane is created in the recorded workspace with
+    # cwd set to the recorded worktree, so the replacement starts where the
+    # work already lives.
+    [ -n "$HERDR_SES" ] && [ -n "$HERDR_WORKSPACE_ID" ] || {
+      echo "error: task $ID has no recorded herdr session/workspace; refusing to recreate a missing endpoint" >&2
+      exit 1
+    }
+    fm_backend_herdr_server_ensure "$HERDR_SES" || {
+      echo "error: herdr session for task $ID could not be ensured; refusing to recreate a missing endpoint" >&2
+      exit 1
+    }
+    HERDR_TASK_IDS=$(fm_backend_herdr_create_task "$HERDR_SES:$HERDR_WORKSPACE_ID" "$W" "$WT") || exit 1
+    read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
+$HERDR_TASK_IDS
+EOF
+    if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
+      echo "error: herdr did not return a tab/pane id for $W" >&2
+      exit 1
+    fi
+    T="$HERDR_SES:$HERDR_PANE_ID"
+    SES=$HERDR_SES
+  else
+    # Adopt the recorded endpoint instead of creating one. This is what keeps a
+    # relaunch a REPLACEMENT rather than a second copy of the task: no new
+    # terminal, no second worktree, and every uncommitted change left exactly
+    # where the previous agent left it.
+    T=$RELAUNCH_TARGET
+    SES=${T%%:*}
+  fi
   WT_TARGET=$T
-  SES=${T%%:*}
 else
 case "$BACKEND" in
   tmux)
