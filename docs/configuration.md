@@ -124,6 +124,33 @@ Missing or unparseable values fall back to the defaults (21600 seconds, 200 wake
 A threshold breach prints one advice line; nothing restarts the session automatically.
 See `bin/fm-anchor-lib.sh`'s header for the full anchor and odometer contract.
 
+## Supervision knobs (config/supervision.env)
+
+The supervision tuning variables listed under "Environment variables" below used to reach a script only through the environment of whatever shell started it.
+A Claude primary inherited them from its own harness settings, another harness only from an interactive shell profile, and a launchd or cron context - which has neither - inherited nothing.
+The same home could therefore answer "is the watcher beacon stale?" with different numbers depending on which process asked, which is exactly the drift a scheduled out-of-session check must not have.
+
+The optional local, gitignored `config/supervision.env` is the one mechanism the supervision scripts themselves read, so every harness and every scheduler context resolves the same values for a home.
+[`bin/fm-watch.sh`](../bin/fm-watch.sh), [`bin/fm-guard.sh`](../bin/fm-guard.sh), and [`bin/fm-watcher-beat-alarm.sh`](../bin/fm-watcher-beat-alarm.sh) load it before resolving any knob below.
+It holds one `NAME=value` assignment per line; blank lines and `#` comments are ignored, and an optional leading `export` is accepted.
+
+A real environment variable always wins over the file.
+A knob already set and non-empty in the environment is left exactly as inherited, so an explicit per-invocation override is never overwritten; the file supplies only the knobs the caller's environment did not already set.
+
+The file is parsed, never sourced.
+One malformed line skips only itself instead of aborting the read and silently dropping every valid knob after it, and a configuration file can never execute code.
+An absent or unreadable file changes nothing, because every knob keeps its own default at its point of use.
+
+```sh
+# config/supervision.env
+FM_GUARD_GRACE=300
+FM_HEARTBEAT_MAX=7200
+```
+
+This file is local to each home and is inherited by secondmate homes the same way other `config/` material is.
+[`bin/fm-supervision-env-lib.sh`](../bin/fm-supervision-env-lib.sh)'s header owns the exact mechanics, and [`examples/supervision.env`](examples/supervision.env) is a copyable starting point.
+The session-independent watcher-beat alert in [`wedge-alarm.md`](wedge-alarm.md) reads its staleness threshold through this file, so raising `FM_GUARD_GRACE` moves that alert with it instead of leaving it on a separate constant.
+
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
 The optional local, gitignored `config/trace-context` presence flag enables default-off native W3C trace-context propagation.

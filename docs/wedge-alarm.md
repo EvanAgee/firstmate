@@ -34,12 +34,16 @@ See [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 A fully dead agent session cannot fire its own network of watchers, so the in-session watcher-down banner alone can never alert the captain when the whole session dies.
 `bin/fm-watcher-beat-alarm.sh` is the session-independent watcher-down alert face: a macOS launchd interval agent runs it every 120 seconds so a dead session, a dead watcher, or a wedged supervision chain still alerts the captain.
 It fires the same shared active-alert machinery (`bin/fm-wedge-alarm-lib.sh`; the channel directives above apply verbatim) with `FM_WEDGE_ALARM_TITLE=firstmate: watcher stopped polling`.
-The alert is alert-only: it never starts, stops, arms, or repairs the watcher or a session, and it is not a second watcher process, so the emitted supervision protocol stays the sole recovery owner.
+The alert is alert-only by default: it never starts, stops, arms, or repairs the watcher or a session, and it is not a second watcher process, so the emitted supervision protocol stays the sole recovery owner.
+`FM_BEAT_ALARM_REARM=1` opts in to one extra step, backgrounding the home-scoped, self-verifying `bin/fm-watch-arm.sh` after the alert; it attaches to a live watcher rather than starting a second one, and the summary then says so instead of claiming nothing was started.
+Even with that opt-in the alert remains the recovery path, because a re-armed watcher keeps queuing wakes durably but has no channel to wake the session.
 The alert fires only when the home needs supervision per the same predicate the in-session guard uses, and away mode defers to away mode's own wedge alarm above.
-A beacon must be stale past one grace AND stay stale across a full additional grace window (`FM_BEAT_ALARM_GRACE`, default 300 seconds each, so roughly 600 seconds) before the alert fires, so an ordinary between-cycles gap never alerts.
+A beacon must be stale past one grace AND stay stale across a full additional grace window (default 300 seconds each, so roughly 600 seconds) before the alert fires, so an ordinary between-cycles gap never alerts.
+That grace is `FM_GUARD_GRACE` - the same value [`configuration.md`](configuration.md#supervision-knobs-configsupervisionenv) resolves through `config/supervision.env` for the in-session guard - so raising it moves this alert with it rather than leaving it on a separate constant; `FM_BEAT_ALARM_GRACE` still overrides this alert alone.
 The alert fires exactly once per outage episode: `state/.beat-alarm-fired` records the alerted beacon's mtime, a fresh beacon clears it, and the next episode alerts exactly once again.
 Install and removal are consent-guarded: `bin/fm-watcher-beat-alarm-install.sh status|install|uninstall` always prints the exact actions and asks once on the terminal, with `--yes` the only prompt bypass (reserved for a captain who already approved that exact action); nothing installs or removes silently.
 On non-macOS platforms the install is refused with guidance to wire the same checker to cron or a systemd timer, keeping the alert-only contract.
+`bin/fm-watcher-beat-alarm-install.sh crontab` prints that exact cron line rather than editing a crontab it does not own; the checker exits 0 when healthy, so cron stays quiet until something is wrong.
 
 ## Test safety
 

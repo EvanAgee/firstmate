@@ -67,7 +67,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 mkdir -p "$STATE"
+
+# Load this home's supervision knobs before any default below is resolved, so a
+# watcher started from any harness or scheduler uses the same values as the
+# guard and the external watchdog (bin/fm-supervision-env-lib.sh).
+# shellcheck source=bin/fm-supervision-env-lib.sh
+. "$SCRIPT_DIR/fm-supervision-env-lib.sh"
+fm_supervision_env_load "$CONFIG"
 
 # The native event fast-path and only its true dependencies have one narrow
 # production owner. The Herdr event-wait smoke test consumes this same owner

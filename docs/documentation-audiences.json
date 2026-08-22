@@ -261,6 +261,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/supervision.env",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/fm-test-isolation-proof.md",
       "audience": "maintainer-verification"
     },
