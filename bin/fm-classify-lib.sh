@@ -178,7 +178,7 @@ status_is_paused_or_captain_held() {  # <status-line>
 # cannot open or close that decision. Positions resolve in order before-colon,
 # note-head, note-tail; when several positions carry a key token the earlier
 # position wins and the later token stays note text.
-# A line with no token in either position uses the key "default", preserving
+# A line with no token in those three positions uses the key "default", preserving
 # the historical one-open-decision-per-task behavior (a bare "resolved:" closes
 # "default"). A stated key whose slug fails the charset below is rejected (the
 # folds skip the line), never rewritten to "default".
