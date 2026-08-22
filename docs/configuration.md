@@ -130,6 +130,7 @@ See `bin/fm-anchor-lib.sh`'s header for the full anchor and odometer contract.
 Missing or unparseable values fall back to the defaults (21600 seconds, 200 wakes), and `FM_ODOMETER_MAX_AGE` / `FM_ODOMETER_MAX_WAKES` override them for tests and focused tuning.
 The odometer counters (`state/.session-odometer`) are written only by `bin/fm-anchor-lib.sh` via `bin/fm-wake-drain.sh`, and they reset whenever the session-lock holder changes.
 The threshold breach prints one advice line in the ANCHOR block; nothing restarts anything automatically.
+The ANCHOR block itself prints only on heartbeat drains. In attended mode the watcher still absorbs no-change heartbeats unless `state/.last-anchor` is missing or older than `FM_ANCHOR_INTERVAL` (default `HEARTBEAT_MAX`), so a live idle session gets a periodic re-read without printing ANCHOR on every drain.
 
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 

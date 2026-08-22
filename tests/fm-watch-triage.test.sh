@@ -1800,6 +1800,8 @@ test_procevent_marker_failure_exits_and_replays() {
 test_heartbeat_no_change_absorbed() {
   local dir state fakebin out pid
   dir=$(make_case heartbeat-absorb); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  # Fresh last-anchor keeps this the absorb path; missing/stale stamps present.
+  touch "$state/.last-anchor"
   # A truly quiet fleet (no windows, no statuses) with a fast heartbeat cadence.
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
@@ -1812,6 +1814,37 @@ test_heartbeat_no_change_absorbed() {
   [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] || fail "heartbeat backoff streak did not advance while absorbing"
   reap "$pid"
   pass "a heartbeat with no captain-relevant change is absorbed and backs off the cadence"
+}
+
+test_heartbeat_presents_when_last_anchor_missing() {
+  local dir state fakebin out drain_out pid
+  dir=$(make_case heartbeat-anchor-missing); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "missing .last-anchor did not present a no-change heartbeat"
+  grep -Fx "heartbeat" "$out" >/dev/null || fail "missing .last-anchor did not exit with a heartbeat wake"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the missing-anchor heartbeat failed"
+  grep "$(printf '\theartbeat\t')" "$drain_out" >/dev/null || fail "missing-anchor heartbeat was not queued"
+  grep -F 'ANCHOR (durable truth re-read on this heartbeat' <<< "$(cat "$drain_out")" >/dev/null \
+    || fail "presented missing-anchor heartbeat drain printed no ANCHOR"
+  [ -f "$state/.last-anchor" ] || fail "the presented heartbeat drain did not stamp .last-anchor"
+  pass "a missing .last-anchor presents one attended no-change heartbeat so ANCHOR can print"
+}
+
+test_heartbeat_presents_when_last_anchor_stale() {
+  local dir state fakebin out pid back
+  dir=$(make_case heartbeat-anchor-stale); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  touch "$state/.last-anchor"
+  back=$(( $(date +%s) - 10 ))
+  set_mtime "$back" "$state/.last-anchor"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 FM_ANCHOR_INTERVAL=5 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "stale .last-anchor did not present a no-change heartbeat"
+  grep -Fx "heartbeat" "$out" >/dev/null || fail "stale .last-anchor did not exit with a heartbeat wake: $(cat "$out")"
+  pass "a .last-anchor older than FM_ANCHOR_INTERVAL presents one attended no-change heartbeat"
 }
 
 test_heartbeat_backstop_surfaces_unsurfaced_status() {
@@ -1970,6 +2003,8 @@ test_procevent_surface_serializes_with_drain
 test_procevent_surface_crash_boundaries
 test_procevent_marker_failure_exits_and_replays
 test_heartbeat_no_change_absorbed
+test_heartbeat_presents_when_last_anchor_missing
+test_heartbeat_presents_when_last_anchor_stale
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot

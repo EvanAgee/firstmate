@@ -8,7 +8,10 @@
 #
 #   ANCHOR block (fm_anchor_on_heartbeat): bin/fm-wake-drain.sh prints it only
 #   on drains that presented a heartbeat wake (never on ordinary signal/stale/
-#   check drains, so routine handling stays tight). The block re-reads durable
+#   check drains, so routine handling stays tight). A successful print touches
+#   state/.last-anchor; the attended watcher presents a no-change heartbeat when
+#   that file is missing or older than FM_ANCHOR_INTERVAL (default HEARTBEAT_MAX)
+#   so a live idle session still re-reads after compaction. The block re-reads durable
 #   state and prints a bounded reminder a compacted session can no longer lose:
 #   the standing-steers excerpt of data/captain.md, the fleet-wide
 #   open-decision count, the in-flight task count, any stale-flag warnings
@@ -122,6 +125,7 @@ fm_odometer_advice() {
 fm_anchor_on_heartbeat() {
   local home=${FM_HOME:-$FM_ROOT} captain steers total_lines=0 line excerpt_lines=0
   local open_lines open_count=0 flags=''
+  touch "$STATE/.last-anchor" 2>/dev/null || true
   printf '%s\n' 'ANCHOR (durable truth re-read on this heartbeat; survives context compaction):'
 
   captain="$home/data/captain.md"

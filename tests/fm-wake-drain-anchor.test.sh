@@ -130,6 +130,34 @@ test_config_file_threshold_binds() {
   pass "config/session-odometer thresholds bind the odometer advice"
 }
 
+test_heartbeat_drain_touches_last_anchor() {
+  local dir before after
+  dir=$(make_home last-anchor)
+  [ ! -f "$dir/state/.last-anchor" ] || fail "precursor last-anchor state already present"
+  append_wake "$dir/state" heartbeat - "no changes"
+  run_drain "$dir" >/dev/null
+  [ -f "$dir/state/.last-anchor" ] \
+    || fail "a heartbeat drain that printed ANCHOR left no .last-anchor stamp"
+
+  dir=$(make_home last-anchor-signal)
+  printf 'blocked [key=creds]: waiting on credits\n' > "$dir/state/task.status"
+  append_wake "$dir/state" signal task "task.status"
+  run_drain "$dir" >/dev/null
+  [ ! -f "$dir/state/.last-anchor" ] \
+    || fail "a signal drain stamped .last-anchor even though ANCHOR must stay heartbeat-only"
+
+  dir=$(make_home last-anchor-refresh)
+  touch "$dir/state/.last-anchor"
+  before=$(if [ "$(uname)" = Darwin ]; then stat -f %m "$dir/state/.last-anchor"; else stat -c %Y "$dir/state/.last-anchor"; fi)
+  sleep 1
+  append_wake "$dir/state" heartbeat - "no changes"
+  run_drain "$dir" >/dev/null
+  after=$(if [ "$(uname)" = Darwin ]; then stat -f %m "$dir/state/.last-anchor"; else stat -c %Y "$dir/state/.last-anchor"; fi)
+  [ "$after" -gt "$before" ] \
+    || fail "a later heartbeat drain did not refresh .last-anchor ($before -> $after)"
+  pass "heartbeat drains stamp .last-anchor; non-heartbeat drains do not"
+}
+
 test_flags_surface_when_present() {
   local dir out
   dir=$(make_home flags)
@@ -148,3 +176,4 @@ test_odometer_starts_on_first_drain_and_counts_wakes
 test_odometer_prompts_advice_over_threshold_via_next_anchor
 test_config_file_threshold_binds
 test_flags_surface_when_present
+test_heartbeat_drain_touches_last_anchor

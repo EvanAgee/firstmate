@@ -129,6 +129,7 @@ state/               runtime records and signals; gitignored
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
   .session-odometer   private per-session age and handled-wake counters for a long-lived session's restart advice; written only by bin/fm-anchor-lib.sh via bin/fm-wake-drain.sh, reset whenever the session-lock holder changes
+  .last-anchor       mtime of the last printed heartbeat ANCHOR; attended no-change heartbeats present when this is missing or older than FM_ANCHOR_INTERVAL (default HEARTBEAT_MAX); touched only by bin/fm-anchor-lib.sh via the drain
   .beat-alarm-fired .beat-alarm.log .beat-alarm.launchd.log   session-independent watcher-beat alert episode marker and its logs; written only by bin/fm-watcher-beat-alarm.sh
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
 .no-mistakes/        local validation state and evidence; gitignored
