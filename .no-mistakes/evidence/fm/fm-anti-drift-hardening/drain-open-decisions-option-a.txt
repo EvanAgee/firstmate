@@ -1,0 +1,11 @@
+=== drain OPEN DECISIONS: mid-note prose must keep q1 ===
+1787428848	1	signal	task	task.status
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+task [key=q1] needs-decision: real choice
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+=== drain OPEN DECISIONS: last-token [key=q1] must close q1 ===
+1787428849	2	signal	task	task.status
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+task needs-decision: should docs mention [key=prose]?
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'

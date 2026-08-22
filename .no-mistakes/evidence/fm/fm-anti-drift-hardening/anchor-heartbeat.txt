@@ -1,0 +1,19 @@
+1787424041	1	heartbeat	-	no changes
+ANCHOR (durable truth re-read on this heartbeat; survives context compaction):
+standing steers (data/captain.md ## Working style):
+  - batch updates
+  - no fable for scouts
+  - prefer durable notes over chat memory
+open decisions: 0 | in-flight tasks: 1
+--- odometer after first heartbeat ---
+pid=unknown
+started_epoch=1787424042
+wakes=1
+--- over-threshold advice ---
+odometer: session over threshold (1787424044s elapsed, 1 wakes handled; thresholds 3600s/200) - tell the captain a fresh session is recommended; a restart is a designed non-event.
+--- flags ---
+flags: github-down (clones may be stale; first seen: 2026-08-21T00:00:00Z); watcher-down banner active (guard-key)
+--- signal drain (no ANCHOR) ---
+1787424043	1	signal	task	task.status
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+task [key=creds] blocked: waiting on credits

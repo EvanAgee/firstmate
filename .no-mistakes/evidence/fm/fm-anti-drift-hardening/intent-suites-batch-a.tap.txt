@@ -1,0 +1,70 @@
+===== tests/fm-classify-decision-key.test.sh =====
+ok - a stated [key=X] opens X whether it precedes or follows the verb colon
+ok - a keyless needs-decision still opens and closes the default key
+ok - a resolution closes its decision regardless of either line's key position
+ok - blocked [key=X] opens X in both key positions
+ok - two colon-form keyed decisions never collapse into one shared bucket
+ok - a [key=x] mentioned mid-note is prose, never an opened or closed key
+ok - a malformed stated key is rejected in both positions, never folded as default
+ok - status_line_verb strips every bracket tag before the colon, in any order, and recovers the bare verb
+ok - a [corr=...] tag ahead of [key=...] no longer swallows the verb: opens and closes under the stated key
+ok - a [corr=...] tag with no stated key opens under 'default', exactly like a bare needs-decision line
+ok - a [key=x] tag alone (no corr tag) still opens x - no regression from the tag-stripping fix
+ok - blocked/resolved parse their bare verb with any bracket-tag order preceding the colon
+ok - an old same-version cursor holding default for a trailing-key line is discarded after the fold-version bump
+ok - the incremental fold matches the full fold across appends in both key positions
+ok - a [key=X] token as the LAST token of the note states the key, never 'default'
+ok - a bare [slug] token states the key in the documented and closing forms
+ok - mid-note [key=X] prose and corr-tagged lines keep their historical folding
+exit:0
+
+===== tests/fm-wake-drain-anchor.test.sh =====
+ok - the ANCHOR block prints only on heartbeat wakes
+ok - a long captain.md yields a bounded excerpt with an omission pointer
+ok - the odometer starts on the first drain and counts handled wake records
+ok - the ANCHOR prints the restart advice exactly when a configured threshold is exceeded
+ok - config/session-odometer thresholds bind the odometer advice
+ok - stale-clone and watcher-down flags surface inside the ANCHOR block
+ok - heartbeat drains stamp .last-anchor; non-heartbeat drains do not
+exit:0
+
+===== tests/fm-supervision-instructions.test.sh =====
+ok - every harness render carries the steer-capture and heartbeat cadence duties; read-only omits them
+ok - renderer prints exactly the selected harness block
+ok - renderer falls back to unknown.md for unverified harness names
+ok - renderer includes read-only, afk, and effective x-mode current-state stanzas
+ok - renderer repair-line mode is harness-aware and honors conditional state
+ok - renderer preserves every harness ordinary-continuation and missing-cycle repair path
+ok - pi-signed keeps its identity while sharing Pi's supervision protocol
+ok - grok supervision is Claude-shaped background notify with passive Stop-hook backstop
+ok - grok rendered command sources the effective x-mode config
+ok - pi supervision snippet renders the effective extension path
+ok - omp supervision snippet renders the effective extension path
+exit:0
+
+===== tests/fm-brief.test.sh =====
+ok - every generated scout/ship brief carries the no-subagents standing rule inside its Rules section
+ok - fm-brief.sh: bash -n succeeds
+/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-brief.lxshZs/heredoc-in-substitution.sh:2
+ok - fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)
+ok - fm-brief.sh: --help renders the complete header
+ok - fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly
+ok - fm-brief.sh: Matt-flow is explicit, complete, and thin
+ok - fm-brief.sh: ship --mode is required and closed-set validated
+ok - fm-brief.sh: the explicit ship mode wins over the registered posture
+ok - fm-brief.sh: ship-only delivery flags are refused elsewhere, never silently dropped
+ok - fm-brief.sh: faster paths use configured authority without stacked review
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe
+ok - fm-brief.sh: no-mistakes DOD self-drives into validation
+ok - fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar
+ok - fm-brief.sh: --herdr-lab emits the complete hard safety contract
+ok - fm-brief.sh: --herdr-lab uses its quoted Firstmate-owned helper path
+ok - fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible
+ok - fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse
+ok - fm-brief.sh: --no-projects scaffolds a project-less charter and guards misuse
+ok - fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting
+ok - fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly
+ok - fm-brief.sh: custom pause verb renders in every scaffold
+ok - fm-brief.sh: investigation and visual-review completions load the shared decision policy
+ok - fm-brief: scout and secondmate code paths still scaffold well-formed briefs
+exit:0

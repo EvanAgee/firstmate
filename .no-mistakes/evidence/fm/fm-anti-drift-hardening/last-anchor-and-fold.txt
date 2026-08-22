@@ -1,0 +1,28 @@
+=== LAST-ANCHOR: missing stamp presents attended heartbeat + ANCHOR ===
+--- watcher stdout ---
+heartbeat
+--- drain (public heartbeat presentation) ---
+1787430533	1	heartbeat	heartbeat	heartbeat
+ANCHOR (durable truth re-read on this heartbeat; survives context compaction):
+standing steers (data/captain.md ## Working style):
+  - batch updates
+  - no fable for scouts
+  - prefer durable notes over chat memory
+open decisions: 0 | in-flight tasks: 0
+--- last-anchor after drain ---
+stamped
+
+=== LAST-ANCHOR: fresh stamp absorbs no-change heartbeat ===
+watcher stayed live (absorbed)
+stdout empty (correct)
+wake-queue empty (correct)
+
+=== LAST-ANCHOR: stale stamp presents heartbeat ===
+--- watcher stdout ---
+heartbeat
+
+=== ITEM 6 fold grammar (public status_open_decisions) ===
+mid-note prose mention leaves q1 open:
+q1 | needs-decision | real choicelast-token [key=q1] closes q1, leaves default:
+default | needs-decision | should docs mention [key=prose]?trailing-key opens nm-openai-credits:
+nm-openai-credits | blocked | the pipeline daemon is out of credits and the user cannot add credits

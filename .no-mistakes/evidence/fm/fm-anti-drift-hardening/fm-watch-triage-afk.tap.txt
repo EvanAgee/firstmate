@@ -1,0 +1,4 @@
+ok - signal_reason_is_actionable: benign absorbed, captain verbs and coalesced batches surfaced
+ok - stale_is_terminal: terminal status surfaces, non-terminal and no-status are benign
+ok - scan_captain_relevant_statuses lists only captain-relevant statuses
+ok - with .afk present the watcher reverts to one-shot so the daemon owns triage (no double-triage)

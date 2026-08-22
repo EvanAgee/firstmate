@@ -1,0 +1,21 @@
+# Item 6 captain repro: trailing [key=slug] and bare [slug] now fold to the stated key
+
+trailing-key open:
+nm-openai-credits	blocked	the pipeline daemon is out of credits and the user cannot add credits
+
+after canonical `resolved [key=nm-openai-credits]:`:
+<empty>
+
+bare-bracket open:
+died-resume-fold	needs-decision	reviewer flagged TurnDied double-render
+
+# Existing triage fixture that now fails (q1 closed by trailing key on resolved:)
+input:
+needs-decision: should docs mention [key=prose]?
+needs-decision [key=q1]: real choice
+resolved: docs still mention [key=q1]
+needs-decision [key=bad key]: malformed
+
+open set:
+default	needs-decision	should docs mention [key=prose]?
+# q1 is gone — the trailing [key=q1] on the resolved: line closed it

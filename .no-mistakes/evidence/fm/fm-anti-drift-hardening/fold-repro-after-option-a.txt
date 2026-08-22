@@ -1,0 +1,10 @@
+=== fold contract after captain option A ===
+--- mid-note prose (in passing) ---
+input last resolved line: resolved: docs still mention [key=q1] in passing
+open set:
+q1 | needs-decision | real choice--- last-token [key=q1] (tail-key-closes) ---
+input last resolved line: resolved: docs still mention [key=q1]
+open set:
+default | needs-decision | should docs mention [key=prose]?--- expected ---
+mid-note: q1 remains open
+tail-key: q1 closed (only default if any)
