@@ -5,6 +5,7 @@
 # live only in a private sidecar and are never interpolated into shell source.
 # A GitHub pull request URL and a GitLab merge request URL are both accepted,
 # including a merge request on a self-hosted GitLab instance.
+# A successful GitHub arm also adds the agent-pr-watched label, creating it if missing; label errors warn and never fail the arm.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -134,4 +135,28 @@ fm_pr_poll_publish_prepared || {
   echo "error: could not publish PR poll" >&2
   exit 1
 }
+
+# After a successful GitHub arm, add agent-pr-watched. If the label is missing,
+# create it once and retry the add. Label errors warn; the merge watch still
+# exits success.
+fm_pr_check_apply_watch_label() {
+  local repo="$PROJECT_PATH" number="$NUMBER"
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "warning: could not add agent-pr-watched to ${repo}#${number}" >&2
+    return 0
+  fi
+  if gh pr edit "$number" --repo "$repo" --add-label agent-pr-watched >/dev/null 2>&1; then
+    return 0
+  fi
+  gh label create agent-pr-watched --repo "$repo" --color 5319e7 \
+    --description "An agent merge watch is armed on this PR" >/dev/null 2>&1 || true
+  if gh pr edit "$number" --repo "$repo" --add-label agent-pr-watched >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "warning: could not add agent-pr-watched to ${repo}#${number}" >&2
+  return 0
+}
+if [ "$PROVIDER" = github ]; then
+  fm_pr_check_apply_watch_label
+fi
 printf 'armed: state/%s.check.sh\n' "$ID"

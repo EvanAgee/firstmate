@@ -653,6 +653,96 @@ SH
   pass "valid direct and merge flows record exact metadata and reject multiline head metadata"
 }
 
+test_watch_label_applied_on_arm() {
+  local dir rc edit_count
+  dir=$(make_case watch-label-add)
+  write_task_meta "$dir"
+  run_check_entry "$dir" task-a https://github.com/acme/widgets/pull/42 \
+    > "$dir/stdout" 2> "$dir/stderr" || fail "arm with watch label failed"
+  grep -qxF 'armed: state/task-a.check.sh' "$dir/stdout" \
+    || fail "arm did not print the armed line"
+  fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
+    || fail "successful arm did not publish the merge watch"
+  grep -qxF 'pr edit 42 --repo acme/widgets --add-label agent-pr-watched' "$dir/gh.log" \
+    || fail "arm did not add agent-pr-watched with the parsed repo and number"
+  ! grep -q 'warning:' "$dir/stderr" \
+    || fail "successful label add printed a warning"
+  pass "successful arm adds agent-pr-watched with the parsed repo and number"
+
+  dir=$(make_case watch-label-create)
+  write_task_meta "$dir"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+case "${1:-} ${2:-}" in
+  "pr view")
+    printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    exit 0
+    ;;
+  "pr edit")
+    if [ -f "${FM_TEST_LABEL_CREATED:-}" ]; then
+      exit 0
+    fi
+    echo "could not add label: 'agent-pr-watched' not found" >&2
+    exit 1
+    ;;
+  "label create")
+    [ -n "${FM_TEST_LABEL_CREATED:-}" ] || exit 1
+    touch "$FM_TEST_LABEL_CREATED"
+    exit 0
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/gh"
+  FM_TEST_LABEL_CREATED="$dir/label-created" run_check_entry "$dir" task-a \
+    https://github.com/acme/widgets/pull/42 \
+    > "$dir/stdout" 2> "$dir/stderr" || fail "arm after missing-label create failed"
+  grep -qxF 'armed: state/task-a.check.sh' "$dir/stdout" \
+    || fail "missing-label create path did not print the armed line"
+  grep -qxF 'label create agent-pr-watched --repo acme/widgets --color 5319e7 --description An agent merge watch is armed on this PR' \
+    "$dir/gh.log" || fail "missing label was not created with the specified color and description"
+  edit_count=$(grep -cFx 'pr edit 42 --repo acme/widgets --add-label agent-pr-watched' "$dir/gh.log" || true)
+  [ "$edit_count" -eq 2 ] || fail "missing-label path did not retry the add after create"
+  ! grep -q 'warning:' "$dir/stderr" \
+    || fail "create-then-retry path printed a warning"
+  pass "missing agent-pr-watched is created once and the add is retried"
+
+  dir=$(make_case watch-label-fail)
+  write_task_meta "$dir"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+case "${1:-} ${2:-}" in
+  "pr view")
+    printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    exit 0
+    ;;
+  "pr edit"|"label create")
+    echo "error: label failed" >&2
+    exit 1
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/gh"
+  set +e
+  run_check_entry "$dir" task-a https://github.com/acme/widgets/pull/42 \
+    > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "label failure failed the arm"
+  grep -qxF 'armed: state/task-a.check.sh' "$dir/stdout" \
+    || fail "label failure suppressed the armed line"
+  fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
+    || fail "label failure left the merge watch unarmed"
+  grep -qxF 'warning: could not add agent-pr-watched to acme/widgets#42' "$dir/stderr" \
+    || fail "label failure did not print a one-line warning"
+  grep -qxF 'pr=https://github.com/acme/widgets/pull/42' "$dir/home/state/task-a.meta" \
+    || fail "label failure skipped PR metadata recording"
+  pass "label failure warns and still arms the merge watch"
+}
+
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
@@ -3367,6 +3457,7 @@ test_retirement_queue_failure_and_receipt_tampering
 test_gitlab_merged_poll_retires
 test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
+test_watch_label_applied_on_arm
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_atomic_interruption_leaves_no_partial_artifact
