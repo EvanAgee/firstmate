@@ -152,16 +152,25 @@ SH
 }
 
 test_installer_refuses_without_consent() {
-  local dir agents
+  local dir agents fakebin
   dir=$(make_home consent)
   agents="$TMP_ROOT/launch-agents-consent"
   mkdir -p "$agents"
-  if FM_HOME_OVERRIDE="$dir" LAUNCH_AGENTS_DIR="$agents" "$INSTALLER" install --yes-consent-only > "$dir/refuse.out" 2>&1; then
+  # Consent is a Darwin-path gate (require_macos runs first). Fake Darwin so
+  # Linux CI still reaches the consent refusal instead of the platform one.
+  fakebin="$TMP_ROOT/fakebin-darwin"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/uname" <<'SH'
+#!/usr/bin/env bash
+printf 'Darwin\n'
+SH
+  chmod +x "$fakebin/uname"
+  if PATH="$fakebin:$PATH" FM_HOME_OVERRIDE="$dir" LAUNCH_AGENTS_DIR="$agents" "$INSTALLER" install --yes-consent-only > "$dir/refuse.out" 2>&1; then
     fail "installer ran without a consent gate reachability check (invalid flag silently accepted)"
   fi
   # No tty + no --yes: the consent gate must refuse before touching launchd,
   # and the refuse path must leave no plist behind.
-  if FM_HOME_OVERRIDE="$dir" LAUNCH_AGENTS_DIR="$agents" "$INSTALLER" install < /dev/null > "$dir/noctty.out" 2>&1; then
+  if PATH="$fakebin:$PATH" FM_HOME_OVERRIDE="$dir" LAUNCH_AGENTS_DIR="$agents" "$INSTALLER" install < /dev/null > "$dir/noctty.out" 2>&1; then
     fail "installer ran without consent on a non-tty and succeeded"
   fi
   grep -iF 'consent not given' "$dir/noctty.out" >/dev/null \
