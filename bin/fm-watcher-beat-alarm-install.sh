@@ -26,7 +26,7 @@ ACTION=
 YES=0
 
 usage() {
-  sed -n '2,19p' "$0"
+  sed -n '2,17p' "$0"
   exit "${1:-2}"
 }
 

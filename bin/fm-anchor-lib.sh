@@ -125,7 +125,6 @@ fm_odometer_advice() {
 fm_anchor_on_heartbeat() {
   local home=${FM_HOME:-$FM_ROOT} captain steers total_lines=0 line excerpt_lines=0
   local open_lines open_count=0 flags=''
-  touch "$STATE/.last-anchor" 2>/dev/null || true
   printf '%s\n' 'ANCHOR (durable truth re-read on this heartbeat; survives context compaction):'
 
   captain="$home/data/captain.md"
@@ -164,5 +163,6 @@ fm_anchor_on_heartbeat() {
   [ -n "$flags" ] && printf 'flags: %s\n' "${flags%; }"
 
   fm_odometer_advice
+  touch "$STATE/.last-anchor" 2>/dev/null || true
   return 0
 }

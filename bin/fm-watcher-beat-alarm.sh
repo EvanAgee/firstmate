@@ -48,7 +48,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     -h|--help)
-      sed -n 2,44p "$0"
+      sed -n '2,33p' "$0"
       exit 0
       ;;
     *)
