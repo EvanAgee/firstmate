@@ -205,6 +205,28 @@ test_omp_snippet_uses_effective_extension_path() {
   pass "omp supervision snippet renders the effective extension path"
 }
 
+test_anti_drift_duties_render_on_every_harness() {
+  # Items 3 and 5 of fm-anti-drift-hardening (2026-08-21): the emitted protocol
+  # carries the durable duties a compacted session cannot hold in conversation
+  # memory - steer capture before acknowledging wakes, and the heartbeat
+  # cadence duties names explicitly.
+  local harness out
+  for harness in claude codex pi omp unknown; do
+    out=$(FM_HOME="$TMP_ROOT/duty-$harness" "$RENDER" --harness "$harness")
+    assert_contains "$out" "- Steer capture:" "steer-capture duty missing for $harness"
+    assert_contains "$out" "record every new standing captain instruction" "steer-capture duty lacks its inspection contract for $harness"
+    assert_contains "$out" "data/captain.md" "steer-capture duty lacks its durable target for $harness"
+    assert_contains "$out" "- Heartbeat cadence:" "heartbeat cadence duty missing for $harness"
+    assert_contains "$out" "fleet status board" "cadence duty lacks the fleet board for $harness"
+    assert_contains "$out" "batch a captain update" "cadence duty lacks the captain update for $harness"
+  done
+  out=$(FM_HOME="$TMP_ROOT/duty-ro" "$RENDER" --harness codex --read-only 1)
+  assert_not_contains "$out" "- Steer capture:" "read-only render still printed duties it cannot own"
+  assert_not_contains "$out" "- Heartbeat cadence:" "read-only render still printed cadence duties it cannot own"
+  pass "every harness render carries the steer-capture and heartbeat cadence duties; read-only omits them"
+}
+
+test_anti_drift_duties_render_on_every_harness
 test_selected_harness_block_only
 test_unknown_fallback
 test_conditional_stanzas

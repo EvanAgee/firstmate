@@ -52,7 +52,9 @@
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
 #   heartbeat              fleet-scan backstop found an unsurfaced captain-relevant
-#                          status, unless afk is active
+#                          status, unless afk is active; also a periodic ANCHOR
+#                          re-read when state/.last-anchor is missing or older than
+#                          FM_ANCHOR_INTERVAL (default HEARTBEAT_MAX)
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
@@ -120,6 +122,9 @@ fi
 POLL=${FM_POLL:-15}                   # seconds between cycles
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
+# Attended no-change heartbeats stay absorbed unless ANCHOR is this old.
+FM_ANCHOR_INTERVAL=${FM_ANCHOR_INTERVAL:-$HEARTBEAT_MAX}
+case "$FM_ANCHOR_INTERVAL" in ''|*[!0-9]*) FM_ANCHOR_INTERVAL=$HEARTBEAT_MAX ;; esac
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
@@ -1195,10 +1200,11 @@ EOF
   [ "$hb" -gt "$HEARTBEAT_MAX" ] && hb=$HEARTBEAT_MAX
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
     # Triage: in always-on mode a heartbeat is benign unless the cheap fleet-scan
-    # turns up a captain-relevant status the per-wake path missed. Absorb the
-    # no-change case (advance the schedule and back off exactly as wake() would,
+    # turns up a captain-relevant status the per-wake path missed, or the last
+    # printed ANCHOR is missing/older than FM_ANCHOR_INTERVAL. Absorb the other
+    # no-change cases (advance the schedule and back off exactly as wake() would,
     # without exiting); the away-mode daemon, when present, owns triage and wants
-    # every heartbeat.
+    # every heartbeat. ANCHOR itself still prints only on a presented heartbeat.
     if afk_present; then
       fm_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
@@ -1210,6 +1216,10 @@ EOF
       fm_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced
+      wake "heartbeat"
+    elif [ "$(age_of "$STATE/.last-anchor")" -ge "$FM_ANCHOR_INTERVAL" ]; then
+      fm_wake_append heartbeat heartbeat heartbeat || exit 1
+      touch "$STATE/.last-heartbeat"
       wake "heartbeat"
     else
       touch "$STATE/.last-heartbeat"

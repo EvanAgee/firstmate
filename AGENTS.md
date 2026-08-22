@@ -74,7 +74,8 @@ config/startup-memory-budget     primary-authoritative per-home startup-memory b
 config/herdr-presentation-spaces  optional "off" opt-out from, or "on" opt-in to, Herdr's default-on disposable single-task visual projection, which is unconfigured-default-on only at or above a Herdr version floor; LOCAL, gitignored; inherited by secondmate homes; see docs/herdr-backend.md "Presentation spaces"
 config/trace-context  optional presence flag enabling default-off native W3C trace-context propagation to spawned agents; LOCAL, gitignored; inherited by secondmate homes; see docs/configuration.md "Trace context propagation" and docs/trace-context.md
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
-config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
+config/wedge-alarm  optional active-alert channel directives for the away-mode wedge alarm and the watcher-beat alert; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
+config/session-odometer  optional session-age and handled-wake thresholds for heartbeat ANCHOR restart advice; LOCAL, gitignored; absent uses 21600s/200 wakes; see docs/configuration.md "Session odometer"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
@@ -128,6 +129,9 @@ state/               runtime records and signals; gitignored
   .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak   watcher internals; never touch
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
+  .session-odometer   private per-session age and handled-wake counters for a long-lived session's restart advice; written only by bin/fm-anchor-lib.sh via bin/fm-wake-drain.sh, reset whenever the session-lock holder changes
+  .last-anchor       mtime of the last printed heartbeat ANCHOR; attended no-change heartbeats present when this is missing or older than FM_ANCHOR_INTERVAL (default HEARTBEAT_MAX); touched only by bin/fm-anchor-lib.sh via the drain
+  .beat-alarm-fired .beat-alarm.log .beat-alarm.launchd.log   session-independent watcher-beat alert episode marker and its logs; written only by bin/fm-watcher-beat-alarm.sh
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
 .no-mistakes/        local validation state and evidence; gitignored
 ```

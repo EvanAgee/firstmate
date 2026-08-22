@@ -236,6 +236,77 @@ test_blocked_and_resolved_are_tag_order_independent() {
   pass "blocked/resolved parse their bare verb with any bracket-tag order preceding the colon"
 }
 
+# Item 6 regression pair (2026-08-21 captain repro in the real home): a worker
+# habitually writes the key as the LAST token of the note
+# (blocked: ... [key=nm-openai-credits]) or as a bare bracket token instead of
+# the canonical [key=<slug>] form (needs-decision [died-resume-fold]: ...).
+# Those lines opened under "default", so fm-send --resolve-key refused the key
+# the drain kept printing forever - the two consumers visibly disagreed. The
+# ONE fold now states the key at either position/form, so both consumers agree.
+test_trailing_note_token_is_a_stated_key() {
+  local dir expected
+  dir=$(case_dir trailing-key)
+  printf 'blocked: the pipeline daemon is out of credits and the user cannot add credits [key=nm-openai-credits]\n' > "$dir/t.status"
+  expected=$(printf 'nm-openai-credits\tblocked\tthe pipeline daemon is out of credits and the user cannot add credits\n')
+  assert_fold "$dir/t.status" "$expected" "trailing note-head [key=X] states and strips"
+
+  # The canonical resolution fm-send --resolve-key writes closes it.
+  printf 'resolved [key=nm-openai-credits]: answered: captain refilled\n' >> "$dir/t.status"
+  assert_fold "$dir/t.status" "" "canonical resolution closes a trailing-key open"
+  pass "a [key=X] token as the LAST token of the note states the key, never 'default'"
+}
+
+test_bare_bracket_token_is_a_stated_key() {
+  local dir expected
+  dir=$(case_dir bare-bracket-key)
+  printf 'needs-decision [died-resume-fold]: reviewer flagged TurnDied double-render\n' > "$dir/t.status"
+  expected=$(printf 'died-resume-fold\tneeds-decision\treviewer flagged TurnDied double-render\n')
+  assert_fold "$dir/t.status" "$expected" "bare [slug] before the colon states the key"
+
+  printf 'resolved [died-resume-fold]: firstmate: option A - fold suspend/resume\n' >> "$dir/t.status"
+  assert_fold "$dir/t.status" "" "bare [slug] resolution closes a bare open"
+  pass "a bare [slug] token states the key in the documented and closing forms"
+}
+
+test_existing_prose_mentions_keep_folding_to_default_like_before() {
+  local dir
+  dir=$(case_dir unchanged-prose)
+  # The tail position must not widen the surface for mid-note mentions: an
+  # interior [key=X] remains prose, and a corr-tagged line with no key token
+  # still folds to default.
+  printf 'needs-decision: explain what [key=blue] means in the report\n' > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'default\tneeds-decision\texplain what [key=blue] means in the report\n')" \
+    "mid-note key mention stays prose"
+  pass "mid-note [key=X] prose and corr-tagged lines keep their historical folding"
+}
+
+test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded() {
+  local dir f cf ident size expected got
+  dir=$(case_dir stale-v4-cursor)
+  f="$dir/t.status"
+  cf=$(_fm_open_decisions_cursor_path "$f")
+  printf 'blocked: the pipeline daemon is out of credits and the user cannot add credits [key=nm-openai-credits]\n' > "$f"
+  ident=$(_fm_open_decisions_file_ident "$f")
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted cursor"
+  size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
+  # Plant the exact drain-vs-send disagreement: a version=4 cursor already at
+  # EOF, so a same-version incremental fold would keep this default row and
+  # never re-read the trailing-key line. After the grammar bump the cursor
+  # must be discarded and rebuilt from byte 0.
+  {
+    printf 'version=4\n'
+    printf 'offset=%s\n' "$size"
+    printf 'ident=%s\n' "$ident"
+    printf 'default\tblocked\tthe pipeline daemon is out of credits and the user cannot add credits [key=nm-openai-credits]\n'
+  } > "$cf"
+  expected=$(printf 'nm-openai-credits\tblocked\tthe pipeline daemon is out of credits and the user cannot add credits\n')
+  got=$(status_open_decisions_incremental "$f")
+  [ "$got" = "$expected" ] \
+    || fail "stale v4 cursor was kept: got '$got' want '$expected'"
+  pass "an old same-version cursor holding default for a trailing-key line is discarded after the fold-version bump"
+}
+
 test_incremental_agrees_with_full_fold_across_appends() {
   local dir f expected
   dir=$(case_dir incremental)
@@ -271,4 +342,8 @@ test_corr_and_key_tags_open_and_close_under_the_stated_key
 test_corr_only_tag_opens_as_default_like_a_bare_line
 test_key_only_before_colon_still_opens_no_regression
 test_blocked_and_resolved_are_tag_order_independent
+test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded
 test_incremental_agrees_with_full_fold_across_appends
+test_trailing_note_token_is_a_stated_key
+test_bare_bracket_token_is_a_stated_key
+test_existing_prose_mentions_keep_folding_to_default_like_before

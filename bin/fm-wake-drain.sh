@@ -14,6 +14,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
+# Anti-drift anchors for long-lived primary sessions: the heartbeat ANCHOR
+# block and the session odometer (bin/fm-anchor-lib.sh; contract in its header).
+# shellcheck source=bin/fm-anchor-lib.sh
+. "$SCRIPT_DIR/fm-anchor-lib.sh"
 
 DRAIN_TMP=
 DRAIN_LOCK_HELD=false
@@ -336,5 +340,15 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
 (print_status_presentation "$RAW_ROWS") || true
+
+# Session anchor machinery (bin/fm-anchor-lib.sh): the odometer notes the wake
+# records this drain handled, and a heartbeat wake additionally re-anchors the
+# session on durable truth.
+rows=$(printf '%s\n' "$RAW_ROWS" | awk 'NF{c++} END{print c+0}' 2>/dev/null || printf '0')
+fm_odometer_note_drain "$rows" || true
+if printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$3=="heartbeat"{f=1} END{exit !f}'; then
+  fm_anchor_on_heartbeat || true
+fi
+
 assert_watcher_liveness
 exit 0

@@ -344,6 +344,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+8. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -476,6 +477,7 @@ $RULE1
 8. After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid.
 9. Before reporting done for any PR with user-visible UI changes, use the exact upload command supplied by the project brief to upload viewport screenshots and embed them in the PR body; local paths do not count.
 10. Run \`npx unslop\` on every changed file and fix all findings before any PR.
+11. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.

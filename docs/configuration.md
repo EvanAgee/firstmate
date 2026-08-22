@@ -115,7 +115,14 @@ Beyond the durable `state/.subsuper-inject-wedged` marker and the tmux status-li
 Directives are `off` (a position-independent kill switch that disables every active alert), `auto`/`default`, `osascript` (macOS Notification Center banner), `herdr` (herdr UI notification), and `command:<cmd>` (run `<cmd>` via `sh -c`, summary on `$1` and stdin).
 An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisely so a wedged away-mode primary is never silent, and it fires at most once per max-defer window after a genuine wedge.
 A missing or failing channel logs and falls through to the next, never crashing the daemon.
-See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
+The same file and directives also feed the session-independent watcher-beat alert; [`wedge-alarm.md`](wedge-alarm.md) owns both faces, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) owns active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) is the copyable config.
+
+## Session odometer (config/session-odometer)
+
+`config/session-odometer` is a local, gitignored file carrying two whitespace-separated base-10 numbers on its first line: the maximum session age in seconds and the maximum handled-wake count before the drain's heartbeat ANCHOR block advises starting a fresh session.
+Missing or unparseable values fall back to the defaults (21600 seconds, 200 wakes), and `FM_ODOMETER_MAX_AGE` / `FM_ODOMETER_MAX_WAKES` override them for tests and focused tuning.
+A threshold breach prints one advice line; nothing restarts the session automatically.
+See `bin/fm-anchor-lib.sh`'s header for the full anchor and odometer contract.
 
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
@@ -543,8 +550,9 @@ FM_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tas
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically
 FM_POLL=15              # seconds between watcher poll cycles
-FM_HEARTBEAT=600        # base seconds between heartbeat scans; no-change heartbeats are absorbed while idle
+FM_HEARTBEAT=600        # base seconds between heartbeat scans; attended no-change heartbeats stay absorbed unless the last printed ANCHOR is missing or older than FM_ANCHOR_INTERVAL
 FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
+FM_ANCHOR_INTERVAL=     # seconds since the last printed heartbeat ANCHOR before an attended no-change heartbeat presents; unset uses HEARTBEAT_MAX
 FM_INACTIVE_RECONCILE_SECS=900  # 60..1800-second watcher cadence and inactivity threshold; locked session start also scans immediately
 FM_INACTIVE_RECONCILE_BUDGET_SECS=10  # 1..30-second aggregate bound per inactive-outcome scan
 FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, or Relay dispatch)
@@ -617,9 +625,10 @@ FM_SUPERVISOR_TARGET=              # optional supervisor pane target override; t
 FM_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 FM_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
 FM_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
-FM_WEDGE_ALARM_CHANNEL=            # override config/wedge-alarm with one active-alert directive for the wedge alarm; off|auto|osascript|herdr|command:<cmd>; absent = auto (macOS -> an OS notification)
-FM_WEDGE_ALARM_EXEC=              # notifier seam: route every channel (osascript, herdr, command:) through this command as `<cmd> <channel> <summary>`; "discard" fires nothing; unset in production; the daemon defaults it to "discard" when sourced so no test posts a real notification (docs/wedge-alarm.md)
+FM_WEDGE_ALARM_CHANNEL=            # override config/wedge-alarm with one active-alert directive for the away-mode wedge alarm and the watcher-beat alert; off|auto|osascript|herdr|command:<cmd>; absent = auto (macOS -> an OS notification)
+FM_WEDGE_ALARM_EXEC=              # notifier seam: route every channel (osascript, herdr, command:) through this command as `<cmd> <channel> <summary>`; "discard" fires nothing; unset in production; library-mode callers default it to "discard" so no test posts a real notification (docs/wedge-alarm.md)
 FM_WEDGE_ALARM_TIMEOUT_SECS=10    # maximum seconds for each osascript, herdr, override, or command: notifier before its watchdog terminates it and continues to the next channel; invalid or zero values use 10
+FM_BEAT_ALARM_GRACE=300           # watcher-beat alert grace seconds; a beacon must stay stale across two grace windows (age >= 2*grace) before one episode fires (docs/wedge-alarm.md)
 FM_INJECT_FAIL_SLEEP=30            # seconds to back off when the supervisor pane is unavailable
 FM_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once
 FM_INJECT_CONFIRM_SLEEP=0.5        # seconds between daemon submit checks

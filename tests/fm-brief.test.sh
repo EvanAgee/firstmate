@@ -780,6 +780,45 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+test_no_subagents_rule_emits_in_every_variant() {
+  # Item 7 of fm-anti-drift-hardening (captain standing order 2026-08-21): the
+  # no-subagents standing rule must reach every worker through the generated
+  # brief - scout and every ship delivery mode alike.
+  local home id mode brief sentence
+  home="$TMP_ROOT/subagent-home"
+  write_registry "$home"
+  sentence="Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session."
+
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-nosub-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "ship brief --mode $mode failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "$sentence" "$brief" "$id: ship brief missing the no-subagents standing rule"
+    awk -v s="$sentence" '
+      $0 == "# Rules" { in_rules = 1 }
+      in_rules && index($0, s) { found = 1 }
+      in_rules && /^# / && $0 != "# Rules" { in_rules = 0 }
+      END { exit !found }
+    ' "$brief" || fail "$id: the no-subagents rule emitted outside the Rules section"
+  done
+
+  id=brief_no_sub_scout
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 \
+    || fail "scout brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep "$sentence" "$brief" "$id: scout brief missing the no-subagents standing rule"
+  awk -v s="$sentence" '
+    $0 == "# Rules" { in_rules = 1 }
+    in_rules && index($0, s) { found = 1 }
+    in_rules && /^# / && $0 != "# Rules" { in_rules = 0 }
+    END { exit !found }
+  ' "$brief" || fail "$id: the no-subagents rule emitted outside the Rules section"
+
+  pass "every generated scout/ship brief carries the no-subagents standing rule inside its Rules section"
+}
+
+test_no_subagents_rule_emits_in_every_variant
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
