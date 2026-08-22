@@ -1,0 +1,9 @@
+watcher_pid=99037 lock_pid=99037
+$ bin/fm-watchdog.sh --arm   # live watcher => healthy, arm never reached
+ok: supervision alive (last beat 0s ago)
+exit=0
+$ bin/fm-watch-arm.sh   # out-of-band against live watcher
+watcher: attached pid=99037 (beacon 0s)
+lock_owner_while_attached=99037
+no 'started pid=' line
+fm-watch.sh processes matching (best-effort count via pgrep, not home-scoped): see lock owner above

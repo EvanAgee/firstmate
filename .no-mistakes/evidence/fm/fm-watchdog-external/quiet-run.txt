@@ -1,0 +1,3 @@
+$ bin/fm-watchdog.sh --quiet
+stdout_bytes=0
+exit=10

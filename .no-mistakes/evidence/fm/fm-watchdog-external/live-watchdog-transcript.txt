@@ -1,0 +1,119 @@
+# Live external-watchdog validation
+# date: 2026-08-22T20:49:33Z
+# home: /tmp/fm-watchdog-live.MkeZ64
+# topic: fm-wd-e2e-660f7d3924ce (disposable; not committed to tracked code)
+
+== 1. Shared grace from supervision.env only (no shell profile) ==
+$ FM_GUARD_READ_ONLY=1 bin/fm-guard.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 60s).
+●  This read-only session should report the lapse, not repair it.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  Watcher repair belongs to the session holding the fleet lock; do not drain, arm, or repair from this read-only session.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$ bin/fm-watchdog.sh --status
+home=/tmp/fm-watchdog-live.MkeZ64 needed=true afk=0 beacon=never fresh=false grace=60s in-flight=1
+
+== 2. Missing channel fails loudly (exit 1, no swallow) ==
+$ bin/fm-watchdog.sh
+LAPSE: Firstmate supervision is down: 1 task(s) in flight in /tmp/fm-watchdog-live.MkeZ64, last watcher beat never (grace 60s). Open the session to restore it.
+exit=1
+
+== 3. Real ntfy delivery on lapse, then --quiet is silent ==
+$ bin/fm-watchdog.sh
+LAPSE: Firstmate supervision is down: 1 task(s) in flight in /tmp/fm-watchdog-live.MkeZ64, last watcher beat never (grace 60s). Open the session to restore it.
+exit=10
+
+$ curl -fsS -H 'Accept: application/json' https://ntfy.sh/<topic>/json?poll=1
+{
+  "id": "WgvJqbFEvyhv",
+  "event": "message",
+  "topic": "fm-wd-e2e-660f7d3924ce",
+  "title": "firstmate supervision down",
+  "message": "Firstmate supervision is down: 1 task(s) in flight in /tmp/fm-watchdog-live.MkeZ64, last watcher beat never (grace 60s). Open the session to restore it."
+}
+$ bin/fm-watchdog.sh --quiet
+stdout_bytes=0
+exit=10
+
+== 4. Re-arm is off by default: dry-run without --arm does not mention re-arm ==
+$ bin/fm-watchdog.sh --dry-run
+LAPSE: Firstmate supervision is down: 1 task(s) in flight in /tmp/fm-watchdog-live.MkeZ64, last watcher beat never (grace 60s). Open the session to restore it.
+would notify via: curl -fsS -H "Title: firstmate supervision down" -d @- https://ntfy.sh/fm-wd-e2e-660f7d3924ce
+exit=10
+
+$ bin/fm-watchdog.sh --dry-run --arm
+LAPSE: Firstmate supervision is down: 1 task(s) in flight in /tmp/fm-watchdog-live.MkeZ64, last watcher beat never (grace 60s). Open the session to restore it.
+would notify via: curl -fsS -H "Title: firstmate supervision down" -d @- https://ntfy.sh/fm-wd-e2e-660f7d3924ce
+would re-arm: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0NK5YJ18Z3XN1WTH6YG5Q3S/bin/fm-watch-arm.sh
+exit=10
+
+== 5. Gates: idle / AFK / fresh beacon ==
+$ (no work) bin/fm-watchdog.sh
+ok: no work in flight, nothing to supervise
+exit=0
+
+$ (away) bin/fm-watchdog.sh
+ok: away mode active, the away daemon owns supervision
+exit=0
+
+$ (fresh beacon) bin/fm-watchdog.sh
+ok: supervision alive (last beat 0s ago)
+exit=0
+
+== 6. Attach-not-double-arm against a real watcher ==
+watcher_pid=99037 lock_pid=99037
+$ bin/fm-watchdog.sh --arm   # live watcher => healthy, arm never reached
+ok: supervision alive (last beat 0s ago)
+exit=0
+$ bin/fm-watch-arm.sh   # out-of-band against live watcher
+watcher: attached pid=99037 (beacon 0s)
+lock_owner_while_attached=99037
+no 'started pid=' line
+fm-watch.sh processes matching (best-effort count via pgrep, not home-scoped): see lock owner above
+
+== 7. Install helper is consented: print/crontab/dry-run, do not load ==
+$ bin/fm-watchdog-install.sh --status
+not installed (/Users/evanagee/Library/LaunchAgents/dev.firstmate.watchdog.1169183522.plist)
+
+$ bin/fm-watchdog-install.sh --crontab
+# Linux: add this line with "crontab -e".
+# The watchdog exits 0 when healthy, so cron stays quiet until something is wrong.
+*/5 * * * * FM_HOME=/tmp/fm-watchdog-live.MkeZ64 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0NK5YJ18Z3XN1WTH6YG5Q3S/bin/fm-watchdog.sh --quiet
+
+$ bin/fm-watchdog-install.sh --dry-run
+would write /Users/evanagee/Library/LaunchAgents/dev.firstmate.watchdog.1169183522.plist:
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.firstmate.watchdog.1169183522</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0NK5YJ18Z3XN1WTH6YG5Q3S/bin/fm-watchdog.sh</string>
+    <string>--quiet</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FM_HOME</key>
+    <string>/tmp/fm-watchdog-live.MkeZ64</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/tmp/fm-watchdog-live.MkeZ64/state/.watchdog.log</string>
+</dict>
+</plist>
+confirmed no LaunchAgent written for live home (dev.firstmate.watchdog.1169183522.plist absent)
+confirmed default plist is notify-only (--arm absent)
+confirmed default plist runs --quiet
+
+== cleanup ==
+removed /tmp/fm-watchdog-live.MkeZ64
+DONE

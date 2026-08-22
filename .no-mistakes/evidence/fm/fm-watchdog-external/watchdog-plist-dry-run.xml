@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.firstmate.watchdog.1169183522</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0NK5YJ18Z3XN1WTH6YG5Q3S/bin/fm-watchdog.sh</string>
+    <string>--quiet</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FM_HOME</key>
+    <string>/tmp/fm-watchdog-live.MkeZ64</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/tmp/fm-watchdog-live.MkeZ64/state/.watchdog.log</string>
+</dict>
+</plist>

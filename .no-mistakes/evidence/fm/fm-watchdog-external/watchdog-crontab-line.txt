@@ -1,0 +1,3 @@
+# Linux: add this line with "crontab -e".
+# The watchdog exits 0 when healthy, so cron stays quiet until something is wrong.
+*/5 * * * * FM_HOME=/tmp/fm-watchdog-live.MkeZ64 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0NK5YJ18Z3XN1WTH6YG5Q3S/bin/fm-watchdog.sh --quiet

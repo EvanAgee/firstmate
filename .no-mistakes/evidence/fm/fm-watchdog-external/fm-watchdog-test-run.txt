@@ -1,0 +1,42 @@
+# Targeted automated run (twice, stable)
+
+$ bin/fm-test-run.sh tests/fm-watchdog.test.sh
+FM_TEST_BEGIN 2026-08-22T20:48:40Z tests/fm-watchdog.test.sh family=watcher-wake-lock expected_gate_skip=none
+ok - supervision.env supplies a knob the environment left unset
+ok - a real environment variable wins over supervision.env
+ok - a malformed line skips only itself
+ok - supervision.env cannot execute code
+ok - an idle home is healthy and notifies nothing
+ok - away mode stands the watchdog down
+ok - clearing away mode exposes the same home as a lapse
+ok - a stale beacon notifies with a summary naming the work at risk
+ok - a command referencing $1 receives the summary there as well
+ok - a failing notification endpoint is reported, never swallowed
+ok - a fresh beacon is healthy
+ok - the verdict follows FM_GUARD_GRACE, so the threshold has one owner
+ok - the grace is honored when it comes from supervision.env alone
+ok - a missing notification channel fails loudly
+ok - config/watchdog-notify supplies the endpoint, comments ignored
+ok - --dry-run reports the lapse and changes nothing
+ok - an overlapping run stands down instead of stacking
+ok - a lock from a dead run is reclaimed, not honored forever
+ok - the lock is released when the run ends
+ok - a live watcher is recognized and the arm is never reached
+ok - an out-of-band arm attaches to the live watcher instead of double-arming
+ok - --status reports the verdict without acting
+FM_TEST_END 2026-08-22T20:48:46Z tests/fm-watchdog.test.sh exit=0 duration_ms=6431 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=6532
+
+$ bin/fm-test-run.sh tests/fm-watchdog.test.sh
+FM_TEST_BEGIN 2026-08-22T20:53:41Z tests/fm-watchdog.test.sh family=watcher-wake-lock expected_gate_skip=none
+(same 22 checks)
+FM_TEST_END 2026-08-22T20:53:47Z tests/fm-watchdog.test.sh exit=0 duration_ms=5776 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=5875
+
+# Related suites for files this change also touches
+
+$ bin/fm-test-run.sh tests/fm-guard-stale-banner.test.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh
+FM_TEST_END tests/fm-guard-stale-banner.test.sh exit=0 duration_ms=16948
+FM_TEST_END tests/fm-watch-arm.test.sh exit=0 duration_ms=122595
+FM_TEST_END tests/fm-watcher-lock.test.sh exit=0 duration_ms=87291
+FM_TEST_SUMMARY total=3 failed=0 skipped_gate=0 duration_ms=227110
