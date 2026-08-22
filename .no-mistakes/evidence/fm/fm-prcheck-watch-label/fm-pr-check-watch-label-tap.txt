@@ -1,0 +1,8 @@
+original colocated test_watch_label_applied_on_arm
+source: tests/fm-pr-check-security.test.sh
+
+ok - raw-byte parser accepts canonical URLs and rejects the complete adversarial matrix
+=== original test_watch_label_applied_on_arm ===
+ok - successful arm adds agent-pr-watched with the parsed repo and number
+ok - missing agent-pr-watched is created once and the add is retried
+ok - label failure warns and still arms the merge watch

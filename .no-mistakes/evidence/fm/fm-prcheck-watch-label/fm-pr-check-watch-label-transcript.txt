@@ -1,0 +1,58 @@
+fm-pr-check.sh watch-label demonstration
+script: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0KNRWSBEY7XAP1SJFR5KRSE/bin/fm-pr-check.sh
+date: 2026-08-22T02:51:28Z
+
+------------------------------------------------------------------------
+SCENARIO 1: successful GitHub arm adds agent-pr-watched
+command: fm-pr-check.sh task-a https://github.com/acme/widgets/pull/42
+------------------------------------------------------------------------
+exit: 0
+stdout:
+  armed: state/task-a.check.sh
+stderr:
+  (empty)
+gh invocations:
+  gh pr view https://github.com/acme/widgets/pull/42 --json headRefOid -q .headRefOid
+  gh pr edit 42 --repo acme/widgets --add-label agent-pr-watched
+recorded metadata:
+  pr=https://github.com/acme/widgets/pull/42
+  pr_head=0123456789abcdef0123456789abcdef01234567
+
+------------------------------------------------------------------------
+SCENARIO 2: missing label is created (color 5319e7) then add is retried
+------------------------------------------------------------------------
+exit: 0
+stdout:
+  armed: state/task-a.check.sh
+stderr (script + gh):
+  (empty)
+gh invocations:
+  gh pr view https://github.com/acme/widgets/pull/42 --json headRefOid -q .headRefOid
+  gh pr edit 42 --repo acme/widgets --add-label agent-pr-watched
+  gh label create agent-pr-watched --repo acme/widgets --color 5319e7 --description An agent merge watch is armed on this PR
+  gh pr edit 42 --repo acme/widgets --add-label agent-pr-watched
+
+------------------------------------------------------------------------
+SCENARIO 3: label failure does not fail the arm
+------------------------------------------------------------------------
+exit: 0
+stdout:
+  armed: state/task-a.check.sh
+stderr:
+  warning: could not add agent-pr-watched to acme/widgets#42
+merge watch armed: yes
+meta pr line:
+  pr=https://github.com/acme/widgets/pull/42
+
+------------------------------------------------------------------------
+SCENARIO 4: GitLab arm does not touch the GitHub label path
+------------------------------------------------------------------------
+exit: 0
+stdout:
+  armed: state/task-a.check.sh
+stderr:
+  (empty)
+gh log (should be empty):
+  (empty)
+glab log:
+  (empty)
