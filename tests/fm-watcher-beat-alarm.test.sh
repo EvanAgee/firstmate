@@ -37,10 +37,16 @@ make_home() {  # <name> -> dir; gives supervision need + a backdated beacon
 run_checker() {  # <home> [env...]
   local home=$1
   shift
+  # Pin a named channel so the EXEC seam is invoked on every platform.
+  # `auto` is default-on only on macOS; on Linux it resolves to no OS
+  # channel and would never reach the recorder (production: the durable
+  # marker is then the only signal). osascript here is a channel name,
+  # not a binary: EXEC replaces the real notifier.
   env "$@" \
     FM_HOME_OVERRIDE="$home" \
     FM_CONFIG_OVERRIDE="$home/config" \
     FM_BEAT_ALARM_GRACE=$GRACE \
+    FM_WEDGE_ALARM_CHANNEL=osascript \
     FM_WEDGE_ALARM_EXEC="$TMP_ROOT/rec" \
     FM_WEDGE_ALARM_LOG="$TMP_ROOT/rec.log" \
     "$CHECKER" --home "$home" 2>/dev/null
