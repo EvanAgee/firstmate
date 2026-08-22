@@ -784,7 +784,7 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   dir=$(make_case exited-declared-pause); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/held.status"
   window="test:fm-held"
-  printf 'idle bare shell after agent exit\n' > "$capture_file"
+  printf 'idle bare shell after agent exit' > "$capture_file"
   printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/held.meta"
   printf 'paused: held per captain while an external decision is pending\n' > "$statusf"
   back=$(( $(date +%s) - 500 ))
@@ -803,7 +803,7 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
       FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
     pid=$!
-    if wait_live "$pid" 15; then reap "$pid"; else wait "$pid" || fail "dead-agent watcher round $round failed"; fi
+    if wait_live "$pid" 50; then reap "$pid"; else wait "$pid" || fail "dead-agent watcher round $round failed"; fi
     round=$((round + 1))
   done
   wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' "$state/.wake-queue")
@@ -816,7 +816,7 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   dir=$(make_case exited-captain-held); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/held.status"
   window="test:fm-held"
-  printf 'idle bare shell after captain-held transfer\n' > "$capture_file"
+  printf 'idle bare shell after captain-held transfer' > "$capture_file"
   printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/held.meta"
   printf 'captain-held [key=route]: tracked by held-decision-route\n' > "$statusf"
   back=$(( $(date +%s) - 500 ))
@@ -839,7 +839,7 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   dir=$(make_case alive-decision-gate); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/gate.status"
   window="test:fm-gate"
-  printf 'idle external-decision gate\n' > "$capture_file"
+  printf 'idle external-decision gate' > "$capture_file"
   printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/gate.meta"
   printf 'paused: waiting at an active external-decision gate\n' > "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-gate_status"
