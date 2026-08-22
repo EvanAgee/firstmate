@@ -165,12 +165,20 @@ test_installer_refuses_without_consent() {
   pass "the installer refuses before touching launchd without explicit consent and leaves no plist"
 }
 
+beacon_mtime() {  # <file> -> epoch seconds; same Darwin/GNU split as fm_sup_stat_mtime
+  if [ "$(uname)" = Darwin ]; then
+    stat -f %m "$1" 2>/dev/null
+  else
+    stat -c %Y "$1" 2>/dev/null
+  fi
+}
+
 test_beat_marker_carries_the_alerted_beacon_mtime() {
   local dir
   dir=$(make_home marker)
   : > "$TMP_ROOT/rec.log"
   run_checker "$dir"
-  [ "$(cat "$dir/state/.beat-alarm-fired")" = "$(stat -f %m "$dir/state/.last-watcher-beat")" ] \
+  [ "$(cat "$dir/state/.beat-alarm-fired")" = "$(beacon_mtime "$dir/state/.last-watcher-beat")" ] \
     || fail "the fired marker does not carry its episode's beacon mtime"
   pass "the fired marker records the alerted episode's beacon mtime"
 }
