@@ -124,6 +124,33 @@ Missing or unparseable values fall back to the defaults (21600 seconds, 200 wake
 A threshold breach prints one advice line; nothing restarts the session automatically.
 See `bin/fm-anchor-lib.sh`'s header for the full anchor and odometer contract.
 
+## Supervision knobs (config/supervision.env)
+
+The supervision tuning variables listed under "Environment variables" below used to reach a script only through the environment of whatever shell started it.
+A Claude primary inherited them from its own harness settings, another harness only from an interactive shell profile, and a launchd or cron context - which has neither - inherited nothing.
+The same home could therefore answer "is the watcher beacon stale?" with different numbers depending on which process asked, which is exactly the drift a scheduled out-of-session check must not have.
+
+The optional local, gitignored `config/supervision.env` is the one mechanism the supervision scripts themselves read, so every harness and every scheduler context resolves the same values for a home.
+[`bin/fm-watch.sh`](../bin/fm-watch.sh), [`bin/fm-guard.sh`](../bin/fm-guard.sh), and [`bin/fm-watcher-beat-alarm.sh`](../bin/fm-watcher-beat-alarm.sh) load it before resolving any knob below.
+It holds one `NAME=value` assignment per line; blank lines and `#` comments are ignored, and an optional leading `export` is accepted.
+
+A real environment variable always wins over the file.
+A knob already set and non-empty in the environment is left exactly as inherited, so an explicit per-invocation override is never overwritten; the file supplies only the knobs the caller's environment did not already set.
+
+The file is parsed, never sourced.
+One malformed line skips only itself instead of aborting the read and silently dropping every valid knob after it, and a configuration file can never execute code.
+An absent or unreadable file changes nothing, because every knob keeps its own default at its point of use.
+
+```sh
+# config/supervision.env
+FM_GUARD_GRACE=300
+FM_HEARTBEAT_MAX=7200
+```
+
+This file is local to each home and is not in the primary-to-secondmate inherited-config set owned by `bin/fm-config-inherit-lib.sh`; a secondmate home reads its own copy if present.
+[`bin/fm-supervision-env-lib.sh`](../bin/fm-supervision-env-lib.sh)'s header owns the exact mechanics, and [`examples/supervision.env`](examples/supervision.env) is a copyable starting point.
+The session-independent watcher-beat alert in [`wedge-alarm.md`](wedge-alarm.md) reads its staleness threshold through this file, so raising `FM_GUARD_GRACE` moves that alert with it instead of leaving it on a separate constant.
+
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
 The optional local, gitignored `config/trace-context` presence flag enables default-off native W3C trace-context propagation.
@@ -576,7 +603,7 @@ FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting Relay completion f
 FMX_FOLLOWUP_MAX_COUNT=3   # local cap on Relay completion follow-ups per linked mention
 FM_PF_RETRY_BACKOFF_SECS=900   # seconds before the next attempt after a retryable promised-public-reply delivery error
 FM_LOCK_STALE_AFTER=2   # seconds before dead-pid lock records can be reclaimed; mid-acquire locks keep at least 2s grace
-FM_GUARD_GRACE=300      # seconds before guard warnings, arm health checks, and the primary turn-end guard treat a watcher beacon as stale
+FM_GUARD_GRACE=300      # seconds before guard warnings, arm health checks, the primary turn-end guard, and the watcher-beat alert treat a watcher beacon as stale
 FM_CLAUDE_AUTOARM_ATTEMPTS=2   # bounded Stop-owned arm attempts per Claude auto-arm cycle; accepted values are 1, 2, or 3
 FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=800   # milliseconds the --claude turn-end guard waits for watcher health, a role-verified Stop auto-arm claim, or a fresh epoch before deciding recovery ownership or failure progression
 FM_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains eligible for the current event epoch's recovery or failure decision
@@ -628,7 +655,8 @@ FM_MAX_DEFER_SECS=300              # max buffered escalation age before retry pl
 FM_WEDGE_ALARM_CHANNEL=            # override config/wedge-alarm with one active-alert directive for the away-mode wedge alarm and the watcher-beat alert; off|auto|osascript|herdr|command:<cmd>; absent = auto (macOS -> an OS notification)
 FM_WEDGE_ALARM_EXEC=              # notifier seam: route every channel (osascript, herdr, command:) through this command as `<cmd> <channel> <summary>`; "discard" fires nothing; unset in production; library-mode callers default it to "discard" so no test posts a real notification (docs/wedge-alarm.md)
 FM_WEDGE_ALARM_TIMEOUT_SECS=10    # maximum seconds for each osascript, herdr, override, or command: notifier before its watchdog terminates it and continues to the next channel; invalid or zero values use 10
-FM_BEAT_ALARM_GRACE=300           # watcher-beat alert grace seconds; a beacon must stay stale across two grace windows (age >= 2*grace) before one episode fires (docs/wedge-alarm.md)
+FM_BEAT_ALARM_GRACE=           # optional watcher-beat alert grace override; defaults to FM_GUARD_GRACE; a beacon must stay stale across two grace windows (age >= 2*grace) before one episode fires (docs/wedge-alarm.md)
+FM_BEAT_ALARM_REARM=0             # 1 detaches fm-watch-arm.sh after a watcher-beat alert; default 0 stays alert-only (docs/wedge-alarm.md)
 FM_INJECT_FAIL_SLEEP=30            # seconds to back off when the supervisor pane is unavailable
 FM_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once
 FM_INJECT_CONFIRM_SLEEP=0.5        # seconds between daemon submit checks

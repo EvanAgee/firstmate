@@ -3,9 +3,10 @@
 # (bin/fm-watcher-beat-alarm.sh; contract in docs/wedge-alarm.md's
 # "Watcher-beat alarm"). Installs and removes a macOS launchd interval agent
 # that runs bin/fm-watcher-beat-alarm.sh --home <FM_HOME> every 120 seconds.
-# The checker is alert-only: it never starts, stops, arms, or repairs the
-# watcher, it is not a second watcher process, and it keeps running while a
-# fully dead agent session cannot alert on its own.
+# The checker is alert-only by default (docs/wedge-alarm.md). This installer
+# does not set FM_BEAT_ALARM_REARM on the launchd agent or the printed cron
+# line. crontab prints a Linux cron line rather than editing a crontab this
+# installer does not own.
 #
 # Consent contract: install and uninstall print the exact actions and ask once
 # on the terminal; only --yes skips the prompt (for a non-interactive run the
@@ -15,6 +16,7 @@
 #   bin/fm-watcher-beat-alarm-install.sh status
 #   bin/fm-watcher-beat-alarm-install.sh install [--yes]
 #   bin/fm-watcher-beat-alarm-install.sh uninstall [--yes]
+#   bin/fm-watcher-beat-alarm-install.sh crontab          # print the Linux cron line
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,13 +28,13 @@ ACTION=
 YES=0
 
 usage() {
-  sed -n '2,17p' "$0"
+  sed -n '2,/^set -u$/p' "$0" | sed '$d'
   exit "${1:-2}"
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    status|install|uninstall)
+    status|install|uninstall|crontab)
       [ -z "$ACTION" ] || { echo "watcher-beat-alarm install: pass at most one action" >&2; usage 2; }
       ACTION=$1
       shift
@@ -123,6 +125,17 @@ is_installed() {
 }
 
 case "$ACTION" in
+  crontab)
+    # Linux has no launchd, so print the exact line rather than editing a
+    # crontab this installer does not own. The checker exits 0 when healthy, so
+    # cron stays quiet until something is actually wrong.
+    minutes=$(( INTERVAL / 60 ))
+    [ "$minutes" -ge 1 ] || minutes=1
+    printf '# Linux: add this line with "crontab -e".\n'
+    printf '*/%s * * * * FM_HOME=%s %s --home %s\n' \
+      "$minutes" "$FM_HOME" "$CHECKER" "$FM_HOME"
+    exit 0
+    ;;
   status)
     if is_installed; then
       printf 'installed: %s (interval %ss, checker %s)\n' "$PLIST" "$INTERVAL" "$CHECKER"

@@ -491,3 +491,51 @@ Observed output:
 ```
 
 The safe command-channel contract is covered without a notification by `tests/fm-daemon.test.sh`: the summary reaches both `$1` and stdin, every channel is process-group bounded, and a failed channel falls through.
+
+## Watcher-beat alert: shared grace, re-arm, and Linux cron
+
+This record supports the current guarantee that the session-independent watcher-beat alert compares against the same staleness threshold as the in-session guard, that its opt-in re-arm attaches instead of starting a second watcher, and that its Linux cron line is usable.
+
+The pass ran on 2026-08-23 on macOS (Darwin 27.0.0) with the tracked `.claude/settings.json` Stop hook wiring.
+
+Two upstream claims were re-checked against source rather than carried forward.
+The Stop auto-arm's `"timeout": 28800` is present on the `asyncRewake` hook in `.claude/settings.json`, so the foreground-teardown reasoning behind an out-of-session check holds.
+`bin/fm-watch-arm.sh` does NOT print exactly one status line: the attach path prints its `watcher: ...` line and can later print the delivered wake reason as a second line, so a caller must handle each line rather than pattern-matching one captured blob.
+
+Shared grace, proven by the same beacon flipping the verdict.
+Before this change the alert resolved `GRACE=${FM_BEAT_ALARM_GRACE:-300}` and only a comment claimed alignment with `FM_GUARD_GRACE`.
+Against a 700-second-stale beacon with `FM_GUARD_GRACE=9999` supplied by `config/supervision.env` alone, the pre-change checker still alerted once, because 9999 never reached it.
+The current checker stays silent for that input and alerts under `FM_GUARD_GRACE=300`, so the guard and this alert can no longer disagree.
+
+Opt-in re-arm against a real running watcher:
+
+```sh
+bin/fm-watch.sh &            # took the singleton, pid 267
+FM_BEAT_ALARM_REARM=1 bin/fm-watcher-beat-alarm.sh --home "$HOME_UNDER_TEST"
+```
+
+Observed in `state/.beat-alarm.log`:
+
+```
+rearm: starting .../bin/fm-watch-arm.sh (opt-in FM_BEAT_ALARM_REARM=1)
+watcher: attached pid=267 (beacon 0s)
+```
+
+The current checker also records the detached child pid on that `rearm:` line; the attach line is the load-bearing proof.
+The arm attached to the live watcher and no `started pid=` line appeared, so the opt-in cannot produce a second watcher for that home.
+With the opt-in unset the same home logged no `rearm:` line at all, so the default alert-only contract is unchanged.
+
+Linux cron line:
+
+```sh
+bin/fm-watcher-beat-alarm-install.sh crontab
+```
+
+Observed output at the default 120-second interval, and clamped to `*/1` when `FM_BEAT_ALARM_INTERVAL=30` leaves no valid cron expression:
+
+```
+# Linux: add this line with "crontab -e".
+*/2 * * * * FM_HOME=<home> <repo>/bin/fm-watcher-beat-alarm.sh --home <home>
+```
+
+`tests/fm-watcher-beat-alarm.test.sh` covers the rest without a network call or a real notification: the alert gates and single-fire episode behavior, the grace threshold following `FM_GUARD_GRACE` including the value arriving from `config/supervision.env` alone with a real environment variable still winning, the re-arm being off by default and honest in its summary when opted in, and the cron line with its sub-minute clamp.

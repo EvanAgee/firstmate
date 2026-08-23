@@ -76,6 +76,7 @@ config/trace-context  optional presence flag enabling default-off native W3C tra
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional active-alert channel directives for the away-mode wedge alarm and the watcher-beat alert; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/session-odometer  optional session-age and handled-wake thresholds for heartbeat ANCHOR restart advice; LOCAL, gitignored; absent uses 21600s/200 wakes; see docs/configuration.md "Session odometer"
+config/supervision.env  optional supervision knob file the watcher, the guard, and the watcher-beat alert all read, so every harness and scheduler resolves one value per home; LOCAL, gitignored; real env wins; see docs/configuration.md "Supervision knobs"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history

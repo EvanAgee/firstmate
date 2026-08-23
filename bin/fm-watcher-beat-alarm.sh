@@ -7,9 +7,18 @@
 # active-alert machinery (bin/fm-wedge-alarm-lib.sh; config/wedge-alarm).
 #
 # Contract:
-#   - Alert-only. It never starts, stops, arms, or repairs the watcher or the
-#     session: the emitted supervision protocol owns recovery. This script is
-#     observability, never a second watcher and never an auto-restart path.
+#   - Alert-only by default. It never starts, stops, arms, or repairs the
+#     watcher or the session: the emitted supervision protocol owns recovery.
+#     This script is observability, never a second watcher and never an
+#     auto-restart path. FM_BEAT_ALARM_REARM=1 opts in to one extra step - it
+#     detaches the home-scoped, self-verifying bin/fm-watch-arm.sh into its own
+#     session after the alert, which attaches to a live watcher rather than
+#     starting a second one. The arm must outlive this process: a scheduled
+#     launchd or cron job tears down its own process group on exit, so a bare
+#     background child would die with the checker. If that detach cannot be
+#     done here, the summary does not claim the watcher was re-armed. Even then
+#     the alert is the recovery path: an armed watcher queues wakes durably but
+#     cannot wake the model.
 #   - Needs supervision: it alerts only when the home needs supervision
 #     (in-flight tasks, registered event sources, or an X-mode relay poll, per
 #     bin/fm-supervision-lib.sh) and quietens otherwise.
@@ -24,13 +33,23 @@
 #     episode alerts once again.
 #
 # Not installed by default. bin/fm-watcher-beat-alarm-install.sh installs and
-# removes the launchd agent with an explicit consent prompt.
+# removes the launchd agent with an explicit consent prompt, and its crontab
+# action prints a Linux cron line rather than editing a crontab it does not own.
 #
 # Env knobs (tests and focused tuning):
-#   FM_BEAT_ALARM_GRACE        grace seconds (default 300, aligned with
-#                              FM_GUARD_GRACE); staleness >= 2 * grace alerts
+#   FM_BEAT_ALARM_GRACE        grace seconds for this alert alone; defaults to
+#                              FM_GUARD_GRACE (itself 300), which the shared
+#                              config/supervision.env loader resolves through
+#                              bin/fm-supervision-env-lib.sh so this alert and
+#                              bin/fm-guard.sh cannot drift apart;
+#                              staleness >= 2 * grace alerts
 #   FM_WEDGE_ALARM_EXEC        the shared test seam for the notifier
 #   FM_BEAT_ALARM_LOG_LIMIT    keep the self-log under N lines (default 200)
+#   FM_BEAT_ALARM_REARM        1 opts in to also re-arming the watcher after an
+#                              alert (default 0, alert-only), detached so the
+#                              arm outlives this process. The alert is what
+#                              restores supervision; a re-armed watcher only
+#                              keeps queuing wakes durably until someone returns
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,7 +67,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     -h|--help)
-      sed -n '2,33p' "$0"
+      sed -n '2,/^set -u$/p' "$0" | sed '$d'
       exit 0
       ;;
     *)
@@ -62,7 +81,19 @@ STATE="$FM_HOME/state"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 export FM_HOME
 export FM_CONFIG_OVERRIDE="$CONFIG"
-GRACE=${FM_BEAT_ALARM_GRACE:-300}
+
+# Load this home's supervision knobs before the grace below is resolved. launchd
+# inherits neither a harness setting nor an interactive shell profile, so without
+# this the same home could answer "is the beacon stale?" with one number here and
+# a different one in bin/fm-guard.sh.
+# shellcheck source=bin/fm-supervision-env-lib.sh
+. "$SCRIPT_DIR/fm-supervision-env-lib.sh"
+fm_supervision_env_load "$CONFIG"
+
+# FM_BEAT_ALARM_GRACE stays available for focused tuning of this alert alone, but
+# the default is the guard's own value rather than a second hardcoded constant:
+# raising FM_GUARD_GRACE used to leave this alert firing on the old threshold.
+GRACE=${FM_BEAT_ALARM_GRACE:-${FM_GUARD_GRACE:-300}}
 case "$GRACE" in *[!0-9]*) GRACE=300 ;; esac
 BEAT="$STATE/.last-watcher-beat"
 FIRED="$STATE/.beat-alarm-fired"
@@ -90,6 +121,76 @@ trim_log() {
 finish() {
   trim_log
   exit "${1:-0}"
+}
+
+# Start the arm in a new session (or, without perl, its own process group) so
+# this scheduled job's exit cannot tear it down. Prints the child pid only when
+# that isolation held; otherwise the caller must not claim a re-arm.
+beat_alarm_rearm_detach() {  # <arm>
+  local arm=$1 child pgid self_pgid monitor_was_on=0 used_setsid=0
+  self_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]') || return 1
+  case "$self_pgid" in ''|*[!0-9]*) return 1 ;; esac
+
+  if command -v perl >/dev/null 2>&1; then
+    child=$(
+      FM_BEAT_REARM_LOG="$BEAT_LOG" perl -e '
+        use POSIX qw(setsid);
+        pipe my ($rh, $wh) or exit 125;
+        defined(my $pid = fork) or exit 125;
+        if ($pid == 0) {
+          close $rh;
+          setsid() or do { print $wh "e\n"; exit 125 };
+          my $log = $ENV{FM_BEAT_REARM_LOG};
+          $log = "/dev/null" unless defined $log && length $log;
+          open STDIN, "<", "/dev/null" or do { print $wh "e\n"; exit 125 };
+          open STDOUT, ">>", $log or do { print $wh "e\n"; exit 125 };
+          open STDERR, ">&STDOUT" or do { print $wh "e\n"; exit 125 };
+          print $wh "ok\n" or exit 125;
+          close $wh;
+          exec @ARGV;
+          exit 125;
+        }
+        close $wh;
+        my $st = <$rh>;
+        close $rh;
+        if (defined $st && $st eq "ok\n") {
+          print $pid;
+          exit 0;
+        }
+        waitpid($pid, 0);
+        exit 125;
+      ' "$arm"
+    ) || return 1
+    used_setsid=1
+  else
+    case $- in *m*) monitor_was_on=1 ;; esac
+    set -m 2>/dev/null || return 1
+    nohup "$arm" >>"$BEAT_LOG" 2>&1 </dev/null &
+    child=$!
+    [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+  fi
+
+  case "$child" in ''|*[!0-9]*) return 1 ;; esac
+  # The perl child only reports success after setsid() returns. Re-reading
+  # that pid with kill/ps is a race: a fast-exiting arm (the test stub, or a
+  # real arm that attached and returned before we looked) can vanish, look
+  # like it is still in this group, or become unreadable - and the captain
+  # then hears that nothing was started. Trust the handshake.
+  if [ "$used_setsid" = 1 ]; then
+    printf '%s\n' "$child"
+    return 0
+  fi
+  if kill -0 "$child" 2>/dev/null; then
+    pgid=$(ps -o pgid= -p "$child" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$pgid" ] || [ "$pgid" = "$self_pgid" ]; then
+      kill -TERM -- "-$child" 2>/dev/null || true
+      kill -TERM -- "$child" 2>/dev/null || true
+      return 1
+    fi
+  else
+    return 1
+  fi
+  printf '%s\n' "$child"
 }
 
 # A home with no beacon at all has never run (or completed and removed) a
@@ -146,9 +247,41 @@ fi
 
 printf '%s\n' "$beat_mtime" > "$FIRED" 2>/dev/null || true
 home_label=${FM_HOME##*/}
+rearmed=0
+# Opt-in re-arm. Alert-only remains the default contract: the alert is what
+# restores supervision, because a re-armed watcher can queue wakes durably but
+# has no channel to wake the model - that is the Stop hook, which needs the
+# session that died. Re-arming only makes the wakes survive until someone
+# returns.
+#
+# It is safe to schedule because bin/fm-watch-arm.sh is home-scoped and
+# self-verifying: with a live watcher already holding this home's singleton it
+# reports "attached" and follows that cycle instead of starting a second one.
+# The arm blocks until its cycle closes, so it is detached with the episode
+# marker already written, and a slow arm can never hold up the next scheduled
+# alert check. Isolation is confirmed before the captain-facing summary claims
+# a re-arm: a failed detach is not reported as recovery.
+if [ "${FM_BEAT_ALARM_REARM:-0}" = 1 ]; then
+  arm="$SCRIPT_DIR/fm-watch-arm.sh"
+  if [ -x "$arm" ]; then
+    if child=$(beat_alarm_rearm_detach "$arm"); then
+      log "rearm: starting $arm pid=$child (opt-in FM_BEAT_ALARM_REARM=1)"
+      rearmed=1
+    else
+      log "rearm: skipped, could not detach $arm from this process group"
+    fi
+  else
+    log "rearm: skipped, no executable arm at $arm"
+  fi
+fi
+if [ "$rearmed" = 1 ]; then
+  recovery_note='A fresh session owns recovery; this alert only re-armed the watcher to keep queuing wakes, which cannot wake the session by itself.'
+else
+  recovery_note='A fresh session or the emitted repair line owns recovery; this alert did not start or stop anything.'
+fi
 summary=$(printf \
-  'watcher beacon stale %ss (>2x grace %ss) with supervision needed in %s; poll delivery may be stalled. A fresh session or the emitted repair line owns recovery; this alert did not start or stop anything.' \
-  "$age" "$GRACE" "$home_label")
+  'watcher beacon stale %ss (>2x grace %ss) with supervision needed in %s; poll delivery may be stalled. %s' \
+  "$age" "$GRACE" "$home_label" "$recovery_note")
 log "ALERT: $summary"
 FM_WEDGE_ALARM_TITLE="firstmate: watcher stopped polling" \
   wedge_alarm_notify "$summary" "$FIRED"

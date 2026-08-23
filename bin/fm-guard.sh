@@ -35,6 +35,12 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# Load this home's supervision knobs before the first one is read, so a guard
+# run from any harness or scheduler resolves the same grace as every other
+# supervision script in the same home (bin/fm-supervision-env-lib.sh).
+# shellcheck source=bin/fm-supervision-env-lib.sh
+. "$SCRIPT_DIR/fm-supervision-env-lib.sh"
+fm_supervision_env_load "$CONFIG"
 WATCH="$SCRIPT_DIR/fm-watch.sh"
 GRACE=${FM_GUARD_GRACE:-300}
 queue_pending=false

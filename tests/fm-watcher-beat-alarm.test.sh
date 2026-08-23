@@ -198,6 +198,239 @@ test_beat_marker_carries_the_alerted_beacon_mtime() {
   pass "the fired marker records the alerted episode's beacon mtime"
 }
 
+# --- folded from the external-watchdog task ------------------------------------
+#
+# The grace this alert compares against must be the SAME value bin/fm-guard.sh
+# uses. It previously hardcoded 300 with only a comment claiming alignment, so
+# raising FM_GUARD_GRACE left this alert firing on the old threshold. These
+# deliberately do NOT pin FM_BEAT_ALARM_GRACE, so the fallback chain is what
+# decides.
+
+# Like run_checker, but without the FM_BEAT_ALARM_GRACE pin.
+run_checker_unpinned() {  # <home> [env...]
+  local home=$1
+  shift
+  env "$@" \
+    FM_HOME_OVERRIDE="$home" \
+    FM_CONFIG_OVERRIDE="$home/config" \
+    FM_WEDGE_ALARM_CHANNEL=osascript \
+    FM_WEDGE_ALARM_EXEC="$TMP_ROOT/rec" \
+    FM_WEDGE_ALARM_LOG="$TMP_ROOT/rec.log" \
+    "$CHECKER" --home "$home" 2>/dev/null
+}
+
+test_grace_follows_the_guard_knob() {
+  local dir
+  dir=$(make_home guard-grace)
+  touch -t "$(backdate_ts 700)" "$dir/state/.last-watcher-beat"
+
+  # 700s stale against grace 300 is past the 2x confirmation window: alerts.
+  : > "$TMP_ROOT/rec.log"
+  run_checker_unpinned "$dir" FM_GUARD_GRACE=300 || fail "guard-grace run failed"
+  grep -F 'watcher beacon stale' "$TMP_ROOT/rec.log" >/dev/null \
+    || fail "700s stale under grace 300 did not alert"
+
+  # The same beacon under a much larger guard grace is inside the window and
+  # must stay silent. Before the fix this alerted anyway, on its own 300.
+  rm -f "$dir/state/.beat-alarm-fired"
+  : > "$TMP_ROOT/rec.log"
+  run_checker_unpinned "$dir" FM_GUARD_GRACE=9999 || fail "wide-grace run failed"
+  [ ! -s "$TMP_ROOT/rec.log" ] \
+    || fail "FM_GUARD_GRACE=9999 still alerted, so the threshold has two owners: $(cat "$TMP_ROOT/rec.log")"
+  pass "the alert threshold follows FM_GUARD_GRACE, so the guard and this alert cannot disagree"
+}
+
+test_grace_arrives_from_the_shared_knob_file() {
+  local dir
+  dir=$(make_home knob-file)
+  touch -t "$(backdate_ts 700)" "$dir/state/.last-watcher-beat"
+
+  # launchd and cron inherit no shell profile, so the file alone must decide.
+  printf 'FM_GUARD_GRACE=9999\n' > "$dir/config/supervision.env"
+  : > "$TMP_ROOT/rec.log"
+  run_checker_unpinned "$dir" || fail "knob-file run failed"
+  [ ! -s "$TMP_ROOT/rec.log" ] \
+    || fail "config/supervision.env did not supply the grace: $(cat "$TMP_ROOT/rec.log")"
+
+  # A real environment variable still outranks the file.
+  rm -f "$dir/state/.beat-alarm-fired"
+  : > "$TMP_ROOT/rec.log"
+  run_checker_unpinned "$dir" FM_GUARD_GRACE=300 || fail "env-over-file run failed"
+  grep -F 'watcher beacon stale' "$TMP_ROOT/rec.log" >/dev/null \
+    || fail "a real FM_GUARD_GRACE did not win over config/supervision.env"
+  pass "grace resolves from config/supervision.env, and a real environment variable still wins"
+}
+
+test_rearm_is_opt_in_and_off_by_default() {
+  local dir
+  dir=$(make_home rearm-default)
+  : > "$TMP_ROOT/rec.log"
+  run_checker "$dir" || fail "default run failed"
+  grep -F 'watcher beacon stale' "$TMP_ROOT/rec.log" >/dev/null \
+    || fail "the default run did not alert at all"
+  grep -q 'rearm:' "$dir/state/.beat-alarm.log" 2>/dev/null \
+    && fail "the default contract is alert-only, but it re-armed"
+  grep -F 'did not start or stop anything' "$TMP_ROOT/rec.log" >/dev/null \
+    || fail "the default summary no longer states that nothing was started"
+  pass "re-arming is off by default and the summary says nothing was started"
+}
+
+test_optin_rearm_runs_the_home_scoped_arm() {
+  local dir arm_marker
+  dir=$(make_home rearm-optin)
+  arm_marker="$dir/arm-was-run"
+
+  # Run the checker from a shim directory whose fm-watch-arm.sh records that it
+  # was invoked and exits immediately. The real arm BLOCKS until its watcher
+  # cycle closes, so invoking it here would leak a background watcher per run
+  # and let those strays fight the singleton lock in other suites. The live
+  # attach-not-double-arm proof belongs to docs/verification/supervision.md;
+  # what this asserts is that opting in reaches the home-scoped arm at all and
+  # that the captain-facing summary stops claiming nothing was started.
+  local shim="$dir/shim"
+  mkdir -p "$shim"
+  cp "$CHECKER" "$shim/fm-watcher-beat-alarm.sh"
+  for dep in fm-wedge-alarm-lib.sh fm-supervision-lib.sh fm-supervision-env-lib.sh \
+    fm-classify-lib.sh fm-line-cap-lib.sh fm-timeout-lib.sh; do
+    [ -f "$ROOT/bin/$dep" ] && cp "$ROOT/bin/$dep" "$shim/$dep"
+  done
+  cat > "$shim/fm-watch-arm.sh" <<ARM
+#!/usr/bin/env bash
+printf 'stub-arm invoked\n'
+: > "$arm_marker"
+exit 0
+ARM
+  chmod +x "$shim/fm-watch-arm.sh"
+
+  : > "$TMP_ROOT/rec.log"
+  env FM_BEAT_ALARM_REARM=1 \
+    FM_HOME_OVERRIDE="$dir" \
+    FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_BEAT_ALARM_GRACE=$GRACE \
+    FM_WEDGE_ALARM_CHANNEL=osascript \
+    FM_WEDGE_ALARM_EXEC="$TMP_ROOT/rec" \
+    FM_WEDGE_ALARM_LOG="$TMP_ROOT/rec.log" \
+    "$shim/fm-watcher-beat-alarm.sh" --home "$dir" 2>/dev/null \
+    || fail "opt-in re-arm run failed"
+
+  grep -q 'rearm:' "$dir/state/.beat-alarm.log" \
+    || fail "FM_BEAT_ALARM_REARM=1 did not reach the re-arm path"
+  # The arm is backgrounded, so give it a moment to record its own invocation.
+  local i=0
+  while [ "$i" -lt 50 ] && [ ! -e "$arm_marker" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$arm_marker" ] || fail "the opt-in did not actually invoke the home-scoped arm"
+  grep -F 'did not start or stop anything' "$TMP_ROOT/rec.log" >/dev/null \
+    && fail "the opt-in summary still claims nothing was started"
+  grep -F 're-armed the watcher' "$TMP_ROOT/rec.log" >/dev/null \
+    || fail "the opt-in summary does not say the watcher was re-armed"
+  pass "opting in invokes the home-scoped arm and the summary reflects it honestly"
+}
+
+test_optin_rearm_survives_caller_process_group_teardown() {
+  local dir keep arm_pid_file checker_pgid_file shim arm_pid arm_pgid checker_pgid i
+  dir=$(make_home rearm-detach)
+  keep="$dir/keep-arm"
+  arm_pid_file="$dir/arm.pid"
+  checker_pgid_file="$dir/checker.pgid"
+  touch "$keep"
+
+  # Same shim as the opt-in reachability test: a stub arm, never the real
+  # blocking watcher. This stub stays up while $keep exists so the caller can
+  # tear down the checker's process group and observe whether the arm survived.
+  shim="$dir/shim"
+  mkdir -p "$shim"
+  cp "$CHECKER" "$shim/fm-watcher-beat-alarm.sh"
+  for dep in fm-wedge-alarm-lib.sh fm-supervision-lib.sh fm-supervision-env-lib.sh \
+    fm-classify-lib.sh fm-line-cap-lib.sh fm-timeout-lib.sh; do
+    [ -f "$ROOT/bin/$dep" ] && cp "$ROOT/bin/$dep" "$shim/$dep"
+  done
+  cat > "$shim/fm-watch-arm.sh" <<ARM
+#!/usr/bin/env bash
+printf '%s\\n' "\$\$" > "$arm_pid_file"
+ps -o pgid= -p "\$\$" 2>/dev/null | tr -d '[:space:]' > "$dir/arm.pgid"
+while [ -e "$keep" ]; do
+  sleep 0.1
+done
+exit 0
+ARM
+  chmod +x "$shim/fm-watch-arm.sh"
+
+  : > "$TMP_ROOT/rec.log"
+  # Quotes are deliberate: the body is Perl, not shell.
+  # shellcheck disable=SC2016
+  env FM_BEAT_ALARM_REARM=1 \
+    FM_HOME_OVERRIDE="$dir" \
+    FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_BEAT_ALARM_GRACE=$GRACE \
+    FM_WEDGE_ALARM_CHANNEL=osascript \
+    FM_WEDGE_ALARM_EXEC="$TMP_ROOT/rec" \
+    FM_WEDGE_ALARM_LOG="$TMP_ROOT/rec.log" \
+    CHECKER_PGID_FILE="$checker_pgid_file" \
+    perl -e '
+      setpgrp(0, 0) or exit 125;
+      if (open my $fh, ">", $ENV{CHECKER_PGID_FILE}) {
+        print $fh $$;
+        close $fh;
+      }
+      exec @ARGV;
+      exit 125;
+    ' "$shim/fm-watcher-beat-alarm.sh" --home "$dir" \
+    || fail "detached opt-in re-arm run failed"
+
+  i=0
+  while [ "$i" -lt 50 ] && [ ! -s "$arm_pid_file" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$arm_pid_file" ] || fail "the detached opt-in did not start the home-scoped arm"
+  arm_pid=$(cat "$arm_pid_file")
+  arm_pgid=$(cat "$dir/arm.pgid" 2>/dev/null || true)
+  checker_pgid=$(cat "$checker_pgid_file" 2>/dev/null || true)
+  case "$arm_pid" in ''|*[!0-9]*) fail "stub arm wrote no pid" ;; esac
+  case "$checker_pgid" in ''|*[!0-9]*) fail "checker wrote no process group" ;; esac
+  [ "$arm_pgid" != "$checker_pgid" ] \
+    || fail "the arm stayed in the checker's process group ($checker_pgid)"
+  kill -0 "$arm_pid" 2>/dev/null \
+    || fail "the arm exited before the caller's group was torn down"
+
+  # launchd's default job teardown: signal leftover members of the job's group.
+  kill -TERM -- "-$checker_pgid" 2>/dev/null || true
+  sleep 0.2
+  kill -0 "$arm_pid" 2>/dev/null \
+    || fail "tearing down the checker's process group killed the recovery arm"
+  grep -F 're-armed the watcher' "$TMP_ROOT/rec.log" >/dev/null \
+    || fail "a successfully detached re-arm did not say the watcher was re-armed"
+
+  rm -f "$keep"
+  kill -TERM -- "$arm_pid" 2>/dev/null || true
+  pass "opt-in re-arm survives teardown of the checker's process group"
+}
+
+test_installer_prints_a_linux_cron_line() {
+  local out
+  out=$(FM_HOME_OVERRIDE="$TMP_ROOT" "$INSTALLER" crontab 2>&1) \
+    || fail "crontab action failed: $out"
+  case $out in
+    *"fm-watcher-beat-alarm.sh"*) : ;;
+    *) fail "the cron line does not invoke the checker: $out" ;;
+  esac
+  case $out in
+    *"* * * *"*) : ;;
+    *) fail "no cron schedule field in: $out" ;;
+  esac
+  # Sub-minute intervals have no cron expression and must clamp to one minute.
+  out=$(FM_HOME_OVERRIDE="$TMP_ROOT" FM_BEAT_ALARM_INTERVAL=30 "$INSTALLER" crontab 2>&1) \
+    || fail "sub-minute crontab action failed: $out"
+  case $out in
+    *"*/1 * * * *"*) : ;;
+    *) fail "a 30s interval did not clamp to every minute: $out" ;;
+  esac
+  pass "the installer prints a usable Linux cron line and clamps sub-minute intervals"
+}
+
 test_stale_beat_alerts_once_per_episode
 test_fresh_beat_stays_silent_and_rearms_next_episode
 test_unsupervised_home_stays_silent
@@ -206,3 +439,9 @@ test_second_confirmation_window_required
 test_installer_rejects_non_macos_platforms
 test_installer_refuses_without_consent
 test_beat_marker_carries_the_alerted_beacon_mtime
+test_grace_follows_the_guard_knob
+test_grace_arrives_from_the_shared_knob_file
+test_rearm_is_opt_in_and_off_by_default
+test_optin_rearm_runs_the_home_scoped_arm
+test_optin_rearm_survives_caller_process_group_teardown
+test_installer_prints_a_linux_cron_line
