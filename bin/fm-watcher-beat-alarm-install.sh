@@ -3,9 +3,10 @@
 # (bin/fm-watcher-beat-alarm.sh; contract in docs/wedge-alarm.md's
 # "Watcher-beat alarm"). Installs and removes a macOS launchd interval agent
 # that runs bin/fm-watcher-beat-alarm.sh --home <FM_HOME> every 120 seconds.
-# The checker is alert-only: it never starts, stops, arms, or repairs the
-# watcher, it is not a second watcher process, and it keeps running while a
-# fully dead agent session cannot alert on its own.
+# The checker is alert-only by default (docs/wedge-alarm.md). This installer
+# does not set FM_BEAT_ALARM_REARM on the launchd agent or the printed cron
+# line. crontab prints a Linux cron line rather than editing a crontab this
+# installer does not own.
 #
 # Consent contract: install and uninstall print the exact actions and ask once
 # on the terminal; only --yes skips the prompt (for a non-interactive run the

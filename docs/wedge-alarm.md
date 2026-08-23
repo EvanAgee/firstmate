@@ -42,8 +42,8 @@ A beacon must be stale past one grace AND stay stale across a full additional gr
 That grace is `FM_GUARD_GRACE` - the same value [`configuration.md`](configuration.md#supervision-knobs-configsupervisionenv) resolves through `config/supervision.env` for the in-session guard - so raising it moves this alert with it rather than leaving it on a separate constant; `FM_BEAT_ALARM_GRACE` still overrides this alert alone.
 The alert fires exactly once per outage episode: `state/.beat-alarm-fired` records the alerted beacon's mtime, a fresh beacon clears it, and the next episode alerts exactly once again.
 Install and removal are consent-guarded: `bin/fm-watcher-beat-alarm-install.sh status|install|uninstall` always prints the exact actions and asks once on the terminal, with `--yes` the only prompt bypass (reserved for a captain who already approved that exact action); nothing installs or removes silently.
-On non-macOS platforms the install is refused with guidance to wire the same checker to cron or a systemd timer, keeping the alert-only contract.
-`bin/fm-watcher-beat-alarm-install.sh crontab` prints that exact cron line rather than editing a crontab it does not own; the checker exits 0 when healthy, so cron stays quiet until something is wrong.
+On non-macOS platforms the install is refused.
+`bin/fm-watcher-beat-alarm-install.sh crontab` prints the exact cron line rather than editing a crontab it does not own; the checker exits 0 when healthy, so cron stays quiet until something is wrong.
 
 ## Test safety
 

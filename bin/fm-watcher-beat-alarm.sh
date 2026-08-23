@@ -33,7 +33,8 @@
 #     episode alerts once again.
 #
 # Not installed by default. bin/fm-watcher-beat-alarm-install.sh installs and
-# removes the launchd agent with an explicit consent prompt.
+# removes the launchd agent with an explicit consent prompt, and its crontab
+# action prints a Linux cron line rather than editing a crontab it does not own.
 #
 # Env knobs (tests and focused tuning):
 #   FM_BEAT_ALARM_GRACE        grace seconds for this alert alone; defaults to

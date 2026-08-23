@@ -521,6 +521,7 @@ rearm: starting .../bin/fm-watch-arm.sh (opt-in FM_BEAT_ALARM_REARM=1)
 watcher: attached pid=267 (beacon 0s)
 ```
 
+The current checker also records the detached child pid on that `rearm:` line; the attach line is the load-bearing proof.
 The arm attached to the live watcher and no `started pid=` line appeared, so the opt-in cannot produce a second watcher for that home.
 With the opt-in unset the same home logged no `rearm:` line at all, so the default alert-only contract is unchanged.
 
