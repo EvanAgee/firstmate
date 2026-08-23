@@ -366,6 +366,48 @@ test_claude_hooks_stale_incarnation_harmless() {
   pass "claude hook events from a superseded incarnation are rejected without breaking the hook"
 }
 
+test_claude_fable_denies_subagent_delegation() {
+  local rec id=busy-cl-fable out state settings deny
+  rec=$(make_spawn_case claude-fable claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" --model claude-fable-5)
+  expect_code 0 $? "claude fable spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  settings="$WT_DIR/.claude/settings.local.json"
+  assert_present "$settings" "claude fable spawn did not write hook settings"
+  jq -e . "$settings" >/dev/null || fail "fable hook settings are not valid JSON"
+
+  deny=$(jq -r '(.permissions.deny // []) | sort | join(",")' "$settings")
+  [ "$deny" = "Agent,Task" ] \
+    || fail "a fable launch must deny both delegation tools, got '$deny'"
+
+  # The deny list is an addition, not a replacement: the busy-state hooks that
+  # every claude launch depends on must survive it.
+  for ev in UserPromptSubmit Stop StopFailure SessionEnd; do
+    jq -e ".hooks[\"$ev\"]" "$settings" >/dev/null \
+      || fail "the fable deny list dropped the $ev hook"
+  done
+  rm -f "$state/$id.turn-ended"
+  run_claude_hook "$settings" Stop || fail "Stop hook command failed under a fable launch"
+  out=$(classify claude "$id" "$state")
+  [ "$out" = "idle claude-hook" ] \
+    || fail "the fable deny list broke busy-state classification, got '$out'"
+  pass "a fable claude launch denies the Agent and Task delegation tools and keeps its busy hooks"
+}
+
+test_claude_non_fable_keeps_delegation() {
+  local rec id=busy-cl-sonnet out settings
+  rec=$(make_spawn_case claude-non-fable claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" --model claude-sonnet-5)
+  expect_code 0 $? "claude non-fable spawn should succeed: $out"
+  settings="$WT_DIR/.claude/settings.local.json"
+  jq -e . "$settings" >/dev/null || fail "non-fable hook settings are not valid JSON"
+  jq -e 'has("permissions")' "$settings" >/dev/null \
+    && fail "only a fable launch may carry a deny list; a non-fable model must not"
+  pass "a non-fable claude launch carries no delegation deny list"
+}
+
 test_codex_unverified_until_a_semantic_source_exists() {
   local rec id=busy-cx-1 out state
   rec=$(make_spawn_case codex-unverified codex "$id")
@@ -406,6 +448,8 @@ test_kimi_and_grok_install_no_unverified_wiring
 test_opencode_plugin_semantic_lifecycle
 test_claude_hooks_semantic_lifecycle
 test_claude_hooks_stale_incarnation_harmless
+test_claude_fable_denies_subagent_delegation
+test_claude_non_fable_keeps_delegation
 test_codex_unverified_until_a_semantic_source_exists
 
 echo "all fm-busy-adapter-wiring tests passed"
