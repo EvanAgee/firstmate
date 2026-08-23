@@ -145,6 +145,19 @@ def validate(root: Path, inventory_path: Path) -> tuple[int, int]:
     patterns = list_of_strings(scope.get("trackedPatterns"), "scope.trackedPatterns")
     if patterns != REQUIRED_TRACKED_PATTERNS:
         fail("scope.trackedPatterns must match the fixed maintained-prose scope")
+    # Vendored third-party prose is classified like any other surface, but its
+    # links are not checked: firstmate cannot edit that content without breaking
+    # the upstream content hash in skills-lock.json, and its examples point at
+    # illustrative paths that only exist in a consuming project.
+    # Optional: an inventory that vendors nothing simply omits the field, but a
+    # present one must still be a well-formed array of path prefixes.
+    raw_vendored = data.get("vendoredPathPrefixes")
+    if raw_vendored is None:
+        vendored_prefixes: tuple[str, ...] = ()
+    else:
+        vendored_prefixes = tuple(
+            list_of_strings(raw_vendored, "vendoredPathPrefixes")
+        )
     audiences = set(list_of_strings(data.get("allowedAudiences"), "allowedAudiences"))
     setup_audiences = set(list_of_strings(data.get("setupAudiences"), "setupAudiences"))
     if not setup_audiences <= audiences:
@@ -231,6 +244,8 @@ def validate(root: Path, inventory_path: Path) -> tuple[int, int]:
     anchor_cache: dict[Path, set[str]] = {}
     for path in sorted(tracked):
         if Path(path).suffix.lower() not in {".md", ".mdx"}:
+            continue
+        if vendored_prefixes and path.startswith(vendored_prefixes):
             continue
         source = root / path
         for raw, target in markdown_local_links(root, source):

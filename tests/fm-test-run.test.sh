@@ -120,8 +120,14 @@ init_changed_fixture_repo() {
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
   printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
-  mkdir -p "$repo/.agents/skills/example" "$repo/.claude" "$repo/.pi/extensions" "$repo/src"
+  mkdir -p "$repo/.agents/skills/example/scripts" "$repo/.claude" \
+    "$repo/.pi/extensions" "$repo/src"
   : >"$repo/.agents/skills/example/SKILL.md"
+  # A vendored skill ships more than one file: a reference page and a bundled
+  # script alongside its SKILL.md.
+  : >"$repo/.agents/skills/example/REFERENCE.md"
+  : >"$repo/.agents/skills/example/scripts/helper.sh"
+  : >"$repo/skills-lock.json"
   : >"$repo/.claude/settings.json"
   : >"$repo/.pi/extensions/fm-primary-pi-watch.ts"
   : >"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
@@ -160,6 +166,8 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm supervisor-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
+  printf '\n' >>"$repo/.agents/skills/example/REFERENCE.md"
+  printf '\n' >>"$repo/.agents/skills/example/scripts/helper.sh"
   printf '\n' >>"$repo/.claude/settings.json"
   printf '\n' >>"$repo/.pi/extensions/fm-primary-pi-watch.ts"
   printf '\n' >>"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
@@ -169,6 +177,30 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "Pi source selects watcher coverage"
   git -C "$repo" add .agents .claude .pi
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm non-bin-source-change
+
+  # A skill's supporting material must select the same family as its SKILL.md
+  # rather than falling through to the catch-all and refusing as unmapped.
+  printf '\n' >>"$repo/.agents/skills/example/REFERENCE.md"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
+    "a skill reference page selects the same coverage as its SKILL.md"
+  git -C "$repo" add .agents
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm skill-reference-change
+
+  printf '\n' >>"$repo/.agents/skills/example/scripts/helper.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
+    "a skill bundled script selects the same coverage as its SKILL.md"
+  git -C "$repo" add .agents
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm skill-script-change
+
+  # The vendoring lock file carries no behavior, so it selects no suite while
+  # still being a mapped path.
+  printf '{}\n' >"$repo/skills-lock.json"
+  (cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD) >/dev/null 2>&1 \
+    || fail "the skills lock file must be a mapped path, not an unmapped refusal"
+  git -C "$repo" add skills-lock.json
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm lock-change
 
   printf '\n' >>"$repo/src/unmapped.ts"
   set +e
