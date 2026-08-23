@@ -359,6 +359,8 @@ ARM
   chmod +x "$shim/fm-watch-arm.sh"
 
   : > "$TMP_ROOT/rec.log"
+  # Quotes are deliberate: the body is Perl, not shell.
+  # shellcheck disable=SC2016
   env FM_BEAT_ALARM_REARM=1 \
     FM_HOME_OVERRIDE="$dir" \
     FM_CONFIG_OVERRIDE="$dir/config" \
