@@ -192,7 +192,12 @@ Agent-only reference skills live under `.agents/skills/` and are loaded by first
 
 Firstmate's skills live in two separate places with different audiences:
 
-- `.agents/skills/` - agent-loaded skills (this section's table, plus firstmate's agent-only reference skills). Every one of these assumes a live firstmate home and is meaningless, or actively misleading, installed anywhere else, so each carries `metadata.internal: true` in its frontmatter. That flag hides them from installer discovery (tools like the [skills.sh](https://skills.sh) `npx skills add` installer) without affecting how firstmate itself loads them - frontmatter metadata is inert to the agent's own skill loader.
+- `.agents/skills/` - agent-loaded skills (this section's table, firstmate's agent-only reference skills, and a vendored third-party set).
+  Firstmate-owned skills in this tree assume a live firstmate home and are meaningless, or actively misleading, installed anywhere else, so each carries `metadata.internal: true` in its frontmatter.
+  That flag hides them from installer discovery (tools like the [skills.sh](https://skills.sh) `npx skills add` installer) without affecting how firstmate itself loads them - frontmatter metadata is inert to the agent's own skill loader.
+  The same tree also holds a vendored set from `mattpocock/skills`, copied verbatim and recorded in [`skills-lock.json`](skills-lock.json) by upstream repo, path, and content hash.
+  Those files keep their upstream frontmatter and therefore do not carry `metadata.internal: true`.
+  Do not edit them, because a local edit would break the lock file's hash.
 - `skills/` - public, installer-facing skills meant to be installed standalone into any project, independent of firstmate.
   Each one is a self-contained skill with no dependency on firstmate's paths, tools, or vocabulary.
   Today that is `skills/stow`, a generic session-knowledge-sweep skill that routes findings by explicit instruction first, then existing local conventions, then a private `.stow-notes.md` fallback, and curates tiered entries through decay, local archival, and user-approved on-demand offload proposals.

@@ -976,6 +976,13 @@ families_for_changed_path() {
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
       ;;
+    .agents/skills/*/*)
+      # A skill's supporting material - reference pages, agent manifests, and
+      # bundled scripts - is selected by the same family as its SKILL.md, so a
+      # skill that ships more than one file does not fall through to the
+      # catch-all and refuse as unmapped.
+      printf '%s\n' pure-contract-unit
+      ;;
     .github/workflows/ci.yml|.no-mistakes.yaml)
       printf '%s\n' pure-contract-unit
       printf '%s\n' real-herdr-gated
@@ -1016,7 +1023,7 @@ families_for_changed_path() {
     tests/*)
       printf '%s\n' "__unmapped__:$path"
       ;;
-    README.md|LICENSE|assets/*|docs/*|.gitignore)
+    README.md|LICENSE|assets/*|docs/*|.gitignore|skills-lock.json)
       ;;
     *)
       families_for_test_reference "$path" \
