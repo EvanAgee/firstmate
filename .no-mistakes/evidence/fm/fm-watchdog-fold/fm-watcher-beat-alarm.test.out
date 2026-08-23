@@ -1,0 +1,15 @@
+ok - a stale beacon alerts exactly once per outage episode
+ok - a fresh beacon stays silent, and recovery re-arms the next episode's single alert
+ok - a stale beacon with no supervision need stays silent
+ok - the alert defers to away mode's own wedge alarm
+ok - staleness inside the second confirmation window stays silent
+ok - the installer refuses non-macOS platforms with guidance toward the documented contract
+ok - the installer refuses before touching launchd without explicit consent and leaves no plist
+ok - the fired marker records the alerted episode's beacon mtime
+ok - the alert threshold follows FM_GUARD_GRACE, so the guard and this alert cannot disagree
+ok - grace resolves from config/supervision.env, and a real environment variable still wins
+ok - re-arming is off by default and the summary says nothing was started
+ok - opting in invokes the home-scoped arm and the summary reflects it honestly
+ok - opt-in re-arm survives teardown of the checker's process group
+ok - the installer prints a usable Linux cron line and clamps sub-minute intervals
+EXIT:0

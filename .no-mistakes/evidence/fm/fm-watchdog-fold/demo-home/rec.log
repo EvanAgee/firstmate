@@ -1,0 +1,1 @@
+osascript	watcher beacon stale 702s (>2x grace 300s) with supervision needed in demo-home; poll delivery may be stalled. A fresh session owns recovery; this alert only re-armed the watcher to keep queuing wakes, which cannot wake the session by itself.

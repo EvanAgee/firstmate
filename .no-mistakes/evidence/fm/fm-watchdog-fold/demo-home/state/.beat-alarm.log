@@ -1,0 +1,3 @@
+[2026-08-23T07:33:56-0500] rearm: starting /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home/new-bin/fm-watch-arm.sh pid=43579 (opt-in FM_BEAT_ALARM_REARM=1)
+[2026-08-23T07:33:56-0500] ALERT: watcher beacon stale 702s (>2x grace 300s) with supervision needed in demo-home; poll delivery may be stalled. A fresh session owns recovery; this alert only re-armed the watcher to keep queuing wakes, which cannot wake the session by itself.
+stub-arm invoked pid=43579

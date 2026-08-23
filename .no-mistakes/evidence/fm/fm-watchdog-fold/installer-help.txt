@@ -1,0 +1,17 @@
+# Consent-guarded installer for the session-independent watcher-beat alert
+# (bin/fm-watcher-beat-alarm.sh; contract in docs/wedge-alarm.md's
+# "Watcher-beat alarm"). Installs and removes a macOS launchd interval agent
+# that runs bin/fm-watcher-beat-alarm.sh --home <FM_HOME> every 120 seconds.
+# The checker is alert-only: it never starts, stops, arms, or repairs the
+# watcher, it is not a second watcher process, and it keeps running while a
+# fully dead agent session cannot alert on its own.
+#
+# Consent contract: install and uninstall print the exact actions and ask once
+# on the terminal; only --yes skips the prompt (for a non-interactive run the
+# captain already approved). Nothing is installed or removed silently.
+#
+# Usage:
+#   bin/fm-watcher-beat-alarm-install.sh status
+#   bin/fm-watcher-beat-alarm-install.sh install [--yes]
+#   bin/fm-watcher-beat-alarm-install.sh uninstall [--yes]
+#   bin/fm-watcher-beat-alarm-install.sh crontab          # print the Linux cron line

@@ -1,0 +1,112 @@
+
+======== 1. Duplicate watchdog files are gone (only the five named paths) ========
+ABSENT   bin/fm-watchdog.sh
+ABSENT   bin/fm-watchdog-install.sh
+ABSENT   docs/watchdog.md
+ABSENT   docs/examples/watchdog-notify
+ABSENT   tests/fm-watchdog.test.sh
+git diff vs base (deletions should be none; PR 14 never merged):
+
+======== 2. --help tracks the header through set -u (new knobs are visible) ========
+/Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/live-demo.sh: line 101: printf: --: invalid option
+printf: usage: printf [-v var] format [arguments]
+#     drives the episode, a fresh beacon clears the marker, and the NEXT
+#     episode alerts once again.
+#
+# Not installed by default. bin/fm-watcher-beat-alarm-install.sh installs and
+# removes the launchd agent with an explicit consent prompt.
+#
+# Env knobs (tests and focused tuning):
+#   FM_BEAT_ALARM_GRACE        grace seconds for this alert alone; defaults to
+#                              FM_GUARD_GRACE (itself 300), which the shared
+#                              config/supervision.env loader resolves through
+#                              bin/fm-supervision-env-lib.sh so this alert and
+#                              bin/fm-guard.sh cannot drift apart;
+#                              staleness >= 2 * grace alerts
+#   FM_WEDGE_ALARM_EXEC        the shared test seam for the notifier
+#   FM_BEAT_ALARM_LOG_LIMIT    keep the self-log under N lines (default 200)
+#   FM_BEAT_ALARM_REARM        1 opts in to also re-arming the watcher after an
+#                              alert (default 0, alert-only), detached so the
+#                              arm outlives this process. The alert is what
+#                              restores supervision; a re-armed watcher only
+#                              keeps queuing wakes durably until someone returns
+
+--- installer --help (tail) ---
+# watcher, it is not a second watcher process, and it keeps running while a
+# fully dead agent session cannot alert on its own.
+#
+# Consent contract: install and uninstall print the exact actions and ask once
+# on the terminal; only --yes skips the prompt (for a non-interactive run the
+# captain already approved). Nothing is installed or removed silently.
+#
+# Usage:
+#   bin/fm-watcher-beat-alarm-install.sh status
+#   bin/fm-watcher-beat-alarm-install.sh install [--yes]
+#   bin/fm-watcher-beat-alarm-install.sh uninstall [--yes]
+#   bin/fm-watcher-beat-alarm-install.sh crontab          # print the Linux cron line
+
+======== 3. Shared grace: 700s-stale beacon, file-only FM_GUARD_GRACE=9999 ========
+config/supervision.env:
+FM_GUARD_GRACE=9999
+
+PRE-CHANGE checker (GRACE=\${FM_BEAT_ALARM_GRACE:-300}, no file loader):
+ALERT FIRED:
+osascript	watcher beacon stale 701s (>2x grace 300s) with supervision needed in demo-home; poll delivery may be stalled. A fresh session or the emitted repair line owns recovery; this alert did not start or stop anything.
+
+CURRENT checker (defaults to FM_GUARD_GRACE from the parsed file):
+SILENT (no alert)
+
+======== 4. Same beacon under FM_GUARD_GRACE=300 (env wins over file=9999) ========
+CURRENT checker with FM_GUARD_GRACE=300 in the environment:
+ALERT FIRED:
+osascript	watcher beacon stale 701s (>2x grace 300s) with supervision needed in demo-home; poll delivery may be stalled. A fresh session or the emitted repair line owns recovery; this alert did not start or stop anything.
+
+======== 5. Parse-not-source: malformed + executable-looking lines do not abort or run ========
+resolved FM_GUARD_GRACE=9999 (expect 9999; later knobs must still apply)
+resolved FM_POLL=42 (expect 42; written AFTER the garbage line)
+resolved FM_HEARTBEAT=123 (expect 123; written AFTER the command-looking lines)
+OK: no pwned/sourced files created; config did not execute
+CURRENT checker against that file (700s stale, grace 9999) must stay silent:
+SILENT (no alert)
+
+======== 6. Default contract is alert-only; opt-in re-arm invokes the home-scoped arm ========
+DEFAULT (no FM_BEAT_ALARM_REARM):
+ALERT FIRED:
+osascript	watcher beacon stale 702s (>2x grace 300s) with supervision needed in demo-home; poll delivery may be stalled. A fresh session or the emitted repair line owns recovery; this alert did not start or stop anything.
+OK: no rearm: line in the beat-alarm log
+
+OPT-IN FM_BEAT_ALARM_REARM=1:
+ALERT FIRED:
+osascript	watcher beacon stale 702s (>2x grace 300s) with supervision needed in demo-home; poll delivery may be stalled. A fresh session owns recovery; this alert only re-armed the watcher to keep queuing wakes, which cannot wake the session by itself.
+beat-alarm.log:
+[2026-08-23T07:33:56-0500] rearm: starting /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home/new-bin/fm-watch-arm.sh pid=43579 (opt-in FM_BEAT_ALARM_REARM=1)
+[2026-08-23T07:33:56-0500] ALERT: watcher beacon stale 702s (>2x grace 300s) with supervision needed in demo-home; poll delivery may be stalled. A fresh session owns recovery; this alert only re-armed the watcher to keep queuing wakes, which cannot wake the session by itself.
+stub-arm invoked pid=43579
+
+======== 7. Linux cron line + sub-minute clamp ========
+default interval:
+# Linux: add this line with "crontab -e".
+*/2 * * * * FM_HOME=/Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Q8AQDS86W3Z6DQ29C6WEF0/bin/fm-watcher-beat-alarm.sh --home /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home
+
+FM_BEAT_ALARM_INTERVAL=30 (must clamp to */1):
+# Linux: add this line with "crontab -e".
+*/1 * * * * FM_HOME=/Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Q8AQDS86W3Z6DQ29C6WEF0/bin/fm-watcher-beat-alarm.sh --home /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home
+
+FM_BEAT_ALARM_INTERVAL=180 (every 3 minutes):
+# Linux: add this line with "crontab -e".
+*/3 * * * * FM_HOME=/Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Q8AQDS86W3Z6DQ29C6WEF0/bin/fm-watcher-beat-alarm.sh --home /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home
+
+======== 8. Installer still refuses to write launchd without consent ========
+OK: install refused without consent
+watcher-beat-alarm install:
+  label:  com.firstmate.watcher-beat-alarm.ca8e4211
+  plist:  /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home/launch-agents/com.firstmate.watcher-beat-alarm.ca8e4211.plist
+  action: write /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home/launch-agents/com.firstmate.watcher-beat-alarm.ca8e4211.plist and load it into launchd now (alerts every 120s; alert-only, never starts or stops anything)
+Proceed? [y/N] /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Q8AQDS86W3Z6DQ29C6WEF0/bin/fm-watcher-beat-alarm-install.sh: line 81: /dev/tty: Device not configured
+refused: consent not given (pass --yes only when the captain already approved this exact action)
+OK: no plist written
+
+======== 9. config/supervision.env is gitignored via config/ ========
+.gitignore:13:config/	config/supervision.env
+
+======== DEMO COMPLETE ========

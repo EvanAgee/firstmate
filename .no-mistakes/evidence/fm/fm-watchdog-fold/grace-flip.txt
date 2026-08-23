@@ -1,0 +1,15 @@
+Shared-grace proof against one 700s-stale supervised beacon.
+
+config/supervision.env (file only, no FM_BEAT_ALARM_GRACE pin):
+FM_GUARD_GRACE=9999
+
+PRE-CHANGE checker (8e4b903, GRACE=${FM_BEAT_ALARM_GRACE:-300}, no file loader):
+ALERT FIRED:
+osascript	watcher beacon stale 701s (>2x grace 300s) ... this alert did not start or stop anything.
+
+CURRENT checker (defaults to FM_GUARD_GRACE from the parsed file):
+SILENT (no alert)
+
+CURRENT checker with FM_GUARD_GRACE=300 in the environment (env wins over file=9999):
+ALERT FIRED:
+osascript	watcher beacon stale 701s (>2x grace 300s) ... this alert did not start or stop anything.

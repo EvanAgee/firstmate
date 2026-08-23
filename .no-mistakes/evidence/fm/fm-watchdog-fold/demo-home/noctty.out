@@ -1,0 +1,6 @@
+watcher-beat-alarm install:
+  label:  com.firstmate.watcher-beat-alarm.ca8e4211
+  plist:  /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home/launch-agents/com.firstmate.watcher-beat-alarm.ca8e4211.plist
+  action: write /Users/evanagee/.no-mistakes/evidence/01M0Q8AQDS86W3Z6DQ29C6WEF0/demo-home/launch-agents/com.firstmate.watcher-beat-alarm.ca8e4211.plist and load it into launchd now (alerts every 120s; alert-only, never starts or stops anything)
+Proceed? [y/N] /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Q8AQDS86W3Z6DQ29C6WEF0/bin/fm-watcher-beat-alarm-install.sh: line 81: /dev/tty: Device not configured
+refused: consent not given (pass --yes only when the captain already approved this exact action)
