@@ -127,7 +127,7 @@ finish() {
 # this scheduled job's exit cannot tear it down. Prints the child pid only when
 # that isolation held; otherwise the caller must not claim a re-arm.
 beat_alarm_rearm_detach() {  # <arm>
-  local arm=$1 child pgid self_pgid monitor_was_on=0
+  local arm=$1 child pgid self_pgid monitor_was_on=0 used_setsid=0
   self_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]') || return 1
   case "$self_pgid" in ''|*[!0-9]*) return 1 ;; esac
 
@@ -161,6 +161,7 @@ beat_alarm_rearm_detach() {  # <arm>
         exit 125;
       ' "$arm"
     ) || return 1
+    used_setsid=1
   else
     case $- in *m*) monitor_was_on=1 ;; esac
     set -m 2>/dev/null || return 1
@@ -170,6 +171,15 @@ beat_alarm_rearm_detach() {  # <arm>
   fi
 
   case "$child" in ''|*[!0-9]*) return 1 ;; esac
+  # The perl child only reports success after setsid() returns. Re-reading
+  # that pid with kill/ps is a race: a fast-exiting arm (the test stub, or a
+  # real arm that attached and returned before we looked) can vanish, look
+  # like it is still in this group, or become unreadable - and the captain
+  # then hears that nothing was started. Trust the handshake.
+  if [ "$used_setsid" = 1 ]; then
+    printf '%s\n' "$child"
+    return 0
+  fi
   if kill -0 "$child" 2>/dev/null; then
     pgid=$(ps -o pgid= -p "$child" 2>/dev/null | tr -d '[:space:]')
     if [ -z "$pgid" ] || [ "$pgid" = "$self_pgid" ]; then
@@ -177,7 +187,7 @@ beat_alarm_rearm_detach() {  # <arm>
       kill -TERM -- "$child" 2>/dev/null || true
       return 1
     fi
-  elif ! command -v perl >/dev/null 2>&1; then
+  else
     return 1
   fi
   printf '%s\n' "$child"
