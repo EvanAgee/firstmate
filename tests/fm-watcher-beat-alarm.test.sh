@@ -329,6 +329,84 @@ ARM
   pass "opting in invokes the home-scoped arm and the summary reflects it honestly"
 }
 
+test_optin_rearm_survives_caller_process_group_teardown() {
+  local dir keep arm_pid_file checker_pgid_file shim arm_pid arm_pgid checker_pgid i
+  dir=$(make_home rearm-detach)
+  keep="$dir/keep-arm"
+  arm_pid_file="$dir/arm.pid"
+  checker_pgid_file="$dir/checker.pgid"
+  touch "$keep"
+
+  # Same shim as the opt-in reachability test: a stub arm, never the real
+  # blocking watcher. This stub stays up while $keep exists so the caller can
+  # tear down the checker's process group and observe whether the arm survived.
+  shim="$dir/shim"
+  mkdir -p "$shim"
+  cp "$CHECKER" "$shim/fm-watcher-beat-alarm.sh"
+  for dep in fm-wedge-alarm-lib.sh fm-supervision-lib.sh fm-supervision-env-lib.sh \
+    fm-classify-lib.sh fm-line-cap-lib.sh fm-timeout-lib.sh; do
+    [ -f "$ROOT/bin/$dep" ] && cp "$ROOT/bin/$dep" "$shim/$dep"
+  done
+  cat > "$shim/fm-watch-arm.sh" <<ARM
+#!/usr/bin/env bash
+printf '%s\\n' "\$\$" > "$arm_pid_file"
+ps -o pgid= -p "\$\$" 2>/dev/null | tr -d '[:space:]' > "$dir/arm.pgid"
+while [ -e "$keep" ]; do
+  sleep 0.1
+done
+exit 0
+ARM
+  chmod +x "$shim/fm-watch-arm.sh"
+
+  : > "$TMP_ROOT/rec.log"
+  env FM_BEAT_ALARM_REARM=1 \
+    FM_HOME_OVERRIDE="$dir" \
+    FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_BEAT_ALARM_GRACE=$GRACE \
+    FM_WEDGE_ALARM_CHANNEL=osascript \
+    FM_WEDGE_ALARM_EXEC="$TMP_ROOT/rec" \
+    FM_WEDGE_ALARM_LOG="$TMP_ROOT/rec.log" \
+    CHECKER_PGID_FILE="$checker_pgid_file" \
+    perl -e '
+      setpgrp(0, 0) or exit 125;
+      if (open my $fh, ">", $ENV{CHECKER_PGID_FILE}) {
+        print $fh $$;
+        close $fh;
+      }
+      exec @ARGV;
+      exit 125;
+    ' "$shim/fm-watcher-beat-alarm.sh" --home "$dir" \
+    || fail "detached opt-in re-arm run failed"
+
+  i=0
+  while [ "$i" -lt 50 ] && [ ! -s "$arm_pid_file" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$arm_pid_file" ] || fail "the detached opt-in did not start the home-scoped arm"
+  arm_pid=$(cat "$arm_pid_file")
+  arm_pgid=$(cat "$dir/arm.pgid" 2>/dev/null || true)
+  checker_pgid=$(cat "$checker_pgid_file" 2>/dev/null || true)
+  case "$arm_pid" in ''|*[!0-9]*) fail "stub arm wrote no pid" ;; esac
+  case "$checker_pgid" in ''|*[!0-9]*) fail "checker wrote no process group" ;; esac
+  [ "$arm_pgid" != "$checker_pgid" ] \
+    || fail "the arm stayed in the checker's process group ($checker_pgid)"
+  kill -0 "$arm_pid" 2>/dev/null \
+    || fail "the arm exited before the caller's group was torn down"
+
+  # launchd's default job teardown: signal leftover members of the job's group.
+  kill -TERM -- "-$checker_pgid" 2>/dev/null || true
+  sleep 0.2
+  kill -0 "$arm_pid" 2>/dev/null \
+    || fail "tearing down the checker's process group killed the recovery arm"
+  grep -F 're-armed the watcher' "$TMP_ROOT/rec.log" >/dev/null \
+    || fail "a successfully detached re-arm did not say the watcher was re-armed"
+
+  rm -f "$keep"
+  kill -TERM -- "$arm_pid" 2>/dev/null || true
+  pass "opt-in re-arm survives teardown of the checker's process group"
+}
+
 test_installer_prints_a_linux_cron_line() {
   local out
   out=$(FM_HOME_OVERRIDE="$TMP_ROOT" "$INSTALLER" crontab 2>&1) \
@@ -363,4 +441,5 @@ test_grace_follows_the_guard_knob
 test_grace_arrives_from_the_shared_knob_file
 test_rearm_is_opt_in_and_off_by_default
 test_optin_rearm_runs_the_home_scoped_arm
+test_optin_rearm_survives_caller_process_group_teardown
 test_installer_prints_a_linux_cron_line
