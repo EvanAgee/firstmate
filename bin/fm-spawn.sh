@@ -177,6 +177,10 @@
 # resolver because `cursor` is not the CLI name. A cursor SECONDMATE instead runs
 # the tracked project-scope .cursor/hooks.json in its own home, whose stop-hook
 # park owns that home's supervision (docs/supervision-protocols/cursor.md).
+# Claude crew worktrees get an untracked .claude/settings.local.json: busy-state
+# lifecycle hooks for every Claude model, plus permissions.deny of Agent and Task
+# when the model name contains "fable", so those delegation tools leave the
+# schema. Other Claude models get no permissions key.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the

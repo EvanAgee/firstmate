@@ -3,6 +3,11 @@
 [`documentation-audiences.json`](documentation-audiences.json) is the machine-consumed classification owner for every maintained prose surface.
 `bin/fm-doc-audience-check.sh` validates exact inventory coverage, README setup routing, required owner pointers, and local link targets.
 Audience metadata is centralized there rather than copied into front matter on every page.
+The inventory may declare `vendoredPathPrefixes` for third-party prose recorded in [`skills-lock.json`](../skills-lock.json).
+Those classified surfaces still require an audience, but the checker skips their local links.
+That content cannot be edited without breaking the lock file's upstream hash, and its examples only resolve inside a consuming project.
+The field is optional so a synthetic inventory that vendors nothing can omit it.
+A present value must be a non-empty string array of those lock-file skill directories.
 
 The audience classes have one placement purpose each:
 

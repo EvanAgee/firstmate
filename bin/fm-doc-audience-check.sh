@@ -7,6 +7,8 @@
 #
 # The inventory owns classification and setup routing.
 # This check validates structure only and does not keyword-lint prose.
+# Optional vendoredPathPrefixes skip local-link checks for lock-hashed
+# third-party prose while still requiring those surfaces to be classified.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
