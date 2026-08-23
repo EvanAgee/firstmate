@@ -1,0 +1,5 @@
+FM_TEST_BEGIN 2026-08-23T17:52:27Z tests/fm-busy-adapter-wiring.test.sh family=unclassified expected_gate_skip=none
+ok - a fable claude launch denies the Agent and Task delegation tools and keeps its busy hooks
+ok - a non-fable claude launch carries no delegation deny list
+all fm-busy-adapter-wiring tests passed
+FM_TEST_END 2026-08-23T17:53:01Z tests/fm-busy-adapter-wiring.test.sh exit=0 duration_ms=34317 gate_skip=false

@@ -1,0 +1,16 @@
+=== omitted field (optional) ===
+exit=1
+fm-doc-audience-check: unresolved local link in .agents/skills/domain-modeling/CONTEXT-FORMAT.md: ./src/ordering/CONTEXT.md
+
+=== present string instead of array ===
+exit=1
+fm-doc-audience-check: vendoredPathPrefixes must be a non-empty string array
+
+=== present array of non-strings ===
+exit=1
+fm-doc-audience-check: vendoredPathPrefixes must be a non-empty string array
+
+=== present well-formed array (repo inventory) ===
+exit=0
+fm-doc-audience-check: ok surfaces=118 local_links=269
+

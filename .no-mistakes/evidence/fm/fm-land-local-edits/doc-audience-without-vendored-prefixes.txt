@@ -1,0 +1,3 @@
+=== fm-doc-audience-check.sh with vendoredPathPrefixes removed ===
+exit=1
+fm-doc-audience-check: unresolved local link in .agents/skills/domain-modeling/CONTEXT-FORMAT.md: ./src/ordering/CONTEXT.md

@@ -1,0 +1,5 @@
+=== generated settings.local.json permissions contract ===
+fable deny: ["Agent","Task"]
+fable hook events: ["SessionEnd","Stop","StopFailure","UserPromptSubmit"]
+sonnet has permissions: false
+sonnet hook events: ["SessionEnd","Stop","StopFailure","UserPromptSubmit"]

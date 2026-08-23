@@ -1,0 +1,50 @@
+{
+    "hooks": {
+        "UserPromptSubmit": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "'/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0QVJ5D32BS2KZ9WMY93M5WR/bin/fm-busy-event.sh' apply '/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-fable-deny-evidence.dPqguC/fable/home/state' 'demo-fable' busy --gen 'g1787507687.57210.13633' --source claude-hook --event user-prompt-submit 2>/dev/null || true"
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "touch '/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-fable-deny-evidence.dPqguC/fable/home/state/demo-fable.turn-ended'; '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0QVJ5D32BS2KZ9WMY93M5WR/bin/fm-busy-event.sh' apply '/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-fable-deny-evidence.dPqguC/fable/home/state' 'demo-fable' idle --gen 'g1787507687.57210.13633' --source claude-hook --event stop 2>/dev/null || true"
+                    }
+                ]
+            }
+        ],
+        "StopFailure": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "'/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0QVJ5D32BS2KZ9WMY93M5WR/bin/fm-busy-event.sh' apply '/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-fable-deny-evidence.dPqguC/fable/home/state' 'demo-fable' idle --gen 'g1787507687.57210.13633' --source claude-hook --event stop-failure 2>/dev/null || true"
+                    }
+                ]
+            }
+        ],
+        "SessionEnd": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "'/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0QVJ5D32BS2KZ9WMY93M5WR/bin/fm-busy-event.sh' apply '/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-fable-deny-evidence.dPqguC/fable/home/state' 'demo-fable' idle --gen 'g1787507687.57210.13633' --source claude-hook --event session-end 2>/dev/null || true"
+                    }
+                ]
+            }
+        ]
+    },
+    "permissions": {
+        "deny": [
+            "Agent",
+            "Task"
+        ]
+    }
+}
