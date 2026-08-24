@@ -401,7 +401,7 @@ test_duplicate_rows_one_handling_event() {
 
 # --- 6. two coordinator firings -> one coordinator owner ------------------------
 test_single_coordinator_owner() {
-  local dir c1 c2 owner_pids
+  local dir c1 c2
   dir=$(make_home single-coord)
   start_lock_holder "$dir"
   printf 'window=x\n' > "$dir/state/task.meta"
