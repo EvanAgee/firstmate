@@ -1,0 +1,47 @@
+=== BEFORE TERM ===
+leader_pid=67166
+arm_live=-rw-r--r--@ 1 evanagee  staff  0 Aug 24 11:24 /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-hardening-term-demo.DFWcO1/home/state/arm-live
+epoch_before:
+epoch=1 owner_pid=67166 outcome=arming updated_at=1787588644
+output files before:
+/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-hardening-term-demo.DFWcO1/home/state/.claude-autoarm-output.lgKj3q
+.
+..
+.claude-autoarm-epoch
+.claude-autoarm-output.lgKj3q
+.claude-autoarm.lock
+.claude-autoarm.lock.owner.wGDJQ1
+.lock
+arm-live
+arm-ran
+task.meta
+
+=== MID-CYCLE (arm live, about to TERM the process group) ===
+epoch_mid:
+epoch=1 owner_pid=67166 outcome=arming updated_at=1787588644
+state listing:
+.
+..
+.claude-autoarm-epoch
+.claude-autoarm-output.lgKj3q
+.claude-autoarm.lock
+.claude-autoarm.lock.owner.wGDJQ1
+.lock
+arm-live
+arm-ran
+task.meta
+
+=== AFTER TERM ===
+outcome=interrupted
+epoch_after:
+epoch=2 owner_pid=67166 outcome=interrupted updated_at=1787588645
+abandoned output files:
+owner lock present? NO
+state listing:
+.
+..
+.claude-autoarm-epoch
+.lock
+arm-live
+arm-ran
+task.meta

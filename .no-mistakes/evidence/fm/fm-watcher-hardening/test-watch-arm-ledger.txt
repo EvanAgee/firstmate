@@ -1,0 +1,3 @@
+ok - watch-arm: lifecycle ledger adds source/epoch/session/cause without breaking existing parsers
+ok - watch-arm: a manual arm defaults source=manual with epoch=none
+EXIT:0

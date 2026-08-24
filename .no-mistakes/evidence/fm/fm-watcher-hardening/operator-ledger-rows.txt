@@ -1,0 +1,45 @@
+=== AUTOARM-SOURCED CYCLE ===
+ledger:
+arm_pid=81208	watcher_pid=80625	origin=attached	started_at=1787588665	ended_at=1787588674	exit_code=unknown	signal=unknown	reason=attached-delivered-wake	beacon_age=9	lock_before=pid:80625|identity:Mon Aug 24 11:24:24 2026     bash /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0T82CKQQKXTF0Z538QPZHQB/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none	source=autoarm	epoch=41	session=4242	cause=unknown
+
+field split:
+NF=16
+  $1=arm_pid=81208
+  $2=watcher_pid=80625
+  $3=origin=attached
+  $4=started_at=1787588665
+  $5=ended_at=1787588674
+  $6=exit_code=unknown
+  $7=signal=unknown
+  $8=reason=attached-delivered-wake
+  $9=beacon_age=9
+  $10=lock_before=pid:80625|identity:Mon Aug 24 11:24:24 2026     bash /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0T82CKQQKXTF0Z538QPZHQB/bin/fm-watch.sh
+  $11=lock_after=pid:none|identity:none
+  $12=successor=none
+  $13=source=autoarm
+  $14=epoch=41
+  $15=session=4242
+  $16=cause=unknown
+
+=== MANUAL ARM DEFAULT ===
+ledger:
+arm_pid=86371	watcher_pid=85885	origin=attached	started_at=1787588675	ended_at=1787588684	exit_code=unknown	signal=unknown	reason=attached-delivered-wake	beacon_age=9	lock_before=pid:85885|identity:Mon Aug 24 11:24:34 2026     bash /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0T82CKQQKXTF0Z538QPZHQB/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none	source=manual	epoch=none	session=none	cause=unknown
+
+field split:
+NF=16
+  $1=arm_pid=86371
+  $2=watcher_pid=85885
+  $3=origin=attached
+  $4=started_at=1787588675
+  $5=ended_at=1787588684
+  $6=exit_code=unknown
+  $7=signal=unknown
+  $8=reason=attached-delivered-wake
+  $9=beacon_age=9
+  $10=lock_before=pid:85885|identity:Mon Aug 24 11:24:34 2026     bash /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0T82CKQQKXTF0Z538QPZHQB/bin/fm-watch.sh
+  $11=lock_after=pid:none|identity:none
+  $12=successor=none
+  $13=source=manual
+  $14=epoch=none
+  $15=session=none
+  $16=cause=unknown

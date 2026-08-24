@@ -1,0 +1,2 @@
+ok - auto-arm: parent TERM records interrupted and cleans the abandoned output file
+EXIT:0

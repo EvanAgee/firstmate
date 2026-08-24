@@ -1,0 +1,44 @@
+=== 1. Claude autoarm + outcome=rewake + stale beacon ===
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but a design-induced supervision gap after a successful rewake (last beat: never, grace 999s).
+●  Supervision IS absent during this gap; it is not harmless. Expected if the handling turn is still running past grace after a successful rewake; if that turn has ended, the auto-arm hook may have failed to arm the successor - check it.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  If the handling turn has already ended, the auto-arm hook may have failed to arm the successor - check the Stop hook and whether it armed. Do not re-arm the watcher yourself while that turn is still running.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+=== 2. Claude autoarm + outcome=arming + stale beacon (ordinary) ===
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 999s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+=== 3. Cursor autoarm + leftover rewake (must stay ordinary) ===
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 999s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision is owned by the stop-hook park; inspect the hook registration and watcher startup path before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+=== 4. Persistent model + stray rewake epoch ===
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 0s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /tmp/fm-hardening-demo/persistent-rewake/root/.pi/extensions/fm-primary-turnend-guard.ts -e /tmp/fm-hardening-demo/persistent-rewake/root/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+=== 5. FM_GUARD_GRACE default still 300 ===
+resolved_default_note=script_uses_${FM_GUARD_GRACE:-300}
+
+=== 5. FM_GUARD_GRACE default still 300 (resolved from source) ===
+bin/fm-guard.sh: GRACE=${FM_GUARD_GRACE:-300}
+bin/fm-watch-arm.sh: GRACE=${FM_GUARD_GRACE:-300}
+bin/fm-claude-stop-autoarm.sh: GRACE=${FM_GUARD_GRACE:-300}
+diff vs base: no FM_GUARD_GRACE edits in bin/
