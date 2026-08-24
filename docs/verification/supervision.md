@@ -304,7 +304,9 @@ ok - Claude 2.1.219 (Claude Code) live E2E reclaimed a stale session lock throug
 ```
 
 That evidence covers the reclaim-and-rewake contract the notifier still keeps.
-The coordinator + notifier two-hook handshake introduced in the watcher-coordinator change is exercised by `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-watch-coordinator-live-e2e.test.sh`, which must be run against the real installed Claude Code after any Claude Code upgrade to refresh this evidence:
+
+The coordinator + notifier two-hook handshake introduced in the watcher-coordinator change has **no live evidence yet**: `FM_CLAUDE_LIVE_E2E` was not enabled for that change, so the handshake is currently proven only by the deterministic real-component suite `tests/fm-claude-watch-coordinator.test.sh`.
+Run the command below against the real installed Claude Code, then replace this paragraph with the dated version string and exact output:
 
 ```sh
 claude --version
@@ -427,7 +429,7 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 
 | Harness | Exact opt-in command | Observed guarantee |
 | --- | --- | --- |
-| Claude | `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-watch-coordinator-live-e2e.test.sh` | Current two-hook contract: a verified successor stays live across a handling turn longer than grace. Refresh this row's dated output against the installed Claude Code. |
+| Claude | `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-watch-coordinator-live-e2e.test.sh` | **Pending — not yet observed live.** The two-hook contract (a verified successor stays live across a handling turn longer than grace) is covered deterministically by `tests/fm-claude-watch-coordinator.test.sh`; this row gains a dated observation once the opt-in command is run against the installed Claude Code. |
 | Codex | `FM_CODEX_LIVE_E2E=1 tests/fm-codex-continuity-live-e2e.test.sh` | The one-second foreground checkpoint returned without switching to the arm wrapper. |
 | OpenCode | `FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh` | A verified successor existed before prompt handling, with no model re-arm or turn-end fallback. |
 | Pi | `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh` | One initial tool call led to extension-owned successors and clean child retirement on exit. |

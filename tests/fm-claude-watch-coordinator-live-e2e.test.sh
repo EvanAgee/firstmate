@@ -190,7 +190,7 @@ FAKE_CLAUDE="$LAB/claude"
 ln -s /bin/bash "$FAKE_CLAUDE"
 mkdir -p "$LIVE_OWNER_HOME/state" "$LIVE_OWNER_HOME/config"
 printf 'project=fixture\n' > "$LIVE_OWNER_HOME/state/task.meta"
-"$FAKE_CLAUDE" -c 'sleep 3; :' &
+"$FAKE_CLAUDE" -c 'sleep 30; :' &
 LIVE_OWNER_PID=$!
 printf '%s\n' "$LIVE_OWNER_PID" > "$LIVE_OWNER_HOME/state/.lock"
 LIVE_OWNER_RC=0
@@ -205,6 +205,7 @@ if kill -0 "$CTRL" 2>/dev/null; then kill "$CTRL" 2>/dev/null; LIVE_OWNER_RC=par
 [ "$LIVE_OWNER_RC" = 0 ] || fail "competing coordinator did not stand down against a live foreign owner (rc=$LIVE_OWNER_RC)"
 [ "$(cat "$LIVE_OWNER_HOME/state/.lock")" = "$LIVE_OWNER_PID" ] || fail "competing coordinator replaced the live session owner"
 [ ! -e "$LIVE_OWNER_HOME/state/.claude-coordinator.lock" ] || fail "competing coordinator took the coordinator lock in a foreign-owned home"
+kill "$LIVE_OWNER_PID" 2>/dev/null || true
 wait "$LIVE_OWNER_PID" 2>/dev/null || true
 
 printf 'ok - Claude %s live E2E reclaimed a stale session lock through session start, kept a live watcher across a handling turn longer than grace, woke on notifier ready events with no model arm, and preserved the competing-live-owner boundary\n' "$CLAUDE_VERSION"

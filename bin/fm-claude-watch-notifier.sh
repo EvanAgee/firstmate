@@ -307,12 +307,14 @@ while :; do
   fi
 
   # A live watcher may make this home healthy independently (e.g. a manual arm);
-  # nothing to notify, keep parking but reset the coordinator-absent clock since
-  # supervision is present. A healthy watcher is also positive recovery: clear any
-  # failure episode so a later genuine failure starts a fresh bounded progression,
-  # matching the guard's fm_failure_episode_reset contract.
+  # nothing to notify, so keep parking for a ready record. A healthy watcher is
+  # positive recovery: clear any failure episode so a later genuine failure starts
+  # a fresh bounded progression, matching the guard's fm_failure_episode_reset
+  # contract. Deliberately do NOT push coord_deadline forward here: only a live
+  # coordinator resets the coordinator-absent clock. A healthy watcher with no
+  # coordinator must still reach the bound below and exit 0 rather than park until
+  # the hook timeout.
   if fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME"; then
-    coord_deadline=$(( $(date +%s) + COORD_WAIT ))
     fm_failure_episode_reset "$STATE" || true
   fi
 
