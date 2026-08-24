@@ -554,6 +554,9 @@ test_coordinator_stands_down_on_session_handover() {
     fail "coordinator did not stand down after a session handover"
   fi
   wait "$coord" 2>/dev/null || true
+  # Reap the session-loop holder so its unbounded `while :` does not leak past the
+  # test and pile up watcher children that wedge a later test.
+  stop_bg "$HOLDER_PID"
   pass "coordinator: stands down cleanly when a new session generation owns the session lock"
 }
 
