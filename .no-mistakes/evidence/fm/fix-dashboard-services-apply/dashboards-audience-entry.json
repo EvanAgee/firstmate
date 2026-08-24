@@ -1,0 +1,7 @@
+{
+  "path": "docs/dashboards.md",
+  "audience": "operator-current",
+  "allowed": true,
+  "file_exists": true,
+  "tracked": true
+}

@@ -1,0 +1,11 @@
+# Confirm /fleet is served (recipe in docs/dashboards.md)
+$ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet
+200
+
+# Retired firstmate.agee.dev port
+$ curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:7860/
+000
+
+# Usage tracker
+$ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/
+200

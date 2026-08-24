@@ -1,0 +1,93 @@
+{
+  "hosts": [
+    {
+      "host": "agee.dev",
+      "port": "3200",
+      "label": "dev.agee.dashboard-app",
+      "tunnel": "/Users/evanagee/.cloudflared/agee-root-config.yml",
+      "checkout": "~/Sites/firstmate/projects/agee-dev-dashboard` (on `main`)",
+      "command": "npm run start` (prod build)",
+      "launchd_rc": 0,
+      "launchd_state": "running",
+      "plist": "/Users/evanagee/Library/LaunchAgents/dev.agee.dashboard-app.plist",
+      "launchd_workdir": "/Users/evanagee/Sites/firstmate/projects/agee-dev-dashboard",
+      "tunnel_exists": true,
+      "tunnel_mentions_host": true,
+      "tunnel_mentions_port": true,
+      "port_listening": true
+    },
+    {
+      "host": "subs.agee.dev",
+      "port": "3000",
+      "label": "dev.agee.usage-tracker",
+      "tunnel": "/Users/evanagee/.cloudflared/subs-config.yml",
+      "checkout": "~/Sites/firstmate/projects/usage-tracker` (on `main`)",
+      "command": "npm run start` (prod build)",
+      "launchd_rc": 0,
+      "launchd_state": "running",
+      "plist": "/Users/evanagee/Library/LaunchAgents/dev.agee.usage-tracker.plist",
+      "launchd_workdir": "/Users/evanagee/Sites/firstmate/projects/usage-tracker",
+      "tunnel_exists": true,
+      "tunnel_mentions_host": true,
+      "tunnel_mentions_port": true,
+      "port_listening": true
+    },
+    {
+      "host": "ci.agee.dev",
+      "port": "4200",
+      "label": "dev.agee.cloudflared-aos-ci",
+      "tunnel": "/Users/evanagee/.cloudflared/aos-ci-config.yml",
+      "checkout": "separate aos CI backend",
+      "command": "out of scope here",
+      "launchd_rc": 0,
+      "launchd_state": "running",
+      "plist": "/Users/evanagee/Library/LaunchAgents/dev.agee.cloudflared-aos-ci.plist",
+      "tunnel_exists": true,
+      "tunnel_mentions_host": true,
+      "tunnel_mentions_port": true,
+      "port_listening": true
+    },
+    {
+      "host": "aos.agee.dev",
+      "port": "4112",
+      "label": "dev.agee.cloudflared-aos-review",
+      "tunnel": "/Users/evanagee/.cloudflared/aos-review-config.yml",
+      "checkout": "separate aos review service",
+      "command": "out of scope here",
+      "launchd_rc": 0,
+      "launchd_state": "running",
+      "plist": "/Users/evanagee/Library/LaunchAgents/dev.agee.cloudflared-aos-review.plist",
+      "tunnel_exists": true,
+      "tunnel_mentions_host": true,
+      "tunnel_mentions_port": true,
+      "port_listening": false
+    }
+  ],
+  "retired": {
+    "port_7860_listening": false,
+    "firstmate_tunnel_exists": true,
+    "firstmate_tunnel_points_7860": true,
+    "firstmate_cloudflared_running": true,
+    "firstmate_app_label_loaded": false
+  },
+  "checkouts": {
+    "agee-dev-dashboard": {
+      "exists": true,
+      "branch": "main"
+    },
+    "usage-tracker": {
+      "exists": true,
+      "branch": "main"
+    }
+  },
+  "curls": {
+    "http://127.0.0.1:3200/": "200",
+    "http://127.0.0.1:3200/fleet": "200",
+    "http://127.0.0.1:3000/": "200",
+    "http://127.0.0.1:7860/": "000"
+  },
+  "notes": {
+    "aos_agee_dev_port_4112": "documented as out of scope; tunnel label running, local port not listening at check time",
+    "firstmate_agee_dev": "app label unloaded and :7860 dead as documented; leftover cloudflared-firstmate tunnel still running, matching the doc note that it can be stopped after captain confirmation"
+  }
+}
