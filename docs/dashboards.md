@@ -52,14 +52,18 @@ launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker
 `launchctl kickstart -k` restarts the app without touching the Cloudflare tunnel, so the public host stays mapped through the few seconds of reboot.
 Serving a production build is what makes the restart pick up the current `main` reliably; `next dev` can keep serving a stale in-memory build after the code under it changes.
 
-To confirm the local app is serving after a restart (a local health check, not a public-reachability check):
+To confirm the local app is serving after a restart (a local health check, not a public-reachability check), curl the port for the app you just restarted:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet   # 200 means the local app serves /fleet
+# agee.dev
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet
+
+# subs.agee.dev
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/
 ```
 
-A 200 confirms the local app is up.
-To confirm the public host is reachable, curl `https://agee.dev/fleet` or check the tunnel (see "When a dashboard is unreachable").
+The port must match the app just restarted. A 200 confirms that specific local app is up.
+To confirm the public host is reachable, curl `https://agee.dev/fleet` (or the public host you restarted) or check the tunnel (see "When a dashboard is unreachable").
 To confirm a specific code change is live, open the page in a browser.
 
 ## When a dashboard is unreachable
@@ -69,10 +73,10 @@ Curl the local port first: `curl -s -o /dev/null -w '%{http_code}' http://127.0.
 
 If the local port does not answer, the app is down: rebuild and restart its server agent with the restart recipe above.
 
-If the local port answers but the public host is unreachable, the tunnel is down: restart the tunnel agent with its label from the host map.
+If the local port answers but the public host is unreachable, the tunnel is down: restart the tunnel agent whose label matches the affected host from the host map. The label is `dev.agee.cloudflared-<name>`, where `<name>` is `root`, `subs`, `aos-ci`, or `aos-review`.
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/dev.agee.cloudflared-root   # or -subs, -aos-ci, -aos-review
+launchctl kickstart -k gui/$(id -u)/dev.agee.cloudflared-<name>
 ```
 
 This happened on 2026-08-24: the root tunnel (`dev.agee.cloudflared-root`) had crashed while the local `:3200` app was healthy and returning 200, so `agee.dev` was unreachable even though nothing was wrong with the app.
