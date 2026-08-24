@@ -8,7 +8,7 @@ Each public host is a Cloudflare tunnel that maps to a local port, and a launchd
 A dashboard runs on `main` in ONE checkout, never in a disposable treehouse worktree.
 The one checkout is the primary clone under `~/Sites/firstmate/projects/<name>`.
 A treehouse worktree is scratch space for a single task and gets pruned, so serving from one means the site dies when that task ends.
-This rule comes from the captain (2026-08-19); see the `agee-dev-dashboard` entry in `data/projects.md`.
+The captain set this serving rule on 2026-08-19.
 
 ## Host map
 
@@ -39,11 +39,14 @@ launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app   # or dev.agee.usage
 `launchctl kickstart -k` restarts the app without touching the Cloudflare tunnel, so the public host stays mapped through the few seconds of reboot.
 Serving a production build is what makes the restart pick up the current `main` reliably; `next dev` can keep serving a stale in-memory build after the code under it changes.
 
-To confirm the current code is live on `agee.dev` after a restart:
+To confirm `/fleet` is served on `agee.dev` after a restart:
 
 ```bash
-curl -s http://127.0.0.1:3200/fleet | grep -ci 'override active'   # 1 means the current /fleet code is live
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet   # 200 confirms /fleet is served
 ```
+
+A 200 confirms `/fleet` is served.
+To confirm a specific code change is live, open the page in a browser.
 
 ## Retired hosts
 
@@ -55,4 +58,4 @@ Its tunnel (`dev.agee.cloudflared-firstmate`, config `~/.cloudflared/firstmate-c
 
 Keep this file to current serving facts and the restart recipe.
 Update the host map and the retired list when a host, port, label, tunnel config, or checkout changes.
-Prefer a pointer to the authoritative plist, tunnel config, or `data/projects.md` entry over copying detail that will drift.
+Prefer a pointer to the authoritative plist or tunnel config over copying detail that will drift.
