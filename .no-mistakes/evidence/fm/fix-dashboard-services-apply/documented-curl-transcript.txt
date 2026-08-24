@@ -1,0 +1,31 @@
+# Exact commands from docs/dashboards.md, run 2026-08-24 from this machine after Access-302 wording fix
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet
+=> 200
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/
+=> 200
+curl -s -o /dev/null -w '%{http_code}' https://agee.dev/fleet
+=> 302
+curl -s -o /dev/null -w '%{http_code}' https://subs.agee.dev/
+=> 302
+curl -sSI --max-time 12 https://agee.dev/fleet | sed -n '1,8p'
+HTTP/2 302 
+date: Mon, 24 Aug 2026 17:20:02 GMT
+location: https://rough-term-afa4.cloudflareaccess.com/cdn-cgi/access/login/agee.dev?<access-login>
+www-authenticate: Cloudflare-Access resource_metadata="https://agee.dev/.well-known/cloudflare-access-protected-resource/fleet"
+server: cloudflare
+curl -sSI --max-time 12 https://firstmate.agee.dev/ | selected headers
+HTTP/2 302 
+date: Mon, 24 Aug 2026 17:20:02 GMT
+location: https://rough-term-afa4.cloudflareaccess.com/cdn-cgi/access/login/firstmate.agee.dev?<access-login>
+www-authenticate: Cloudflare-Access resource_metadata="https://firstmate.agee.dev/.well-known/cloudflare-access-protected-resource/"
+server: cloudflare
+dig +short firstmate.agee.dev A
+172.67.140.244
+104.21.27.30
+launchctl print gui/501/dev.agee.cloudflared-firstmate
+Bad request.
+Could not find service "dev.agee.cloudflared-firstmate" in domain for user gui: 501
+ls ~/Library/LaunchAgents/dev.agee.cloudflared-firstmate*
+-rw-r--r--@ 1 evanagee  staff  880 Aug 16 13:54 /Users/evanagee/Library/LaunchAgents/dev.agee.cloudflared-firstmate.plist.disabled
+local :7860
+http_code=000

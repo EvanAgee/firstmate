@@ -1,0 +1,92 @@
+{
+  "launchd": {
+    "dev.agee.dashboard-app": {
+      "rc": 0,
+      "state": "running"
+    },
+    "dev.agee.usage-tracker": {
+      "rc": 0,
+      "state": "running"
+    },
+    "dev.agee.cloudflared-root": {
+      "rc": 0,
+      "state": "running"
+    },
+    "dev.agee.cloudflared-subs": {
+      "rc": 0,
+      "state": "running"
+    },
+    "dev.agee.cloudflared-firstmate": {
+      "rc": 113,
+      "state": "missing"
+    }
+  },
+  "plists": {
+    "/Users/evanagee/Library/LaunchAgents/dev.agee.cloudflared-firstmate.plist.disabled": true,
+    "/Users/evanagee/Library/LaunchAgents/dev.agee.cloudflared-firstmate.plist": false
+  },
+  "checkouts": {
+    "agee-dev-dashboard": {
+      "exists": true,
+      "branch": "main",
+      "git_dir_is_primary": true
+    },
+    "usage-tracker": {
+      "exists": true,
+      "branch": "main",
+      "git_dir_is_primary": true
+    }
+  },
+  "local_http": {
+    "agee_fleet": {
+      "rc": 0,
+      "http_code": "200",
+      "stderr": ""
+    },
+    "subs": {
+      "rc": 0,
+      "http_code": "200",
+      "stderr": ""
+    },
+    "firstmate_7860": {
+      "rc": 7,
+      "http_code": "000",
+      "stderr": "curl: (7) Failed to connect to 127.0.0.1 port 7860 after 0 ms: Couldn't connect to server"
+    }
+  },
+  "public_http": {
+    "agee_fleet": {
+      "rc": 0,
+      "http_code": "302",
+      "stderr": ""
+    },
+    "subs": {
+      "rc": 0,
+      "http_code": "302",
+      "stderr": ""
+    },
+    "firstmate": {
+      "rc": 0,
+      "http_code": "302",
+      "stderr": ""
+    }
+  },
+  "dns": {
+    "agee.dev": [
+      "172.67.140.244",
+      "104.21.27.30"
+    ],
+    "subs.agee.dev": [
+      "104.21.27.30",
+      "172.67.140.244"
+    ],
+    "firstmate.agee.dev": [
+      "104.21.27.30",
+      "172.67.140.244"
+    ]
+  },
+  "operator_classification": {
+    "local_200_means_app_up": true,
+    "public_302_to_access_means_reachable": true
+  }
+}

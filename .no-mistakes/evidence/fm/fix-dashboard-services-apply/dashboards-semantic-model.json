@@ -1,0 +1,98 @@
+{
+  "headings": [
+    "Standing rule",
+    "Host map",
+    "Restart recipe",
+    "When a dashboard is unreachable",
+    "Retired hosts",
+    "Maintaining this file"
+  ],
+  "host_map_columns": [
+    "Public host",
+    "Local port",
+    "Server launchd label",
+    "Tunnel launchd label",
+    "Tunnel config",
+    "Checkout",
+    "Command"
+  ],
+  "host_map": [
+    {
+      "Public host": "agee.dev",
+      "Local port": "3200",
+      "Server launchd label": "`dev.agee.dashboard-app`",
+      "Tunnel launchd label": "`dev.agee.cloudflared-root`",
+      "Tunnel config": "`~/.cloudflared/agee-root-config.yml`",
+      "Checkout": "`~/Sites/firstmate/projects/agee-dev-dashboard` (on `main`)",
+      "Command": "`npm run start` (prod build)"
+    },
+    {
+      "Public host": "subs.agee.dev",
+      "Local port": "3000",
+      "Server launchd label": "`dev.agee.usage-tracker`",
+      "Tunnel launchd label": "`dev.agee.cloudflared-subs`",
+      "Tunnel config": "`~/.cloudflared/subs-config.yml`",
+      "Checkout": "`~/Sites/firstmate/projects/usage-tracker` (on `main`)",
+      "Command": "`npm run start` (prod build)"
+    },
+    {
+      "Public host": "ci.agee.dev",
+      "Local port": "4200",
+      "Server launchd label": "separate aos CI backend",
+      "Tunnel launchd label": "`dev.agee.cloudflared-aos-ci`",
+      "Tunnel config": "`~/.cloudflared/aos-ci-config.yml`",
+      "Checkout": "separate aos CI backend",
+      "Command": "out of scope here"
+    },
+    {
+      "Public host": "aos.agee.dev",
+      "Local port": "4112",
+      "Server launchd label": "separate aos review service",
+      "Tunnel launchd label": "`dev.agee.cloudflared-aos-review`",
+      "Tunnel config": "`~/.cloudflared/aos-review-config.yml`",
+      "Checkout": "separate aos review service",
+      "Command": "out of scope here"
+    }
+  ],
+  "restart_blocks": [
+    {
+      "app": "agee.dev",
+      "lang": "bash",
+      "commands": [
+        "cd ~/Sites/firstmate/projects/agee-dev-dashboard",
+        "git checkout main            # the checkout must be on main, not detached",
+        "npm run build",
+        "launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app"
+      ]
+    },
+    {
+      "app": "subs.agee.dev",
+      "lang": "bash",
+      "commands": [
+        "cd ~/Sites/firstmate/projects/usage-tracker",
+        "git checkout main",
+        "npm run build",
+        "launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker"
+      ]
+    }
+  ],
+  "inventory": [
+    {
+      "path": "docs/dashboards.md",
+      "audience": "operator-current"
+    }
+  ],
+  "required_columns_present": true,
+  "required_hosts": [
+    "agee.dev",
+    "subs.agee.dev",
+    "ci.agee.dev",
+    "aos.agee.dev"
+  ],
+  "access_302_is_reachable": true,
+  "tunnel_down_is_refused_or_502_530": true,
+  "local_curl_is_definitive": true,
+  "firstmate_does_not_claim_unresolved": true,
+  "firstmate_dns_may_still_resolve": true,
+  "firstmate_retired_2026_08_24": true
+}
