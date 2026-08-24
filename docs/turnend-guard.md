@@ -41,7 +41,11 @@ That ownership proof is `fm_pi_extension_owns_supervision` in `bin/fm-wake-lib.s
 Requiring the turn-end guard extension as well as the watch extension is deliberate, because a home without that structural backstop has no benign hand-off to tolerate.
 Without that proof an unheld lock alarms exactly as it did before, so an unloaded, version-drifted, or exited Pi session is loud immediately, and a cycle the extension never restores is loud once the beacon passes grace.
 Under every persistent-watcher harness a live identity-matched watcher with a fresh beacon is still required, so the pull guard keeps the same strict semantics there.
-Its banner names the true failing condition, either a missing live watcher process or a genuinely stale beacon with its real age, and keys the once-per-episode dedup on that condition rather than the beacon mtime.
+Its banner names the true failing condition: a missing live watcher process, a genuinely stale beacon with its real age, or on Claude only a design-induced successor gap after a successful rewake.
+That Claude-only wording fires when the running harness is Claude, the supervision model is autoarm, the latest epoch outcome is `rewake`, and the beacon is stale.
+It keeps the WATCHER DOWN header because supervision is genuinely absent until the next Stop arms, and it tells the operator to check the Stop hook only if the handling turn has already ended rather than to repair hook registration while that turn is still running.
+Cursor shares the autoarm model and keeps the ordinary banner even if a stray rewake epoch is on disk.
+The once-per-episode dedup is keyed on that condition rather than the beacon mtime.
 
 `FM_STATE_OVERRIDE` wins over `FM_HOME/state`, and `FM_HOME` wins over repository-root `state/`.
 `FM_GUARD_GRACE` controls beacon freshness and defaults to 300 seconds.
@@ -74,6 +78,7 @@ Claude runs the guard with `--claude`, which ignores `stop_hook_active` and coop
 Claude Code sets `stop_hook_active=true` on every stop after any stop-hook continuation, including `asyncRewake` rewakes, which re-opened the 2026-07-21 blind window under the default one-shot behavior.
 The Claude mode waits up to `FM_CLAUDE_AUTOARM_SYNC_WAIT_MS` (default 800 milliseconds) and allows the stop when the watcher is healthy, `state/.claude-autoarm.lock` has a live `autoarm` role owner whose eventual failure must exit 2, or `state/.claude-autoarm-epoch` contains a fresh actionable rewake owned by this event epoch.
 Fresh `failed` and `failed-suppressed` outcomes enter or advance the failure progression instead of acting as unconditional recovery proof.
+An `interrupted` outcome is not recovery proof: the auto-arm recorded a mid-cycle HUP, INT, or TERM, so the guard falls through to a Stop-owned continuation.
 The auto-arm itself rechecks the healthy watcher predicate and retries a bounded number of times before reporting a genuine failure.
 The first fresh exhausted-failure epoch preserves its handoff without consuming a blocked-stop count, while later fresh failed epochs advance the same monotonic progression instead of resetting it.
 When none of those proofs appears, it re-blocks up to `FM_CLAUDE_TURNEND_BLOCK_BUDGET` times (default 3, below Claude's 8-block override).
@@ -148,7 +153,7 @@ That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it alwa
 
 `tests/fm-turnend-guard.test.sh` covers the predicate, main and secondmate primary scope, child-worktree exclusion, `FM_HOME` and `FM_STATE_OVERRIDE` precedence, the live-lock and fresh-beacon guard predicate, the cooperative `--claude` claim wait, monotonic failed-epoch progression, bounded attended fail-open, post-alarm continuation suppression, positive recovery reset, Pi logical-run latching, missing-`jq` behavior, all five primary registrations, Grok native and legacy selection, typed field precedence, malformed input, and exactly-one-path safety.
 `tests/fm-guard-stale-banner.test.sh` covers the pull-guard predicate, including the persistent-model fresh-leftover-beacon negative control, the auto-arm model's healthy fresh-beacon-without-a-watcher case and stale-beacon alarm, and the extension model's live-watcher path, ownership-qualified fresh hand-off, held-lock failures, independently broken ownership signals, stale-beacon alarm, queued-wake warning, and omp, Pi, and pi-signed harness routing.
-It also covers true-reason banner wording and reason-keyed episode dedup surviving a beacon mtime change.
+It also covers true-reason banner wording, Claude-only successor-gap wording after a rewake epoch, Cursor and non-rewake auto-arm keeping the ordinary banner, the persistent model ignoring a stray rewake epoch, and reason-keyed episode dedup surviving a beacon mtime change.
 `tests/fm-cursor-primary.test.sh` covers the Cursor park end to end over real processes with no harness installed: each tracked Claude-shaped entrypoint standing down on a Cursor payload, both follow-up sources, the bounded repair nag and its reset, the nested loop bounds, supersession, away-mode and lock-ownership inertness, child-worktree exclusion, and that the adapter never exits 2.
 `FM_CURSOR_PRIMARY_LIVE_E2E=1 tests/fm-cursor-primary-live-e2e.test.sh` is the opt-in guard that proves the same behavior against the installed cursor-agent and fails naming the harness and version.
 `tests/fm-kimi-harness.test.sh` covers the separate Kimi crew hook's format preservation, idempotence, refusal cases, token guard, spawn registration, and teardown cleanup.
