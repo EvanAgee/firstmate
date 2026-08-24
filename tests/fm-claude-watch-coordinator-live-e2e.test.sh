@@ -99,8 +99,9 @@ printf '9999999\n' > "$HOME_DIR/state/.lock"
 # keeps a live watcher across the turn. The drain fixture still ends the in-flight
 # need after enough presentation drains so a misbehaving session cannot loop, but
 # it speaks the real WAKE_ACK_REQUIRED protocol: presentation prints the exact
-# ack command, and --ack-through retires the recovery marker so a handling
-# successor leaves pending:downtime and starts beating.
+# ack command, and --ack-through drops queue rows at or below the cutoff before
+# retiring the recovery marker so a handling successor leaves pending:downtime
+# and stays in the FM_POLL beat loop.
 cat > "$PROJECT/bin/fm-wake-drain.sh" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -117,6 +118,13 @@ if [ "${1:-}" = --ack-through ]; then
   ACK_GENERATION=${4:-}
   case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
   [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
+  if [ -e "$FM_WAKE_QUEUE" ]; then
+    DRAIN_TMP=$(mktemp "$STATE/.wake-queue.ack.XXXXXX") || exit 1
+    awk -F '\t' -v cutoff="$ACK_THROUGH" '
+      NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff { print }
+    ' "$FM_WAKE_QUEUE" > "$DRAIN_TMP" || exit 1
+    mv -f -- "$DRAIN_TMP" "$FM_WAKE_QUEUE" || exit 1
+  fi
   fm_recovery_marker_ack "$MARKER" "$ACK_GENERATION" || true
   printf 'ack-run=%s generation=%s\n' "$ACK_THROUGH" "$ACK_GENERATION" >> "$STATE/drain-acked"
   exit 0
@@ -163,6 +171,7 @@ fi
 case "\$m" in ''|*[!0-9]*) m=0 ;; esac
 age=\$((now - m))
 printf 'watcher_alive=%s beacon_age=%s\n' "\$alive" "\$age" > "\$FM_HOME/state/live-sample"
+printf 'blocked: needs a post-sample decision\n' > "\$FM_HOME/state/task.status"
 SH
 chmod +x "$PROJECT/bin/live-sample.sh"
 
