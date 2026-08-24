@@ -427,7 +427,7 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 
 | Harness | Exact opt-in command | Observed guarantee |
 | --- | --- | --- |
-| Claude | `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-stop-autoarm-live-e2e.test.sh` | Session start reclaimed a stale owner before two Stop-owned cycles, and a competing live owner prevented arm, rewake, epoch write, or lock replacement. |
+| Claude | `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-watch-coordinator-live-e2e.test.sh` | Current two-hook contract: a verified successor stays live across a handling turn longer than grace. Refresh this row's dated output against the installed Claude Code. |
 | Codex | `FM_CODEX_LIVE_E2E=1 tests/fm-codex-continuity-live-e2e.test.sh` | The one-second foreground checkpoint returned without switching to the arm wrapper. |
 | OpenCode | `FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh` | A verified successor existed before prompt handling, with no model re-arm or turn-end fallback. |
 | Pi | `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh` | One initial tool call led to extension-owned successors and clean child retirement on exit. |
@@ -501,7 +501,7 @@ This record supports the current guarantee that the session-independent watcher-
 The pass ran on 2026-08-23 on macOS (Darwin 27.0.0) with the tracked `.claude/settings.json` Stop hook wiring.
 
 Two upstream claims were re-checked against source rather than carried forward.
-The Stop auto-arm's `"timeout": 28800` is present on the `asyncRewake` hook in `.claude/settings.json`, so the foreground-teardown reasoning behind an out-of-session check holds.
+The notifier's `"timeout": 28800` is present on the `asyncRewake` hook in `.claude/settings.json`, so the foreground-teardown reasoning behind an out-of-session check holds.
 `bin/fm-watch-arm.sh` does NOT print exactly one status line: the attach path prints its `watcher: ...` line and can later print the delivered wake reason as a second line, so a caller must handle each line rather than pattern-matching one captured blob.
 
 Shared grace, proven by the same beacon flipping the verdict.

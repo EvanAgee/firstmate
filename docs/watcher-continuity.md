@@ -30,20 +30,23 @@ This is deliberate Option B ordering: the fleet is protected before the model ha
 
 Claude's coordinator now establishes and verifies the successor before the notifier surfaces the wake, the same Option B ordering Pi and OpenCode use, rather than the former next-Stop gap.
 After an actionable child close the coordinator reads the queue high-water mark, arms and verifies a fresh successor (a live watcher owning `state/.watch.lock` with a fresh beacon), and only then writes an atomic `state/.claude-ready-to-notify` record binding that high-water mark, the recovery generation, the predecessor arm pid, the verified successor pid and identity, the coordinator generation, and the session owner.
-A confirmed successor resets the coordinator's readiness-timeout streak. After `FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK` consecutive timeouts with no healthy watcher (default 3), the coordinator stands down: it stops retrying, releases `state/.claude-coordinator.lock`, removes its generation file, and exits so it is no longer alive.
-The notifier consumes that record by its monotonic `ready_seq` high-water mark, never by counting queue rows, so the watcher's deliberate double-scan (which appends duplicate rows for one event) never inflates the number of handling turns; it exits 2 exactly once per ready event whose session owner and coordinator generation still match this session, and surfaces a typed coordinator-degraded failure rather than exiting 0 into a still-needed-but-unsurfaced state. Once the coordinator has stood down, the parked notifier's coordinator-absent bound fires and drives that same typed failure plus the guard's failed-epoch progression.
+A confirmed successor resets the coordinator's readiness-timeout streak.
+After `FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK` consecutive timeouts with no healthy watcher (default 3), the coordinator stands down: it stops retrying, releases `state/.claude-coordinator.lock`, removes its generation file, and exits so it is no longer alive.
+The notifier consumes that record by its monotonic `ready_seq` high-water mark, never by counting queue rows, so the watcher's deliberate double-scan (which appends duplicate rows for one event) never inflates the number of handling turns.
+It exits 2 exactly once per ready event whose session owner and coordinator generation still match this session, and surfaces a typed coordinator-degraded failure rather than exiting 0 into a still-needed-but-unsurfaced state.
+Once the coordinator has stood down, the parked notifier's coordinator-absent bound fires and drives that same typed failure plus the guard's failed-epoch progression.
 Because the coordinator keeps one live watcher across the whole handling turn, a turn longer than the beacon grace no longer leaves supervision genuinely absent, which was the false "watcher down" the former next-Stop design produced.
 For every supported arm path, a successor that observes an accepted down stretch emits `check: rearm-resurface` through the ordinary durable handling path before settling into its live wait.
 That recovery presentation includes all unacknowledged queue rows, the cursor-folded OPEN DECISIONS set, and still-unread informational status lines, so a still-open decision or a buried `note:` answer reappears even when recovery has no queue row of its own.
 The model no longer re-arms after ordinary wakes.
 No PreToolUse hook denies fleet commands based on watcher status.
-A genuine auto-arm failure describes the automatic mechanism as broken and never directs a routine manual background arm.
+A genuine coordinator-degraded failure describes the automatic mechanism as broken and never directs a routine manual background arm.
 Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 Codex retains its bounded foreground checkpoint protocol.
 Grok retains its tracked background-task notification protocol.
 No adapter starts a replacement with shell `&`.
 
-The turn-end guard remains the final backstop rather than the normal continuity mechanism and cooperates with the auto-arm in its `--claude` mode.
+The turn-end guard remains the final backstop rather than the normal continuity mechanism and cooperates with the notifier in its `--claude` mode.
 
 ## Recovery episode acknowledgement
 
@@ -93,6 +96,6 @@ The same suite covers ordinary same-process session replacement for `/new`, `/re
 The goal is continuity without a Pi or OpenCode model-memory re-arm step.
 No zero-latency guarantee is claimed because lock verification, watcher startup, and bounded retry delays remain deliberate safety work.
 OpenCode support targets persistent TUI sessions rather than headless `opencode run`.
-Claude depends on the Stop `asyncRewake` rewake, Cursor depends on its awaited stop-hook park, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
+Claude depends on the Stop `async` coordinator plus the `asyncRewake` notifier, Cursor depends on its awaited stop-hook park, Grok retains native background-completion notifications, and Codex retains bounded foreground checkpoints.
 
-[`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current five-harness live evidence, the 2026-07-24 Stop-owned Claude auto-arm results, and exact opt-in commands.
+[`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current five-harness live evidence and exact opt-in commands.

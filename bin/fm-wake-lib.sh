@@ -133,17 +133,17 @@ fm_watcher_healthy() {
 # arm layer (bin/fm-watch-arm.sh, bin/fm-claude-watch-coordinator.sh) needs exactly
 # that - it decides whether to start, attach to, or replace a real watcher
 # process, so a leftover beacon must never satisfy it. bin/fm-turnend-guard.sh
-# also keeps this strict check because it fires at the turn boundary where the
-# auto-arm brings a fresh watcher up. The pull warning (bin/fm-guard.sh) fires
-# mid-turn, where the auto-arm model runs no watcher at all, so it wants a
-# different, model-aware question:
+# also keeps this strict check because it fires at the turn boundary and
+# cooperates with the parked notifier. The pull warning (bin/fm-guard.sh) fires
+# mid-turn and uses a different, model-aware question:
 
 # fm_supervision_model
 # Print the supervision model of this home's PRIMARY harness:
-#   autoarm     Claude's Stop-hook auto-arm and Cursor's stop-hook park: the
-#               watcher is armed at each turn end and exits on its wake, so it
-#               runs only BETWEEN turns. Mid-turn a fresh beacon with no live
-#               watcher process is the healthy state.
+#   autoarm     Cursor's stop-hook park, and Claude's still-classified pull-guard
+#               model: Cursor arms at each turn end and exits on its wake, so it
+#               runs only BETWEEN turns. Claude's coordinator now keeps a live
+#               watcher across the handling turn, but the pull-guard still treats
+#               a mid-turn fresh beacon with no live watcher as healthy.
 #   extension   Pi, pi-signed, and omp: a primary watcher extension owns
 #               continuity. It tears the watcher down on every actionable wake and
 #               spawns the replacement itself, so a genuinely unheld singleton lock
