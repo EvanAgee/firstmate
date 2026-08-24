@@ -12,15 +12,19 @@ The captain set this serving rule on 2026-08-19.
 
 ## Host map
 
-| Public host | Local port | launchd label | Tunnel config | Checkout | Command |
-|---|---|---|---|---|---|
-| agee.dev | 3200 | `dev.agee.dashboard-app` | `~/.cloudflared/agee-root-config.yml` | `~/Sites/firstmate/projects/agee-dev-dashboard` (on `main`) | `npm run start` (prod build) |
-| subs.agee.dev | 3000 | `dev.agee.usage-tracker` | `~/.cloudflared/subs-config.yml` | `~/Sites/firstmate/projects/usage-tracker` (on `main`) | `npm run start` (prod build) |
-| ci.agee.dev | 4200 | `dev.agee.cloudflared-aos-ci` | `~/.cloudflared/aos-ci-config.yml` | separate aos CI backend | out of scope here |
-| aos.agee.dev | 4112 | `dev.agee.cloudflared-aos-review` | `~/.cloudflared/aos-review-config.yml` | separate aos review service | out of scope here |
+Each host has two independent pieces: the local app (a launchd agent serving a port) and the Cloudflare tunnel (a separate launchd agent that maps the public host to that port).
+Either can fail on its own, so both labels are listed.
+
+| Public host | Local port | Server launchd label | Tunnel launchd label | Tunnel config | Checkout | Command |
+|---|---|---|---|---|---|---|
+| agee.dev | 3200 | `dev.agee.dashboard-app` | `dev.agee.cloudflared-root` | `~/.cloudflared/agee-root-config.yml` | `~/Sites/firstmate/projects/agee-dev-dashboard` (on `main`) | `npm run start` (prod build) |
+| subs.agee.dev | 3000 | `dev.agee.usage-tracker` | `dev.agee.cloudflared-subs` | `~/.cloudflared/subs-config.yml` | `~/Sites/firstmate/projects/usage-tracker` (on `main`) | `npm run start` (prod build) |
+| ci.agee.dev | 4200 | separate aos CI backend | `dev.agee.cloudflared-aos-ci` | `~/.cloudflared/aos-ci-config.yml` | separate aos CI backend | out of scope here |
+| aos.agee.dev | 4112 | separate aos review service | `dev.agee.cloudflared-aos-review` | `~/.cloudflared/aos-review-config.yml` | separate aos review service | out of scope here |
 
 `agee.dev` is one Next.js app that serves `/`, `/fleet`, and `/subs`.
 `subs.agee.dev` is a different app (the usage tracker), not the `agee.dev/subs` page.
+`agee.dev/fleet` gets its data in-process: the app runs `bin/fm-fleet-snapshot.sh --json` itself (see `lib/fleet/snapshot.server.ts` in the dashboard repo) and caches the result, so there is no separate snapshot server to run or crash.
 
 ## Restart recipe
 
@@ -48,10 +52,27 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet   # 200 confi
 A 200 confirms `/fleet` is served.
 To confirm a specific code change is live, open the page in a browser.
 
+## When a dashboard is unreachable
+
+The tunnel is a separate failure point from the local app, so check both.
+Curl the local port first: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/` (use the host's own port).
+
+If the local port does not answer, the app is down: rebuild and restart its server agent with the restart recipe above.
+
+If the local port answers but the public host is unreachable, the tunnel is down: restart the tunnel agent with its label from the host map.
+
+```bash
+launchctl kickstart -k gui/$(id -u)/dev.agee.cloudflared-root   # or -subs, -aos-ci, -aos-review
+```
+
+This happened on 2026-08-24: the root tunnel (`dev.agee.cloudflared-root`) had crashed while the local `:3200` app was healthy and returning 200, so `agee.dev` was unreachable even though nothing was wrong with the app.
+Restarting the tunnel agent, not the app, is the fix for that case.
+
 ## Retired hosts
 
 `firstmate.agee.dev` (port 7860) was a standalone fleet dashboard that never landed on `main`.
-It was retired on 2026-08-24: its launchd agent and its zombie process were removed, because the fleet view already lives at `agee.dev/fleet`.
+It was retired on 2026-08-24: its launchd agent and its process were removed, because the fleet view already lives at `agee.dev/fleet`.
+That server also answered `/api/snapshot`, which `agee.dev/fleet` fetched for its data, so retiring it moved the snapshot in-process into the dashboard app (`lib/fleet/snapshot.server.ts`) rather than dropping it.
 Its tunnel (`dev.agee.cloudflared-firstmate`, config `~/.cloudflared/firstmate-config.yml`) points at the now-dead port and can be stopped once the captain confirms the host is not wanted back.
 
 ## Maintaining this file
