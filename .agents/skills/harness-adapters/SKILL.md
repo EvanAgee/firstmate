@@ -305,6 +305,17 @@ Project trust dialog can appear on the first pi run in any not-yet-trusted direc
 Accept with Enter.
 The decision persists per path in `~/.pi/agent/trust.json`, so later spawns in the same worktree slot skip it.
 
+Pi is installed as a `#!/usr/bin/env node` script, so its shebang resolves whatever `node` the pane's PATH offers, not the Node its own install sits under.
+A project that pins an older Node - an `.nvmrc` plus an nvm auto-switch in the pane's shell rc - therefore runs Pi's bundled dependencies on the wrong runtime, and Pi dies at import time before its first frame.
+The observed shape on 2026-08-24 was Pi 0.84.2 under Node 20.19.6: `TypeError: webidl.util.markAsUncloneable is not a function` from undici.
+The launch is what pins the interpreter, so a project's own Node stays correct for that project's commands.
+
+A crewmate or scout Pi session must not discover project-local `.pi/extensions`.
+A task worktree is a disposable copy of the project, so when the project is firstmate itself that copy carries firstmate's tracked primary-only extensions, which are written for a primary session and some of which import omp's packages rather than Pi's.
+Discovering them in a crew pane kills the launch with a require failure and drops the pane to a raw shell.
+A secondmate is a primary in its own home, so it keeps discovery.
+`fm-spawn.sh --help` owns both mechanisms; neither ever writes into a project worktree.
+
 `fm-spawn` keeps the turn-end extension in `state/`, outside the worktree, because project-local extension files make the trust gate strictly worse and pollute the project.
 The extension must listen for pi's `turn_end` event, not `agent_end`, so the watcher wakes after each completed turn instead of only when the whole agent run exits.
 Pi sets `PI_CODING_AGENT=true` for its children; this is its harness-detection env marker.
