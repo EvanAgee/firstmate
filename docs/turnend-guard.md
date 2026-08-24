@@ -42,9 +42,9 @@ That ownership proof is `fm_pi_extension_owns_supervision` in `bin/fm-wake-lib.s
 Requiring the turn-end guard extension as well as the watch extension is deliberate, because a home without that structural backstop has no benign hand-off to tolerate.
 Without that proof an unheld lock alarms exactly as it did before, so an unloaded, version-drifted, or exited Pi session is loud immediately, and a cycle the extension never restores is loud once the beacon passes grace.
 Under every persistent-watcher harness a live identity-matched watcher with a fresh beacon is still required, so the pull guard keeps the same strict semantics there.
-Its banner names the true failing condition: a missing live watcher process, a genuinely stale beacon with its real age, or on Claude only a stale beacon after a successful rewake epoch.
+Its banner names the true failing condition: a missing live watcher process, a genuinely stale beacon with its real age, or on Claude only a design-induced supervision gap after a successful rewake.
 That Claude-only wording fires when the running harness is Claude, the supervision model is autoarm, the latest epoch outcome is `rewake`, and the beacon is stale.
-With successor-first ordering that is no longer the ordinary long-turn path; it means the coordinator did not keep a live watcher, and the banner tells the operator to check the Stop hooks if the handling turn has already ended.
+With successor-first ordering that is no longer the ordinary long-turn path; it means the coordinator did not keep a live watcher, and the banner still tells the operator to check the auto-arm Stop hook if the handling turn has already ended.
 Cursor shares the autoarm model and keeps the ordinary banner even if a stray rewake epoch is on disk.
 The once-per-episode dedup is keyed on that condition rather than the beacon mtime.
 
