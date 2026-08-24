@@ -1,0 +1,8 @@
+ready_seq=0
+recovery_generation=none
+predecessor_arm_pid=none
+successor_watch_pid=78339
+successor_watch_identity=Mon Aug 24 18:52:01 2026     bash /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-claude-watch-long-turn-demo.wTVtFm/long-turn-demo/bin/fm-watch.sh
+coordinator_generation=coord-76945-77471
+session_owner=76945
+published_at=1787615523

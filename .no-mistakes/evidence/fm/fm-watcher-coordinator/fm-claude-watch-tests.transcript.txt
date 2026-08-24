@@ -1,0 +1,41 @@
+FM_TEST_BEGIN 2026-08-24T23:42:14Z tests/fm-claude-watch-coordinator.test.sh family=unclassified expected_gate_skip=none
+ok - coordinator: a verified live successor owns the lock before the ready record is published
+ok - coordinator: one stable live watcher keeps the beacon fresh across a turn longer than grace
+ok - coordinator: an actionable close arms a verified successor and re-publishes the ready high-water mark
+ok - notifier: parks, then exits 2 exactly once keyed to ready_seq, and does not re-wake the same event
+ok - handshake: a duplicated-row event advances one monotonic high-water mark and wakes exactly once
+ok - coordinator: concurrent firings admit exactly one coordinator owner
+ok - guard: a coordinator lock alone never satisfies the turn-end guard
+ok - coordinator: stands down cleanly when a new session generation owns the session lock
+ok - coordinator: stands down after a bounded successor-timeout streak so the guard blocks an idle Stop
+FM_TEST_END 2026-08-24T23:46:15Z tests/fm-claude-watch-coordinator.test.sh exit=0 duration_ms=241254 gate_skip=false
+FM_TEST_BEGIN 2026-08-24T23:46:15Z tests/fm-claude-watch-notifier.test.sh family=unclassified expected_gate_skip=none
+ok - notifier: inert in a linked child worktree even when in-flight
+ok - notifier: inert with no session lock
+ok - notifier: inert without epoch or lock replacement when another live harness owns the home
+ok - notifier: a demonstrably dead recorded session owner is reclaimed through fm-lock.sh before parking
+ok - notifier: inert while AFK owns supervision
+ok - notifier: inert with nothing in flight and no X-mode need
+ok - notifier: stands down on a Cursor-delivered (foreign-host) payload
+ok - notifier: a fresh ready record for this session triggers exactly one exit-2 rewake
+ok - notifier: a ready record from another session generation is never surfaced
+ok - notifier: a genuinely absent coordinator surfaces a typed failure and records the guard's episode notice
+ok - notifier: consecutive coordinator-absent failures notify once and keep retrying
+ok - notifier: a fresh ready record clears the failure episode (positive recovery) and still wakes
+ok - notifier: AFK appearing mid-park hands triage to the daemon with a clean exit
+ok - notifier: concurrent firings admit exactly one parked owner
+ok - notifier: parent TERM records interrupted and releases the owner lock
+ok - notifier: active in a marked secondmate home
+ok - notifier: rejects a session handover between the identity gate and SESSION_OWNER read
+ok - notifier: rejects an empty SESSION_OWNER after claiming the owner lock
+ok - fm-lock: shared session-lock lib preserves the status path
+FM_TEST_END 2026-08-24T23:47:45Z tests/fm-claude-watch-notifier.test.sh exit=0 duration_ms=90455 gate_skip=false
+FM_TEST_BEGIN 2026-08-24T23:47:45Z tests/fm-claude-watch-coordinator-live-e2e.test.sh family=unclassified expected_gate_skip=none
+skip: set FM_CLAUDE_LIVE_E2E=1 to run the Claude watcher coordinator regression
+FM_TEST_END 2026-08-24T23:47:45Z tests/fm-claude-watch-coordinator-live-e2e.test.sh exit=0 duration_ms=34 gate_skip=true
+FM_TEST_SUMMARY total=3 failed=0 skipped_gate=1 duration_ms=331965
+FM_TEST_SUMMARY_FAMILY family=unclassified count=3 duration_ms=331743 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-claude-watch-coordinator.test.sh duration_ms=241254
+FM_TEST_SLOWEST rank=2 script=tests/fm-claude-watch-notifier.test.sh duration_ms=90455
+FM_TEST_SLOWEST rank=3 script=tests/fm-claude-watch-coordinator-live-e2e.test.sh duration_ms=34
+EXIT:0

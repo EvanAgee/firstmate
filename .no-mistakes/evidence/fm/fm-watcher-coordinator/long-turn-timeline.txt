@@ -1,0 +1,34 @@
+long-turn demo: grace=6s, sample window=10s
+real components: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-claude-watch-long-turn-demo.wTVtFm/long-turn-demo/bin/fm-watch-arm.sh + fm-watch.sh + fm-guard.sh + fm-turnend-guard.sh --claude
+home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-claude-watch-long-turn-demo.wTVtFm/long-turn-demo
+session_owner=76945
+coordinator_pid=77471
+watch.lock.pid=78339
+watch.lock.path=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-claude-watch-long-turn-demo.wTVtFm/long-turn-demo/bin/fm-watch.sh
+watch.lock.home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-claude-watch-long-turn-demo.wTVtFm/long-turn-demo
+
+=== ready-to-notify ===
+ready_seq=0
+recovery_generation=none
+predecessor_arm_pid=none
+successor_watch_pid=78339
+successor_watch_identity=Mon Aug 24 18:52:01 2026     bash /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-claude-watch-long-turn-demo.wTVtFm/long-turn-demo/bin/fm-watch.sh
+coordinator_generation=coord-76945-77471
+session_owner=76945
+published_at=1787615523
+
+t_s	watch_pid	watch_alive	beacon_age	ready_seq	successor_pid	guard	turnend
+0	78339	yes	2	0	78339	silent	allow:0
+1	78339	yes	0	0	78339	silent	allow:0
+2	78339	yes	1	0	78339	silent	allow:0
+3	78339	yes	1	0	78339	silent	allow:0
+4	78339	yes	0	0	78339	silent	allow:0
+5	78339	yes	1	0	78339	silent	allow:0
+6	78339	yes	1	0	78339	silent	allow:0
+7	78339	yes	0	0	78339	silent	allow:0
+8	78339	yes	0	0	78339	silent	allow:0
+9	78339	yes	1	0	78339	silent	allow:0
+10	78339	yes	1	0	78339	silent	allow:0
+
+summary: first_watch=78339 last_watch=78339 dead_samples=0 stale_samples=0 watcher_down_banners=0 turnend_blocks=0
+RESULT: PASS — one live watcher kept the beacon fresh across 10s (> 6s grace); fm-guard.sh stayed silent; turn-end guard did not raise SUPERVISION IS OFF
