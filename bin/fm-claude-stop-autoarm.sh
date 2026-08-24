@@ -42,7 +42,11 @@
 # The epoch ledger state/.claude-autoarm-epoch records the latest claim and
 # outcome so the synchronous Stop guard (bin/fm-turnend-guard.sh --claude) can
 # allow a stop whose recovery this hook already owns, instead of forcing a
-# duplicate continuation for the same event epoch. The failure marker
+# duplicate continuation for the same event epoch. HUP/INT/TERM traps record an
+# "interrupted" outcome and remove the abandoned arm-output file when this hook
+# process tree is killed mid-cycle; the guard reads "interrupted" as "this hook
+# does not own recovery", so it falls through to a proper Stop-owned continuation
+# instead of trusting a half-finished epoch. SIGKILL stays unreportable. The failure marker
 # state/.claude-autoarm-failure-notified deduplicates the last-resort notice,
 # and state/.claude-autoarm-failure-alarmed bounds the attended fail-open and
 # suppresses any later automatic continuation in that unresolved episode.
@@ -140,7 +144,11 @@ if ! fm_lock_set_role "$OWNER_LOCK" autoarm; then
   fm_lock_release "$OWNER_LOCK"
   exit 0
 fi
-trap 'fm_lock_release "$OWNER_LOCK"' EXIT
+
+# Current arm-output file this owner is responsible for. The foreground arm loop
+# keeps this pointed at the live output; the signal traps below use it to clean up
+# an abandoned file when the parent hook is killed mid-cycle.
+OUT=
 
 write_epoch() {  # <outcome>
   local outcome=$1 seq tmp
@@ -155,6 +163,31 @@ write_epoch() {  # <outcome>
     && mv -f "$tmp" "$EPOCH" 2>/dev/null
   rm -f "$tmp" 2>/dev/null || true
 }
+
+# When Claude kills this hook process tree mid-cycle (session teardown, hook
+# timeout, or an operator interrupt), record an "interrupted" epoch outcome and
+# remove the abandoned arm-output file before dying, so the ledger does not leave
+# a dangling "arming"/"rewake" epoch and a stranded .claude-autoarm-output.* file
+# that the review found scattered across historical runs. The turn-end guard reads
+# "interrupted" as "the auto-arm does not own recovery", forcing a proper Stop-owned
+# continuation. SIGKILL stays unreportable, which is expected and unavoidable. The
+# EXIT trap still releases the owner lock; a signal handler re-raises the default so
+# EXIT runs and the exit status carries the signal.
+# shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
+handle_parent_signal() {
+  local signal=$1
+  trap - HUP INT TERM
+  write_epoch interrupted
+  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  trap - EXIT
+  fm_lock_release "$OWNER_LOCK" 2>/dev/null || true
+  kill -s "$signal" "$$" 2>/dev/null || true
+  exit $((128 + $(kill -l "$signal" 2>/dev/null || echo 15)))
+}
+trap 'fm_lock_release "$OWNER_LOCK"' EXIT
+trap 'handle_parent_signal HUP' HUP
+trap 'handle_parent_signal INT' INT
+trap 'handle_parent_signal TERM' TERM
 
 write_epoch arming
 
@@ -177,10 +210,12 @@ attempt=0
 while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   attempt=$((attempt + 1))
   OUT=$(mktemp "$STATE/.claude-autoarm-output.XXXXXX") || OUT=
+  # Mark every cycle this hook arms as source=autoarm in the lifecycle ledger, so
+  # the ledger distinguishes auto-arm cycles from manual arms without the transcript.
   if [ -n "$OUT" ]; then
-    "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
+    FM_WATCH_ARM_SOURCE=autoarm "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1 || true
   else
-    "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
+    FM_WATCH_ARM_SOURCE=autoarm "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1 || true
   fi
 
   # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress

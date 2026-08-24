@@ -216,6 +216,103 @@ test_attached_arm_reports_the_delivered_wake_after_drain() {
   pass "watch-arm: a delivered wake consumed by the handling turn still closes the attached arm cleanly"
 }
 
+# The lifecycle ledger's additive fields (source/epoch/session/cause) must appear
+# on a real cycle row, carry the right values, and never break a reader that parses
+# only the original fields. An autoarm-sourced arm with a claimed epoch and a session
+# lock present is the case that populates every new field with a real value.
+test_lifecycle_ledger_records_additive_source_epoch_session_cause() {
+  local dir state fakebin out armout row session_pid i
+  dir=$(make_case ledger-additive-fields)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  armout="$dir/arm.out"
+
+  # Stand up the identity an autoarm-sourced cycle carries: a claimed epoch and the
+  # session-lock owner pid the row should record as its session generation.
+  printf 'epoch=41 owner_pid=999 outcome=arming updated_at=1700000000\n' \
+    > "$state/.claude-autoarm-epoch"
+  session_pid=4242
+  printf '%s\n' "$session_pid" > "$state/.lock"
+
+  start_seed_watcher "$state" "$fakebin" "$out"
+  # Launch the arm exactly like start_attached_arm, but mark it source=autoarm.
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 \
+    FM_ARM_CONFIRM_TIMEOUT=5 FM_WATCH_ARM_SOURCE=autoarm "$WATCH_ARM" > "$armout" &
+  ARM_PID=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF "watcher: attached pid=$SEED_PID" "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF "watcher: attached pid=$SEED_PID" "$armout" \
+    || fail "autoarm-sourced arm did not attach: $(cat "$armout")"
+
+  printf 'done: fixture finished\n' > "$state/demo.status"
+  wait_for_exit "$SEED_PID" 120
+  wait_for_exit "$ARM_PID" 120
+
+  [ -s "$state/.watch-cycle-exits.log" ] \
+    || fail "the cycle produced no lifecycle ledger row"
+  row=$(grep 'reason=attached-delivered-wake' "$state/.watch-cycle-exits.log" | tail -1)
+  [ -n "$row" ] || row=$(tail -1 "$state/.watch-cycle-exits.log")
+
+  # Every new field is present with its expected value.
+  printf '%s\n' "$row" | grep -q $'\tsource=autoarm' \
+    || fail "ledger row missing source=autoarm: $row"
+  printf '%s\n' "$row" | grep -q $'\tepoch=41' \
+    || fail "ledger row missing the claimed epoch sequence: $row"
+  printf '%s\n' "$row" | grep -q $'\tsession='"$session_pid" \
+    || fail "ledger row missing the session-lock owner as session generation: $row"
+  printf '%s\n' "$row" | grep -qE $'\tcause=(clean|signal:[A-Za-z0-9]+|exit:[0-9]+|unknown)(\t|$)' \
+    || fail "ledger row missing a well-formed termination cause: $row"
+
+  # Additive means non-breaking: a reader that splits on tabs and reads the ORIGINAL
+  # twelve fields by index still finds every one, in order and unchanged, with the
+  # new fields appearing only afterward.
+  printf '%s\n' "$row" | awk -F '\t' '
+    {
+      ok = (NF >= 16) \
+        && $1 ~ /^arm_pid=/ && $2 ~ /^watcher_pid=/ && $3 ~ /^origin=/ \
+        && $4 ~ /^started_at=/ && $5 ~ /^ended_at=/ && $6 ~ /^exit_code=/ \
+        && $7 ~ /^signal=/ && $8 ~ /^reason=/ && $9 ~ /^beacon_age=/ \
+        && $10 ~ /^lock_before=/ && $11 ~ /^lock_after=/ && $12 ~ /^successor=/ \
+        && $13 ~ /^source=/ && $14 ~ /^epoch=/ && $15 ~ /^session=/ && $16 ~ /^cause=/
+      exit ok ? 0 : 1
+    }
+  ' \
+    || fail "the original ledger fields are no longer parseable in order: $row"
+  pass "watch-arm: lifecycle ledger adds source/epoch/session/cause without breaking existing parsers"
+}
+
+# A manual (non-autoarm) arm must default source=manual and record epoch=none, so
+# the ledger cleanly separates the two arm origins the review could not tell apart.
+test_lifecycle_ledger_defaults_manual_source_without_epoch() {
+  local dir state fakebin out armout row
+  dir=$(make_case ledger-manual-default)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  armout="$dir/arm.out"
+
+  start_seed_watcher "$state" "$fakebin" "$out"
+  # A plain attach with no FM_WATCH_ARM_SOURCE and no epoch file.
+  start_attached_arm "$state" "$fakebin" "$armout" 5
+
+  printf 'done: fixture finished\n' > "$state/demo.status"
+  wait_for_exit "$SEED_PID" 120
+  wait_for_exit "$ARM_PID" 120
+
+  row=$(grep 'reason=attached-delivered-wake' "$state/.watch-cycle-exits.log" | tail -1)
+  [ -n "$row" ] || row=$(tail -1 "$state/.watch-cycle-exits.log")
+  printf '%s\n' "$row" | grep -q $'\tsource=manual' \
+    || fail "a manual arm must record source=manual: $row"
+  printf '%s\n' "$row" | grep -q $'\tepoch=none' \
+    || fail "a manual arm must record epoch=none (no autoarm epoch): $row"
+  pass "watch-arm: a manual arm defaults source=manual with epoch=none"
+}
+
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver() {
   local dir state fakebin out armout status
   dir=$(make_case attached-no-delivery)
@@ -799,6 +896,8 @@ test_downtime_marker_does_not_follow_symlink() {
 
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
+test_lifecycle_ledger_records_additive_source_epoch_session_cause
+test_lifecycle_ledger_defaults_manual_source_without_epoch
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver
 test_rearm_resurfaces_durable_queue_and_remote_open_decision
 test_marker_publish_failure_retains_recovery_evidence
