@@ -597,10 +597,12 @@ test_fm_lock_status_still_works_with_shared_lib() {
 # "interrupted" epoch outcome and remove the abandoned .claude-autoarm-output.*
 # file, instead of leaving a dangling "arming" epoch and a stranded output file.
 # The hook chain runs in its own process group (portable perl setpgrp, since macOS
-# has no setsid) so one group TERM reaches the parent hook and its foreground arm
-# together - exactly how Claude kills the hook process tree. The arm fixture's own
-# TERM trap makes its foreground command return, which lets the parent's deferred
-# TERM trap run.
+# has no setsid) so one group TERM reaches the fake harness, the parent hook, and
+# its foreground arm together - exactly how Claude kills the hook process tree.
+# The fake claude parent must stay alive as the lock owner: exec-replacing it with
+# the hook destroys harness ancestry, and the hook then stands down before arming.
+# The arm fixture's own TERM trap makes its foreground command return, which lets
+# the parent's deferred TERM trap run.
 test_parent_term_records_interrupted_and_cleans_output() {
   local dir leader i outcome stray
   dir=$(make_primary_dir "$TMP_ROOT/parent-term")
@@ -611,15 +613,20 @@ test_parent_term_records_interrupted_and_cleans_output() {
     | FM_HOME="$dir" perl -e 'setpgrp(0,0); exec @ARGV' \
         "$FAKE_CLAUDE" -c '
           printf "%s\n" "$$" > "$FM_HOME/state/.lock"
-          exec "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+          "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
         ' >/dev/null 2>&1 &
   leader=$!
 
   # Wait until the arm is genuinely live before killing, so the interrupt lands
-  # mid-cycle rather than before the epoch is even claimed.
+  # mid-cycle rather than before the epoch is even claimed. If the leader dies
+  # first, the hook stood down (or never started) and waiting out the timeout
+  # cannot recover that.
   i=0
   while [ ! -e "$dir/state/arm-live" ]; do
-    [ "$i" -lt 200 ] || { kill "$leader" 2>/dev/null || true; fail "arm fixture never went live before the interrupt"; }
+    if [ "$i" -ge 200 ] || ! kill -0 "$leader" 2>/dev/null; then
+      kill "$leader" 2>/dev/null || true
+      fail "arm fixture never went live before the interrupt"
+    fi
     sleep 0.05
     i=$((i + 1))
   done
