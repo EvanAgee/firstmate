@@ -268,8 +268,9 @@ fm_extension_owns_supervision() {
 #                                             the lock (the beacon is still fresh)
 #                              stale-beacon - the beacon is stale beyond grace or
 #                                             absent (a genuine supervision lapse)
-# autoarm: a fresh beacon within grace is healthy even with no live watcher,
-# because the watcher only runs between turns; only a stale beacon is a lapse.
+# autoarm: a fresh beacon within grace is healthy even with no live watcher;
+# only a stale beacon is a lapse. See fm_supervision_model for why Claude stays
+# in this class after successor-first ordering.
 # extension: a live identity-matched watcher is the ordinary healthy state, but a
 # genuinely unheld lock is also healthy while the beacon is fresh AND a live Pi
 # session provably owns continuity (fm_extension_owns_supervision) - that is the

@@ -20,7 +20,7 @@ When this session owns supervision and away mode is not active:
 8. The turn-end guard (`bin/fm-turnend-guard.sh --claude`) remains the final backstop.
    It requires the PID-strict live-watcher and fresh-beacon predicate at the Stop boundary.
    It allows the stop when a watcher is healthy or the role-verified notifier owns recovery, while fresh failure epochs advance the bounded one-time attended fail-open progression described in [`turnend-guard.md`](../turnend-guard.md).
-9. Waiting on the hook-owned cycle is silent: do not send idle progress while the watcher is parked.
+9. Waiting on the hook-owned cycle is silent: do not send idle progress while the notifier is parked for the next wake.
 
 The watcher itself remains `bin/fm-watch.sh`, and `bin/fm-watch-arm.sh` remains the verified arm wrapper that the coordinator drives as a tracked child.
 Re-arm attaches to an existing healthy cycle when one is already present and follows its verified successor chain.
