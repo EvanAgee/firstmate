@@ -47,14 +47,74 @@ CS
   printf '%s\n' "$dir"
 }
 
-# Launch the fake harness that holds the session lock, echo its pid. Its child
-# sleeps so the coordinator's ancestry/identity check resolves to a live owner.
+# Launch a fake Claude session that owns state/.lock and keeps harness identity.
+# `bash -c 'sleep 300'` last-command-execs into sleep on Linux, so the lock pid
+# would stop looking like a harness; a live loop keeps the claude argv[0].
+# Children started via session_eval inherit that identity. CI has no ambient
+# Claude/Pi ancestor, so a sibling coordinator stands down at the identity gate
+# and never publishes a ready record.
 HOLDER_PID=
 start_lock_holder() {  # <dir>
   local dir=$1
-  "$dir/fakebin/claude" -c 'sleep 300' &
+  mkdir -p "$dir/state/session-jobs"
+  # shellcheck disable=SC2046
+  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    "$dir/fakebin/claude" -c '
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      while :; do
+        for f in "$FM_HOME/state/session-jobs"/run-*.sh; do
+          [ -f "$f" ] || continue
+          id=${f##*/run-}
+          id=${id%.sh}
+          started="$FM_HOME/state/session-jobs/$id.started"
+          mv "$f" "$started" || continue
+          bash "$started" >"$FM_HOME/state/session-jobs/$id.out" 2>"$FM_HOME/state/session-jobs/$id.err" &
+          printf "%s\n" "$!" > "$FM_HOME/state/session-jobs/$id.pid"
+        done
+        sleep 0.05
+      done
+    ' </dev/null &
   HOLDER_PID=$!
-  printf '%s\n' "$HOLDER_PID" > "$dir/state/.lock"
+  wait_file "$dir/state/.lock" 50 \
+    || { stop_bg "$HOLDER_PID"; fail "session never wrote the lock"; }
+}
+
+# Run a bash snippet as a child of the lock-holding claude. Echoes the child pid.
+session_eval() {  # <dir> <job-id> <snippet>
+  local dir=$1 id=$2 snippet=$3
+  printf '%s\n' "$snippet" > "$dir/state/session-jobs/run-${id}.sh.tmp"
+  mv "$dir/state/session-jobs/run-${id}.sh.tmp" "$dir/state/session-jobs/run-${id}.sh"
+  wait_file "$dir/state/session-jobs/${id}.pid" 50 || return 1
+  cat "$dir/state/session-jobs/${id}.pid"
+}
+
+# Start the real coordinator as a session child. Extra args are env assignments.
+# Writes $dir/<job-id>.out and echoes the coordinator pid.
+start_coordinator() {  # <dir> <job-id> [env=val ...]
+  local dir=$1 id=$2
+  shift 2
+  session_eval "$dir" "$id" "
+    exec env $* FM_CLAUDE_COORD_READY_TIMEOUT=\${FM_CLAUDE_COORD_READY_TIMEOUT:-15} \\
+      bash \"$COORDINATOR\" </dev/null >\"$dir/${id}.out\" 2>&1
+  "
+}
+
+# Start the real notifier as a session child so identity matches the lock holder.
+start_notifier() {  # <dir> <job-id> [env=val ...]
+  local dir=$1 id=$2
+  shift 2
+  session_eval "$dir" "$id" "
+    printf '%s\\n' '{\"session_id\":\"s\"}' | env $* \\
+      bash \"$NOTIFIER\" >\"$dir/${id}.out\" 2>\"$dir/${id}.err\"
+    printf '%s\\n' \"\$?\" > \"$dir/${id}.rc\"
+  "
+}
+
+# Read a session-child exit code. The child is not a descendant of this test
+# shell, so wait(1) cannot collect it.
+session_child_rc() {  # <dir> <job-id>
+  wait_file "$1/$2.rc" 50 || return 1
+  cat "$1/$2.rc"
 }
 
 # Common env for driving a coordinator/notifier against a real home.
@@ -125,13 +185,11 @@ test_successor_verified_before_ready_publish() {
   printf 'working: go\n' > "$dir/state/task.status"
   prime_seen "$dir" "$dir/state/task.status"
 
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/coord.out" 2>&1 &
-  coord=$!
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
 
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
 
   # At the instant the ready record exists, the named successor must be the live
   # watcher owning the real lock with a fresh beacon.
@@ -174,13 +232,11 @@ test_live_watcher_across_long_turn() {
   # grace=6s with a 10s "handling turn" is genuinely longer than grace, while the
   # watcher's 1s beat cadence keeps the beacon well under 6s even under CI load - a
   # tighter grace would flake on beat jitter, not on a real supervision gap.
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_GUARD_GRACE=6 FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/coord.out" 2>&1 &
-  coord=$!
+  coord=$(start_coordinator "$dir" coord FM_GUARD_GRACE=6) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the long-turn coordinator"; }
 
   wait_file "$dir/state/.watch.lock/pid" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never established a watcher"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never established a watcher"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
   # Let the coordinator settle onto its stable attached watcher.
   sleep 2
   first=$(watch_pid "$dir")
@@ -220,13 +276,11 @@ test_actionable_close_rearms_and_republishes() {
   prime_seen "$dir" "$dir/state/one.status"
   prime_seen "$dir" "$dir/state/two.status"
 
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/coord.out" 2>&1 &
-  coord=$!
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the re-arm coordinator"; }
 
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published an initial ready record"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published an initial ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
   first_seq=$(ready_field "$dir" ready_seq)
 
   # A real actionable status change that keeps the task in flight.
@@ -267,12 +321,10 @@ test_notifier_parks_then_exits_two_on_ready() {
   prime_seen "$dir" "$dir/state/one.status"
   prime_seen "$dir" "$dir/state/two.status"
 
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/coord.out" 2>&1 &
-  coord=$!
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the park coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
   first_seq=$(ready_field "$dir" ready_seq)
 
   # Start the notifier as a child of the lock-holding harness BEFORE the wake.
@@ -283,11 +335,8 @@ test_notifier_parks_then_exits_two_on_ready() {
   printf '%s\n' "$first_seq" > "$dir/state/.claude-notifier-surfaced-seq"
 
   nout="$dir/notif.out"; nerr="$dir/notif.err"
-  # shellcheck disable=SC2046
-  printf '%s\n' '{"session_id":"s"}' | env $(home_env "$dir") PATH="$dir/fakebin:$PATH" \
-    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_CLAUDE_NOTIFIER_COORD_WAIT=60 \
-    "$dir/fakebin/claude" -c '"$FM_ROOT_OVERRIDE/bin/fm-claude-watch-notifier.sh"' >"$nout" 2>"$nerr" &
-  notif=$!
+  notif=$(start_notifier "$dir" notif FM_CLAUDE_NOTIFIER_COORD_WAIT=60) \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the parked notifier"; }
 
   # Confirm it is genuinely parked: still alive after a moment with no ready advance.
   sleep 2
@@ -307,7 +356,8 @@ test_notifier_parks_then_exits_two_on_ready() {
     stop_bg "$notif" "$coord" "$HOLDER_PID"
     fail "notifier stayed parked and never woke on the advanced ready record"
   fi
-  wait "$notif"; nrc=$?
+  nrc=$(session_child_rc "$dir" notif) \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "parked notifier never recorded an exit code"; }
 
   expect_code 2 "$nrc" "the notifier must exit 2 on a fresh ready record"
   assert_contains "$(cat "$nerr")" "firstmate watcher wake" "the notifier must carry the rewake banner"
@@ -320,19 +370,16 @@ test_notifier_parks_then_exits_two_on_ready() {
   # A second notifier firing on the SAME ready record must NOT re-wake (exit 0),
   # proving exactly-once-per-ready-event keyed to the high-water mark.
   local n2 rc2
-  # shellcheck disable=SC2046
-  printf '%s\n' '{"session_id":"s"}' | env $(home_env "$dir") PATH="$dir/fakebin:$PATH" \
-    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_CLAUDE_NOTIFIER_COORD_WAIT=3 \
-    "$dir/fakebin/claude" -c '"$FM_ROOT_OVERRIDE/bin/fm-claude-watch-notifier.sh"' >"$dir/n2.out" 2>"$dir/n2.err" &
-  n2=$!
+  n2=$(start_notifier "$dir" n2 FM_CLAUDE_NOTIFIER_COORD_WAIT=3) \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the second notifier"; }
   # It will see a live coordinator, keep parking, and we stop it: proving it did
   # NOT exit 2 on the already-surfaced record.
   sleep 3
   if kill -0 "$n2" 2>/dev/null; then
-    kill "$n2" 2>/dev/null; wait "$n2" 2>/dev/null || true
+    kill "$n2" 2>/dev/null || true
     rc2=parked
   else
-    wait "$n2"; rc2=$?
+    rc2=$(session_child_rc "$dir" n2 || echo died)
   fi
   [ "$rc2" != 2 ] \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "a second firing re-woke on the already-surfaced ready record"; }
@@ -356,12 +403,10 @@ test_duplicate_rows_one_handling_event() {
   prime_seen "$dir" "$dir/state/one.status"
   prime_seen "$dir" "$dir/state/two.status"
 
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/coord.out" 2>&1 &
-  coord=$!
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the duplicate-row coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
   first_seq=$(ready_field "$dir" ready_seq)
 
   printf 'blocked: needs a decision\n' > "$dir/state/one.status"
@@ -383,14 +428,11 @@ test_duplicate_rows_one_handling_event() {
   # One notifier firing surfaces the event once and advances past it, so a second
   # firing on the same high-water mark cannot re-wake regardless of row count.
   local notif nrc
-  # shellcheck disable=SC2046
-  printf '%s\n' '{"session_id":"s"}' | env $(home_env "$dir") PATH="$dir/fakebin:$PATH" \
-    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_CLAUDE_NOTIFIER_COORD_WAIT=60 \
-    "$dir/fakebin/claude" -c '"$FM_ROOT_OVERRIDE/bin/fm-claude-watch-notifier.sh"' >"$dir/dn.out" 2>"$dir/dn.err" &
-  notif=$!
+  notif=$(start_notifier "$dir" dn FM_CLAUDE_NOTIFIER_COORD_WAIT=60) \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the duplicate-row notifier"; }
   i=0
   while [ "$i" -lt 60 ] && kill -0 "$notif" 2>/dev/null; do sleep 0.25; i=$((i + 1)); done
-  if kill -0 "$notif" 2>/dev/null; then kill "$notif" 2>/dev/null; wait "$notif" 2>/dev/null || true; nrc=parked; else wait "$notif"; nrc=$?; fi
+  if kill -0 "$notif" 2>/dev/null; then kill "$notif" 2>/dev/null || true; nrc=parked; else nrc=$(session_child_rc "$dir" dn || echo died); fi
   expect_code 2 "$nrc" "the notifier must surface the duplicated-row event exactly once (exit 2)"
   [ "$(cat "$dir/state/.claude-notifier-surfaced-seq")" = "$new_seq" ] \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "notifier did not advance past the whole ready_seq despite $rows queue rows"; }
@@ -408,25 +450,22 @@ test_single_coordinator_owner() {
   printf 'working: go\n' > "$dir/state/task.status"
   prime_seen "$dir" "$dir/state/task.status"
 
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/c1.out" 2>&1 &
-  c1=$!
+  c1=$(start_coordinator "$dir" c1) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the first coordinator"; }
   wait_file "$dir/state/.claude-coordinator.lock/pid" 300 \
     || { stop_bg "$c1" "$HOLDER_PID"; fail "first coordinator never took the coordinator lock"; }
   # A second firing must find the live owner and exit 0 immediately.
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/c2.out" 2>&1 &
-  c2=$!
-  local i=0 rc2=
-  while [ "$i" -lt 60 ]; do
-    if ! kill -0 "$c2" 2>/dev/null; then wait "$c2"; rc2=$?; break; fi
+  c2=$(start_coordinator "$dir" c2) \
+    || { stop_bg "$c1" "$HOLDER_PID"; fail "session never started the second coordinator"; }
+  local i=0
+  while [ "$i" -lt 60 ] && kill -0 "$c2" 2>/dev/null; do
     sleep 0.1
     i=$((i + 1))
   done
-  [ "$rc2" = 0 ] \
-    || { stop_bg "$c1" "$c2" "$HOLDER_PID"; fail "a second coordinator firing did not exit 0 against the live owner (rc=$rc2)"; }
+  if kill -0 "$c2" 2>/dev/null; then
+    stop_bg "$c1" "$c2" "$HOLDER_PID"
+    fail "a second coordinator firing stayed alive instead of yielding to the live owner"
+  fi
   [ "$(fm_lock_role_of "$dir")" = coordinator ] \
     || { stop_bg "$c1" "$HOLDER_PID"; fail "coordinator lock role is not 'coordinator'"; }
 
@@ -452,11 +491,16 @@ test_coordinator_lock_does_not_satisfy_guard() {
   printf '%s\n' "$holder" > "$dir/state/.claude-coordinator.lock/pid"
   printf 'coordinator\n' > "$dir/state/.claude-coordinator.lock/role"
 
-  gout=$(printf '%s\n' '{"session_id":"g","stop_hook_active":false}' \
-    | env FM_ROOT_OVERRIDE="$dir" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
-        PATH="$dir/fakebin:$PATH" FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=300 \
-        "$dir/fakebin/claude" -c '"$FM_ROOT_OVERRIDE/bin/fm-turnend-guard.sh" --claude' 2>&1)
-  grc=$?
+  session_eval "$dir" guard '
+    printf "%s\n" "{\"session_id\":\"g\",\"stop_hook_active\":false}" \
+      | env FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=300 \
+        "$FM_HOME/bin/fm-turnend-guard.sh" --claude >"$FM_HOME/state/guard.out" 2>&1
+    printf "%s\n" "$?" > "$FM_HOME/state/guard.rc"
+  ' >/dev/null || { stop_bg "$holder" "$HOLDER_PID"; fail "session never started the turn-end guard"; }
+  wait_file "$dir/state/guard.rc" 50 \
+    || { stop_bg "$holder" "$HOLDER_PID"; fail "turn-end guard never recorded an exit code"$'\n'"$(cat "$dir/state/session-jobs/guard.err" "$dir/state/session-jobs/guard.started" 2>/dev/null)"; }
+  gout=$(cat "$dir/state/guard.out" 2>/dev/null || true)
+  grc=$(cat "$dir/state/guard.rc" 2>/dev/null || true)
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
 
@@ -476,15 +520,13 @@ test_coordinator_stands_down_on_session_handover() {
   printf 'working: go\n' > "$dir/state/task.status"
   prime_seen "$dir" "$dir/state/task.status"
 
-  # shellcheck disable=SC2046
-  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
-    FM_CLAUDE_COORD_READY_TIMEOUT=15 bash "$COORDINATOR" </dev/null >"$dir/coord.out" 2>&1 &
-  coord=$!
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the handover coordinator"; }
   # Wait until the coordinator is FULLY established (ready record published), which
   # proves it has captured its own session owner. Changing .lock before that would
   # race the coordinator's own SESSION_OWNER read and make it adopt the new pid.
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never established (no ready record)"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never established (no ready record)"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
   local captured_owner
   captured_owner=$(cat "$dir/state/.lock")
 
