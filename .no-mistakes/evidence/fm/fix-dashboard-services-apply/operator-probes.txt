@@ -1,0 +1,35 @@
+agee.dev dashboards — operator probes (2026-08-24)
+
+Local definitive health (from docs/dashboards.md)
+  curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet  -> 200  (370800 bytes, Fleet page)
+  curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/       -> 200  (37479 bytes, Usage Tracker)
+
+Public reachability (unauthenticated; 302-to-Access = REACHABLE)
+  https://agee.dev/fleet      -> HTTP/2 302  Location: https://rough-term-afa4.cloudflareaccess.com/cdn-cgi/access/login/agee.dev
+  https://subs.agee.dev/      -> HTTP/2 302  Location: https://rough-term-afa4.cloudflareaccess.com/cdn-cgi/access/login/subs.agee.dev
+  www-authenticate: Cloudflare-Access on both
+
+Retired firstmate.agee.dev
+  launchctl print gui/$(id -u)/dev.agee.firstmate-dashboard     -> not loaded (deleted)
+  launchctl print gui/$(id -u)/dev.agee.cloudflared-firstmate   -> not loaded
+  ~/Library/LaunchAgents/dev.agee.cloudflared-firstmate.plist.disabled exists
+  curl http://127.0.0.1:7860/ -> connection refused (nothing serves firstmate locally)
+  https://firstmate.agee.dev/ -> HTTP/2 302 to Cloudflare Access (DNS still at CF; non-200)
+
+Live launchd (matches host map)
+  dev.agee.dashboard-app     running  cwd=~/Sites/firstmate/projects/agee-dev-dashboard  npm run start
+  dev.agee.usage-tracker     running  cwd=~/Sites/firstmate/projects/usage-tracker       npm run start
+  dev.agee.cloudflared-root  running  --config ~/.cloudflared/agee-root-config.yml
+  dev.agee.cloudflared-subs  running  --config ~/.cloudflared/subs-config.yml
+
+Checkouts
+  agee-dev-dashboard  branch=main
+  usage-tracker       branch=main
+
+In-process fleet snapshot
+  ~/Sites/firstmate/bin/fm-fleet-snapshot.sh present
+  agee-dev-dashboard/lib/fleet/snapshot.server.ts present (execs snapshot script; no :7860 server)
+
+Audience inventory
+  bin/fm-doc-audience-check.sh -> ok surfaces=119 local_links=271
+  docs/dashboards.md classified operator-current exactly once

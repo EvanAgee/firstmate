@@ -1,100 +1,65 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
 <title>agee.dev dashboards — operator reference</title>
 <style>
   :root { color-scheme: light; }
-  body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 0; background: #fff; color: #1f2328; }
-  main { max-width: 1100px; margin: 0 auto; padding: 32px 24px 80px; }
-  h1 { font-size: 2rem; border-bottom: 1px solid #d1d9e0; padding-bottom: .3em; }
-  h2 { font-size: 1.4rem; margin-top: 2em; border-bottom: 1px solid #d8dee4; padding-bottom: .2em; }
-  p { margin: 0.8em 0; }
-  code { background: #f6f8fa; padding: .15em .35em; border-radius: 4px; font-size: 85%; }
-  pre { background: #f6f8fa; padding: 16px; overflow: auto; border-radius: 8px; }
-  pre code { background: none; padding: 0; }
-  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 13px; }
-  th, td { border: 1px solid #d1d9e0; padding: 8px 10px; text-align: left; vertical-align: top; }
-  th { background: #f6f8fa; }
-</style>
-</head>
-<body>
-<main>
-<h1>agee.dev dashboards</h1>
-<p>This is the single reference for how the captain&#x27;s personal <code>*.agee.dev</code> dashboards are served on this machine.</p>
-<p>Each public host is a Cloudflare tunnel that maps to a local port, and a launchd agent keeps the local app running.</p>
-<h2>Standing rule</h2>
-<p>A dashboard runs on <code>main</code> in ONE checkout, never in a disposable treehouse worktree.</p>
-<p>The one checkout is the primary clone under <code>~/Sites/firstmate/projects/&lt;name&gt;</code>.</p>
-<p>A treehouse worktree is scratch space for a single task and gets pruned, so serving from one means the site dies when that task ends.</p>
-<p>The captain set this serving rule on 2026-08-19.</p>
-<h2>Host map</h2>
-<p>Each host has two independent pieces: the local app (a launchd agent serving a port) and the Cloudflare tunnel (a separate launchd agent that maps the public host to that port).</p>
-<p>Either can fail on its own, so both labels are listed.</p>
-<table><thead><tr><th>Public host</th><th>Local port</th><th>Server launchd label</th><th>Tunnel launchd label</th><th>Tunnel config</th><th>Checkout</th><th>Command</th></tr></thead><tbody><tr><td>agee.dev</td><td>3200</td><td><code>dev.agee.dashboard-app</code></td><td><code>dev.agee.cloudflared-root</code></td><td><code>~/.cloudflared/agee-root-config.yml</code></td><td><code>~/Sites/firstmate/projects/agee-dev-dashboard</code> (on <code>main</code>)</td><td><code>npm run start</code> (prod build)</td></tr><tr><td>subs.agee.dev</td><td>3000</td><td><code>dev.agee.usage-tracker</code></td><td><code>dev.agee.cloudflared-subs</code></td><td><code>~/.cloudflared/subs-config.yml</code></td><td><code>~/Sites/firstmate/projects/usage-tracker</code> (on <code>main</code>)</td><td><code>npm run start</code> (prod build)</td></tr><tr><td>ci.agee.dev</td><td>4200</td><td>separate aos CI backend</td><td><code>dev.agee.cloudflared-aos-ci</code></td><td><code>~/.cloudflared/aos-ci-config.yml</code></td><td>separate aos CI backend</td><td>out of scope here</td></tr><tr><td>aos.agee.dev</td><td>4112</td><td>separate aos review service</td><td><code>dev.agee.cloudflared-aos-review</code></td><td><code>~/.cloudflared/aos-review-config.yml</code></td><td>separate aos review service</td><td>out of scope here</td></tr></tbody></table>
-<p><code>agee.dev</code> is one Next.js app that serves <code>/</code>, <code>/fleet</code>, and <code>/subs</code>.</p>
-<p><code>subs.agee.dev</code> is a different app (the usage tracker), not the <code>agee.dev/subs</code> page.</p>
-<p><code>agee.dev/fleet</code> gets its data in-process: the app runs <code>bin/fm-fleet-snapshot.sh --json</code> itself (see <code>lib/fleet/snapshot.server.ts</code> in the dashboard repo) and caches the result, so there is no separate snapshot server to run or crash.</p>
-<h2>Restart recipe</h2>
-<p>Both <code>agee.dev</code> and <code>subs.agee.dev</code> serve a production build, so a restart must rebuild first, then restart the launchd agent.</p>
-<p>Each app has its own checkout and its own launchd label, so use the block for the app you are restarting.</p>
-<p>For <code>agee.dev</code>:</p>
-<pre class="lang-bash"><code>cd ~/Sites/firstmate/projects/agee-dev-dashboard
-git checkout main            # the checkout must be on main, not detached
-npm run build
-launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app</code></pre>
-<p>For <code>subs.agee.dev</code>:</p>
-<pre class="lang-bash"><code>cd ~/Sites/firstmate/projects/usage-tracker
-git checkout main
-npm run build
-launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker</code></pre>
-<p><code>launchctl kickstart -k</code> restarts the app without touching the Cloudflare tunnel, so the public host stays mapped through the few seconds of reboot.</p>
-<p>Serving a production build is what makes the restart pick up the current <code>main</code> reliably; <code>next dev</code> can keep serving a stale in-memory build after the code under it changes.</p>
-<p>To confirm the local app is serving after a restart (a local health check, not a public-reachability check), curl the port for the app you just restarted:</p>
-<pre class="lang-bash"><code># agee.dev
+  body { font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; max-width: 1100px; margin: 32px auto; padding: 0 24px 64px; color: #111; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  h2 { margin-top: 36px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 16px 0 24px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f4f4f5; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: #f4f4f5; padding: 1px 4px; border-radius: 3px; }
+  pre.code { background: #111; color: #f5f5f5; padding: 14px 16px; overflow: auto; border-radius: 8px; }
+  pre.code code { background: transparent; color: inherit; padding: 0; }
+  ul { padding-left: 22px; }
+</style></head><body>
+<h1>agee.dev dashboards</h1><p>This is the single reference for how the captain&#x27;s personal <code>*.agee.dev</code> dashboards are served on this machine.<br>
+Each public host is a Cloudflare tunnel that maps to a local port, and a launchd agent keeps the local app running.</p><h2>Standing rule</h2><p>A dashboard runs on <code>main</code> in ONE checkout, never in a disposable treehouse worktree.<br>
+The one checkout is the primary clone under <code>~/Sites/firstmate/projects/&lt;name&gt;</code>.<br>
+A treehouse worktree is scratch space for a single task and gets pruned, so serving from one means the site dies when that task ends.<br>
+The captain set this serving rule on 2026-08-19.</p><h2>Host map</h2><p>Each host has two independent pieces: the local app (a launchd agent serving a port) and the Cloudflare tunnel (a separate launchd agent that maps the public host to that port).<br>
+Either can fail on its own, so both labels are listed.</p><table><thead><tr><th>Public host</th><th>Local port</th><th>Server launchd label</th><th>Tunnel launchd label</th><th>Tunnel config</th><th>Checkout</th><th>Command</th></tr></thead><tbody><tr><td>agee.dev</td><td>3200</td><td><code>dev.agee.dashboard-app</code></td><td><code>dev.agee.cloudflared-root</code></td><td><code>~/.cloudflared/agee-root-config.yml</code></td><td><code>~/Sites/firstmate/projects/agee-dev-dashboard</code> (on <code>main</code>)</td><td><code>npm run start</code> (prod build)</td></tr><tr><td>subs.agee.dev</td><td>3000</td><td><code>dev.agee.usage-tracker</code></td><td><code>dev.agee.cloudflared-subs</code></td><td><code>~/.cloudflared/subs-config.yml</code></td><td><code>~/Sites/firstmate/projects/usage-tracker</code> (on <code>main</code>)</td><td><code>npm run start</code> (prod build)</td></tr><tr><td>ci.agee.dev</td><td>4200</td><td>separate aos CI backend</td><td><code>dev.agee.cloudflared-aos-ci</code></td><td><code>~/.cloudflared/aos-ci-config.yml</code></td><td>separate aos CI backend</td><td>out of scope here</td></tr><tr><td>aos.agee.dev</td><td>4112</td><td>separate aos review service</td><td><code>dev.agee.cloudflared-aos-review</code></td><td><code>~/.cloudflared/aos-review-config.yml</code></td><td>separate aos review service</td><td>out of scope here</td></tr></tbody></table><p><code>agee.dev</code> is one Next.js app that serves <code>/</code>, <code>/fleet</code>, and <code>/subs</code>.<br>
+<code>subs.agee.dev</code> is a different app (the usage tracker), not the <code>agee.dev/subs</code> page.<br>
+<code>agee.dev/fleet</code> gets its data in-process: the app runs <code>bin/fm-fleet-snapshot.sh --json</code> itself (see <code>lib/fleet/snapshot.server.ts</code> in the dashboard repo) and caches the result, so there is no separate snapshot server to run or crash.</p><h2>Restart recipe</h2><p>Both <code>agee.dev</code> and <code>subs.agee.dev</code> serve a production build, so a restart must rebuild first, then restart the launchd agent.<br>
+Each app has its own checkout and its own launchd label, so use the block for the app you are restarting.</p><p>For <code>agee.dev</code>:</p><pre class="code"><code>cd ~/Sites/firstmate/projects/agee-dev-dashboard &amp;&amp;
+  git checkout main &amp;&amp;           # the checkout must be on main, not detached
+  npm run build &amp;&amp;
+  launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app
+</code></pre><p>For <code>subs.agee.dev</code>:</p><pre class="code"><code>cd ~/Sites/firstmate/projects/usage-tracker &amp;&amp;
+  git checkout main &amp;&amp;
+  npm run build &amp;&amp;
+  launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker
+</code></pre><p>The commands are chained with <code>&amp;&amp;</code> so a failed checkout or build stops the sequence and never restarts a stale build.</p><p><code>launchctl kickstart -k</code> restarts the app without touching the Cloudflare tunnel, so the public host stays mapped through the few seconds of reboot.<br>
+Serving a production build is what makes the restart pick up the current <code>main</code> reliably; <code>next dev</code> can keep serving a stale in-memory build after the code under it changes.</p><p>To confirm the local app is serving after a restart (a local health check, not a public-reachability check), curl the port for the app you just restarted:</p><pre class="code"><code># agee.dev
 curl -s -o /dev/null -w &#x27;%{http_code}&#x27; http://127.0.0.1:3200/fleet
 
 # subs.agee.dev
-curl -s -o /dev/null -w &#x27;%{http_code}&#x27; http://127.0.0.1:3000/</code></pre>
-<p>The port must match the app just restarted. That local curl is the definitive up/down check: a 200 means that specific app is up.</p>
-<p>The public curl only tells you whether tunnel routing works. Both hosts sit behind Cloudflare Access, so an unauthenticated curl often returns 302 to the Access login even when everything is healthy. Treat 200 or 302-to-Access as reachable; a 302 is the Access gate, not a down tunnel. Tunnel-down is a refused connection or Cloudflare 502/530 (no origin), not any non-200.</p>
-<pre class="lang-bash"><code># agee.dev
+curl -s -o /dev/null -w &#x27;%{http_code}&#x27; http://127.0.0.1:3000/
+</code></pre><p>The port must match the app just restarted. That local curl is the definitive up/down check: a 200 means that specific app is up.<br>
+The public curl only tells you whether tunnel routing works. Both hosts sit behind Cloudflare Access, so an unauthenticated curl often returns 302 to the Access login even when everything is healthy. Treat 200 or 302-to-Access as reachable; a 302 is the Access gate, not a down tunnel. Tunnel-down is a refused connection or Cloudflare 502/530 (no origin), not any non-200.</p><pre class="code"><code># agee.dev
 curl -s -o /dev/null -w &#x27;%{http_code}&#x27; https://agee.dev/fleet
 
 # subs.agee.dev
-curl -s -o /dev/null -w &#x27;%{http_code}&#x27; https://subs.agee.dev/</code></pre>
-<p>If the local check is 200 and the public check is refused / 502 / 530, the tunnel is down (see &quot;When a dashboard is unreachable&quot;).</p>
-<p>To confirm a specific code change is live, open the page in a browser.</p>
-<h2>When a dashboard is unreachable</h2>
-<p>The tunnel is a separate failure point from the local app, so check both.</p>
-<p>Probe the local port of the host you are diagnosing:</p>
-<pre class="lang-bash"><code># agee.dev
+curl -s -o /dev/null -w &#x27;%{http_code}&#x27; https://subs.agee.dev/
+</code></pre><p>If the local check is 200 and the public check is refused / 502 / 530, the tunnel is down (see &quot;When a dashboard is unreachable&quot;).<br>
+To confirm a specific code change is live, open the page in a browser.</p><h2>When a dashboard is unreachable</h2><p>The tunnel is a separate failure point from the local app, so check both.<br>
+Probe the local port of the host you are diagnosing:</p><pre class="code"><code># agee.dev
 curl -s -o /dev/null -w &#x27;%{http_code}&#x27; http://127.0.0.1:3200/fleet
 
 # subs.agee.dev
-curl -s -o /dev/null -w &#x27;%{http_code}&#x27; http://127.0.0.1:3000/</code></pre>
-<p>A 200 on that port confirms that specific local app is up.</p>
-<p>If the local port does not answer, the app is down: rebuild and restart its server agent with the restart recipe above.</p>
-<p>If the local port answers, the app is up. The public curl only distinguishes tunnel routing from a down tunnel. Both hosts sit behind Cloudflare Access, so an unauthenticated curl often returns 302 to the Access login even when the tunnel and app are healthy. 200 or 302-to-Access means the host is reachable; a 302 is the Access gate, not tunnel-down. Tunnel-down is a refused connection or Cloudflare 502/530 (no origin).</p>
-<pre class="lang-bash"><code># agee.dev
+curl -s -o /dev/null -w &#x27;%{http_code}&#x27; http://127.0.0.1:3000/
+</code></pre><p>A 200 on that port confirms that specific local app is up.</p><p>If the local port does not answer, the app is down: rebuild and restart its server agent with the restart recipe above.</p><p>If the local port answers, the app is up. The public curl only distinguishes tunnel routing from a down tunnel. Both hosts sit behind Cloudflare Access, so an unauthenticated curl often returns 302 to the Access login even when the tunnel and app are healthy. 200 or 302-to-Access means the host is reachable; a 302 is the Access gate, not tunnel-down. Tunnel-down is a refused connection or Cloudflare 502/530 (no origin).</p><pre class="code"><code># agee.dev
 curl -s -o /dev/null -w &#x27;%{http_code}&#x27; https://agee.dev/fleet
 
 # subs.agee.dev
-curl -s -o /dev/null -w &#x27;%{http_code}&#x27; https://subs.agee.dev/</code></pre>
-<p>If the local port answers but the public check is refused / 502 / 530, the tunnel is down: restart the tunnel agent whose label matches the affected host from the host map. The label is <code>dev.agee.cloudflared-&lt;name&gt;</code>, where <code>&lt;name&gt;</code> is <code>root</code>, <code>subs</code>, <code>aos-ci</code>, or <code>aos-review</code>.</p>
-<pre class="lang-bash"><code>launchctl kickstart -k gui/$(id -u)/dev.agee.cloudflared-&lt;name&gt;</code></pre>
-<p>This happened on 2026-08-24: the root tunnel (<code>dev.agee.cloudflared-root</code>) had crashed while the local <code>:3200</code> app was healthy and returning 200, so <code>agee.dev</code> was unreachable even though nothing was wrong with the app.</p>
-<p>Restarting the tunnel agent, not the app, is the fix for that case.</p>
-<h2>Retired hosts</h2>
-<p><code>firstmate.agee.dev</code> (port 7860) was a standalone fleet dashboard that never landed on <code>main</code>.</p>
-<p>It was retired on 2026-08-24: its launchd agent and its process were removed, because the fleet view already lives at <code>agee.dev/fleet</code>.</p>
-<p>That server also answered <code>/api/snapshot</code>, which <code>agee.dev/fleet</code> fetched for its data, so retiring it moved the snapshot in-process into the dashboard app (<code>lib/fleet/snapshot.server.ts</code>) rather than dropping it.</p>
-<p>Its tunnel (<code>dev.agee.cloudflared-firstmate</code>, config <code>~/.cloudflared/firstmate-config.yml</code>) was stopped on 2026-08-24 and its launchd plist disabled (renamed to <code>.disabled</code>), so nothing serves <code>firstmate.agee.dev</code>. Its DNS may still resolve to Cloudflare, which now returns an error / non-200 because no tunnel backs the host.</p>
-<p>To bring <code>firstmate.agee.dev</code> back, land the fleet-dashboard server on <code>main</code>, restore the plist, and start the tunnel again.</p>
-<h2>Maintaining this file</h2>
-<p>Keep this file to current serving facts and the restart recipe.</p>
-<p>Update the host map and the retired list when a host, port, label, tunnel config, or checkout changes.</p>
-<p>Prefer a pointer to the authoritative plist or tunnel config over copying detail that will drift.</p>
-</main>
-</body>
-</html>
+curl -s -o /dev/null -w &#x27;%{http_code}&#x27; https://subs.agee.dev/
+</code></pre><p>If the local port answers but the public check is refused / 502 / 530, the tunnel is down: restart the tunnel agent whose label matches the affected host from the host map. The label is <code>dev.agee.cloudflared-&lt;name&gt;</code>, where <code>&lt;name&gt;</code> is <code>root</code>, <code>subs</code>, <code>aos-ci</code>, or <code>aos-review</code>.</p><pre class="code"><code>launchctl kickstart -k gui/$(id -u)/dev.agee.cloudflared-&lt;name&gt;
+</code></pre><p>This happened on 2026-08-24: the root tunnel (<code>dev.agee.cloudflared-root</code>) had crashed while the local <code>:3200</code> app was healthy and returning 200, so <code>agee.dev</code> was unreachable even though nothing was wrong with the app.<br>
+Restarting the tunnel agent, not the app, is the fix for that case.</p><h2>Retired hosts</h2><p><code>firstmate.agee.dev</code> (port 7860) was a standalone fleet dashboard that never landed on <code>main</code>.<br>
+It was retired on 2026-08-24: its launchd agent and its process were removed, because the fleet view already lives at <code>agee.dev/fleet</code>.<br>
+That server also answered <code>/api/snapshot</code>, which <code>agee.dev/fleet</code> fetched for its data, so retiring it moved the snapshot in-process into the dashboard app (<code>lib/fleet/snapshot.server.ts</code>) rather than dropping it.<br>
+Its tunnel (<code>dev.agee.cloudflared-firstmate</code>, config <code>~/.cloudflared/firstmate-config.yml</code>) was stopped on 2026-08-24 and its launchd plist disabled (renamed to <code>.disabled</code>), so nothing serves <code>firstmate.agee.dev</code>. Its DNS may still resolve to Cloudflare, which now returns an error / non-200 because no tunnel backs the host.</p><p>To bring <code>firstmate.agee.dev</code> back, both launchd agents have to return, or the tunnel would run with no server behind port 7860:</p><ul><li>Server: land the fleet-dashboard server (<code>bin/fm-fleet-dashboard.js</code>, which currently lives only on an unmerged branch) on <code>main</code>, then recreate and load its <code>dev.agee.firstmate-dashboard</code> launchd agent (that plist was deleted, not disabled).</li><li>Tunnel: rename <code>dev.agee.cloudflared-firstmate.plist.disabled</code> back to <code>.plist</code> and load it (<code>launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.agee.cloudflared-firstmate.plist</code>).</li></ul><h2>Maintaining this file</h2><p>Keep this file to current serving facts and the restart recipe.<br>
+Update the host map and the retired list when a host, port, label, tunnel config, or checkout changes.<br>
+Prefer a pointer to the authoritative plist or tunnel config over copying detail that will drift.</p>
+</body></html>
