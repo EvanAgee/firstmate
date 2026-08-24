@@ -130,7 +130,7 @@ fm_watcher_healthy() {
 
 # fm_watcher_healthy above is the PID-STRICT primitive: true only when a live,
 # identity-matched watcher PROCESS holds this home's lock with a fresh beacon. The
-# arm layer (bin/fm-watch-arm.sh, bin/fm-claude-stop-autoarm.sh) needs exactly
+# arm layer (bin/fm-watch-arm.sh, bin/fm-claude-watch-coordinator.sh) needs exactly
 # that - it decides whether to start, attach to, or replace a real watcher
 # process, so a leftover beacon must never satisfy it. bin/fm-turnend-guard.sh
 # also keeps this strict check because it fires at the turn boundary where the
@@ -331,7 +331,7 @@ fm_lock_clean_known_files() {
 fm_lock_set_role() {
   local lockdir=$1 role=$2 current pid back
   case "$role" in
-    autoarm|terminal-check) : ;;
+    autoarm|terminal-check|coordinator|notifier) : ;;
     *) return 1 ;;
   esac
   current=${BASHPID:-$$}

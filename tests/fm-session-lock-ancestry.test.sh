@@ -68,7 +68,7 @@ case "$pid:$field:${FM_TEST_CLAUDE_SHAPE:-linux}" in
   700:args=:macos) printf '%s\n' '/Users/u/.local/share/claude/versions/2.1.220 --resume' ;;
   700:ppid=:*) printf '%s\n' 1 ;;
   *:comm=:*) printf '%s\n' bash ;;
-  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-claude-stop-autoarm.sh' ;;
+  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-claude-watch-notifier.sh' ;;
   *:ppid=:*) printf '%s\n' 700 ;;
 esac
 SH
@@ -222,10 +222,15 @@ SH
 
 # --- end-to-end layer: the real Stop auto-arm in real process trees ----------
 
+# The end-to-end layer exercises the SHARED session-lock ancestry identity path
+# through the Claude notifier hook: when identity resolves to this session's own
+# lock owner and a fresh ready record is present, the notifier exits 2. That makes
+# the identity match observable (rc=2, epoch=rewake) without needing an arm fixture
+# or a long-lived coordinator loop.
 install_autoarm_scripts() {
   local dir=$1
   mkdir -p "$dir/bin"
-  cp "$ROOT/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-claude-stop-autoarm.sh"
+  cp "$ROOT/bin/fm-claude-watch-notifier.sh" "$dir/bin/fm-claude-watch-notifier.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/fm-classify-lib.sh"
@@ -233,16 +238,9 @@ install_autoarm_scripts() {
   cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
   cp "$ROOT/bin/fm-cursor-lib.sh" "$dir/bin/fm-cursor-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
+  cp "$ROOT/bin/fm-watch.sh" "$dir/bin/fm-watch.sh"
   cp "$ROOT/bin/fm-lock.sh" "$dir/bin/fm-lock.sh"
-  chmod +x "$dir/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-lock.sh"
-  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
-#!/usr/bin/env bash
-echo "$$" >> "$FM_HOME/state/arm-ran"
-printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
-printf 'stale: fixture-win actionable\n'
-exit 0
-SH
-  chmod +x "$dir/bin/fm-watch-arm.sh"
+  chmod +x "$dir/bin/fm-claude-watch-notifier.sh" "$dir/bin/fm-lock.sh" "$dir/bin/fm-watch.sh"
 }
 
 # A primary home with one task in flight, so the hook's scope and supervision-need
@@ -268,7 +266,16 @@ if [ "${FM_FIXTURE_ORPHAN_HERE:-0}" = 1 ]; then
 fi
 printf '%s\n' "$$" > "$FM_HOME/state/session-pid"
 printf '%s\n' "$$" > "$FM_HOME/state/.lock"
-"$FM_HOME/bin/fm-claude-stop-autoarm.sh" </dev/null > "$FM_HOME/state/hook.out" 2>&1
+# Seed a fresh ready-to-notify record for THIS session owner so the notifier's
+# identity match resolves to an exit-2 rewake, making the ancestry outcome
+# observable. The coordinator would normally publish this; the ancestry test only
+# needs the identity path, so it seeds the record directly.
+{
+  printf 'ready_seq=7\nrecovery_generation=none\npredecessor_arm_pid=none\n'
+  printf 'successor_watch_pid=1\nsuccessor_watch_identity=fixture\n'
+  printf 'coordinator_generation=coord-%s-1\nsession_owner=%s\npublished_at=%s\n' "$$" "$$" "$(date +%s)"
+} > "$FM_HOME/state/.claude-ready-to-notify"
+FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" </dev/null > "$FM_HOME/state/hook.out" 2>&1
 printf '%s\n' "$?" > "$FM_HOME/state/hook.rc"
 SH
   cat > "$dir/daemon.sh" <<'SH'
@@ -320,9 +327,8 @@ test_e2e_version_named_session_claims_the_home() {
   make_primary_home "$dir"
   run_fixture_tree "$dir" "$VERSIONED_CLAUDE"
   expect_code 2 "$(hook_rc "$dir")" "a version-named session must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a version-named session"
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "no claim was recorded, got: $(epoch_outcome "$dir")"
-  pass "session-lock e2e: a version-named session claims the home and arms supervision"
+  pass "session-lock e2e: a version-named session claims the home and wakes on the ready record"
 }
 
 test_e2e_daemon_parented_session_claims_the_home() {
@@ -336,9 +342,8 @@ test_e2e_daemon_parented_session_claims_the_home() {
     || fail "fixture did not produce a distinct daemon and session: session=$session_pid daemon=$daemon_pid"
   lock_after=$(tr -d '[:space:]' < "$dir/state/.lock")
   expect_code 2 "$(hook_rc "$dir")" "a session parented by a harness-named daemon must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a daemon-parented session"
   [ "$lock_after" = "$session_pid" ] || fail "the session lock moved off the session: expected $session_pid, got $lock_after"
-  pass "session-lock e2e: a session parented by a harness-named daemon claims the home and arms supervision"
+  pass "session-lock e2e: a session parented by a harness-named daemon claims the home and wakes on the ready record"
 }
 
 test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
@@ -353,7 +358,6 @@ test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
     || fail "the live session's lock was reclaimed as stale and rewritten to the shared daemon pid $daemon_pid"
   [ "$lock_after" = "$session_pid" ] || fail "the session lock moved off the session: expected $session_pid, got $lock_after"
   expect_code 2 "$(hook_rc "$dir")" "a version-named session under a daemon must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a version-named daemon-parented session"
   pass "session-lock e2e: a version-named session under a harness-named daemon keeps its own lock"
 }
 

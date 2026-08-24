@@ -103,8 +103,8 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
 
   out=$("$RENDER" --harness claude)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
-  assert_contains "$ordinary" "Stop-owned auto-arm" "claude ordinary-wake line does not leave continuity to the Stop hook"
-  assert_contains "$ordinary" "bin/fm-claude-stop-autoarm.sh" "claude ordinary-wake line lost the auto-arm script name"
+  assert_contains "$ordinary" "Stop-owned watcher coordinator" "claude ordinary-wake line does not leave continuity to the Stop hook"
+  assert_contains "$ordinary" "bin/fm-claude-watch-coordinator.sh" "claude ordinary-wake line lost the coordinator script name"
   assert_contains "$ordinary" "do not arm another cycle" "claude ordinary-wake line does not forbid a model re-arm"
   assert_not_contains "$ordinary" "bin/fm-watch-arm.sh" "claude ordinary-wake line incorrectly calls the manual arm"
   out=$("$RENDER" --harness claude --repair-line)

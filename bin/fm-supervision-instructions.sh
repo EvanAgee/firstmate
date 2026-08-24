@@ -168,7 +168,7 @@ repair_line() {
 ordinary_wake_line() {
   case "$HARNESS" in
     claude)
-      printf '%s\n' '- Ordinary wake: the Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.'
+      printf '%s\n' '- Ordinary wake: the Stop-owned watcher coordinator (bin/fm-claude-watch-coordinator.sh) already keeps a verified successor supervising the fleet; drain and handle the wake, and do not arm another cycle yourself.'
       ;;
     codex)
       printf '%s\n' '- Ordinary wake: take the next foreground bin/fm-watch-checkpoint.sh checkpoint as directed below.'

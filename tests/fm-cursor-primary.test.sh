@@ -71,7 +71,7 @@ install_scripts() {
   mkdir -p "$dir/bin" "$dir/docs"
   for f in fm-turnend-guard-cursor.sh fm-turnend-guard.sh fm-sessionstart-cursor.sh \
            fm-sessionstart-run.sh fm-sessionstart-nudge.sh fm-arm-pretool-check.sh \
-           fm-cd-pretool-check.sh fm-claude-stop-autoarm.sh fm-hook-host-lib.sh \
+           fm-cd-pretool-check.sh fm-claude-watch-coordinator.sh fm-claude-watch-notifier.sh fm-hook-host-lib.sh \
            fm-primary-scope-lib.sh fm-supervision-lib.sh fm-classify-lib.sh fm-wake-lib.sh \
            fm-session-lock-lib.sh fm-cursor-lib.sh fm-operational-input.sh \
            fm-supervision-instructions.sh fm-harness.sh fm-lock.sh \
@@ -206,14 +206,24 @@ test_autoarm_stands_down_on_cursor_payload() {
   dir=$(make_primary_dir "$TMP_ROOT/host-autoarm")
   : > "$dir/state/task1.meta"
   write_arm_fixture "$dir" actionable
+  # Both Claude Stop hooks must stand down on a Cursor payload; either running
+  # synchronously inside Cursor's stop step would hold the turn open for its
+  # multi-hour timeout.
   printf '%s' "$CURSOR_PAYLOAD" | FM_HOME="$dir" "$FAKE_CURSOR" -c '
       printf "%s\n" "$$" > "$FM_HOME/state/.lock"
-      exec "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+      exec "$FM_HOME/bin/fm-claude-watch-coordinator.sh"
     ' >/dev/null 2>&1
   status=$?
-  expect_code 0 "$status" "the Claude auto-arm must stay inert under Cursor"
-  [ ! -e "$dir/state/arm-ran" ] || fail "the Claude auto-arm armed under a Cursor payload; on Cursor it would run synchronously and hold the turn open for its multi-hour timeout"
-  pass "fm-claude-stop-autoarm: inert on a Cursor-delivered payload"
+  expect_code 0 "$status" "the Claude watcher coordinator must stay inert under Cursor"
+  [ ! -e "$dir/state/arm-ran" ] || fail "the Claude coordinator armed under a Cursor payload"
+  [ ! -e "$dir/state/.claude-coordinator.lock" ] || fail "the Claude coordinator took its lock under a Cursor payload"
+  printf '%s' "$CURSOR_PAYLOAD" | FM_HOME="$dir" "$FAKE_CURSOR" -c '
+      exec "$FM_HOME/bin/fm-claude-watch-notifier.sh"
+    ' >/dev/null 2>&1
+  status=$?
+  expect_code 0 "$status" "the Claude watcher notifier must stay inert under Cursor"
+  [ ! -e "$dir/state/.claude-autoarm-epoch" ] || fail "the Claude notifier ran under a Cursor payload"
+  pass "fm-claude-watch: both Claude Stop hooks stay inert on a Cursor-delivered payload"
 }
 
 test_sessionstart_run_stands_down_on_cursor_payload() {
