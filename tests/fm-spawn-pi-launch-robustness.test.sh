@@ -272,6 +272,8 @@ test_pi_signed_shares_the_crew_launch_contract() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 0 "$status" "pi-signed crew spawn should succeed"
+  assert_contains "$out" "spawned $id harness=pi-signed" \
+    "pi-signed must keep its own recorded identity while sharing pi's launch fixes"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "PATH='$FAKEBIN_DIR':\"\$PATH\"" \
     "pi-signed must receive the same interpreter pin as pi"
