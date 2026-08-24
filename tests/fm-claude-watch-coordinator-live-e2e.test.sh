@@ -109,7 +109,8 @@ printf 'signal: fixture drained\n'
 SH
 chmod +x "$PROJECT/bin/fm-wake-drain.sh"
 
-# A helper the model runs on its first turn to sample supervision liveness DURING
+# A helper the model runs on a Stop-hook-feedback wake turn (after a
+# coordinator-verified successor is live) to sample supervision liveness DURING
 # a handling turn longer than grace: it sleeps past grace, then records whether a
 # live watcher still owns the lock with a fresh beacon. This is the coordinator's
 # guarantee that the former next-Stop design could not meet.
@@ -132,7 +133,7 @@ printf 'watcher_alive=%s beacon_age=%s\n' "\$alive" "\$age" > "\$FM_HOME/state/l
 SH
 chmod +x "$PROJECT/bin/live-sample.sh"
 
-PROMPT='Run exactly `bin/fm-session-start.sh` with Bash as your first tool call. After reading its complete digest, run exactly `bin/live-sample.sh` with Bash once (it takes several seconds), then reply with exactly CYCLE0 and stop. Whenever a Stop hook feedback message wakes you, run exactly `bin/fm-wake-drain.sh` once with Bash, then reply with exactly ACK and stop. Never run bin/fm-watch-arm.sh, bin/fm-claude-watch-coordinator.sh, or any other arm command, and never use any other tool.'
+PROMPT='Run exactly `bin/fm-session-start.sh` with Bash as your first tool call. After reading its complete digest, reply with exactly CYCLE0 and stop. Do not run bin/live-sample.sh on that first turn. Whenever a Stop hook feedback message wakes you: if you have not yet run bin/live-sample.sh this session, run exactly `bin/live-sample.sh` with Bash once (it takes several seconds), then run exactly `bin/fm-wake-drain.sh` once with Bash, then reply with exactly ACK and stop. If you have already run bin/live-sample.sh, run exactly `bin/fm-wake-drain.sh` once with Bash, then reply with exactly ACK and stop. Never run bin/fm-watch-arm.sh, bin/fm-claude-watch-coordinator.sh, or any other arm command, and never use any other tool.'
 
 (
   cd "$PROJECT" || exit 1
@@ -147,8 +148,9 @@ PROMPT='Run exactly `bin/fm-session-start.sh` with Bash as your first tool call.
   || fail "session start did not reclaim the stale dead-owner lock"
 
 # 2. The coordinator kept a live watcher with a fresh beacon across a turn longer
-#    than grace - the core repair. The sample ran inside the first handling turn.
-[ -f "$HOME_DIR/state/live-sample" ] || fail "the mid-turn liveness sample never ran"
+#    than grace - the core repair. The sample ran on a Stop-hook-feedback wake
+#    turn after a coordinator-verified successor was already live.
+[ -f "$HOME_DIR/state/live-sample" ] || fail "the post-wake liveness sample never ran"
 SAMPLE=$(cat "$HOME_DIR/state/live-sample")
 case "$SAMPLE" in
   *watcher_alive=yes*) : ;;
