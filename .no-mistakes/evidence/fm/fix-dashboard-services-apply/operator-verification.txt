@@ -1,0 +1,23 @@
+=== fm-doc-audience-check.sh ===
+fm-doc-audience-check: ok surfaces=119 local_links=271
+
+=== documented local /fleet serving check ===
+command: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet
+http_code=200
+
+=== local ports from host map ===
+agee.dev local :3200/ -> 200
+agee.dev local :3200/fleet -> 200
+subs.agee.dev local :3000/ -> 200
+ci.agee.dev local :4200/ -> 200
+
+=== launchd labels from host map ===
+PRESENT dev.agee.dashboard-app state=running
+PRESENT dev.agee.usage-tracker state=running
+PRESENT dev.agee.cloudflared-root state=running
+PRESENT dev.agee.cloudflared-subs state=running
+PRESENT dev.agee.cloudflared-aos-ci state=running
+PRESENT dev.agee.cloudflared-aos-review state=running
+
+=== inventory classification ===
+[{'path': 'docs/dashboards.md', 'audience': 'operator-current'}]
