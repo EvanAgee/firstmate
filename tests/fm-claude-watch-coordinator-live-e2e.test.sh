@@ -137,7 +137,9 @@ PROMPT='Run exactly `bin/fm-session-start.sh` with Bash as your first tool call.
 
 (
   cd "$PROJECT" || exit 1
-  FM_HOME="$HOME_DIR" FM_GUARD_GRACE="$GRACE" CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false \
+  FM_HOME="$HOME_DIR" FM_GUARD_GRACE="$GRACE" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false \
     claude -p "$PROMPT" --dangerously-skip-permissions --effort low --output-format stream-json --verbose
 ) > "$TRANSCRIPT" 2>&1 || fail "Claude credentialed coordinator session failed: $(tail -20 "$TRANSCRIPT")"
 
