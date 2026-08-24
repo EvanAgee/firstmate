@@ -894,3 +894,48 @@ Refresh this harness-dependent proof before accepting a cursor upgrade:
 ```sh
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
 ```
+
+## Pi launch under a project Node pin and project-local extensions (2026-08-24, Pi 0.84.2, tmux)
+
+Pi installs as a `#!/usr/bin/env node` script, so the launch environment, not Pi, decides which Node runs it.
+Both failures below were observed live and are now pinned by the launch itself.
+
+**Wrong Node.**
+Under `super-duper-it`, whose `.nvmrc` pins `20.19.6` and whose pane shell auto-switches on `chpwd`, Pi resolved Node 20 and died before its first frame:
+
+```
+$ PATH="$HOME/.nvm/versions/node/v20.19.6/bin:$PATH" pi --version
+.../@earendil-works/pi-coding-agent/node_modules/undici/lib/web/cache/cachestorage.js:20
+    webidl.util.markAsUncloneable(this)
+                ^
+TypeError: webidl.util.markAsUncloneable is not a function
+Node.js v20.19.6
+```
+
+The same command with Pi's own install directory first on PATH prints `0.84.2`.
+Pi is installed under `~/.nvm/versions/node/v22.22.0/bin`, which holds both `pi` and the `node` that owns it, so the launch derives the pin from the resolved executable rather than from a version.
+
+**Project-local extensions.**
+A crewmate worktree of firstmate carries firstmate's tracked `.pi/extensions`, which are written for a primary session; `fm-primary-omp-watch.ts` imports `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui`.
+A crew Pi session that discovers them dies with a require failure and drops the pane to a raw shell.
+`pi --help` on 0.84.2 documents `--no-extensions, -ne  Disable extension discovery (explicit -e paths still work)`, so the per-task `-e` sidecar is unaffected.
+
+**Live result.**
+Three crewmate spawns through `bin/fm-spawn.sh`, each in a real worktree of the named project, each reaching Pi's ready state and executing its brief:
+
+| Project | Condition | Result |
+|---|---|---|
+| `super-duper-it` | `.nvmrc` pins 20.19.6; pane shell reports `Now using node v20.19.6` | reached ready state, ran its command |
+| `firstmate` | worktree carries the five tracked primary-only `.pi/extensions` | reached ready state, ran its command |
+| `aos` | no `.nvmrc` (regression check) | reached ready state, ran its command |
+
+Each pane's launch line showed both defenses, for example:
+
+```
+PATH='/Users/evanagee/.nvm/versions/node/v22.22.0/bin':"$PATH" FM_PI_HARNESS=pi \
+  '/Users/evanagee/.nvm/versions/node/v22.22.0/bin/pi' --tui-mode regular --no-extensions \
+  -e '<state>/<id>.pi-ext.ts' "$(... encode launch-brief < '<data>/<id>/brief.md')"
+```
+
+Pi's project-trust dialog appeared on each fresh worktree path and was accepted with Enter, unchanged from the existing Pi adapter behavior.
+The portable regression is `tests/fm-spawn-pi-launch-robustness.test.sh`, which drives `fm-spawn` with a fake tmux and asserts the pin ordering, the no-pin case for a standalone install, probe survival under a hostile Node pin, crew and scout `--no-extensions`, secondmate discovery, and `pi-signed` parity.
