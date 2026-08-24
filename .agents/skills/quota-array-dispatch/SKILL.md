@@ -18,6 +18,23 @@ This skill is the single owner of the completion-aware profile-array selection p
 Do not add a daemon, opaque composite score, routing wrapper, hard-coded model-specific policy, or producer-side route recommendation.
 Deterministic shell owns only schema, configuration, and version validation plus concrete spawn safeguards; every model-to-provider, provider-to-credential, and quota-applicability relation is yours to establish transparently and to show your evidence for.
 
+## Drop switched-off rungs first
+
+A rung carrying `"enabled": false` in `config/crew-dispatch.json` is switched off by the captain.
+Remove every such rung from the candidate set before you collect a single quota fact.
+A rung with no `enabled` key is on, which is what every existing configuration means.
+
+This filter is a hard lock in one direction only.
+You may narrow the ladder further on quota evidence, but you may never re-enable a switched-off rung, however tight the remaining candidates are.
+A switched-off rung is not a tie-break candidate, not a fallback, and not eligible under the strongest-reasoning-class rule.
+Do not report it as an accounted candidate either; it left the set before selection began.
+
+If the filter empties a matched ladder, stop and ask the captain.
+Never fall through to `config/crew-harness`, to a pay-per-token surface, or to any rung the file does not list, exactly as the floor rule requires.
+
+A switch takes effect on the NEXT dispatch only.
+A worker already running finishes on the tool it launched with; never switch a live worker mid-task.
+
 ## Collect facts
 
 Run `quota-axi --json` once per intake and reuse that snapshot for every candidate.
