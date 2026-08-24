@@ -100,6 +100,12 @@ start_coordinator() {  # <dir> <job-id> [env=val ...]
 }
 
 # Start the real notifier as a session child so identity matches the lock holder.
+# The notifier reads its Stop payload from stdin, so it must stay in the foreground
+# of the piped command (backgrounding it would detach that stdin) and its exit code
+# is captured to $dir/<id>.rc. The session-job wrapper (bash run-<id>.sh) is the
+# parent of the piped `bash $NOTIFIER`; the test's own $notif pid is that wrapper,
+# so killing $notif alone would leave the notifier child alive holding
+# .claude-autoarm.lock. stop_notifier reaps the wrapper's children too.
 start_notifier() {  # <dir> <job-id> [env=val ...]
   local dir=$1 id=$2
   shift 2
@@ -108,6 +114,17 @@ start_notifier() {  # <dir> <job-id> [env=val ...]
       bash \"$NOTIFIER\" >\"$dir/${id}.out\" 2>\"$dir/${id}.err\"
     printf '%s\\n' \"\$?\" > \"$dir/${id}.rc\"
   "
+}
+
+# Terminate a parked notifier: the session-job wrapper pid AND its children (the
+# piped `bash $NOTIFIER` and any subshell), so no notifier survives holding
+# .claude-autoarm.lock after the test. pkill -P is portable on macOS and Linux.
+stop_notifier() {  # <dir> <job-id> <wrapper-pid>
+  local dir=$1 id=$2 wrapper=$3
+  if [ -n "$wrapper" ]; then
+    pkill -TERM -P "$wrapper" 2>/dev/null || true
+    kill "$wrapper" 2>/dev/null || true
+  fi
 }
 
 # Read a session-child exit code. The child is not a descendant of this test
@@ -361,7 +378,8 @@ test_notifier_parks_then_exits_two_on_ready() {
     j=$((j + 1))
   done
   if kill -0 "$notif" 2>/dev/null; then
-    stop_bg "$notif" "$coord" "$HOLDER_PID"
+    stop_notifier "$dir" notif "$notif"
+    stop_bg "$coord" "$HOLDER_PID"
     fail "notifier stayed parked and never woke on the advanced ready record"
   fi
   nrc=$(session_child_rc "$dir" notif) \
@@ -384,7 +402,7 @@ test_notifier_parks_then_exits_two_on_ready() {
   # NOT exit 2 on the already-surfaced record.
   sleep 3
   if kill -0 "$n2" 2>/dev/null; then
-    kill "$n2" 2>/dev/null || true
+    stop_notifier "$dir" n2 "$n2"
     rc2=parked
   else
     rc2=$(session_child_rc "$dir" n2 || echo died)
@@ -440,7 +458,7 @@ test_duplicate_rows_one_handling_event() {
     || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the duplicate-row notifier"; }
   i=0
   while [ "$i" -lt 60 ] && kill -0 "$notif" 2>/dev/null; do sleep 0.25; i=$((i + 1)); done
-  if kill -0 "$notif" 2>/dev/null; then kill "$notif" 2>/dev/null || true; nrc=parked; else nrc=$(session_child_rc "$dir" dn || echo died); fi
+  if kill -0 "$notif" 2>/dev/null; then stop_notifier "$dir" dn "$notif"; nrc=parked; else nrc=$(session_child_rc "$dir" dn || echo died); fi
   expect_code 2 "$nrc" "the notifier must surface the duplicated-row event exactly once (exit 2)"
   [ "$(cat "$dir/state/.claude-notifier-surfaced-seq")" = "$new_seq" ] \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "notifier did not advance past the whole ready_seq despite $rows queue rows"; }
