@@ -96,24 +96,57 @@ printf '9999999\n' > "$HOME_DIR/state/.lock"
 
 # The coordinator drives the REAL fm-watch-arm.sh and REAL fm-watch.sh here; no
 # arm fixture is installed, because the whole point is to prove the real arm layer
-# keeps a live watcher across the turn. The drain fixture ends the in-flight need
-# after the model has handled two wakes so a misbehaving session cannot loop.
+# keeps a live watcher across the turn. The drain fixture still ends the in-flight
+# need after enough presentation drains so a misbehaving session cannot loop, but
+# it speaks the real WAKE_ACK_REQUIRED protocol: presentation prints the exact
+# ack command, and --ack-through retires the recovery marker so a handling
+# successor leaves pending:downtime and starts beating.
 cat > "$PROJECT/bin/fm-wake-drain.sh" <<'SH'
 #!/usr/bin/env bash
-N=$(cat "$FM_HOME/state/drain-count" 2>/dev/null || echo 0); N=$((N+1)); echo "$N" > "$FM_HOME/state/drain-count"
-echo "drain-run=$N" >> "$FM_HOME/state/drain-ran"
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+MARKER="$STATE/.watcher-down"
+
+if [ "${1:-}" = --ack-through ]; then
+  ACK_THROUGH=${2:-}
+  case "$ACK_THROUGH" in ''|*[!0-9]*) echo "wake drain: invalid acknowledgement sequence" >&2; exit 2 ;; esac
+  [ "${3:-}" = --recovery-generation ] \
+    || { echo "wake drain: acknowledgement requires its recovery generation" >&2; exit 2; }
+  ACK_GENERATION=${4:-}
+  case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
+  [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
+  fm_recovery_marker_ack "$MARKER" "$ACK_GENERATION" || true
+  printf 'ack-run=%s generation=%s\n' "$ACK_THROUGH" "$ACK_GENERATION" >> "$STATE/drain-acked"
+  exit 0
+fi
+
+N=$(cat "$STATE/drain-count" 2>/dev/null || echo 0); N=$((N+1)); echo "$N" > "$STATE/drain-count"
+echo "drain-run=$N" >> "$STATE/drain-ran"
 if [ "$N" -ge 3 ]; then
-  rm -f "$FM_HOME/state/task.meta"
+  rm -f "$STATE/task.meta"
+fi
+
+fm_recovery_marker_snapshot "$MARKER" || true
+generation=${FM_RECOVERY_MARKER_TOKEN##*:}
+case "$generation" in ''|*[!A-Za-z0-9._-]*) generation=fixture-generation ;; esac
+sequence=0
+if [ -s "$FM_WAKE_QUEUE" ]; then
+  sequence=$(awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > max { max=$2 } END { print max + 0 }' "$FM_WAKE_QUEUE")
 fi
 printf 'signal: fixture drained\n'
+printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through %s --recovery-generation %s\n' \
+  "$sequence" "$generation"
 SH
 chmod +x "$PROJECT/bin/fm-wake-drain.sh"
 
-# A helper the model runs on a Stop-hook-feedback wake turn (after a
-# coordinator-verified successor is live) to sample supervision liveness DURING
-# a handling turn longer than grace: it sleeps past grace, then records whether a
-# live watcher still owns the lock with a fresh beacon. This is the coordinator's
-# guarantee that the former next-Stop design could not meet.
+# A helper the model runs on a Stop-hook-feedback wake turn AFTER drain+ack (so
+# the successor has left pending:downtime and entered its FM_POLL beat loop) to
+# sample supervision liveness DURING a handling turn longer than grace: it sleeps
+# past grace, then records whether a live watcher still owns the lock with a
+# fresh beacon. This is the coordinator's guarantee that the former next-Stop
+# design could not meet.
 cat > "$PROJECT/bin/live-sample.sh" <<SH
 #!/usr/bin/env bash
 sleep $((GRACE + 4))
@@ -133,7 +166,7 @@ printf 'watcher_alive=%s beacon_age=%s\n' "\$alive" "\$age" > "\$FM_HOME/state/l
 SH
 chmod +x "$PROJECT/bin/live-sample.sh"
 
-PROMPT='Run exactly `bin/fm-session-start.sh` with Bash as your first tool call. After reading its complete digest, reply with exactly CYCLE0 and stop. Do not run bin/live-sample.sh on that first turn. Whenever a Stop hook feedback message wakes you: if you have not yet run bin/live-sample.sh this session, run exactly `bin/live-sample.sh` with Bash once (it takes several seconds), then run exactly `bin/fm-wake-drain.sh` once with Bash, then reply with exactly ACK and stop. If you have already run bin/live-sample.sh, run exactly `bin/fm-wake-drain.sh` once with Bash, then reply with exactly ACK and stop. Never run bin/fm-watch-arm.sh, bin/fm-claude-watch-coordinator.sh, or any other arm command, and never use any other tool.'
+PROMPT='Run exactly `bin/fm-session-start.sh` with Bash as your first tool call. After reading its complete digest, reply with exactly CYCLE0 and stop. Do not run bin/live-sample.sh on that first turn. Whenever a Stop hook feedback message wakes you: run exactly `bin/fm-wake-drain.sh` once with Bash, then run the exact `bin/fm-wake-drain.sh --ack-through … --recovery-generation …` command printed on the drain WAKE_ACK_REQUIRED line (copy the sequence and generation; do not invent them). If you have not yet run bin/live-sample.sh this session, then run exactly `bin/live-sample.sh` with Bash once (it takes several seconds). Then reply with exactly ACK and stop. Never run bin/fm-watch-arm.sh, bin/fm-claude-watch-coordinator.sh, or any other arm command, and never use any other tool.'
 
 (
   cd "$PROJECT" || exit 1
@@ -151,8 +184,15 @@ PROMPT='Run exactly `bin/fm-session-start.sh` with Bash as your first tool call.
 
 # 2. The coordinator kept a live watcher with a fresh beacon across a turn longer
 #    than grace - the core repair. The sample ran on a Stop-hook-feedback wake
-#    turn after a coordinator-verified successor was already live.
+#    turn after drain+ack left the handling wait and a verified successor was live.
 [ -f "$HOME_DIR/state/live-sample" ] || fail "the post-wake liveness sample never ran"
+if ! awk '
+  $0 ~ /fm-wake-drain\.sh --ack-through/ { acked=1 }
+  $0 ~ /live-sample\.sh/ { sampled=1; if (acked) found=1 }
+  END { exit !(acked && sampled && found) }
+' "$HOME_DIR/state/tool-calls.log" 2>/dev/null; then
+  fail "live-sample did not run after a printed drain acknowledgement: $(cat "$HOME_DIR/state/tool-calls.log" 2>/dev/null)"
+fi
 SAMPLE=$(cat "$HOME_DIR/state/live-sample")
 case "$SAMPLE" in
   *watcher_alive=yes*) : ;;
