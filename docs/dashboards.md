@@ -34,20 +34,22 @@ Each app has its own checkout and its own launchd label, so use the block for th
 For `agee.dev`:
 
 ```bash
-cd ~/Sites/firstmate/projects/agee-dev-dashboard
-git checkout main            # the checkout must be on main, not detached
-npm run build
-launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app
+cd ~/Sites/firstmate/projects/agee-dev-dashboard &&
+  git checkout main &&           # the checkout must be on main, not detached
+  npm run build &&
+  launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app
 ```
 
 For `subs.agee.dev`:
 
 ```bash
-cd ~/Sites/firstmate/projects/usage-tracker
-git checkout main
-npm run build
-launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker
+cd ~/Sites/firstmate/projects/usage-tracker &&
+  git checkout main &&
+  npm run build &&
+  launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker
 ```
+
+The commands are chained with `&&` so a failed checkout or build stops the sequence and never restarts a stale build.
 
 `launchctl kickstart -k` restarts the app without touching the Cloudflare tunnel, so the public host stays mapped through the few seconds of reboot.
 Serving a production build is what makes the restart pick up the current `main` reliably; `next dev` can keep serving a stale in-memory build after the code under it changes.
@@ -118,7 +120,11 @@ Restarting the tunnel agent, not the app, is the fix for that case.
 It was retired on 2026-08-24: its launchd agent and its process were removed, because the fleet view already lives at `agee.dev/fleet`.
 That server also answered `/api/snapshot`, which `agee.dev/fleet` fetched for its data, so retiring it moved the snapshot in-process into the dashboard app (`lib/fleet/snapshot.server.ts`) rather than dropping it.
 Its tunnel (`dev.agee.cloudflared-firstmate`, config `~/.cloudflared/firstmate-config.yml`) was stopped on 2026-08-24 and its launchd plist disabled (renamed to `.disabled`), so nothing serves `firstmate.agee.dev`. Its DNS may still resolve to Cloudflare, which now returns an error / non-200 because no tunnel backs the host.
-To bring `firstmate.agee.dev` back, land the fleet-dashboard server on `main`, restore the plist, and start the tunnel again.
+
+To bring `firstmate.agee.dev` back, both launchd agents have to return, or the tunnel would run with no server behind port 7860:
+
+- Server: land the fleet-dashboard server (`bin/fm-fleet-dashboard.js`, which currently lives only on an unmerged branch) on `main`, then recreate and load its `dev.agee.firstmate-dashboard` launchd agent (that plist was deleted, not disabled).
+- Tunnel: rename `dev.agee.cloudflared-firstmate.plist.disabled` back to `.plist` and load it (`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.agee.cloudflared-firstmate.plist`).
 
 ## Maintaining this file
 
