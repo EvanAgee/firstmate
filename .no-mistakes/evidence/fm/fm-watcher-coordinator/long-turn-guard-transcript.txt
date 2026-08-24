@@ -1,0 +1,36 @@
+scenario: Claude PRIMARY long handling turn (grace=6s, sample=10s)
+home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-long-turn-evidence.vbKdS3
+session_pid=32968 lock=56706
+coordinator_pid=32993
+started_at=2026-08-24T18:57:42Z
+
+ready-to-notify record at t=0:
+  ready_seq=0
+  recovery_generation=none
+  predecessor_arm_pid=none
+  successor_watch_pid=33603
+  successor_watch_identity=Mon Aug 24 13:57:39 2026     bash /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-long-turn-evidence.vbKdS3/bin/fm-watch.sh
+  coordinator_generation=coord-56706-32993
+  session_owner=56706
+  published_at=1787597860
+
+t_sec  watch_pid  alive  beacon_age  fm-guard
+    0  33603      yes            2s  silent_ok
+    1  33603      yes            1s  silent_ok
+    2  33603      yes            0s  silent_ok
+    3  33603      yes            2s  silent_ok
+    4  33603      yes            1s  silent_ok
+    5  33603      yes            1s  silent_ok
+    6  33603      yes            0s  silent_ok
+    7  33603      yes            1s  silent_ok
+    8  33603      yes            2s  silent_ok
+    9  33603      yes            1s  silent_ok
+   10  33603      yes            0s  silent_ok
+
+ended_at=2026-08-24T18:57:55Z
+initial_watch_pid=33603
+final_watch_pid=33603
+fm-guard during long turn (full stdout, empty means healthy/silent):
+  (empty — no WATCHER DOWN banner)
+
+RESULT: PASS — one stable live watcher, beacon under grace, fm-guard silent across a turn longer than grace.

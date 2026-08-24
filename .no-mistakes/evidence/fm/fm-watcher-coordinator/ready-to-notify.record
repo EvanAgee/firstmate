@@ -1,0 +1,8 @@
+ready_seq=0
+recovery_generation=none
+predecessor_arm_pid=none
+successor_watch_pid=33603
+successor_watch_identity=Mon Aug 24 13:57:39 2026     bash /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-long-turn-evidence.vbKdS3/bin/fm-watch.sh
+coordinator_generation=coord-56706-32993
+session_owner=56706
+published_at=1787597860

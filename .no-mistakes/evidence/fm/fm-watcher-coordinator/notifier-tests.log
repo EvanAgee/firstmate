@@ -1,0 +1,20 @@
+ok - notifier: inert in a linked child worktree even when in-flight
+ok - notifier: inert with no session lock
+ok - notifier: inert without epoch or lock replacement when another live harness owns the home
+ok - notifier: a demonstrably dead recorded session owner is reclaimed through fm-lock.sh before parking
+ok - notifier: inert while AFK owns supervision
+ok - notifier: inert with nothing in flight and no X-mode need
+ok - notifier: stands down on a Cursor-delivered (foreign-host) payload
+ok - notifier: a fresh ready record for this session triggers exactly one exit-2 rewake
+ok - notifier: a ready record from another session generation is never surfaced
+ok - notifier: a genuinely absent coordinator surfaces a typed failure and records the guard's episode notice
+ok - notifier: consecutive coordinator-absent failures notify once and keep retrying
+ok - notifier: a fresh ready record clears the failure episode (positive recovery) and still wakes
+ok - notifier: AFK appearing mid-park hands triage to the daemon with a clean exit
+ok - notifier: concurrent firings admit exactly one parked owner
+ok - notifier: parent TERM records interrupted and releases the owner lock
+ok - notifier: active in a marked secondmate home
+ok - fm-lock: shared session-lock lib preserves the status path
+real 25.77
+user 1.90
+sys 4.07
