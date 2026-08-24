@@ -119,7 +119,14 @@ sleep $((GRACE + 4))
 pid=\$(cat "\$FM_HOME/state/.watch.lock/pid" 2>/dev/null || true)
 alive=no; kill -0 "\$pid" 2>/dev/null && alive=yes
 now=\$(date +%s)
-m=\$(stat -f %m "\$FM_HOME/state/.last-watcher-beat" 2>/dev/null || stat -c %Y "\$FM_HOME/state/.last-watcher-beat" 2>/dev/null || echo 0)
+# OS-detect the mtime flag: GNU stat treats -f as --file-system and succeeds with
+# a non-numeric value, so a -f || -c fallback never reaches the Linux branch.
+if [ "\$(uname)" = Darwin ]; then
+  m=\$(stat -f %m "\$FM_HOME/state/.last-watcher-beat" 2>/dev/null || echo 0)
+else
+  m=\$(stat -c %Y "\$FM_HOME/state/.last-watcher-beat" 2>/dev/null || echo 0)
+fi
+case "\$m" in ''|*[!0-9]*) m=0 ;; esac
 age=\$((now - m))
 printf 'watcher_alive=%s beacon_age=%s\n' "\$alive" "\$age" > "\$FM_HOME/state/live-sample"
 SH

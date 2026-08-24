@@ -140,7 +140,15 @@ ready_field() {  # <dir> <field>
 
 beacon_age() {  # <dir>
   local m now
-  m=$(stat -f %m "$1/state/.last-watcher-beat" 2>/dev/null || stat -c %Y "$1/state/.last-watcher-beat" 2>/dev/null || echo 0)
+  # OS-detect the mtime flag like fm_path_mtime: GNU stat treats `-f` as
+  # --file-system and succeeds with a non-numeric value, so a `-f || -c` fallback
+  # never reaches the Linux branch. Pick the right flag up front instead.
+  if [ "$(uname)" = Darwin ]; then
+    m=$(stat -f %m "$1/state/.last-watcher-beat" 2>/dev/null || echo 0)
+  else
+    m=$(stat -c %Y "$1/state/.last-watcher-beat" 2>/dev/null || echo 0)
+  fi
+  case "$m" in ''|*[!0-9]*) m=0 ;; esac
   now=$(date +%s)
   echo $(( now - m ))
 }
@@ -311,7 +319,7 @@ test_actionable_close_rearms_and_republishes() {
 # the idle session exactly once when the ready record advances - keyed to
 # ready_seq, never to raw queue-row cardinality.
 test_notifier_parks_then_exits_two_on_ready() {
-  local dir coord notif nout nerr nrc first_seq new_seq i j surfaced
+  local dir coord notif nerr nrc first_seq new_seq i j surfaced
   dir=$(make_home notifier-park)
   start_lock_holder "$dir"
   printf 'window=x\n' > "$dir/state/one.meta"
@@ -334,7 +342,7 @@ test_notifier_parks_then_exits_two_on_ready() {
   # the park, advance the surfaced marker to the current seq first.
   printf '%s\n' "$first_seq" > "$dir/state/.claude-notifier-surfaced-seq"
 
-  nout="$dir/notif.out"; nerr="$dir/notif.err"
+  nerr="$dir/notif.err"
   notif=$(start_notifier "$dir" notif FM_CLAUDE_NOTIFIER_COORD_WAIT=60) \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the parked notifier"; }
 
