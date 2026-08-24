@@ -147,6 +147,20 @@ printf 'stale: fixture-win actionable\n'
 exit 0
 SH
       ;;
+    # Blocks until it is killed, reproducing the exit-143 process-group kill Claude
+    # applies on session teardown or hook timeout: it announces readiness (so the
+    # test can wait for the arm to be live), then exits on TERM like the real arm's
+    # own trap does, letting the parent hook's foreground command return so the
+    # parent's TERM trap fires.
+    blocks-until-killed)
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+trap 'exit 143' TERM
+echo "$$" >> "$FM_HOME/state/arm-ran"
+: > "$FM_HOME/state/arm-live"
+while :; do sleep 0.05; done
+SH
+      ;;
     *)
       echo "unknown arm fixture: $kind" >&2
       return 2
@@ -578,6 +592,68 @@ test_fm_lock_status_still_works_with_shared_lib() {
   pass "fm-lock: shared session-lock lib preserves the status path"
 }
 
+# The exit-143 TERM path the review found: the parent hook is killed mid-cycle
+# (session teardown or hook timeout). Its new HUP/INT/TERM traps must record an
+# "interrupted" epoch outcome and remove the abandoned .claude-autoarm-output.*
+# file, instead of leaving a dangling "arming" epoch and a stranded output file.
+# The hook chain runs in its own process group (portable perl setpgrp, since macOS
+# has no setsid) so one group TERM reaches the parent hook and its foreground arm
+# together - exactly how Claude kills the hook process tree. The arm fixture's own
+# TERM trap makes its foreground command return, which lets the parent's deferred
+# TERM trap run.
+test_parent_term_records_interrupted_and_cleans_output() {
+  local dir leader i outcome stray
+  dir=$(make_primary_dir "$TMP_ROOT/parent-term")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" blocks-until-killed
+
+  printf '%s\n' '{"session_id":"sess-term","stop_hook_active":false}' \
+    | FM_HOME="$dir" perl -e 'setpgrp(0,0); exec @ARGV' \
+        "$FAKE_CLAUDE" -c '
+          printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+          exec "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+        ' >/dev/null 2>&1 &
+  leader=$!
+
+  # Wait until the arm is genuinely live before killing, so the interrupt lands
+  # mid-cycle rather than before the epoch is even claimed.
+  i=0
+  while [ ! -e "$dir/state/arm-live" ]; do
+    [ "$i" -lt 200 ] || { kill "$leader" 2>/dev/null || true; fail "arm fixture never went live before the interrupt"; }
+    sleep 0.05
+    i=$((i + 1))
+  done
+
+  # The perl leader made itself the group leader, so its pid is the group id.
+  # Kill the whole group so the foreground arm dies and the parent's deferred TERM
+  # trap runs. Do NOT wait on the leader here: reaping the killed process group can
+  # block on macOS, and the durable epoch file - not process reaping - is the proof.
+  kill -TERM -- "-$leader" 2>/dev/null || kill -TERM "$leader" 2>/dev/null || true
+
+  # The parent's TERM trap is deferred until its foreground arm returns; give it a
+  # brief bounded window to write the epoch and clean up.
+  i=0
+  outcome=$(epoch_outcome "$dir")
+  while [ "$outcome" != interrupted ] && [ "$i" -lt 100 ]; do
+    sleep 0.05
+    outcome=$(epoch_outcome "$dir")
+    i=$((i + 1))
+  done
+
+  # Best-effort final group cleanup so no fixture arm lingers past the test.
+  kill -TERM -- "-$leader" 2>/dev/null || true
+
+  [ -e "$dir/state/.claude-autoarm-epoch" ] || fail "no epoch file after the parent was interrupted"
+  [ "$outcome" = interrupted ] \
+    || fail "parent TERM must record outcome=interrupted, got: $outcome"
+  stray=$(find "$dir/state" -maxdepth 1 -name '.claude-autoarm-output.*' 2>/dev/null)
+  [ -z "$stray" ] \
+    || fail "parent TERM must remove the abandoned arm-output file, found: $stray"
+  [ ! -e "$dir/state/.claude-autoarm.lock" ] \
+    || fail "parent TERM must release the owner lock via the EXIT trap"
+  pass "auto-arm: parent TERM records interrupted and cleans the abandoned output file"
+}
+
 test_inert_in_child_worktree
 test_inert_without_session_lock
 test_reclaims_stale_session_lock_before_arming
@@ -599,4 +675,5 @@ test_single_flight_admits_exactly_one_owner
 test_need_vanished_mid_cycle_closes_quietly
 test_afk_mid_cycle_suppresses_rewake
 test_active_in_marked_secondmate_home
+test_parent_term_records_interrupted_and_cleans_output
 test_fm_lock_status_still_works_with_shared_lib

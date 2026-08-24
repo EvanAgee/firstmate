@@ -47,7 +47,12 @@
 # Every observed watcher cycle appends one tab-separated lifecycle record to
 # state/.watch-cycle-exits.log. The arm layer owns that bounded ledger; it records
 # arm/watcher identities, timestamps, exit/signal classification, beacon age,
-# lock identity before and after close, and successor disposition. The separate
+# lock identity before and after close, and successor disposition, followed by four
+# additive fields that make a gap diagnosable without the transcript: source
+# (autoarm|manual, from FM_WATCH_ARM_SOURCE), the auto-arm epoch sequence for the
+# cycle, the session-lock owner pid (which session generation owned it), and a
+# compact termination cause. The four are appended AFTER successor so any reader
+# that parses only the earlier fields is unaffected. The separate
 # state/.watch-triage.log remains exclusively the watcher's absorbed-wake debug
 # log and is never written here.
 #
@@ -84,6 +89,17 @@ CYCLE_LOG_LOCK="$STATE/.watch-cycle-exits.lock"
 CYCLE_LOG_MAX_BYTES=${FM_WATCH_CYCLE_LOG_MAX_BYTES:-262144}
 CYCLE_LOG_KEEP_LINES=${FM_WATCH_CYCLE_LOG_KEEP_LINES:-1000}
 ARM_PID=${BASHPID:-$$}
+
+# Who armed this cycle, for the lifecycle ledger. The Claude Stop auto-arm hook
+# (bin/fm-claude-stop-autoarm.sh) exports FM_WATCH_ARM_SOURCE=autoarm; a direct
+# operator or agent run leaves it unset and records "manual". The review could not
+# tell auto-arm cycles from manual ones without the transcript, so this makes the
+# distinction durable. A value with anything but the two known tokens is normalized
+# to "manual" so a stray export can never poison the field.
+case "${FM_WATCH_ARM_SOURCE:-}" in
+  autoarm) CYCLE_SOURCE=autoarm ;;
+  *) CYCLE_SOURCE=manual ;;
+esac
 case "$CYCLE_LOG_MAX_BYTES" in ''|*[!0-9]*|0) CYCLE_LOG_MAX_BYTES=262144 ;; esac
 case "$CYCLE_LOG_KEEP_LINES" in ''|*[!0-9]*|0) CYCLE_LOG_KEEP_LINES=1000 ;; esac
 
@@ -99,6 +115,47 @@ lock_snapshot() {
   pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
   identity=$(cat "$WATCH_LOCK/pid-identity" 2>/dev/null || true)
   printf 'pid:%s|identity:%s' "$(cycle_clean_field "${pid:-none}")" "$(cycle_clean_field "${identity:-none}")"
+}
+
+# The auto-arm epoch sequence for this cycle, so an autoarm ledger row can be
+# joined to its .claude-autoarm-epoch entry without the transcript. Empty (recorded
+# as "none") for a manual arm, which has no epoch.
+cycle_epoch_id() {
+  local seq
+  [ "$CYCLE_SOURCE" = autoarm ] || { printf 'none'; return; }
+  seq=$(sed -n 's/^epoch=\([0-9][0-9]*\) .*/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
+  case "$seq" in
+    ''|*[!0-9]*) printf 'none' ;;
+    *) printf '%s' "$seq" ;;
+  esac
+}
+
+# The session-lock owner pid: which firstmate session generation owned this cycle.
+# It changes on every session restart, so it separates cycles across restarts in a
+# ledger that otherwise only carries per-cycle arm/watcher pids.
+cycle_session_generation() {
+  local pid
+  pid=$(cat "$STATE/.lock" 2>/dev/null || true)
+  case "$pid" in
+    ''|*[!0-9]*) printf 'none' ;;
+    *) printf '%s' "$pid" ;;
+  esac
+}
+
+# Compact termination cause, orthogonal to the reason category: a signal name when
+# a signal ended the cycle, exit:<code> for a nonzero non-signal exit, clean for a
+# normal exit, and unknown when the exit is not a number (e.g. an attached-cycle
+# lifecycle row that carries no real waitpid status).
+cycle_termination_cause() {
+  local exit_code=$1 signal=$2
+  case "$exit_code" in
+    ''|*[!0-9]*) printf 'unknown'; return ;;
+  esac
+  case "$signal" in
+    none) [ "$exit_code" -eq 0 ] && printf 'clean' || printf 'exit:%s' "$exit_code" ;;
+    unknown) printf 'unknown' ;;
+    *) printf 'signal:%s' "$signal" ;;
+  esac
 }
 
 WATCH_DELIVERY_LOG="$STATE/.watch-deliveries.log"
@@ -139,11 +196,12 @@ cycle_signal_name() {
 }
 
 cycle_log_append() {
-  local exit_code=$1 signal=$2 reason=$3 successor=$4 ended_at beacon_age lock_after size tmp raw i
+  local exit_code=$1 signal=$2 reason=$3 successor=$4 ended_at beacon_age lock_after size tmp raw i cause
   [ "$cycle_active" -eq 1 ] || return 0
   ended_at=$(date +%s)
   beacon_age=$(fm_path_age "$BEAT")
   lock_after=$(lock_snapshot)
+  cause=$(cycle_termination_cause "$exit_code" "$signal")
 
   i=0
   while ! fm_lock_try_acquire "$CYCLE_LOG_LOCK"; do
@@ -151,7 +209,12 @@ cycle_log_append() {
     sleep 0.02
     i=$((i + 1))
   done
-  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s\n' \
+  # New source/epoch/session/cause fields are appended AFTER successor so nothing
+  # that parses an earlier tab position (by key= or by index) is disturbed; a
+  # reader that stops at successor keeps its exact behavior. cycle_mark_predecessor_successor
+  # rewrites only the trailing "successor=none" token, which these later fields
+  # never contain, so successor back-fill still targets the right field.
+  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s\tsource=%s\tepoch=%s\tsession=%s\tcause=%s\n' \
     "$ARM_PID" \
     "$(cycle_clean_field "$cycle_watcher_pid")" \
     "$(cycle_clean_field "$cycle_origin")" \
@@ -163,7 +226,11 @@ cycle_log_append() {
     "$beacon_age" \
     "$(cycle_clean_field "$cycle_lock_before")" \
     "$(cycle_clean_field "$lock_after")" \
-    "$(cycle_clean_field "$successor")" >> "$CYCLE_LOG" 2>/dev/null || true
+    "$(cycle_clean_field "$successor")" \
+    "$(cycle_clean_field "$CYCLE_SOURCE")" \
+    "$(cycle_clean_field "$(cycle_epoch_id)")" \
+    "$(cycle_clean_field "$(cycle_session_generation)")" \
+    "$(cycle_clean_field "$cause")" >> "$CYCLE_LOG" 2>/dev/null || true
 
   size=$(wc -c < "$CYCLE_LOG" 2>/dev/null | tr -d '[:space:]')
   case "$size" in
@@ -201,6 +268,11 @@ cycle_mark_predecessor_successor() {
     i=$((i + 1))
   done
   tmp="$CYCLE_LOG.link.$ARM_PID"
+  # Rebuild the target row field-by-field rather than anchoring on end-of-line:
+  # the successor field is no longer the last field now that source/epoch/session/
+  # cause follow it, so a "$"-anchored substitution would silently miss. Rebuilding
+  # from the field array replaces exactly the successor=none token in place and is
+  # agnostic to how many trailing fields a row carries, so old and new rows both work.
   awk -v target="arm_pid=$predecessor" -v replacement="successor=$(cycle_clean_field "$successor")" '
     {
       lines[NR] = $0
@@ -212,9 +284,20 @@ cycle_mark_predecessor_successor() {
       }
     }
     END {
-      for (i = 1; i <= NR; i += 1) {
-        if (i == last) sub(/\tsuccessor=none$/, "\t" replacement, lines[i])
-        print lines[i]
+      for (n = 1; n <= NR; n += 1) {
+        if (n == last) {
+          count = split(lines[n], fields, "\t")
+          done = 0
+          out = ""
+          for (i = 1; i <= count; i += 1) {
+            val = fields[i]
+            if (!done && val == "successor=none") { val = replacement; done = 1 }
+            out = (i == 1) ? val : out "\t" val
+          }
+          print out
+        } else {
+          print lines[n]
+        }
       }
     }
   ' "$CYCLE_LOG" > "$tmp" 2>/dev/null && mv -f "$tmp" "$CYCLE_LOG" 2>/dev/null

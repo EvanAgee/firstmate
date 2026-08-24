@@ -387,6 +387,70 @@ test_autoarm_stale_beacon_alarms_with_correct_reason() {
   pass "fm-guard stale banner: auto-arm stale beacon alarms with the true reason"
 }
 
+# A stale beacon on an auto-arm home whose latest epoch is a SUCCESSFUL rewake is
+# the design-induced successor gap: the between-turns watcher closed cleanly and
+# woke the handling turn, and the next cycle only arms when that turn ends. The
+# banner must name that cause, keep saying supervision is genuinely absent, and
+# stop telling the operator to inspect hook registration - which is fine.
+test_autoarm_rewake_gap_names_design_gap_not_hook_repair() {
+  local dir home out
+  dir=$(make_guard_case autoarm-rewake-gap)
+  home=$(case_home "$dir")
+  printf 'epoch=7 owner_pid=4242 outcome=rewake updated_at=%s\n' "1700000000" \
+    > "$home/state/.claude-autoarm-epoch"
+  out=$(run_guard_case_autoarm "$dir")
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "the successor gap must still raise the watcher-down banner: $out"
+  assert_contains "$out" "design-induced supervision gap after a successful rewake" \
+    "the rewake-gap banner must name the design-induced successor gap"
+  assert_contains "$out" "Supervision IS absent during this gap; it is not harmless" \
+    "the rewake-gap banner must state supervision is genuinely absent, not harmless"
+  assert_not_contains "$out" "hook registration" \
+    "the rewake-gap banner must not send the operator to repair hook registration"
+  assert_not_contains "$out" "false alarm" \
+    "the rewake-gap banner must never call the gap a false alarm"
+  pass "fm-guard stale banner: a successful-rewake gap names the design gap, not a hook repair"
+}
+
+# The rewake-gap wording is scoped to a SUCCESSFUL rewake outcome. An auto-arm home
+# whose latest epoch is anything else (arming, failed, ...) keeps the ordinary
+# stale-beacon banner and its hook-recovery repair line unchanged.
+test_autoarm_non_rewake_epoch_keeps_ordinary_banner() {
+  local dir home out
+  dir=$(make_guard_case autoarm-non-rewake)
+  home=$(case_home "$dir")
+  printf 'epoch=8 owner_pid=4242 outcome=arming updated_at=%s\n' "1700000000" \
+    > "$home/state/.claude-autoarm-epoch"
+  out=$(run_guard_case_autoarm "$dir")
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "a non-rewake auto-arm stale beacon must still alarm: $out"
+  assert_contains "$out" "no watcher has a fresh beacon" \
+    "a non-rewake auto-arm banner must keep the ordinary stale-beacon reason"
+  assert_not_contains "$out" "design-induced supervision gap" \
+    "the design-gap wording must not appear for a non-rewake epoch"
+  pass "fm-guard stale banner: a non-rewake auto-arm epoch keeps the ordinary banner"
+}
+
+# The rewake-gap wording is auto-arm-only. A persistent-watcher primary that happens
+# to carry a stale rewake epoch on disk (leftover from a prior Claude session) must
+# keep its own no-watcher banner and never adopt the design-gap wording.
+test_persistent_model_ignores_rewake_epoch() {
+  local dir home out
+  dir=$(make_guard_case persistent-ignores-rewake)
+  home=$(case_home "$dir")
+  touch "$home/state/.last-watcher-beat"
+  printf 'epoch=9 owner_pid=4242 outcome=rewake updated_at=%s\n' "1700000000" \
+    > "$home/state/.claude-autoarm-epoch"
+  out=$(run_guard_case "$dir")
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "a persistent primary must still alarm with a stray rewake epoch present: $out"
+  assert_contains "$out" "no live watcher process holds this home lock" \
+    "the persistent banner must keep naming the missing watcher process"
+  assert_not_contains "$out" "design-induced supervision gap" \
+    "the design-gap wording is auto-arm-only and must not leak into the persistent model"
+  pass "fm-guard stale banner: persistent model ignores a stray rewake epoch"
+}
+
 test_autoarm_stale_episode_is_stable() {
   local dir out1 out2
   dir=$(make_guard_case autoarm-stable-episode)
@@ -734,6 +798,9 @@ test_persistent_model_ignores_pi_extension_evidence
 test_extension_live_watcher_is_healthy_without_ownership_evidence
 test_autoarm_fresh_beacon_without_watcher_is_healthy
 test_autoarm_stale_beacon_alarms_with_correct_reason
+test_autoarm_rewake_gap_names_design_gap_not_hook_repair
+test_autoarm_non_rewake_epoch_keeps_ordinary_banner
+test_persistent_model_ignores_rewake_epoch
 test_autoarm_stale_episode_is_stable
 test_persistent_no_watcher_banner_names_missing_process
 test_persistent_no_watcher_episode_survives_beacon_touch

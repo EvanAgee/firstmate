@@ -19,7 +19,13 @@
 # lock is down; under every
 # persistent-watcher harness a live identity-matched watcher with a fresh beacon
 # is required. The banner names the true failing condition (a missing live
-# watcher process vs a genuinely stale beacon). The full banner is emitted once
+# watcher process vs a genuinely stale beacon). Under the auto-arm model, a stale
+# beacon whose latest epoch outcome is a successful "rewake" is named as a
+# design-induced successor gap: the between-turns watcher closed cleanly and woke
+# the handling turn, so the next cycle only arms when that turn ends. Supervision
+# is still genuinely absent during that gap, so the banner keeps firing; it just
+# stops telling the operator to repair a hook registration that is fine. The full
+# banner is emitted once
 # per distinct down-episode in this FM_HOME (keyed to the failing condition, not
 # the beacon mtime, which a healthy between-turns watcher advances every poll);
 # later guarded commands in the same episode print a one-line reminder instead.
@@ -67,6 +73,21 @@ STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 # recovery clears the marker (below) and re-arms the next episode.
 fm_guard_stale_episode_key() {
   printf '%s\n' "$1"
+}
+
+# A Claude auto-arm home whose latest epoch outcome is a successful "rewake" is
+# in a design-induced supervision gap: the between-turns watcher already closed
+# cleanly and woke the handling turn, and the successor cycle only arms when that
+# turn ends. A handling turn that runs longer than the grace window lets the
+# beacon go stale while nothing is actually broken with the hook. Detecting this
+# case lets the banner name the real cause instead of sending the operator to
+# repair a hook registration that is fine. It is NOT a false alarm: supervision
+# is genuinely absent during the gap; the banner just stops prescribing the wrong
+# repair. Only the auto-arm model reaches this path; every other harness keeps its
+# existing banner unchanged.
+fm_guard_autoarm_epoch_outcome() {
+  local state=$1
+  sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$state/.claude-autoarm-epoch" 2>/dev/null || true
 }
 
 # Claim the full banner for this episode. Exit 0 = print full banner (this call
@@ -194,17 +215,36 @@ if [ "$watcher_healthy" = false ]; then
     "$queue_pending" && queue_arg=1
     x_mode=0
     [ -f "$CONFIG/x-mode.env" ] && x_mode=1
-    fix=$("$SCRIPT_DIR/fm-supervision-instructions.sh" \
-      --read-only "$READ_ONLY" \
-      --afk "$afk" \
-      --x-mode "$x_mode" \
-      --queue-pending "$queue_arg" \
-      --repair-line 2>/dev/null || printf '%s\n' 'Repair missing watcher supervision according to the session-start operating block.')
+    # A successful-rewake successor gap on a Claude auto-arm home: the hook is
+    # fine, the handling turn just ran past the grace window before the next
+    # cycle could arm. Name that cause and drop the hook-registration repair,
+    # which would send the operator to fix something that is not broken.
+    rewake_gap=0
+    if [ "$(fm_supervision_model)" = autoarm ] \
+      && [ "$(fm_guard_autoarm_epoch_outcome "$STATE")" = rewake ]; then
+      rewake_gap=1
+    fi
+    if [ "$rewake_gap" -eq 1 ]; then
+      if [ "$READ_ONLY" -eq 1 ]; then
+        fix='This read-only session should report the successor gap, not repair it.'
+      else
+        fix='The Stop-owned auto-arm is working; it starts the next cycle when this handling turn ends, so do not re-arm the watcher yourself and nothing needs repair.'
+      fi
+    else
+      fix=$("$SCRIPT_DIR/fm-supervision-instructions.sh" \
+        --read-only "$READ_ONLY" \
+        --afk "$afk" \
+        --x-mode "$x_mode" \
+        --queue-pending "$queue_arg" \
+        --repair-line 2>/dev/null || printf '%s\n' 'Repair missing watcher supervision according to the session-start operating block.')
+    fi
     rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     {
       printf '●%s\n' "$rule"
       printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
-      if [ "$watcher_down_reason" = no-watcher ]; then
+      if [ "$rewake_gap" -eq 1 ]; then
+        watcher_cause=$(printf 'a design-induced supervision gap after a successful rewake - the between-turns watcher closed cleanly and the successor arms only when this handling turn ends (last beat: %s, grace %ss)' "$beacon_desc" "$GRACE")
+      elif [ "$watcher_down_reason" = no-watcher ]; then
         watcher_cause=$(printf 'no live watcher process holds this home lock (last beat: %s)' "$beacon_desc")
       else
         watcher_cause=$(printf 'no watcher has a fresh beacon (last beat: %s, grace %ss)' "$beacon_desc" "$GRACE")
@@ -216,7 +256,9 @@ if [ "$watcher_healthy" = false ]; then
       else
         printf '●  X-mode relay polling needs supervision, but %s.\n' "$watcher_cause"
       fi
-      if [ "$READ_ONLY" -eq 1 ]; then
+      if [ "$rewake_gap" -eq 1 ]; then
+        printf '●  Supervision IS absent during this gap; it is not harmless. It ends on its own when the handling turn ends.\n'
+      elif [ "$READ_ONLY" -eq 1 ]; then
         printf '●  This read-only session should report the lapse, not repair it.\n'
       else
         printf '●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.\n'
