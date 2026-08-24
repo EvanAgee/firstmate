@@ -62,8 +62,8 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/
 ```
 
-The port must match the app just restarted. A 200 confirms that specific local app is up.
-To confirm the public host is reachable, curl the public URL for the app you just restarted:
+The port must match the app just restarted. That local curl is the definitive up/down check: a 200 means that specific app is up.
+The public curl only tells you whether tunnel routing works. Both hosts sit behind Cloudflare Access, so an unauthenticated curl often returns 302 to the Access login even when everything is healthy. Treat 200 or 302-to-Access as reachable; a 302 is the Access gate, not a down tunnel. Tunnel-down is a refused connection or Cloudflare 502/530 (no origin), not any non-200.
 
 ```bash
 # agee.dev
@@ -73,7 +73,7 @@ curl -s -o /dev/null -w '%{http_code}' https://agee.dev/fleet
 curl -s -o /dev/null -w '%{http_code}' https://subs.agee.dev/
 ```
 
-A 200 confirms that specific public host is reachable. If the local check is 200 and the public check is not, the tunnel is down (see "When a dashboard is unreachable").
+If the local check is 200 and the public check is refused / 502 / 530, the tunnel is down (see "When a dashboard is unreachable").
 To confirm a specific code change is live, open the page in a browser.
 
 ## When a dashboard is unreachable
@@ -93,7 +93,7 @@ A 200 on that port confirms that specific local app is up.
 
 If the local port does not answer, the app is down: rebuild and restart its server agent with the restart recipe above.
 
-If the local port answers, confirm the public host next:
+If the local port answers, the app is up. The public curl only distinguishes tunnel routing from a down tunnel. Both hosts sit behind Cloudflare Access, so an unauthenticated curl often returns 302 to the Access login even when the tunnel and app are healthy. 200 or 302-to-Access means the host is reachable; a 302 is the Access gate, not tunnel-down. Tunnel-down is a refused connection or Cloudflare 502/530 (no origin).
 
 ```bash
 # agee.dev
@@ -103,7 +103,7 @@ curl -s -o /dev/null -w '%{http_code}' https://agee.dev/fleet
 curl -s -o /dev/null -w '%{http_code}' https://subs.agee.dev/
 ```
 
-If the local port answers but that public host is unreachable, the tunnel is down: restart the tunnel agent whose label matches the affected host from the host map. The label is `dev.agee.cloudflared-<name>`, where `<name>` is `root`, `subs`, `aos-ci`, or `aos-review`.
+If the local port answers but the public check is refused / 502 / 530, the tunnel is down: restart the tunnel agent whose label matches the affected host from the host map. The label is `dev.agee.cloudflared-<name>`, where `<name>` is `root`, `subs`, `aos-ci`, or `aos-review`.
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/dev.agee.cloudflared-<name>
@@ -117,7 +117,7 @@ Restarting the tunnel agent, not the app, is the fix for that case.
 `firstmate.agee.dev` (port 7860) was a standalone fleet dashboard that never landed on `main`.
 It was retired on 2026-08-24: its launchd agent and its process were removed, because the fleet view already lives at `agee.dev/fleet`.
 That server also answered `/api/snapshot`, which `agee.dev/fleet` fetched for its data, so retiring it moved the snapshot in-process into the dashboard app (`lib/fleet/snapshot.server.ts`) rather than dropping it.
-Its tunnel (`dev.agee.cloudflared-firstmate`, config `~/.cloudflared/firstmate-config.yml`) was stopped on 2026-08-24 and its launchd plist disabled (renamed to `.disabled`), so the host no longer resolves.
+Its tunnel (`dev.agee.cloudflared-firstmate`, config `~/.cloudflared/firstmate-config.yml`) was stopped on 2026-08-24 and its launchd plist disabled (renamed to `.disabled`), so nothing serves `firstmate.agee.dev`. Its DNS may still resolve to Cloudflare, which now returns an error / non-200 because no tunnel backs the host.
 To bring `firstmate.agee.dev` back, land the fleet-dashboard server on `main`, restore the plist, and start the tunnel again.
 
 ## Maintaining this file
