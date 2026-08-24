@@ -63,17 +63,47 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/
 ```
 
 The port must match the app just restarted. A 200 confirms that specific local app is up.
-To confirm the public host is reachable, curl `https://agee.dev/fleet` (or the public host you restarted) or check the tunnel (see "When a dashboard is unreachable").
+To confirm the public host is reachable, curl the public URL for the app you just restarted:
+
+```bash
+# agee.dev
+curl -s -o /dev/null -w '%{http_code}' https://agee.dev/fleet
+
+# subs.agee.dev
+curl -s -o /dev/null -w '%{http_code}' https://subs.agee.dev/
+```
+
+A 200 confirms that specific public host is reachable. If the local check is 200 and the public check is not, the tunnel is down (see "When a dashboard is unreachable").
 To confirm a specific code change is live, open the page in a browser.
 
 ## When a dashboard is unreachable
 
 The tunnel is a separate failure point from the local app, so check both.
-Curl the local port first: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/` (use the host's own port).
+Probe the local port of the host you are diagnosing:
+
+```bash
+# agee.dev
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet
+
+# subs.agee.dev
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/
+```
+
+A 200 on that port confirms that specific local app is up.
 
 If the local port does not answer, the app is down: rebuild and restart its server agent with the restart recipe above.
 
-If the local port answers but the public host is unreachable, the tunnel is down: restart the tunnel agent whose label matches the affected host from the host map. The label is `dev.agee.cloudflared-<name>`, where `<name>` is `root`, `subs`, `aos-ci`, or `aos-review`.
+If the local port answers, confirm the public host next:
+
+```bash
+# agee.dev
+curl -s -o /dev/null -w '%{http_code}' https://agee.dev/fleet
+
+# subs.agee.dev
+curl -s -o /dev/null -w '%{http_code}' https://subs.agee.dev/
+```
+
+If the local port answers but that public host is unreachable, the tunnel is down: restart the tunnel agent whose label matches the affected host from the host map. The label is `dev.agee.cloudflared-<name>`, where `<name>` is `root`, `subs`, `aos-ci`, or `aos-review`.
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/dev.agee.cloudflared-<name>
