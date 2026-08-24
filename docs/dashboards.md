@@ -29,27 +29,37 @@ Either can fail on its own, so both labels are listed.
 ## Restart recipe
 
 Both `agee.dev` and `subs.agee.dev` serve a production build, so a restart must rebuild first, then restart the launchd agent.
+Each app has its own checkout and its own launchd label, so use the block for the app you are restarting.
+
+For `agee.dev`:
 
 ```bash
-# 1. Build the current main in the primary checkout.
-cd ~/Sites/firstmate/projects/agee-dev-dashboard   # or projects/usage-tracker
+cd ~/Sites/firstmate/projects/agee-dev-dashboard
 git checkout main            # the checkout must be on main, not detached
 npm run build
+launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app
+```
 
-# 2. Restart the supervised service in place.
-launchctl kickstart -k gui/$(id -u)/dev.agee.dashboard-app   # or dev.agee.usage-tracker
+For `subs.agee.dev`:
+
+```bash
+cd ~/Sites/firstmate/projects/usage-tracker
+git checkout main
+npm run build
+launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker
 ```
 
 `launchctl kickstart -k` restarts the app without touching the Cloudflare tunnel, so the public host stays mapped through the few seconds of reboot.
 Serving a production build is what makes the restart pick up the current `main` reliably; `next dev` can keep serving a stale in-memory build after the code under it changes.
 
-To confirm `/fleet` is served on `agee.dev` after a restart:
+To confirm the local app is serving after a restart (a local health check, not a public-reachability check):
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet   # 200 confirms /fleet is served
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/fleet   # 200 means the local app serves /fleet
 ```
 
-A 200 confirms `/fleet` is served.
+A 200 confirms the local app is up.
+To confirm the public host is reachable, curl `https://agee.dev/fleet` or check the tunnel (see "When a dashboard is unreachable").
 To confirm a specific code change is live, open the page in a browser.
 
 ## When a dashboard is unreachable
