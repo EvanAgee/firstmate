@@ -112,6 +112,12 @@
 #   name from PATH once, probes that concrete path with --help, and launches the
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
+#   Both the probe and the launch run with the resolved executable's own directory
+#   first on PATH when that directory also holds `node`, so Pi's `env node` shebang
+#   cannot pick up a project's pinned Node; the project's Node is otherwise
+#   untouched. Crewmate and scout Pi launches also pass --no-extensions so a task
+#   worktree's project-local .pi extensions are never discovered, while the
+#   explicit -e sidecar still loads; a secondmate keeps discovery for its own home.
 #   A missing selected executable refuses before endpoint creation, and pi-signed
 #   never falls back to pi.
 #   config/secondmate-harness may also carry an optional model and effort as extra
@@ -152,6 +158,8 @@
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
+#                  (the launch is prefixed with that path's own directory on PATH
+#                  when it holds `node`, pinning Pi's interpreter)
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
 #     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
 #                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
@@ -1097,12 +1105,40 @@ resolve_pi_executable() {
   esac
 }
 
+# Pi ships as a `#!/usr/bin/env node` script, so its shebang resolves whatever
+# `node` is first on PATH in the crewmate pane, NOT the Node its install lives
+# under. A project that pins an older Node (an .nvmrc plus an nvm auto-switch in
+# the pane's shell rc) therefore runs Pi's own bundled dependencies on the wrong
+# runtime and Pi dies at import time, e.g. Node 20 against Pi 0.84.2's undici:
+# "TypeError: webidl.util.markAsUncloneable is not a function".
+#
+# Derive the interpreter directory from the resolved executable itself rather
+# than pinning a version: an nvm/Volta/asdf install puts `node` in the very same
+# bin directory as the `pi` entry point, so prepending that directory puts the
+# owning Node ahead of the project's pinned one for Pi and for anything Pi
+# spawns. It prints nothing when that directory holds no `node`, which covers a
+# standalone or system install that needs no pin. The project's own Node is
+# untouched: only the agent process gets the prefixed PATH.
+pi_interpreter_dir() {
+  local executable=$1 dir
+  dir=$(dirname -- "$executable")
+  [ -x "$dir/node" ] || return 0
+  printf '%s\n' "$dir"
+}
+
 # Pi's CLI surface is version-dependent, so probe the resolved executable's help
 # before composing the optional regular-TUI flag. An absent or inconclusive probe
-# omits the flag so older Pi versions can still spawn.
+# omits the flag so older Pi versions can still spawn. The probe runs under the
+# same pinned interpreter as the launch, so a repo Node pin cannot crash it into
+# silently dropping a flag the installed Pi does support.
 pi_supports_tui_mode() {
-  local executable=$1 help
-  help=$("$executable" --help 2>&1) || return 1
+  local executable=$1 help dir
+  dir=$(pi_interpreter_dir "$executable")
+  if [ -n "$dir" ]; then
+    help=$(PATH="$dir:$PATH" "$executable" --help 2>&1) || return 1
+  else
+    help=$("$executable" --help 2>&1) || return 1
+  fi
   printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:]])--tui-mode([[:space:]=]|$)'
 }
 
@@ -1130,12 +1166,22 @@ launch_template() {
       fi
       ;;
     opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # A secondmate runs as a PRIMARY in its own firstmate home, so it keeps
+    # extension discovery and picks up that home's .pi/extensions. A crewmate or
+    # scout does NOT: its task worktree is a disposable copy of the project, and
+    # when the project is firstmate itself that copy carries firstmate's tracked
+    # primary-only extensions, which are written for a primary session and some
+    # of which import omp's packages rather than Pi's. Discovering them in a crew
+    # pane kills the launch (a "Require stack" failure that drops the pane to a
+    # raw shell). --no-extensions disables DISCOVERY only; the explicit -e sidecar
+    # below still loads, so the per-task turn-end signal is unaffected. This never
+    # touches the project's own .pi directory.
     pi|pi-signed)
       printf '%s' '__PIBIN____PITUIMODE__'
       if [ "$kind" = secondmate ]; then
         printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       else
-        printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' ' __MODELFLAG____EFFORTFLAG__--no-extensions -e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       fi
       ;;
     omp)
@@ -1257,6 +1303,12 @@ case "$HARNESS" in
     fi
     LAUNCH=${LAUNCH//__PITUIMODE__/$PI_TUI_MODE}
     LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH"
+    # Pin Pi to the Node that owns its install ahead of any project Node pin the
+    # pane's shell rc auto-switches to (see pi_interpreter_dir above).
+    PI_NODE_DIR=$(pi_interpreter_dir "$PI_BIN")
+    if [ -n "$PI_NODE_DIR" ]; then
+      LAUNCH="PATH=$(shell_quote "$PI_NODE_DIR"):\"\$PATH\" $LAUNCH"
+    fi
     ;;
   omp)
     OMP_BIN=$(resolve_pi_executable "omp") || {
