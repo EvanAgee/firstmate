@@ -74,6 +74,36 @@ run_guard_case_autoarm() {
     "$ROOT/bin/fm-guard.sh" 2>&1
 }
 
+# Pin harness identity for the Claude-only successor-gap banner. Cursor also
+# maps to autoarm, so tests that name that gap must not inherit the host's
+# Cursor/Claude markers.
+run_guard_case_autoarm_as() {
+  local dir=$1 harness=$2
+  case "$harness" in
+    claude)
+      env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GROK_AGENT -u OMPCODE -u PI_CODING_AGENT \
+        CLAUDECODE=1 \
+        FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+        FM_HOME="$(case_home "$dir")" \
+        FM_GUARD_GRACE=999 \
+        FM_SUPERVISION_MODEL=autoarm \
+        "$ROOT/bin/fm-guard.sh" 2>&1
+      ;;
+    cursor)
+      env -u CLAUDECODE -u CURSOR_INVOKED_AS -u GROK_AGENT -u OMPCODE -u PI_CODING_AGENT \
+        CURSOR_AGENT=1 \
+        FM_ROOT_OVERRIDE="$(case_root "$dir")" \
+        FM_HOME="$(case_home "$dir")" \
+        FM_GUARD_GRACE=999 \
+        FM_SUPERVISION_MODEL=autoarm \
+        "$ROOT/bin/fm-guard.sh" 2>&1
+      ;;
+    *)
+      fail "run_guard_case_autoarm_as: unknown harness $harness"
+      ;;
+  esac
+}
+
 # The Pi extension model: .pi/extensions/fm-primary-pi-watch.ts tears the watcher
 # down on every actionable wake and spawns the replacement itself, so the lock is
 # legitimately unheld during a hand-off.
@@ -387,29 +417,60 @@ test_autoarm_stale_beacon_alarms_with_correct_reason() {
   pass "fm-guard stale banner: auto-arm stale beacon alarms with the true reason"
 }
 
-# A stale beacon on an auto-arm home whose latest epoch is a SUCCESSFUL rewake is
-# the design-induced successor gap: the between-turns watcher closed cleanly and
-# woke the handling turn, and the next cycle only arms when that turn ends. The
-# banner must name that cause, keep saying supervision is genuinely absent, and
-# stop telling the operator to inspect hook registration - which is fine.
+# A stale beacon on a Claude auto-arm home whose latest epoch is a SUCCESSFUL
+# rewake is the design-induced successor gap: expected while the handling turn
+# still runs past grace, but also possible if the next Stop never armed. The
+# banner must name that cause, keep saying supervision is genuinely absent, name
+# the possible hook-arm failure, and never claim the hook is definitely fine.
 test_autoarm_rewake_gap_names_design_gap_not_hook_repair() {
   local dir home out
   dir=$(make_guard_case autoarm-rewake-gap)
   home=$(case_home "$dir")
   printf 'epoch=7 owner_pid=4242 outcome=rewake updated_at=%s\n' "1700000000" \
     > "$home/state/.claude-autoarm-epoch"
-  out=$(run_guard_case_autoarm "$dir")
+  out=$(run_guard_case_autoarm_as "$dir" claude)
   [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
     || fail "the successor gap must still raise the watcher-down banner: $out"
   assert_contains "$out" "design-induced supervision gap after a successful rewake" \
     "the rewake-gap banner must name the design-induced successor gap"
   assert_contains "$out" "Supervision IS absent during this gap; it is not harmless" \
     "the rewake-gap banner must state supervision is genuinely absent, not harmless"
+  assert_contains "$out" "auto-arm hook may have failed to arm the successor" \
+    "the rewake-gap banner must name the possible hook-arm failure"
+  assert_contains "$out" "check the Stop hook" \
+    "the rewake-gap banner must tell the operator to check the hook"
   assert_not_contains "$out" "hook registration" \
-    "the rewake-gap banner must not send the operator to repair hook registration"
+    "the rewake-gap banner must not send the operator to the ordinary hook-registration repair"
+  assert_not_contains "$out" "nothing needs repair" \
+    "the rewake-gap banner must not claim nothing needs repair"
+  assert_not_contains "$out" "auto-arm is working" \
+    "the rewake-gap banner must not claim the hook is definitely fine"
   assert_not_contains "$out" "false alarm" \
     "the rewake-gap banner must never call the gap a false alarm"
-  pass "fm-guard stale banner: a successful-rewake gap names the design gap, not a hook repair"
+  pass "fm-guard stale banner: Claude rewake gap names the design gap and a possible hook-arm failure"
+}
+
+# Cursor also uses the autoarm model, but the successor-gap banner is Claude-only.
+# A Cursor home with a leftover rewake epoch and a stale beacon must keep the
+# ordinary stale-beacon banner and its hook-registration repair line.
+test_cursor_rewake_epoch_keeps_ordinary_banner() {
+  local dir home out
+  dir=$(make_guard_case cursor-rewake-ordinary)
+  home=$(case_home "$dir")
+  printf 'epoch=7 owner_pid=4242 outcome=rewake updated_at=%s\n' "1700000000" \
+    > "$home/state/.claude-autoarm-epoch"
+  out=$(run_guard_case_autoarm_as "$dir" cursor)
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "a Cursor auto-arm stale beacon must still alarm: $out"
+  assert_contains "$out" "no watcher has a fresh beacon" \
+    "a Cursor rewake leftover must keep the ordinary stale-beacon reason"
+  assert_contains "$out" "hook registration" \
+    "a Cursor rewake leftover must keep the ordinary hook-registration repair line"
+  assert_not_contains "$out" "design-induced supervision gap" \
+    "the design-gap wording must not appear for Cursor"
+  assert_not_contains "$out" "auto-arm hook may have failed to arm the successor" \
+    "the Claude successor-gap check line must not appear for Cursor"
+  pass "fm-guard stale banner: Cursor keeps the ordinary banner for a leftover rewake"
 }
 
 # The rewake-gap wording is scoped to a SUCCESSFUL rewake outcome. An auto-arm home
@@ -799,6 +860,7 @@ test_extension_live_watcher_is_healthy_without_ownership_evidence
 test_autoarm_fresh_beacon_without_watcher_is_healthy
 test_autoarm_stale_beacon_alarms_with_correct_reason
 test_autoarm_rewake_gap_names_design_gap_not_hook_repair
+test_cursor_rewake_epoch_keeps_ordinary_banner
 test_autoarm_non_rewake_epoch_keeps_ordinary_banner
 test_persistent_model_ignores_rewake_epoch
 test_autoarm_stale_episode_is_stable
