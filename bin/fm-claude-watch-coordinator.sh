@@ -39,7 +39,11 @@
 # record only after the readiness line proves the successor is live, then waits on
 # the arm. When the arm closes actionable, that closed cycle's wake is already in
 # the durable queue; the coordinator arms the next successor before the notifier
-# surfaces anything, so the fleet is never blind.
+# surfaces anything, so the fleet is never blind. A confirmed successor resets the
+# readiness-timeout streak; after FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK
+# consecutive timeouts with no healthy watcher (default 3), this hook releases its
+# lock, removes its generation file, and exits so the notifier's coordinator-absent
+# failure can run.
 #
 # Scope, identity, AFK, need, and stale-session-lock recovery gates are identical
 # to the notifier and the turn-end guard, so an idle, away, child, or foreign-host
@@ -79,6 +83,10 @@ WATCH="$SCRIPT_DIR/fm-watch.sh"
 # pin the loop, and it must exceed the arm's own confirmation budget with margin.
 READY_TIMEOUT=${FM_CLAUDE_COORD_READY_TIMEOUT:-30}
 case "$READY_TIMEOUT" in ''|*[!0-9]*|0) READY_TIMEOUT=30 ;; esac
+# Consecutive successor-timeouts with no healthy watcher before this coordinator
+# stands down so a live-but-failing owner cannot park the notifier forever.
+SUCCESSOR_TIMEOUT_LIMIT=${FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK:-3}
+case "$SUCCESSOR_TIMEOUT_LIMIT" in ''|*[!0-9]*|0) SUCCESSOR_TIMEOUT_LIMIT=3 ;; esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
@@ -323,6 +331,7 @@ spawn_arm() {  # <predecessor_arm_pid>
 # successor was armed before the notifier surfaces it. Re-check need, AFK, and
 # session ownership every turn.
 PREDECESSOR_ARM_PID=none
+SUCCESSOR_TIMEOUT_STREAK=0
 while :; do
   [ -e "$STATE/.afk" ] && { cycle_ledger_note afk; exit 0; }
   need_supervision || { cycle_ledger_note idle; exit 0; }
@@ -335,14 +344,24 @@ while :; do
   # and is not prematurely marked notifiable.
   READY_SEQ=$(wake_seq_value)
   if wait_for_successor_ready "$OUT"; then
+    SUCCESSOR_TIMEOUT_STREAK=0
     publish_ready "$READY_SEQ" "$PREDECESSOR_ARM_PID"
     cycle_ledger_note successor-ready
   else
     # Readiness failed or the arm died before confirming a live watcher. Leave no
-    # false ready record. The notifier's typed successor-readiness path and the
-    # turn-end guard cover the gap. Reap and retry.
+    # false ready record. After a bounded streak of consecutive timeouts with no
+    # healthy watcher, stand down so the notifier's coordinator-absent path runs.
     cycle_ledger_note successor-timeout
     reap_arm
+    if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
+      SUCCESSOR_TIMEOUT_STREAK=0
+    else
+      SUCCESSOR_TIMEOUT_STREAK=$((SUCCESSOR_TIMEOUT_STREAK + 1))
+      if [ "$SUCCESSOR_TIMEOUT_STREAK" -ge "$SUCCESSOR_TIMEOUT_LIMIT" ]; then
+        cycle_ledger_note successor-timeout-exhausted
+        exit 0
+      fi
+    fi
     # Brief backoff so a persistently failing arm cannot spin the loop hot.
     sleep 1
     continue

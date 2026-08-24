@@ -507,6 +507,124 @@ test_coordinator_stands_down_on_session_handover() {
   pass "coordinator: stands down cleanly when a new session generation owns the session lock"
 }
 
+# --- 9. a persistent successor-confirm failure stands the coordinator down -----
+# A live coordinator that never confirms a successor used to park the notifier
+# forever and let the turn-end guard allow a blind Stop. After a bounded streak
+# of consecutive successor-timeouts with no healthy watcher, the coordinator must
+# release its lock and exit so the existing coordinator-absent notifier/guard
+# progression can run.
+test_coordinator_stands_down_after_successor_timeout_streak() {
+  local dir session lock_holder coord notif n2 i gout grc
+  dir=$(make_home successor-timeout-standdown)
+  printf 'window=x\n' > "$dir/state/task.meta"
+  printf 'working: go\n' > "$dir/state/task.status"
+  prime_seen "$dir" "$dir/state/task.status"
+
+  # One session-owning claude holds .lock and launches both hooks as children, so
+  # identity matches a real Stop. A live non-watcher holds the watch lock so the
+  # REAL arm/watch never confirm a successor.
+  # shellcheck disable=SC2046
+  env $(home_env "$dir") PATH="$dir/fakebin:$PATH" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_COORDINATOR="$COORDINATOR" FM_NOTIFIER="$NOTIFIER" \
+    "$dir/fakebin/claude" -c '
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      sleep 180 &
+      printf "%s\n" "$!" > "$FM_HOME/state/watch-holder.pid"
+      mkdir -p "$FM_HOME/state/.watch.lock"
+      printf "%s\n" "$!" > "$FM_HOME/state/.watch.lock/pid"
+      env FM_ARM_CONFIRM_TIMEOUT=1 FM_CLAUDE_COORD_READY_TIMEOUT=1 \
+        FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK=3 \
+        bash "$FM_COORDINATOR" </dev/null >"$FM_HOME/coord.out" 2>&1 &
+      printf "%s\n" "$!" > "$FM_HOME/state/coord.pid"
+      printf "%s\n" "{\"session_id\":\"standdown\"}" | env FM_CLAUDE_NOTIFIER_COORD_WAIT=4 \
+        FM_CLAUDE_NOTIFIER_PARK_POLL=0.2 \
+        bash "$FM_NOTIFIER" >"$FM_HOME/notif.out" 2>"$FM_HOME/notif.err" &
+      printf "%s\n" "$!" > "$FM_HOME/state/notif.pid"
+      wait "$!"
+      printf "%s\n" "$?" > "$FM_HOME/state/notif.rc"
+      sleep 180
+    ' </dev/null &
+  session=$!
+
+  wait_file "$dir/state/.claude-coordinator.lock/pid" 200 \
+    || { stop_bg "$session"; fail "coordinator never claimed its lock before the failing-arm streak"; }
+  lock_holder=$(cat "$dir/state/watch-holder.pid" 2>/dev/null || true)
+  coord=$(cat "$dir/state/coord.pid" 2>/dev/null || true)
+  notif=$(cat "$dir/state/notif.pid" 2>/dev/null || true)
+  [ -n "$coord" ] && [ -n "$notif" ] && [ -n "$lock_holder" ] \
+    || { stop_bg "$session"; fail "session did not record coordinator, notifier, and watch-lock holder pids"; }
+
+  i=0
+  while [ "$i" -lt 250 ] && kill -0 "$coord" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$coord" 2>/dev/null; then
+    stop_bg "$session"
+    fail "coordinator did not stand down after a bounded successor-timeout streak"
+  fi
+  wait "$coord" 2>/dev/null || true
+  [ ! -e "$dir/state/.claude-coordinator.lock" ] \
+    || { stop_bg "$session"; fail "coordinator stood down but left .claude-coordinator.lock behind"; }
+  [ ! -e "$dir/state/.claude-coordinator-generation" ] \
+    || { stop_bg "$session"; fail "coordinator stood down but left its generation file behind"; }
+  [ ! -e "$dir/state/.claude-ready-to-notify" ] \
+    || { stop_bg "$session"; fail "a failing-arm coordinator published a ready record"; }
+  [ "$(watch_pid "$dir")" = "$lock_holder" ] \
+    || { stop_bg "$session"; fail "a failing-arm cycle took the watch lock"; }
+
+  i=0
+  while [ "$i" -lt 120 ] && kill -0 "$notif" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$notif" 2>/dev/null; then
+    stop_bg "$session"
+    fail "parked notifier never surfaced a coordinator-absent failure after stand-down"
+  fi
+  wait_file "$dir/state/notif.rc" 50 \
+    || { stop_bg "$session"; fail "session never recorded the parked notifier exit code"; }
+  expect_code 2 "$(cat "$dir/state/notif.rc")" "the parked notifier must exit 2 with a typed coordinator-absent failure"
+  assert_contains "$(cat "$dir/notif.err")" "supervision DEGRADED" "stand-down must surface the typed degraded-supervision failure"
+  [ "$(sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$dir/state/.claude-autoarm-epoch" 2>/dev/null || true)" = failed ] \
+    || { stop_bg "$session"; fail "coordinator-absent notifier failure must record outcome=failed"; }
+  [ -e "$dir/state/.claude-autoarm-failure-notified" ] \
+    || { stop_bg "$session"; fail "coordinator-absent notifier failure must write the guard's episode notice"; }
+
+  # A consecutive coordinator-absent firing records failed-suppressed. The first
+  # failed epoch owns its automatic handoff; the later one is what must make an
+  # idle Stop consume the guard's block instead of going idle unsupervised.
+  # shellcheck disable=SC2046
+  printf '%s\n' '{"session_id":"standdown"}' | env $(home_env "$dir") PATH="$dir/fakebin:$PATH" \
+    FM_NOTIFIER="$NOTIFIER" FM_CLAUDE_NOTIFIER_COORD_WAIT=1 FM_CLAUDE_NOTIFIER_PARK_POLL=0.2 \
+    "$dir/fakebin/claude" -c '
+      printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+      bash "$FM_NOTIFIER"
+    ' >"$dir/n2.out" 2>"$dir/n2.err" &
+  n2=$!
+  i=0
+  while [ "$i" -lt 80 ] && kill -0 "$n2" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$n2" 2>/dev/null; then
+    stop_bg "$n2" "$session"
+    fail "second notifier firing stayed parked after coordinator stand-down"
+  fi
+  wait "$n2" 2>/dev/null || true
+
+  gout=$(printf '%s\n' '{"session_id":"standdown","stop_hook_active":false}' \
+    | env FM_ROOT_OVERRIDE="$dir" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+        PATH="$dir/fakebin:$PATH" FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=300 \
+        "$dir/fakebin/claude" -c '"$FM_ROOT_OVERRIDE/bin/fm-turnend-guard.sh" --claude' 2>&1)
+  grc=$?
+  expect_code 2 "$grc" "after coordinator stand-down the turn-end guard must block an idle Stop"
+  assert_contains "$gout" "SUPERVISION IS OFF" "the blocked idle Stop must carry the off-supervision banner"
+
+  stop_bg "$session"
+  pass "coordinator: stands down after a bounded successor-timeout streak so the guard blocks an idle Stop"
+}
+
 test_successor_verified_before_ready_publish
 test_live_watcher_across_long_turn
 test_actionable_close_rearms_and_republishes
@@ -515,3 +633,4 @@ test_duplicate_rows_one_handling_event
 test_single_coordinator_owner
 test_coordinator_lock_does_not_satisfy_guard
 test_coordinator_stands_down_on_session_handover
+test_coordinator_stands_down_after_successor_timeout_streak
