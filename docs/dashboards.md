@@ -73,7 +73,8 @@ Restarting the tunnel agent, not the app, is the fix for that case.
 `firstmate.agee.dev` (port 7860) was a standalone fleet dashboard that never landed on `main`.
 It was retired on 2026-08-24: its launchd agent and its process were removed, because the fleet view already lives at `agee.dev/fleet`.
 That server also answered `/api/snapshot`, which `agee.dev/fleet` fetched for its data, so retiring it moved the snapshot in-process into the dashboard app (`lib/fleet/snapshot.server.ts`) rather than dropping it.
-Its tunnel (`dev.agee.cloudflared-firstmate`, config `~/.cloudflared/firstmate-config.yml`) points at the now-dead port and can be stopped once the captain confirms the host is not wanted back.
+Its tunnel (`dev.agee.cloudflared-firstmate`, config `~/.cloudflared/firstmate-config.yml`) was stopped on 2026-08-24 and its launchd plist disabled (renamed to `.disabled`), so the host no longer resolves.
+To bring `firstmate.agee.dev` back, land the fleet-dashboard server on `main`, restore the plist, and start the tunnel again.
 
 ## Maintaining this file
 
