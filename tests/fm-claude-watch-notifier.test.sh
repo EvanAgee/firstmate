@@ -436,6 +436,100 @@ test_active_in_marked_secondmate_home() {
   pass "notifier: active in a marked secondmate home"
 }
 
+test_rejects_handover_between_identity_and_owner_read() {
+  local dir other session_a rc i
+  dir=$(make_primary_dir "$TMP_ROOT/handover-startup")
+  : > "$dir/state/task.meta"
+  "$FAKE_CLAUDE" -c 'sleep 60; :' &
+  other=$!
+  rm -f "$dir/state/.lock"
+  mkfifo "$dir/state/.lock"
+  FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+    printf "%s\n" "$$" > "$FM_HOME/state/session-a"
+    env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" \
+      >"$FM_HOME/state/n.out" 2>"$FM_HOME/state/n.err"
+    echo "$?" > "$FM_HOME/state/n.rc"
+  ' </dev/null &
+  i=0
+  while [ ! -f "$dir/state/session-a" ]; do
+    if [ "$i" -ge 100 ] || ! kill -0 $! 2>/dev/null; then
+      kill "$other" $! 2>/dev/null || true
+      fail "session A never started before the identity FIFO write"
+    fi
+    sleep 0.05
+    i=$((i + 1))
+  done
+  session_a=$(cat "$dir/state/session-a")
+  # Identity gate reads the FIFO first and must still see this session.
+  printf '%s\n' "$session_a" > "$dir/state/.lock"
+  # After that read, the lock belongs to the other live session so the post-claim
+  # SESSION_OWNER copy cannot adopt the new pid and later exit 2 in A.
+  rm -f "$dir/state/.lock"
+  printf '%s\n' "$other" > "$dir/state/.lock"
+  write_ready "$dir" "$other" 7
+  i=0
+  while [ ! -f "$dir/state/n.rc" ]; do
+    if [ "$i" -ge 100 ]; then
+      kill "$other" 2>/dev/null || true
+      fail "notifier never exited after a post-identity session handover"
+    fi
+    sleep 0.05
+    i=$((i + 1))
+  done
+  rc=$(cat "$dir/state/n.rc")
+  kill "$other" 2>/dev/null || true
+  wait "$other" 2>/dev/null || true
+  expect_code 0 "$rc" "a handover between identity and SESSION_OWNER must stand down (exit 0), not wake session A"
+  [ ! -e "$dir/state/.claude-autoarm.lock" ] || fail "handover stand-down must release the owner lock"
+  [ ! -e "$dir/state/.claude-autoarm-epoch" ] || fail "handover stand-down must not park or record an epoch"
+  [ ! -e "$dir/state/.claude-notifier-surfaced-seq" ] || fail "handover stand-down must not surface the new session's ready record"
+  case "$(cat "$dir/state/n.err" 2>/dev/null || true)" in
+    *"firstmate watcher wake"*) fail "handover stand-down must not print a rewake banner in session A" ;;
+  esac
+  pass "notifier: rejects a session handover between the identity gate and SESSION_OWNER read"
+}
+
+test_rejects_empty_owner_after_claim() {
+  local dir session_a rc i
+  dir=$(make_primary_dir "$TMP_ROOT/empty-owner-startup")
+  : > "$dir/state/task.meta"
+  rm -f "$dir/state/.lock"
+  mkfifo "$dir/state/.lock"
+  FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+    printf "%s\n" "$$" > "$FM_HOME/state/session-a"
+    env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" \
+      >"$FM_HOME/state/n.out" 2>"$FM_HOME/state/n.err"
+    echo "$?" > "$FM_HOME/state/n.rc"
+  ' </dev/null &
+  i=0
+  while [ ! -f "$dir/state/session-a" ]; do
+    if [ "$i" -ge 100 ] || ! kill -0 $! 2>/dev/null; then
+      kill $! 2>/dev/null || true
+      fail "session A never started before the empty-owner FIFO write"
+    fi
+    sleep 0.05
+    i=$((i + 1))
+  done
+  session_a=$(cat "$dir/state/session-a")
+  printf '%s\n' "$session_a" > "$dir/state/.lock"
+  rm -f "$dir/state/.lock"
+  : > "$dir/state/.lock"
+  write_ready "$dir" "$session_a" 7
+  i=0
+  while [ ! -f "$dir/state/n.rc" ]; do
+    if [ "$i" -ge 100 ]; then
+      fail "notifier never exited after a missing/non-numeric SESSION_OWNER"
+    fi
+    sleep 0.05
+    i=$((i + 1))
+  done
+  rc=$(cat "$dir/state/n.rc")
+  expect_code 0 "$rc" "an empty SESSION_OWNER after the owner-lock claim must stand down (exit 0)"
+  [ ! -e "$dir/state/.claude-autoarm.lock" ] || fail "empty-owner stand-down must release the owner lock"
+  [ ! -e "$dir/state/.claude-autoarm-epoch" ] || fail "empty-owner stand-down must not park or record an epoch"
+  pass "notifier: rejects an empty SESSION_OWNER after claiming the owner lock"
+}
+
 test_fm_lock_status_still_works_with_shared_lib() {
   local out
   out=$(FM_HOME="$TMP_ROOT/lock-status-home" bash "$ROOT/bin/fm-lock.sh" status 2>&1)
@@ -459,4 +553,6 @@ test_afk_mid_park_exits_clean
 test_single_flight_admits_one_owner
 test_parent_term_records_interrupted
 test_active_in_marked_secondmate_home
+test_rejects_handover_between_identity_and_owner_read
+test_rejects_empty_owner_after_claim
 test_fm_lock_status_still_works_with_shared_lib

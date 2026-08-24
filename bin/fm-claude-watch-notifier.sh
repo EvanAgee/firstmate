@@ -160,6 +160,10 @@ if ! fm_lock_set_role "$OWNER_LOCK" notifier; then
 fi
 
 SESSION_OWNER=$(cat "$STATE/.lock" 2>/dev/null || true)
+case "$SESSION_OWNER" in
+  ''|*[!0-9]*) fm_lock_release "$OWNER_LOCK"; exit 0 ;;
+esac
+fm_session_lock_owned_by_self "$STATE" || { fm_lock_release "$OWNER_LOCK"; exit 0; }
 
 write_epoch() {  # <outcome>
   local outcome=$1 seq tmp
