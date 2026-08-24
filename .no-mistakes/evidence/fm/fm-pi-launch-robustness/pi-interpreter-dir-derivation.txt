@@ -1,0 +1,9 @@
+=== derive node from resolved pi install prefix (real binaries) ===
+resolved pi: /Users/evanagee/.nvm/versions/node/v22.22.0/bin/pi
+readlink: ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js
+pi_interpreter_dir: /Users/evanagee/.nvm/versions/node/v22.22.0/bin
+sibling node: /Users/evanagee/.nvm/versions/node/v22.22.0/bin/node
+sibling node version: v22.22.0
+
+=== standalone-style install with no sibling node ===
+pi_interpreter_dir(/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.3Yfqmc6Asz/pi)=[] (empty means no invented pin)

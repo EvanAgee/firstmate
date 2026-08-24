@@ -1,0 +1,56 @@
+=== which/real paths ===
+pi: /Users/evanagee/.nvm/versions/node/v22.22.0/bin/pi -> ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js
+node20: /Users/evanagee/.nvm/versions/node/v20.19.6/bin/node v20.19.6
+node22: /Users/evanagee/.nvm/versions/node/v22.22.0/bin/node v22.22.0
+
+=== Failure 1: pi shebang under Node 20.19.6 (repo pin) ===
+command: PATH=/Users/evanagee/.nvm/versions/node/v20.19.6/bin:$PATH /Users/evanagee/.nvm/versions/node/v22.22.0/bin/pi --version
+/Users/evanagee/.nvm/versions/node/v22.22.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/lib/web/cache/cachestorage.js:20
+    webidl.util.markAsUncloneable(this)
+                ^
+
+TypeError: webidl.util.markAsUncloneable is not a function
+    at new CacheStorage (/Users/evanagee/.nvm/versions/node/v22.22.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/lib/web/cache/cachestorage.js:20:17)
+    at Object.<anonymous> (/Users/evanagee/.nvm/versions/node/v22.22.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/index.js:179:25)
+    at Module._compile (node:internal/modules/cjs/loader:1521:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)
+    at Module.load (node:internal/modules/cjs/loader:1266:32)
+    at Module._load (node:internal/modules/cjs/loader:1091:12)
+    at cjsLoader (node:internal/modules/esm/translators:298:15)
+    at ModuleWrap.<anonymous> (node:internal/modules/esm/translators:240:7)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+
+Node.js v20.19.6
+exit: 0
+
+=== Fix: prepend pi install bin dir so env node resolves v22 ===
+command: PATH=/Users/evanagee/.nvm/versions/node/v22.22.0/bin:$PATH /Users/evanagee/.nvm/versions/node/v22.22.0/bin/pi --version
+0.84.2
+exit: 0
+
+=== Same via node <script> for comparison ===
+/Users/evanagee/.nvm/versions/node/v22.22.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/lib/web/cache/cachestorage.js:20
+    webidl.util.markAsUncloneable(this)
+                ^
+
+TypeError: webidl.util.markAsUncloneable is not a function
+    at new CacheStorage (/Users/evanagee/.nvm/versions/node/v22.22.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/lib/web/cache/cachestorage.js:20:17)
+    at Object.<anonymous> (/Users/evanagee/.nvm/versions/node/v22.22.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/index.js:179:25)
+    at Module._compile (node:internal/modules/cjs/loader:1521:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)
+    at Module.load (node:internal/modules/cjs/loader:1266:32)
+    at Module._load (node:internal/modules/cjs/loader:1091:12)
+    at cjsLoader (node:internal/modules/esm/translators:298:15)
+    at ModuleWrap.<anonymous> (node:internal/modules/esm/translators:240:7)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+
+Node.js v20.19.6
+---
+0.84.2
+
+=== pi --help flags of interest ===
+  --extension, -e <path>         Load an extension file (can be used multiple times)
+  --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
+  --tui-mode <mode>              TUI mode: regular (default) or fullscreen

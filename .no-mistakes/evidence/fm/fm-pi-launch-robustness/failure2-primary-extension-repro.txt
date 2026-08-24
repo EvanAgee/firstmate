@@ -1,0 +1,30 @@
+=== cwd ===
+/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0TV0Z65JH69CXP0DFGC5PRQ
+=== tracked primary extensions ===
+fm-calm.ts
+fm-primary-omp-turnend-guard.ts
+fm-primary-omp-watch.ts
+fm-primary-pi-watch.ts
+fm-primary-turnend-guard.ts
+lib
+
+=== Failure 2: discover project .pi/extensions ===
+command: /Users/evanagee/.nvm/versions/node/v22.22.0/bin/pi --print --no-session --offline --no-tools --no-skills --no-prompt-templates --session-dir /Users/evanagee/.no-mistakes/evidence/01M0TV0Z65JH69CXP0DFGC5PRQ/pi-session-scratch --approve -p ping
+Error: Failed to load extension "/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0TV0Z65JH69CXP0DFGC5PRQ/.pi/extensions/fm-primary-omp-watch.ts": Failed to load extension: Cannot find module '@oh-my-pi/pi-tui'
+Require stack:
+- /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0TV0Z65JH69CXP0DFGC5PRQ/.pi/extensions/fm-primary-omp-watch.ts
+Hint: Start without extensions using "pi -ne".
+exit: 1
+
+=== Fix: --no-extensions disables discovery ===
+command: /Users/evanagee/.nvm/versions/node/v22.22.0/bin/pi --print --no-session --offline --no-tools --no-skills --no-prompt-templates --session-dir /Users/evanagee/.no-mistakes/evidence/01M0TV0Z65JH69CXP0DFGC5PRQ/pi-session-scratch --no-extensions --approve -p ping
+Captain, all quiet on deck. Ready when you are.
+exit: 0
+
+=== .pi/extensions still present (not deleted/moved) ===
+fm-calm.ts
+fm-primary-omp-turnend-guard.ts
+fm-primary-omp-watch.ts
+fm-primary-pi-watch.ts
+fm-primary-turnend-guard.ts
+lib
