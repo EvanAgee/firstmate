@@ -102,7 +102,9 @@
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
+#   profile consultation, and a spawn naming a rung that file marks "enabled": false
+#   is refused outright - a switched-off rung is a hard lock, not a preference.
+#   A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|omp|pi|pi-signed|grok|kimi|cursor|muse)
@@ -1354,6 +1356,42 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
       esac
     fi
   fi
+fi
+
+# A rung the captain switched off in config/crew-dispatch.json is a HARD lock:
+# refuse a crewmate/scout spawn that names it, rather than trusting every caller
+# to have filtered the ladder first. The check is deliberately CONCRETE - it
+# matches the resolved harness/model/effort tuple against the file's own rungs,
+# so it cannot be satisfied by a near-miss. A tuple that appears nowhere in the
+# file is NOT refused here: an explicit off-ladder profile stays the captain's
+# call, and only a rung the file actually marks off is blocked. Secondmate
+# spawns are exempt for the same reason they skip the consultation backstop:
+# they resolve through config/secondmate-harness, not the ladders.
+dispatch_rung_disabled() {
+  local file=$1 harness=$2 model=$3 effort=$4
+  [ -f "$file" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -e -n --slurpfile cfg "$file" \
+    --arg h "$harness" --arg m "$model" --arg e "$effort" '
+    def profiles($value):
+      if ($value | type) == "array" then $value
+      elif ($value | type) == "object" then [$value]
+      else [] end;
+    def matches($p):
+      (($p.harness // "") == $h)
+      and (($p.model // "") == $m)
+      and (($p.effort // "") == $e);
+    ($cfg[0] // {}) as $c
+    | ([($c.rules // [])[]? | profiles(.use?)[]?] + [profiles($c.default // [])[]?])
+    | map(select(matches(.)))
+    | (length > 0) and all(.enabled? == false)
+  ' >/dev/null 2>&1
+}
+
+if [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-dispatch.json" ] \
+  && dispatch_rung_disabled "$CONFIG/crew-dispatch.json" "$HARNESS" "$MODEL" "$EFFORT"; then
+  echo "error: that rung is switched off in config/crew-dispatch.json (harness=$HARNESS model=${MODEL:-<default>} effort=${EFFORT:-<default>}) - pick an enabled rung, or ask the captain to turn this one back on." >&2
+  exit 1
 fi
 
 secondmate_registry_value() {

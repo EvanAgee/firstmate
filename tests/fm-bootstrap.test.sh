@@ -1093,6 +1093,27 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
 
+test_crew_dispatch_switched_off_rungs_are_marked_in_verbose_facts() {
+  local case_dir fakebin out expect
+  case_dir="$TMP_ROOT/dispatch-off-marked"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' '{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5.5","effort":"high"}]}],"default":[{"harness":"pi","model":"xai/grok-4.6","enabled":false},{"harness":"codex"}]}' > "$case_dir/home/config/crew-dispatch.json"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "a partly switched-off ladder should stay silent by default, got: $out"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_BOOTSTRAP_VERBOSE_FACTS=1 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+
+  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch rule: big feature -> quota-balanced[claude/opus/high (off), codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch default: quota-balanced[pi/xai/grok-4.6 (off), codex]'
+  [ "$out" = "$expect" ] || fail "switched-off rungs should be marked (off) in verbose facts"$'\n'"expected: $expect"$'\n'"actual:   $out"
+  pass "bootstrap marks switched-off crew-dispatch rungs in verbose facts"
+}
+
 test_crew_dispatch_validation() {
   local label body expect mode case_dir fakebin out n
   n=0
@@ -1146,6 +1167,15 @@ empty default array is flagged^{"default":[]}^exact^CREW_DISPATCH: invalid confi
 non-object default array entry is flagged^{"default":["codex"]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile must be an object
 default array profile without harness is flagged^{"default":[{"model":"gpt-5.5"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile needs harness
 default array malformed effort is flagged^{"default":[{"harness":"codex","effort":3}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings when present
+rung without enabled key is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high"}]}]}^empty^
+rung enabled true is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":true}]}]}^empty^
+one switched-off rung beside an on rung is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"opus","enabled":false},{"harness":"codex","model":"gpt-5.5"}]}]}^empty^
+switched-off default rung beside an on rung is accepted^{"default":[{"harness":"claude","enabled":false},{"harness":"codex"}]}^empty^
+non-boolean rung enabled is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude","enabled":"no"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile enabled must be true or false when present
+non-boolean default enabled is flagged^{"default":[{"harness":"codex","enabled":1}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile enabled must be true or false when present
+all rungs switched off is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude","enabled":false},{"harness":"codex","enabled":false}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - every rung is turned off for: big feature
+single switched-off object use is flagged^{"rules":[{"when":"solo rung","use":{"harness":"claude","enabled":false}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - every rung is turned off for: solo rung
+all default rungs switched off is flagged^{"default":[{"harness":"codex","enabled":false}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - every default rung is turned off
 ROWS
   pass "bootstrap validates crew-dispatch.json and reports malformed or unverified configs"
 }
@@ -1177,4 +1207,5 @@ test_network_sweeps_recheck_lock_ownership
 test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
+test_crew_dispatch_switched_off_rungs_are_marked_in_verbose_facts
 test_crew_dispatch_validation

@@ -106,6 +106,13 @@ enable_dispatch_profile() {
     > "$home/config/crew-dispatch.json"
 }
 
+# A ladder with one switched-off rung (claude/opus/high) beside an enabled one.
+enable_dispatch_profile_with_switched_off_rung() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5","effort":"high"}]}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+    > "$home/config/crew-dispatch.json"
+}
+
 make_seeded_secondmate_home() {
   local home=$1 id=$2
   mkdir -p "$home/bin" "$home/data"
@@ -888,5 +895,82 @@ test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset
 test_non_claude_harness_ignores_config_dir
 test_active_dispatch_profile_does_not_block_secondmate_launch
+
+test_switched_off_rung_is_refused() {
+  local rec id out status
+  id=rung-off-refused-z40
+  rec=$(make_spawn_case rung-off-refused claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude --model opus --effort high)
+  status=$?
+  expect_code 1 "$status" "a spawn naming a switched-off rung should be refused"
+  assert_contains "$out" "that rung is switched off in config/crew-dispatch.json" \
+    "spawn did not explain the switched-off rung"
+  assert_absent "$HOME_DIR/state/$id.meta" "switched-off refusal should happen before meta is written"
+  pass "a switched-off crew-dispatch rung refuses the spawn"
+}
+
+test_enabled_sibling_rung_still_spawns() {
+  local rec id out status
+  id=rung-off-sibling-z41
+  rec=$(make_spawn_case rung-off-sibling claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+  status=$?
+  expect_code 0 "$status" "the enabled rung beside a switched-off one should still spawn"
+  assert_contains "$out" "spawned $id harness=codex" "enabled sibling rung did not spawn"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
+  pass "an enabled rung beside a switched-off one still spawns"
+}
+
+test_off_ladder_profile_is_not_refused_by_the_switch() {
+  local rec id out status
+  id=rung-off-ladder-z42
+  rec=$(make_spawn_case rung-off-ladder claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
+
+  # claude/sonnet/high appears nowhere in the file. The switch blocks only rungs
+  # the file marks off; an explicit off-ladder profile stays the captain's call.
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude --model sonnet --effort high)
+  status=$?
+  expect_code 0 "$status" "a profile absent from the ladder should not be refused by the switch"
+  assert_contains "$out" "spawned $id harness=claude" "off-ladder profile did not spawn"
+  pass "the switch refuses only rungs the dispatch file marks off"
+}
+
+# The switched-off rung here is claude/opus/high, and this secondmate resolves to
+# exactly that tuple. It must still launch: secondmates route through
+# config/secondmate-harness, not the crewmate ladders.
+test_switched_off_rung_does_not_block_secondmate_launch() {
+  local rec id sm out status
+  id=rung-off-secondmate-z43
+  rec=$(make_spawn_case rung-off-secondmate claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
+  printf '%s\n' 'claude opus high' > "$HOME_DIR/config/secondmate-harness"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  status=$?
+  expect_code 0 "$status" "a secondmate launch should be exempt from the rung switch"
+  assert_contains "$out" "spawned $id harness=claude kind=secondmate" \
+    "secondmate launch was blocked by the rung switch"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" claude opus high
+  pass "a switched-off rung does not block a secondmate launch"
+}
+
+test_switched_off_rung_is_refused
+test_enabled_sibling_rung_still_spawns
+test_off_ladder_profile_is_not_refused_by_the_switch
+test_switched_off_rung_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"
