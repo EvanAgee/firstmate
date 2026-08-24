@@ -1,0 +1,31 @@
+# Claude coordinator long-turn evidence
+# grace=6s  sampled_turn=10s  first_watcher=5023
+# columns: t_s watcher_pid watcher_alive beacon_age_s age_lt_grace ready_seq successor_pid guard_watcher_down
+t=00s pid=5023 alive=yes beacon_age=2s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=01s pid=5023 alive=yes beacon_age=0s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=02s pid=5023 alive=yes beacon_age=0s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=03s pid=5023 alive=yes beacon_age=2s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=04s pid=5023 alive=yes beacon_age=1s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=05s pid=5023 alive=yes beacon_age=0s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=06s pid=5023 alive=yes beacon_age=0s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=07s pid=5023 alive=yes beacon_age=1s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=08s pid=5023 alive=yes beacon_age=2s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=09s pid=5023 alive=yes beacon_age=1s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+t=10s pid=5023 alive=yes beacon_age=0s under_grace=yes ready_seq=0 successor=5023 watcher_down=no
+
+# ready-to-notify record at end of turn
+ready_seq=0
+recovery_generation=none
+predecessor_arm_pid=none
+successor_watch_pid=5023
+successor_watch_identity=Mon Aug 24 17:54:06 2026     bash /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0TYG0SS9ATSPJHD0D0FZTWS/bin/fm-watch.sh
+coordinator_generation=coord-3443-4167
+session_owner=3443
+published_at=1787612048
+
+# coordinator lock
+role=coordinator
+coord_pid=4167
+session_owner=3443
+
+# summary first_watcher=5023 last_watcher=5023 dead_samples=0 stale_samples=0 watcher_down_alarms=0

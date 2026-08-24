@@ -1,0 +1,8 @@
+FM_CLAUDE_LIVE_E2E=1 was requested for the two-hook live regression.
+Installed claude 2.1.241 answered a cheap -p ping with:
+  You've reached your Fable 5 limit. Switch to another model, or manage usage
+  credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.
+The env-gated test therefore was not executed against real Claude Code Stop hooks.
+Without that run, Anthropic async + asyncRewake process-group cooperation across
+a real handling turn remains unobserved (docs/verification/supervision.md already
+marks this row pending).

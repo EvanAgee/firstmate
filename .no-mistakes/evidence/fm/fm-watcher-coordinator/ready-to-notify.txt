@@ -1,0 +1,8 @@
+ready_seq=0
+recovery_generation=none
+predecessor_arm_pid=none
+successor_watch_pid=5023
+successor_watch_identity=Mon Aug 24 17:54:06 2026     bash /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0TYG0SS9ATSPJHD0D0FZTWS/bin/fm-watch.sh
+coordinator_generation=coord-3443-4167
+session_owner=3443
+published_at=1787612048
