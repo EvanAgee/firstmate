@@ -30,17 +30,21 @@
 #   model, and effort may change, which is what makes a harness switch one
 #   ordinary relaunch. An omitted --model reuses the recorded model only when
 #   the replacement harness equals the recorded one; a recorded default means
-#   no pin, and a harness change with no --model still means default/no pin. It refuses unless the recorded endpoint is positively
-#   agent-free or authoritatively gone on a backend with a recovery-grade
+#   no pin, and a harness change with no --model still means default/no pin.
+#   The token default on an explicit --model is also no pin, and it still
+#   counts as --model being set, so a same-harness relaunch that names default
+#   does not restore a recorded pin. It refuses unless the recorded endpoint is
+#   positively agent-free or authoritatively gone on a backend with a recovery-grade
 #   agent-state classifier (tmux or herdr), refuses unless a still-present
 #   endpoint's shell is sitting in the recorded worktree, and clears the
 #   previous harness's per-task wiring before arming the new incarnation.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
-#   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
-#   axes chosen by firstmate at intake. They are only threaded into harnesses whose
-#   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed.
+#   --model <name> and --effort <low|medium|high|xhigh|max> are profile axes
+#   chosen by firstmate at intake. On --model, the token default means no pin.
+#   They are only threaded into harnesses whose installed CLIs were verified to
+#   support that axis; unsupported axes are omitted from that harness's launch
+#   rather than guessed.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then

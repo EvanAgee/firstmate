@@ -48,7 +48,10 @@
 #              standing charter is never rewritten.
 #              Records a durable checkpoint and that note, exits the old agent,
 #              then delegates the launch to its single owner,
-#              bin/fm-spawn.sh --relaunch. A failure before publication keeps
+#              bin/fm-spawn.sh --relaunch, always forwarding the already-resolved
+#              --model, including the token default for no pin, so spawn's
+#              same-harness omitted --model restore cannot override this plane's
+#              profile. A failure before publication keeps
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
