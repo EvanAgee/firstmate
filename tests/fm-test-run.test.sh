@@ -659,6 +659,71 @@ SH
   pass "jobs scheduler runs proven scripts; failure propagates; non-proven refused"
 }
 
+test_portable_serial_shards_fit_their_ci_job_cap() {
+  # The lane grows as tests are added, so a shard count and hint table that once
+  # fit will silently drift past the job cap and cancel the shard mid-run. Prove
+  # the estimated budget still leaves real headroom, and prove the matrix width
+  # matches the runner's shard count so a widened runner cannot leave shards
+  # unrun. Budget comes from the runner's own reporting flag, never its source.
+  command -v ruby >/dev/null 2>&1 \
+    || fail "ruby is required to parse .github/workflows/ci.yml as YAML"
+  local budget cap matrix_width shard_count worst lane ms headroom line i
+  budget=$("$RUNNER" --serial-shard-budget) \
+    || fail "--serial-shard-budget failed"
+  [ -n "$budget" ] || fail "--serial-shard-budget printed nothing"
+
+  cap=$(ruby -ryaml -e '
+doc = YAML.load_file(ARGV[0])
+job = doc.fetch("jobs").fetch("tests-portable-serial")
+puts job.fetch("timeout-minutes")
+' "$ROOT/.github/workflows/ci.yml") \
+    || fail "could not read the portable serial job cap from ci.yml"
+  matrix_width=$(ruby -ryaml -e '
+doc = YAML.load_file(ARGV[0])
+job = doc.fetch("jobs").fetch("tests-portable-serial")
+puts job.fetch("strategy").fetch("matrix").fetch("shard").length
+' "$ROOT/.github/workflows/ci.yml") \
+    || fail "could not read the portable serial matrix width from ci.yml"
+
+  shard_count=$(printf '%s\n' "$budget" | grep -c '^FM_TEST_SERIAL_BUDGET ')
+  [ "$matrix_width" = "$shard_count" ] \
+    || fail "ci.yml runs $matrix_width serial shards but the runner packs $shard_count"
+
+  # Every reported shard must name its own index and the configured total, so a
+  # half-applied shard-count change cannot pass as a balanced budget.
+  i=1
+  while [ "$i" -le "$shard_count" ]; do
+    printf '%s\n' "$budget" | grep -q "^FM_TEST_SERIAL_BUDGET shard=${i}of${shard_count} estimated_ms=[0-9][0-9]*\$" \
+      || fail "budget report is missing a well-formed line for shard ${i}of${shard_count}"
+    i=$((i + 1))
+  done
+
+  worst=0
+  lane=
+  while read -r line; do
+    ms=${line##*estimated_ms=}
+    case "$ms" in
+      ''|*[!0-9]*) fail "unparseable budget line: $line" ;;
+    esac
+    if [ "$ms" -gt "$worst" ]; then
+      worst=$ms
+      lane=${line#*shard=}
+      lane=${lane%% *}
+    fi
+  done < <(printf '%s\n' "$budget")
+
+  [ "$worst" -gt 0 ] || fail "budget report gave every shard a zero estimate"
+
+  # Two thirds of the cap is the drift alarm: the estimate excludes runner setup
+  # and normal variance, so a shard that already projects past this is on track
+  # to be cancelled. Refresh the hints and widen the matrix rather than raising
+  # this bound (docs/fm-test-portable-shards.md owns that procedure).
+  headroom=$((cap * 60000 * 2 / 3))
+  [ "$worst" -lt "$headroom" ] \
+    || fail "portable serial shard $lane projects ${worst}ms against a ${cap}-minute cap; reshard or refresh hints"
+  pass "portable serial shards fit their CI job cap with headroom"
+}
+
 test_herdr_ci_family_run_has_a_step_timeout() {
   # The required Herdr lane's hang tripwire is the family-run *step* bound, not
   # the 75-minute job cap. Parse the workflow as YAML so nested `with.name`
@@ -751,5 +816,6 @@ test_portable_serial_shards_partition_the_serial_lane
 test_portable_serial_shard_lane_refusals
 test_jobs_requires_proven_isolated
 test_jobs_parallel_scheduler_and_failure_propagation
+test_portable_serial_shards_fit_their_ci_job_cap
 test_herdr_ci_family_run_has_a_step_timeout
 test_aggregate_json
