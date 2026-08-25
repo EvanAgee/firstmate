@@ -288,26 +288,29 @@ That inertness result is scoped to the builds it exercised: it did not establish
 `tests/fm-turnend-guard.test.sh` now pins every tracked `.claude/settings.json` hook entry against a real grok 1.0.0 hook environment so the inertness contract is covered deterministically rather than only by the opt-in live matrix.
 
 The secondmate-home scope and manual-repair wake path were measured with Claude Code 2.1.207 on 2026-07-12, when a native background completion re-invoked the idle model with no human input.
-The current Stop-owned main/secondmate inclusion and child-worktree exclusion are covered deterministically by `tests/fm-claude-stop-autoarm.test.sh`.
-Session-lock ownership in `bin/fm-session-lock-lib.sh` is decided against a session's whole contiguous harness ancestry rather than one chosen pid, so the Stop auto-arm reaches its lock owner wherever that owner sits: the outermost pid of Claude Code's multi-level `bg-spare` hook worker chain, or an inner pid when a harness-named daemon parents the session.
+The current Stop-owned main/secondmate inclusion and child-worktree exclusion are covered deterministically by the notifier gate suite `tests/fm-claude-watch-notifier.test.sh`, and the successor-first coordinator ordering by the real-component suite `tests/fm-claude-watch-coordinator.test.sh`.
+Session-lock ownership in `bin/fm-session-lock-lib.sh` is decided against a session's whole contiguous harness ancestry rather than one chosen pid, so the Stop hooks reach their lock owner wherever that owner sits: the outermost pid of Claude Code's multi-level `bg-spare` hook worker chain, or an inner pid when a harness-named daemon parents the session.
 Harness identity is read from the executable path and `argv[0]` as well as the command basename, because Claude Code's native installer names the per-session executable by its version (`.../share/claude/versions/2.1.220`): `ps -o comm=` reports that path on macOS and the bare version string on Linux, and neither basename names a harness.
-`tests/fm-session-lock-ancestry.test.sh` pins both platforms' reporting semantics behind a deterministic process table and runs the real Stop auto-arm in version-named, daemon-parented, and combined real process trees.
+`tests/fm-session-lock-ancestry.test.sh` pins both platforms' reporting semantics behind a deterministic process table and runs the real Stop hook in version-named, daemon-parented, and combined real process trees.
 `tests/fm-watch-arm.test.sh` runs real watcher and arm cycles against durable on-disk state to verify that a delivered reason survives until post-handling acknowledgement and stops replaying after acknowledgement, while an unrelated queue append cannot make a watcher cycle that delivered nothing look successful.
 The same suite ingests a keyed remote-secondmate parent reply through the real adapter, establishes the incremental OPEN DECISIONS cursor, interrupts supervision, and proves re-arm replays every unacknowledged queue row plus the still-open decision through the ordinary drain path.
 It also covers decision-only recovery, interrupted handling, handling-window generation reuse, non-fatal moved-generation acknowledgement with sequence-bounded consumption, and a persistent successor remaining live after recovery is acknowledged.
 
-The Claude product live path ran with Claude Code 2.1.219 on 2026-07-24:
-
-```sh
-claude --version
-FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-stop-autoarm-live-e2e.test.sh
-```
-
-Observed output:
+The Claude product live path for the former single-hook auto-arm ran with Claude Code 2.1.219 on 2026-07-24 (the test file was then `tests/fm-claude-stop-autoarm-live-e2e.test.sh`):
 
 ```text
 2.1.219 (Claude Code)
 ok - Claude 2.1.219 (Claude Code) live E2E reclaimed a stale session lock through session start, completed two tokenless Stop-owned rewake cycles, and preserved the competing-live-owner boundary
+```
+
+That evidence covers the reclaim-and-rewake contract the notifier still keeps.
+
+The coordinator + notifier two-hook handshake introduced in the watcher-coordinator change has **no live evidence yet**: `FM_CLAUDE_LIVE_E2E` was not enabled for that change, so the handshake is currently proven only by the deterministic real-component suite `tests/fm-claude-watch-coordinator.test.sh`.
+Run the command below against the real installed Claude Code, then replace this paragraph with the dated version string and exact output:
+
+```sh
+claude --version
+FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-watch-coordinator-live-e2e.test.sh
 ```
 
 Current entry points:
@@ -335,7 +338,7 @@ fm-doc-audience-check: ok surfaces=61 local_links=174
 FM_TEST_SUMMARY total=4 failed=0 skipped_gate=0 duration_ms=102585
 ```
 
-The model-aware pull-guard predicate correction (`bin/fm-guard.sh` no longer reports a false watcher-down mid-turn under the Claude Stop auto-arm model, where the watcher runs only between turns) was verified on 2026-08-04 with the installed ShellCheck 0.11.0 and the same isolated behavior suites.
+The model-aware pull-guard predicate correction (`bin/fm-guard.sh` no longer reports a false watcher-down mid-turn under the `autoarm` model, which then described Claude's between-turns watcher and still describes Cursor's park) was verified on 2026-08-04 with the installed ShellCheck 0.11.0 and the same isolated behavior suites.
 
 ```sh
 bin/fm-lint.sh
@@ -426,7 +429,7 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 
 | Harness | Exact opt-in command | Observed guarantee |
 | --- | --- | --- |
-| Claude | `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-stop-autoarm-live-e2e.test.sh` | Session start reclaimed a stale owner before two Stop-owned cycles, and a competing live owner prevented arm, rewake, epoch write, or lock replacement. |
+| Claude | `FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-watch-coordinator-live-e2e.test.sh` | **Pending — not yet observed live.** The two-hook contract (a verified successor stays live across a handling turn longer than grace) is covered deterministically by `tests/fm-claude-watch-coordinator.test.sh`; this row gains a dated observation once the opt-in command is run against the installed Claude Code. |
 | Codex | `FM_CODEX_LIVE_E2E=1 tests/fm-codex-continuity-live-e2e.test.sh` | The one-second foreground checkpoint returned without switching to the arm wrapper. |
 | OpenCode | `FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh` | A verified successor existed before prompt handling, with no model re-arm or turn-end fallback. |
 | Pi | `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh` | One initial tool call led to extension-owned successors and clean child retirement on exit. |
@@ -455,7 +458,8 @@ tests/fm-watcher-lock.test.sh
 tests/fm-watch-arm.test.sh
 tests/fm-wake-queue.test.sh
 tests/fm-subagent-pretool-check.test.sh
-tests/fm-claude-stop-autoarm.test.sh
+tests/fm-claude-watch-notifier.test.sh
+tests/fm-claude-watch-coordinator.test.sh
 tests/fm-turnend-guard.test.sh
 ```
 
@@ -499,7 +503,7 @@ This record supports the current guarantee that the session-independent watcher-
 The pass ran on 2026-08-23 on macOS (Darwin 27.0.0) with the tracked `.claude/settings.json` Stop hook wiring.
 
 Two upstream claims were re-checked against source rather than carried forward.
-The Stop auto-arm's `"timeout": 28800` is present on the `asyncRewake` hook in `.claude/settings.json`, so the foreground-teardown reasoning behind an out-of-session check holds.
+The notifier's `"timeout": 28800` is present on the `asyncRewake` hook in `.claude/settings.json`, so the foreground-teardown reasoning behind an out-of-session check holds.
 `bin/fm-watch-arm.sh` does NOT print exactly one status line: the attach path prints its `watcher: ...` line and can later print the delivered wake reason as a second line, so a caller must handle each line rather than pattern-matching one captured blob.
 
 Shared grace, proven by the same beacon flipping the verdict.

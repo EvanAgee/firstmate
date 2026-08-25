@@ -2962,9 +2962,9 @@ fi
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   sq_primary_home=$(shell_quote "$FM_HOME")
-  # Keep this in step with fm_supervision_model (bin/fm-wake-lib.sh): Claude's
-  # Stop auto-arm and Cursor's stop-hook park both run the watcher only BETWEEN
-  # turns, so a fresh beacon with no live watcher is their healthy mid-turn state.
+  # Keep this in step with fm_supervision_model (bin/fm-wake-lib.sh): Cursor's
+  # stop-hook park still runs the watcher only BETWEEN turns, and Claude remains
+  # classified autoarm so a fresh beacon with no live watcher is still accepted.
   case "$HARNESS" in
     claude|cursor) supervision_model=autoarm ;;
     omp) supervision_model=extension ;;

@@ -68,14 +68,14 @@ Backend-specific setup is linked in [Documentation](#documentation).
 ### Recommended harnesses
 
 **Claude Code, Grok, and Pi are equal co-primary recommendations** for running the primary firstmate session, with `pi-signed` supported as Pi's distinct signed-wrapper identity.
-Claude Code uses a tracked Stop hook for tokenless watcher re-arm and rewake, Grok uses background-notify wake cycles, and Pi uses its tracked primary watcher extension.
+Claude Code uses two tracked Stop hooks for tokenless watcher continuity and rewake, Grok uses background-notify wake cycles, and Pi uses its tracked primary watcher extension.
 omp (Oh My Pi) is a Pi-family fork with the same tracked primary watcher extension; it uses omp's `session_stop` event for the turn-end guard.
 Launch a primary omp session with [`bin/fm-omp.sh`](bin/fm-omp.sh); [harness configuration](docs/configuration.md#harness-support) owns its setup contract.
 All three have verified turn-end guard paths when launched with their documented setup.
 Pick whichever one matches your subscription and workflow.
 
 Codex and OpenCode are also verified and supported as primary harnesses; Codex uses bounded foreground checkpoints, and OpenCode uses a TUI plugin, so both carry more harness-specific supervision tradeoffs than the three co-primaries.
-Cursor Agent CLI is verified as a primary too, using a tracked project-scope `.cursor/hooks.json` whose `stop` hook parks on the watcher between turns, closest in shape to Claude Code's.
+Cursor Agent CLI is verified as a primary too, using a tracked project-scope `.cursor/hooks.json` whose `stop` hook parks on the watcher between turns.
 Launch it with `--trust`, or none of its project hooks load; it also has no turn-end hook in headless `cursor-agent -p`, so run the primary session interactively.
 
 ### Install and launch

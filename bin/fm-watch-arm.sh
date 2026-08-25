@@ -7,10 +7,10 @@
 # classify. Reliability depends on arming through a mechanism that SURVIVES the
 # call and NOTIFIES on exit, so firstmate must run this script as the harness's
 # own tracked background task (e.g. run_in_background), or - for a Claude
-# primary - inside the Stop asyncRewake hook's foreground process tree
-# (bin/fm-claude-stop-autoarm.sh), where the harness owns the process group and
-# the hook's exit-2 rewake is the notification. Run it as its own standalone
-# background task, never bundled onto the tail of another command.
+# primary - as a tracked background child of the persistent Stop coordinator
+# (bin/fm-claude-watch-coordinator.sh), which owns the harness process group and
+# reads this script's readiness line to keep a verified successor alive. Run it as
+# its own standalone background task, never bundled onto the tail of another command.
 # NEVER fire it and forget with a shell `&` inside another call: that backgrounded
 # child is reaped when the call returns, leaving NO watcher running and a false
 # "already running" off the dying process. That exact mistake silently took
@@ -90,9 +90,9 @@ CYCLE_LOG_MAX_BYTES=${FM_WATCH_CYCLE_LOG_MAX_BYTES:-262144}
 CYCLE_LOG_KEEP_LINES=${FM_WATCH_CYCLE_LOG_KEEP_LINES:-1000}
 ARM_PID=${BASHPID:-$$}
 
-# Who armed this cycle, for the lifecycle ledger. The Claude Stop auto-arm hook
-# (bin/fm-claude-stop-autoarm.sh) exports FM_WATCH_ARM_SOURCE=autoarm; a direct
-# operator or agent run leaves it unset and records "manual". The review could not
+# Who armed this cycle, for the lifecycle ledger. The Claude Stop watcher
+# coordinator (bin/fm-claude-watch-coordinator.sh) exports FM_WATCH_ARM_SOURCE=autoarm;
+# a direct operator or agent run leaves it unset and records "manual". The review could not
 # tell auto-arm cycles from manual ones without the transcript, so this makes the
 # distinction durable. A value with anything but the two known tokens is normalized
 # to "manual" so a stray export can never poison the field.

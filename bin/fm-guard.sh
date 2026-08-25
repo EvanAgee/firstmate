@@ -10,23 +10,22 @@
 # healthy, prints a loud, clearly delimited banner so the agent cannot skim past
 # it in the tool output of whatever it was doing - the one channel every harness
 # has. Supervision health is MODEL-AWARE (fm_watcher_supervision_verdict in
-# bin/fm-wake-lib.sh): under the Claude Stop auto-arm model the watcher runs only
-# between turns, so mid-turn a fresh beacon with no live watcher is healthy and
-# only a stale beacon (beyond FM_GUARD_GRACE) is a genuine lapse; under the Pi
-# extension model the extension tears the watcher down and respawns it on every
-# actionable wake, so a fresh beacon with a genuinely unheld lock is healthy
-# while that live Pi session provably owns continuity; any held but unhealthy
-# lock is down; under every
+# bin/fm-wake-lib.sh). Cursor's stop-hook park still runs the watcher only between
+# turns, and Claude remains classified autoarm, so a mid-turn fresh beacon with no
+# live watcher is still treated as healthy and only a stale beacon (beyond
+# FM_GUARD_GRACE) is a genuine lapse. Claude's coordinator now keeps a live
+# watcher across the handling turn, so that fresh-beacon-without-process case is
+# no longer Claude's ordinary mid-turn state. Under the Pi extension model the
+# extension tears the watcher down and respawns it on every actionable wake, so a
+# fresh beacon with a genuinely unheld lock is healthy while that live Pi session
+# provably owns continuity; any held but unhealthy lock is down; under every
 # persistent-watcher harness a live identity-matched watcher with a fresh beacon
 # is required. The banner names the true failing condition (a missing live
-# watcher process vs a genuinely stale beacon). On Claude only, a stale
-# beacon whose latest epoch outcome is a successful "rewake" is named as a
-# design-induced successor gap: the between-turns watcher closed cleanly and woke
-# the handling turn, so the next cycle only arms when that turn ends. Supervision
-# is still genuinely absent during that gap, so the banner keeps firing. That leftover
-# rewake can also mean the next Stop never armed, so the banner tells the operator
-# to check the hook if the handling turn has ended. Cursor shares the autoarm model
-# and keeps its ordinary banner. The full banner is emitted once
+# watcher process vs a genuinely stale beacon). On Claude only, a stale beacon
+# whose latest epoch outcome is a successful "rewake" still uses the Claude-only
+# wording; that is no longer the ordinary long-turn path and means the coordinator
+# did not keep a live watcher (docs/turnend-guard.md). Cursor shares the autoarm
+# model and keeps its ordinary banner. The full banner is emitted once
 # per distinct down-episode in this FM_HOME (keyed to the failing condition, not
 # the beacon mtime, which a healthy between-turns watcher advances every poll);
 # later guarded commands in the same episode print a one-line reminder instead.
@@ -76,16 +75,11 @@ fm_guard_stale_episode_key() {
   printf '%s\n' "$1"
 }
 
-# A Claude auto-arm home whose latest epoch outcome is a successful "rewake" is
-# in a design-induced supervision gap: the between-turns watcher already closed
-# cleanly and woke the handling turn, and the successor cycle only arms when that
-# turn ends. A handling turn that runs longer than the grace window lets the
-# beacon go stale even when the hook is still going to arm. The same leftover
-# rewake can also mean the next Stop never armed after the handling turn ended.
-# Detecting this case lets the banner name both possibilities instead of claiming
-# the hook is healthy. It is NOT a false alarm: supervision is genuinely absent
-# during the gap. Only Claude's auto-arm model reaches this path; Cursor and
-# every other harness keep their existing banner unchanged.
+# A Claude autoarm home whose latest epoch outcome is a successful "rewake" and
+# whose beacon is stale is the Claude-only banner path. Successor-first ordering
+# should already have a live watcher here, so this case means the coordinator did
+# not keep one (docs/turnend-guard.md). Only Claude's autoarm classification
+# reaches this path; Cursor and every other harness keep their existing banner.
 fm_guard_autoarm_epoch_outcome() {
   local state=$1
   sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$state/.claude-autoarm-epoch" 2>/dev/null || true
@@ -216,10 +210,9 @@ if [ "$watcher_healthy" = false ]; then
     "$queue_pending" && queue_arg=1
     x_mode=0
     [ -f "$CONFIG/x-mode.env" ] && x_mode=1
-    # A successful-rewake successor gap is Claude-only: Cursor shares the autoarm
-    # model and must keep its ordinary banner. Leftover rewake plus a stale beacon
-    # is expected while the handling turn still runs past grace, but it can also
-    # mean the next Stop never armed. Name both and keep a check-the-hook line.
+    # A successful-rewake stale-beacon banner is Claude-only: Cursor shares the
+    # autoarm model and must keep its ordinary banner. After successor-first
+    # ordering this is a coordinator miss, not an expected long-turn gap.
     rewake_gap=0
     harness=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
     if [ "$harness" = claude ] \
