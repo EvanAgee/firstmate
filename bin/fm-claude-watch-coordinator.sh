@@ -11,8 +11,8 @@
 # verified successor is armed and confirmed IMMEDIATELY after each actionable
 # close - before the handling turn, not at its next Stop.
 #
-# Why a coordinator exists at all: Claude's between-turns watcher is one-shot. It
-# runs between turns, delivers one actionable wake, and exits clean; the auto-arm
+# Why a coordinator exists at all: Claude's former between-turns watcher was one-shot. It
+# ran between turns, delivered one actionable wake, and exited clean; the auto-arm
 # armed the successor only at the NEXT Stop. During any handling turn longer than
 # the beacon grace (default 300s) there was then no live watcher, so the beacon
 # went stale and the fleet was genuinely unsupervised even though nothing had
