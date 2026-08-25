@@ -1,0 +1,5 @@
+# matching copy
+fm-skills-lock: ok skills=1
+# after editing SKILL.md (hash drift)
+fm-skills-lock: hash drift in .agents/skills/ask-matt (lock=0cd14026efa0330083cbc7adf590976c162b60e02f696a8dcce96f0b4dab8a72 got=44522cecfc24ee85de9f216269e7fcdec3798ec549601f4e0cfee0f004fcede8)
+exit=1

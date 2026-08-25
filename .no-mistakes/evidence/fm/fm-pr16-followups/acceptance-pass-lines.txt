@@ -1,0 +1,20 @@
+1. Fable relaunch restore / harness-switch drop / case-insensitive match
+   (from tests/fm-busy-adapter-wiring.test.sh)
+   ok - a mixed-case Fable model name still installs the delegation deny list
+   ok - a direct relaunch without --model restores the recorded Fable deny list
+   ok - a harness-switch relaunch without --model drops the previous Fable pin
+
+2. Control profile ownership + disabled omitted-model rung
+   (from tests/fm-control-relaunch.test.sh)
+   ok - fm-control relaunch: a disabled omitted-model rung still refuses the replacement
+   ok - fm-control relaunch: a same-harness secondmate configured default does not freeze a prior pin
+
+3. Vendored skill hash lock
+   (from tests/fm-skills-lock.test.sh and bin/fm-skills-lock.sh)
+   ok - every skills-lock.json hash matches its vendored folder
+   ok - lock check fails on hash drift and a missing vendored folder
+   live: fm-skills-lock: ok skills=29
+
+4. quota-array-dispatch supporting files select both families
+   (from tests/fm-test-run.test.sh)
+   ok - changed selection covers dependents and fails closed for unmapped source

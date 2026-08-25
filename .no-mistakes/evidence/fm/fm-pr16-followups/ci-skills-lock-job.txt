@@ -1,0 +1,8 @@
+name: Vendored skill hashes
+runs-on: ubuntu-latest
+step 1:
+  uses: actions/checkout@v6
+step 2:
+  name: Verify skills-lock.json hashes
+  run: bin/fm-skills-lock.sh
+verified: CI job runs bin/fm-skills-lock.sh

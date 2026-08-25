@@ -1,0 +1,8 @@
+# End-user: edit a quota-array-dispatch supporting file, then list --changed
+changed: .agents/skills/quota-array-dispatch/notes.md
+--- fm-test-run.sh --list --changed --base HEAD ---
+tests/fm-ask-user-authority.test.sh
+tests/fm-brief.test.sh
+tests/fm-cd-pretool-check.test.sh
+tests/fm-skills-lock.test.sh
+tests/fm-afk-pi-herdr-return-e2e.test.sh
