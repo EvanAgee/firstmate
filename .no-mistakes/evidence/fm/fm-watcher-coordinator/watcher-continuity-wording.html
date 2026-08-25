@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>watcher-continuity.md — absent-coordinator wording</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+      max-width: 820px;
+      margin: 32px auto;
+      padding: 0 20px 48px;
+      line-height: 1.55;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .meta { color: #555; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.15rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+    p { margin: 0.85rem 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #f4f4f4; padding: 0.05em 0.3em; border-radius: 3px; }
+    mark.changed {
+      background: #fff3a3;
+      padding: 0.05em 0.15em;
+      border-radius: 2px;
+    }
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.5rem 0;
+    }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: #fafafa;
+    }
+    .card h3 { margin: 0 0 0.5rem; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: #555; }
+    .card.old { border-color: #e0b4b4; background: #fff7f7; }
+    .card.new { border-color: #9ccc9c; background: #f4fff4; }
+    .card p { margin: 0; font-size: 0.95rem; }
+    del { background: #ffd6d6; text-decoration: line-through; }
+    ins { background: #c8f0c8; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>Watcher continuity</h1>
+  <p class="meta">Published docs wording at <code>docs/watcher-continuity.md</code> (commit 11f4a70). Reviewer-facing sentence only; no behavior change.</p>
+
+  <div class="compare">
+    <div class="card old">
+      <h3>Before (flagged)</h3>
+      <p>Once the coordinator has stood down, the parked notifier's <del>coordinator-absent bound</del> fires and drives that same typed failure plus the guard's failed-epoch progression.</p>
+    </div>
+    <div class="card new">
+      <h3>After (this commit)</h3>
+      <p>Once the coordinator has stood down, the parked notifier's <ins>bound for an absent coordinator</ins> fires and drives that same typed failure plus the guard's failed-epoch progression.</p>
+    </div>
+  </div>
+
+  <h2>Actionable wake ordering</h2>
+  <p>Claude's coordinator now establishes and verifies the successor before the notifier surfaces the wake, the same Option B ordering Pi and OpenCode use, rather than the former next-Stop gap.</p>
+  <p>After an actionable child close the coordinator reads the queue high-water mark, arms and verifies a fresh successor (a live watcher owning <code>state/.watch.lock</code> with a fresh beacon), and only then writes an atomic <code>state/.claude-ready-to-notify</code> record binding that high-water mark, the recovery generation, the predecessor arm pid, the verified successor pid and identity, the coordinator generation, and the session owner.</p>
+  <p>A confirmed successor resets the coordinator's readiness-timeout streak.</p>
+  <p>After <code>FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK</code> consecutive timeouts with no healthy watcher (default 3), the coordinator stands down: it stops retrying, releases <code>state/.claude-coordinator.lock</code>, removes its generation file, and exits so it is no longer alive.</p>
+  <p>The notifier consumes that record by its monotonic <code>ready_seq</code> high-water mark, never by counting queue rows, so the watcher's deliberate double-scan (which appends duplicate rows for one event) never inflates the number of handling turns.</p>
+  <p>It exits 2 only when that ready event still belongs to this session and coordinator generation and covers at least one durable unacked queue row, so a leftover <code>.wake-queue.seq</code> with an empty queue cannot open a handling turn.</p>
+  <p>A first run with no surfaced-seq file baselines that leftover high-water instead of treating it as a new wake.</p>
+  <p>It surfaces a typed coordinator-degraded failure rather than exiting 0 into a still-needed-but-unsurfaced state.</p>
+  <p>Once the coordinator has stood down, the parked notifier's <mark class="changed">bound for an absent coordinator</mark> fires and drives that same typed failure plus the guard's failed-epoch progression.</p>
+  <p>Because the coordinator keeps one live watcher across the whole handling turn, a turn longer than the beacon grace no longer leaves supervision genuinely absent, which was the false "watcher down" the former next-Stop design produced.</p>
+</body>
+</html>
