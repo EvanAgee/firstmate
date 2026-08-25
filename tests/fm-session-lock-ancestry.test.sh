@@ -252,6 +252,8 @@ make_primary_home() {  # <dir>
   git -C "$dir" commit -q --allow-empty -m init
   : > "$dir/AGENTS.md"
   : > "$dir/state/task.meta"
+  printf '%s\t7\tsignal\ttask.status\tblocked: needs a decision\n' "$(date +%s)" > "$dir/state/.wake-queue"
+  printf '7\n' > "$dir/state/.wake-queue.seq"
   install_autoarm_scripts "$dir"
   # The process that fires the hook records its own pid as the session lock
   # owner, exactly as a real session does at session start.
