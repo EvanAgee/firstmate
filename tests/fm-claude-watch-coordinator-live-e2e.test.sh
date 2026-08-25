@@ -49,8 +49,16 @@ CLAUDE_VERSION=$(claude --version)
 GRACE=8
 
 cleanup() {
-  # Best-effort teardown: reap any coordinator/watcher the session left behind by
-  # its own process group when Claude tore the session down.
+  # Best-effort teardown. The coordinator hook is async with a long timeout and
+  # drives the real arm/watch layer, so a watcher can outlive the Claude session
+  # and keep polling a deleted state directory. Signal the watcher the arm layer
+  # recorded before the lab disappears; an already-exited pid is not an error.
+  local wpid
+  wpid=$(cat "$HOME_DIR/state/.watch.lock/pid" 2>/dev/null || true)
+  case "$wpid" in
+    '' | *[!0-9]*) : ;;
+    *) kill "$wpid" 2>/dev/null || true ;;
+  esac
   rm -rf "$LAB"
 }
 trap cleanup EXIT
