@@ -89,10 +89,11 @@ A regression in `tests/fm-test-run.test.sh` reads that budget, checks the CI mat
 That fraction is the drift alarm rather than the real limit: the estimate excludes runner setup and normal variance, so a shard already past it is on track to be cancelled.
 Answer that failure by refreshing the hints and raising the shard count, never by raising the alarm threshold or the job cap.
 
-Refresh the hints by downloading the per-shard timing artifacts from a CI run whose serial shards all completed their scripts, replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the measured `path`/`duration_ms` pairs, and updating the table above:
+Refresh the hints by downloading the per-shard timing artifacts from a CI run whose serial shards all completed their scripts, replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the measured `path`/`duration_ms` pairs, and updating the table above.
+`mktemp -d` owns a unique dest under `TMPDIR` (falling back to `/tmp`) so the command cannot collide with `/tmp/fm-serial` or assume that path is writable:
 
 ```sh
-dir=$(mktemp -d)
+dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-serial.XXXXXX")
 gh run download <run-id> --pattern 'fm-test-timing-portable-serial-*' -D "$dir"
 jq -r '.scripts[] | [.path, .duration_ms] | @tsv' "$dir"/*/*.json | LC_ALL=C sort
 bin/fm-test-run.sh --check-coverage
