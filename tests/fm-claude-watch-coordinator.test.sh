@@ -352,13 +352,9 @@ test_notifier_parks_then_exits_two_on_ready() {
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
   first_seq=$(ready_field "$dir" ready_seq)
 
-  # Start the notifier as a child of the lock-holding harness BEFORE the wake.
-  # It must PARK (not exit) because there is no fresh ready record yet: initial
-  # ready_seq equals the notifier's surfaced high-water mark of 0 only when 0, but
-  # any already-published seq greater than 0 would be surfaced immediately; to test
-  # the park, advance the surfaced marker to the current seq first.
-  printf '%s\n' "$first_seq" > "$dir/state/.claude-notifier-surfaced-seq"
-
+  # Start the notifier as a child of the lock-holding harness BEFORE the wake, on
+  # the real first-run path: no pre-seeded surfaced-seq. The first publish has no
+  # unacked queue row, so the notifier must PARK until a genuine wake arrives.
   nerr="$dir/notif.err"
   notif=$(start_notifier "$dir" notif FM_CLAUDE_NOTIFIER_COORD_WAIT=60) \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the parked notifier"; }
@@ -412,6 +408,71 @@ test_notifier_parks_then_exits_two_on_ready() {
 
   stop_bg "$coord" "$HOLDER_PID"
   pass "notifier: parks, then exits 2 exactly once keyed to ready_seq, and does not re-wake the same event"
+}
+
+# --- 4b. leftover acked high-water on an upgraded home is not a wake ------------
+# Existing home: .wake-queue.seq leftover, empty queue, no surfaced-seq file.
+# First successor-ready publishes that leftover number; the notifier must park.
+# A later real wake must still exit 2 exactly once.
+test_upgraded_home_leftover_seq_does_not_rewake() {
+  local dir coord notif nerr nrc first_seq new_seq j
+  dir=$(make_home upgraded-seq)
+  start_lock_holder "$dir"
+  printf 'window=x\n' > "$dir/state/one.meta"
+  printf 'working: go\n' > "$dir/state/one.status"
+  printf 'window=y\n' > "$dir/state/two.meta"
+  printf 'working: still busy\n' > "$dir/state/two.status"
+  prime_seen "$dir" "$dir/state/one.status"
+  prime_seen "$dir" "$dir/state/two.status"
+  : > "$dir/state/.wake-queue"
+  printf '12\n' > "$dir/state/.wake-queue.seq"
+
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the upgraded-home coordinator"; }
+  wait_file "$dir/state/.claude-ready-to-notify" 400 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+  first_seq=$(ready_field "$dir" ready_seq)
+  [ "$first_seq" = 12 ] \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "first publish ready_seq was $first_seq, expected leftover high-water 12"; }
+
+  nerr="$dir/notif.err"
+  notif=$(start_notifier "$dir" notif FM_CLAUDE_NOTIFIER_COORD_WAIT=60) \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the upgraded-home notifier"; }
+
+  sleep 2
+  kill -0 "$notif" 2>/dev/null \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "upgraded-home leftover seq opened a handling turn (notifier exited)"; }
+  case "$(cat "$nerr" 2>/dev/null || true)" in
+    *"firstmate watcher wake"*)
+      stop_notifier "$dir" notif "$notif"
+      stop_bg "$coord" "$HOLDER_PID"
+      fail "upgraded-home leftover seq printed a rewake banner"
+      ;;
+  esac
+
+  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
+  j=0
+  while [ "$j" -lt 120 ] && kill -0 "$notif" 2>/dev/null; do
+    sleep 0.25
+    j=$((j + 1))
+  done
+  if kill -0 "$notif" 2>/dev/null; then
+    stop_notifier "$dir" notif "$notif"
+    stop_bg "$coord" "$HOLDER_PID"
+    fail "notifier stayed parked and never woke on the real upgraded-home wake"
+  fi
+  nrc=$(session_child_rc "$dir" notif) \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "upgraded-home notifier never recorded an exit code"; }
+  expect_code 2 "$nrc" "a real queued wake after the leftover high-water must still exit 2"
+  assert_contains "$(cat "$nerr")" "firstmate watcher wake" "the real wake must carry the rewake banner"
+  new_seq=$(ready_field "$dir" ready_seq)
+  [ -n "$new_seq" ] && [ "$new_seq" -gt 12 ] 2>/dev/null \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "real wake did not advance ready_seq past leftover 12 (now $new_seq)"; }
+  [ "$(cat "$dir/state/.claude-notifier-surfaced-seq")" = "$new_seq" ] \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "notifier did not advance surfaced-seq to the real wake"; }
+
+  stop_bg "$coord" "$HOLDER_PID"
+  pass "notifier: leftover wake-queue.seq on an upgraded empty home does not open a handling turn"
 }
 
 # --- 5. a duplicated-row wake still yields one handling event -------------------
@@ -700,6 +761,7 @@ test_successor_verified_before_ready_publish
 test_live_watcher_across_long_turn
 test_actionable_close_rearms_and_republishes
 test_notifier_parks_then_exits_two_on_ready
+test_upgraded_home_leftover_seq_does_not_rewake
 test_duplicate_rows_one_handling_event
 test_single_coordinator_owner
 test_coordinator_lock_does_not_satisfy_guard

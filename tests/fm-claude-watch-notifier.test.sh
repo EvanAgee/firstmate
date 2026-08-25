@@ -239,6 +239,8 @@ test_exits_two_on_fresh_ready_record() {
       printf "session_owner=$$\n"
       printf "published_at=$(date +%s)\n"
     } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "%s\t5\tsignal\ttask.status\tblocked: needs a decision\n" "$(date +%s)" > "$FM_HOME/state/.wake-queue"
+    printf "5\n" > "$FM_HOME/state/.wake-queue.seq"
     env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >"$FM_HOME/state/n.out" 2>"$FM_HOME/state/n.err" &
     np=$!
     i=0; while [ "$i" -lt 60 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
@@ -250,6 +252,42 @@ test_exits_two_on_fresh_ready_record() {
   [ "$(cat "$dir/state/.claude-notifier-surfaced-seq")" = 5 ] || fail "surfaced high-water mark must advance to the ready_seq"
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "epoch must record outcome=rewake, got: $(epoch_outcome "$dir")"
   pass "notifier: a fresh ready record for this session triggers exactly one exit-2 rewake"
+}
+
+test_upgraded_home_leftover_seq_does_not_rewake() {
+  local dir rc
+  dir=$(make_primary_dir "$TMP_ROOT/upgraded-seq")
+  : > "$dir/state/task.meta"
+  start_fake_coordinator "$dir"
+  # Existing home after upgrade: leftover acked high-water, empty queue, no
+  # surfaced-seq file. First publish of that high-water must not open a turn.
+  : > "$dir/state/.wake-queue"
+  printf '12\n' > "$dir/state/.wake-queue.seq"
+  rc=$(FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+    printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+    {
+      printf "ready_seq=12\n"
+      printf "recovery_generation=none\n"
+      printf "predecessor_arm_pid=none\n"
+      printf "successor_watch_pid=12345\n"
+      printf "successor_watch_identity=fixture\n"
+      printf "coordinator_generation=coord-$$-99\n"
+      printf "session_owner=$$\n"
+      printf "published_at=$(date +%s)\n"
+    } > "$FM_HOME/state/.claude-ready-to-notify"
+    env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >"$FM_HOME/state/n.out" 2>"$FM_HOME/state/n.err" &
+    np=$!
+    i=0; while [ "$i" -lt 30 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
+    if kill -0 "$np" 2>/dev/null; then kill "$np" 2>/dev/null; echo PARKED; else wait "$np"; echo "$?"; fi
+  ' </dev/null)
+  kill "$COORD_HOLDER" 2>/dev/null || true; wait "$COORD_HOLDER" 2>/dev/null || true
+  [ "$rc" = PARKED ] || fail "upgraded-home leftover seq must not exit 2, got $rc"
+  case "$(cat "$dir/state/n.err" 2>/dev/null || true)" in
+    *"firstmate watcher wake"*) fail "upgraded-home leftover seq printed a rewake banner" ;;
+  esac
+  [ "$(cat "$dir/state/.claude-notifier-surfaced-seq" 2>/dev/null || true)" = 12 ] \
+    || fail "first publish with an empty queue must baseline surfaced-seq to the leftover high-water"
+  pass "notifier: leftover wake-queue.seq on an upgraded empty home does not open a handling turn"
 }
 
 test_ignores_stale_session_ready_record() {
@@ -315,6 +353,8 @@ test_ready_record_resets_failure_episode() {
       printf "successor_watch_pid=1\nsuccessor_watch_identity=x\n"
       printf "coordinator_generation=coord-$$-1\nsession_owner=$$\npublished_at=$(date +%s)\n"
     } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "%s\t5\tsignal\ttask.status\tblocked: needs a decision\n" "$(date +%s)" > "$FM_HOME/state/.wake-queue"
+    printf "5\n" > "$FM_HOME/state/.wake-queue.seq"
     env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >/dev/null 2>&1 &
     np=$!
     i=0; while [ "$i" -lt 60 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
@@ -427,6 +467,8 @@ test_active_in_marked_secondmate_home() {
       printf "successor_watch_pid=1\nsuccessor_watch_identity=x\n"
       printf "coordinator_generation=coord-$$-1\nsession_owner=$$\npublished_at=$(date +%s)\n"
     } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "%s\t3\tsignal\ttask.status\tblocked: needs a decision\n" "$(date +%s)" > "$FM_HOME/state/.wake-queue"
+    printf "3\n" > "$FM_HOME/state/.wake-queue.seq"
     env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >/dev/null 2>&1 &
     np=$!
     i=0; while [ "$i" -lt 60 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
@@ -545,6 +587,7 @@ test_inert_when_afk
 test_inert_when_fleet_idle
 test_foreign_host_stands_down
 test_exits_two_on_fresh_ready_record
+test_upgraded_home_leftover_seq_does_not_rewake
 test_ignores_stale_session_ready_record
 test_typed_failure_when_coordinator_absent
 test_repeated_coordinator_failure_notifies_once

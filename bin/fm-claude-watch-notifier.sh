@@ -41,13 +41,15 @@
 #     other concurrent firing exits 0.
 #   - Park-and-notify: the owner PARKS in a bounded wait loop (up to its hook
 #     timeout) polling for EITHER a fresh ready-to-notify record whose ready_seq
-#     is past this notifier's last-surfaced high-water mark - and whose
-#     session_owner and coordinator_generation still match this session - on which
-#     it prints one rewake banner and exits 2 exactly once per ready event; OR a
+#     is past this notifier's last-surfaced high-water mark, whose session_owner
+#     and coordinator_generation still match this session, AND whose ready_seq
+#     covers at least one durable unacked row in state/.wake-queue - on which it
+#     prints one rewake banner and exits 2 exactly once per ready event; OR a
 #     typed coordinator failure (no coordinator, lost session ownership, no
 #     successor readiness within the coordinator's bound), which it surfaces as
 #     typed exit-2 feedback so the handling turn learns supervision is degraded. It
-#     never exits 0 into a still-needed-but-unsurfaced state.
+#     never exits 0 into a still-needed-but-unsurfaced state, and never opens a
+#     handling turn for a high-water mark with nothing actually queued.
 #
 # On a genuinely absent coordinator it also drives the same failure-episode
 # progression the former auto-arm did (failed epoch plus a one-time notice, then
@@ -79,6 +81,7 @@ EPOCH="$STATE/.claude-autoarm-epoch"
 READY="$STATE/.claude-ready-to-notify"
 COORD_LOCK="$STATE/.claude-coordinator.lock"
 SURFACED="$STATE/.claude-notifier-surfaced-seq"
+WAKE_SEQ="$STATE/.wake-queue.seq"
 # The failure-episode markers the turn-end guard's monotonic progression and
 # one-time attended fail-open read (docs/turnend-guard.md). The notifier drives
 # them exactly as the former auto-arm did, so a genuinely absent coordinator is
@@ -212,6 +215,15 @@ ready_field() {  # <field>
   sed -n "s/^$1=\\(.*\\)/\\1/p" "$READY" 2>/dev/null | head -1
 }
 
+queue_highwater() {
+  local v
+  v=$(cat "$WAKE_SEQ" 2>/dev/null || echo 0)
+  case "$v" in
+    ''|*[!0-9]*) printf '0' ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+
 surfaced_seq() {
   local v
   v=$(cat "$SURFACED" 2>/dev/null || echo 0)
@@ -219,6 +231,22 @@ surfaced_seq() {
     ''|*[!0-9]*) printf '0' ;;
     *) printf '%s' "$v" ;;
   esac
+}
+
+# True when the durable queue still holds an unacked row whose sequence is at or
+# below <ready_seq>. A leftover .wake-queue.seq high-water mark with no such row
+# is not a supervision event.
+has_unacked_wake_at_or_below() {  # <ready_seq>
+  local ready_seq=$1 found=1
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  if [ -f "$FM_WAKE_QUEUE" ] && awk -F '\t' -v max="$ready_seq" '
+    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 + 0) <= (max + 0) { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$FM_WAKE_QUEUE"; then
+    found=0
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$found"
 }
 
 advance_surfaced() {  # <seq>
@@ -242,18 +270,17 @@ coordinator_alive() {
   return 0
 }
 
-# A fresh ready record for THIS session that we have not surfaced yet. Sets
-# READY_SEQ on success.
+# A fresh ready record for THIS session that we have not surfaced yet, covering
+# at least one durable unacked wake. Sets READY_SEQ on success.
 READY_SEQ=
 ready_pending() {
-  local rs ro rg current_owner
+  local rs ro rg current_owner hw
   READY_SEQ=
   [ -f "$READY" ] || return 1
   rs=$(ready_field ready_seq)
   case "$rs" in
     ''|*[!0-9]*) return 1 ;;
   esac
-  [ "$rs" -gt "$(surfaced_seq)" ] || return 1
   # The record must belong to this exact session generation, so a stale record
   # left by a previous session's coordinator is never surfaced.
   ro=$(ready_field session_owner)
@@ -264,6 +291,14 @@ ready_pending() {
     coord-*) : ;;
     *) return 1 ;;
   esac
+  if [ ! -f "$SURFACED" ]; then
+    hw=$(queue_highwater)
+    if ! has_unacked_wake_at_or_below "$hw"; then
+      advance_surfaced "$hw"
+    fi
+  fi
+  [ "$rs" -gt "$(surfaced_seq)" ] || return 1
+  has_unacked_wake_at_or_below "$rs" || return 1
   READY_SEQ=$rs
   return 0
 }
