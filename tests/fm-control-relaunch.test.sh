@@ -541,6 +541,24 @@ test_relaunch_onto_an_unverified_harness_is_refused() {
   pass "fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics"
 }
 
+test_relaunch_onto_disabled_omitted_model_rung_is_refused() {
+  local dir out rc
+  dir=$(new_case dispatchoff rl36)
+  add_ship_task "$dir" rl36 pi
+  mkdir -p "$dir/home/config"
+  printf '%s\n' '{"rules":[{"when":"big feature","use":[{"harness":"claude","enabled":false},{"harness":"codex"}]}],"default":{"harness":"codex"}}' \
+    > "$dir/home/config/crew-dispatch.json"
+  printf 'pi' > "$dir/fake/command"
+  out=$(run_control "$dir" rl36 relaunch --harness claude --note "switching runtime"); rc=$?
+  expect_code 1 "$rc" "relaunch onto a disabled omitted-model rung should refuse"$'\n'"$out"
+  assert_contains "$out" "that rung is switched off" "the refusal should name the switched-off rung"
+  [ "$(meta_field "$dir" rl36 harness)" = pi ] \
+    || fail "a refused relaunch must leave the recorded harness, got '$(meta_field "$dir" rl36 harness)'"
+  [ "$(meta_field "$dir" rl36 model)" = default ] \
+    || fail "a refused relaunch must leave the recorded model, got '$(meta_field "$dir" rl36 model)'"
+  pass "fm-control relaunch: a disabled omitted-model rung still refuses the replacement"
+}
+
 test_prior_harness_turnend_registry_entry_is_cleared() {
   local dir auth
   dir=$(new_case grokauth rl9)
@@ -1361,6 +1379,7 @@ test_prefixed_recorded_harness_requires_explicit_replacement
 test_same_harness_relaunch_keeps_the_profile_axes
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
+test_relaunch_onto_disabled_omitted_model_rung_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
