@@ -36,7 +36,7 @@ The notifier consumes that record by its monotonic `ready_seq` high-water mark, 
 It exits 2 only when that ready event still belongs to this session and coordinator generation and covers at least one durable unacked queue row, so a leftover `.wake-queue.seq` with an empty queue cannot open a handling turn.
 A first run with no surfaced-seq file baselines that leftover high-water instead of treating it as a new wake.
 It surfaces a typed coordinator-degraded failure rather than exiting 0 into a still-needed-but-unsurfaced state.
-Once the coordinator has stood down, the parked notifier's coordinator-absent bound fires and drives that same typed failure plus the guard's failed-epoch progression.
+Once the coordinator has stood down, the parked notifier's bound for an absent coordinator fires and drives that same typed failure plus the guard's failed-epoch progression.
 Because the coordinator keeps one live watcher across the whole handling turn, a turn longer than the beacon grace no longer leaves supervision genuinely absent, which was the false "watcher down" the former next-Stop design produced.
 For every supported arm path, a successor that observes an accepted down stretch emits `check: rearm-resurface` through the ordinary durable handling path before settling into its live wait.
 That recovery presentation includes all unacknowledged queue rows, the cursor-folded OPEN DECISIONS set, and still-unread informational status lines, so a still-open decision or a buried `note:` answer reappears even when recovery has no queue row of its own.
