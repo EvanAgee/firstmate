@@ -1,0 +1,15 @@
+tests/fm-session-start.test.sh
+tests/fm-watcher-lock.test.sh
+tests/fm-remote-job.test.sh
+tests/fm-afk-inject-e2e.test.sh
+tests/fm-muse-harness.test.sh
+tests/fm-turnend-guard.test.sh
+tests/fm-remote-secondmate-parent-binding.test.sh
+tests/fm-watch-checkpoint.test.sh
+tests/fm-wake-drain-open-decisions.test.sh
+tests/fm-task-delivery.test.sh
+tests/fm-session-lock-ancestry.test.sh
+tests/fm-backend-herdr-focus-flash-e2e.test.sh
+tests/fm-pi-primary-live-e2e.test.sh
+tests/fm-sessionstart-hook-live-e2e.test.sh
+tests/fm-grok-continuity-live-e2e.test.sh

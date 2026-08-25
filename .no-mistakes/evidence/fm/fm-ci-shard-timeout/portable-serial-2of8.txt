@@ -1,0 +1,13 @@
+tests/fm-claude-watch-coordinator.test.sh
+tests/fm-control.test.sh
+tests/fm-control-relaunch.test.sh
+tests/fm-remote-backlog-handoff.test.sh
+tests/fm-procevent-when.test.sh
+tests/fm-wake-daemon-lifecycle-e2e.test.sh
+tests/fm-herdr-session-cleanup.test.sh
+tests/fm-watch-github-health.test.sh
+tests/fm-classify-decision-key.test.sh
+tests/fm-ask-user-authority.test.sh
+tests/fm-omp.test.sh
+tests/fm-backend-zellij-smoke.test.sh
+tests/fm-opencode-primary-live-e2e.test.sh

@@ -1,0 +1,16 @@
+tests/fm-secondmate-harness.test.sh
+tests/fm-spawn-dispatch-profile.test.sh
+tests/fm-cursor-primary.test.sh
+tests/fm-remote-secondmate-trace-context.test.sh
+tests/fm-daemon.test.sh
+tests/fm-guard-stale-banner.test.sh
+tests/fm-spawn-pool-base-freshen.test.sh
+tests/fm-backlog-handoff.test.sh
+tests/fm-gate-refuse.test.sh
+tests/fm-stow-cascade.test.sh
+tests/fm-documentation-audiences.test.sh
+tests/fm-outage-sync.test.sh
+tests/fm-backend-tmux-smoke.test.sh
+tests/fm-project-origin.test.sh
+tests/fm-herdr-version-floor-live-e2e.test.sh
+tests/fm-harness-liveness-drift-live-e2e.test.sh

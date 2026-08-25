@@ -1,0 +1,74 @@
+=== bin/fm-test-run.sh --check-coverage ===
+FM_TEST_COVERAGE ok total=156 parallel=24 serial=120 serial_shards=8 herdr=12
+
+=== bin/fm-test-run.sh --serial-shard-budget ===
+FM_TEST_SERIAL_BUDGET shard=1of8 estimated_ms=356328
+FM_TEST_SERIAL_BUDGET shard=2of8 estimated_ms=356327
+FM_TEST_SERIAL_BUDGET shard=3of8 estimated_ms=356317
+FM_TEST_SERIAL_BUDGET shard=4of8 estimated_ms=356324
+FM_TEST_SERIAL_BUDGET shard=5of8 estimated_ms=356318
+FM_TEST_SERIAL_BUDGET shard=6of8 estimated_ms=356326
+FM_TEST_SERIAL_BUDGET shard=7of8 estimated_ms=356324
+FM_TEST_SERIAL_BUDGET shard=8of8 estimated_ms=356313
+
+=== bin/fm-test-run.sh --list-lanes ===
+portable-parallel-1
+portable-parallel-2
+portable-serial
+portable-serial-1of8
+portable-serial-2of8
+portable-serial-3of8
+portable-serial-4of8
+portable-serial-5of8
+portable-serial-6of8
+portable-serial-7of8
+portable-serial-8of8
+real-herdr-gated
+
+=== CI matrix (parsed YAML, not grepped) ===
+timeout-minutes=15
+matrix.shard=[1, 2, 3, 4, 5, 6, 7, 8]
+matrix.width=8
+include=false
+exclude=false
+
+=== stale 4-shard lane is refused ===
+
+=== out-of-range 9of8 is refused ===
+
+=== per-shard script counts vs serial lane ===
+portable-serial: 120
+portable-serial-1of8: 15
+portable-serial-2of8: 13
+portable-serial-3of8: 15
+portable-serial-4of8: 15
+portable-serial-5of8: 15
+portable-serial-6of8: 16
+portable-serial-7of8: 18
+portable-serial-8of8: 13
+union vs serial (should be empty):
+duplicates (should be empty):
+
+=== budget vs 15-minute hang tripwire ===
+shard    scripts     est_ms  est_min   vs_10min_alarm   vs_15min_cap
+1of8          15     356328    5.939            UNDER          2.53x
+2of8          13     356327    5.939            UNDER          2.53x
+3of8          15     356317    5.939            UNDER          2.53x
+4of8          15     356324    5.939            UNDER          2.53x
+5of8          15     356318    5.939            UNDER          2.53x
+6of8          16     356326    5.939            UNDER          2.53x
+7of8          18     356324    5.939            UNDER          2.53x
+8of8          13     356313    5.939            UNDER          2.53x
+
+worst=356328 ms (5.939 min)
+imbalance=15 ms
+lane_total=2850577 ms (47.51 min)
+alarm_two_thirds=600000 ms (10.000 min)
+job_cap=900000 ms (15 min)
+margin_vs_cap=2.53x
+
+=== stale 4-shard lane is refused (stderr) ===
+fm-test-run: lane 'portable-serial-1of4' asks for 4 portable serial shards but this runner is configured for 8 (see --list-lanes)
+
+=== out-of-range 9of8 is refused (stderr) ===
+fm-test-run: lane 'portable-serial-9of8' shard index is outside 1..8 (see --list-lanes)

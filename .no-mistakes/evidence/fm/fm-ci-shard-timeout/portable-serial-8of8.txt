@@ -1,0 +1,13 @@
+tests/fm-claude-watch-notifier.test.sh
+tests/fm-bearings-snapshot.test.sh
+tests/fm-wake-drain-open-decisions-cursor.test.sh
+tests/fm-vendor-auth-probe.test.sh
+tests/fm-secondmate-sync.test.sh
+tests/fm-fleet-sync.test.sh
+tests/fm-send-resolve-key.test.sh
+tests/fm-spawn-pi-launch-robustness.test.sh
+tests/fm-backend-zellij.test.sh
+tests/fm-backend-cmux.test.sh
+tests/fm-teardown-endpoint-safety.test.sh
+tests/fm-afk-return.test.sh
+tests/fm-trace-context-lib.test.sh

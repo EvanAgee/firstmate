@@ -1,0 +1,15 @@
+tests/fm-pr-check-security.test.sh
+tests/fm-pi-watch-extension.test.sh
+tests/fm-remote-reply.test.sh
+tests/fm-backend.test.sh
+tests/fm-update.test.sh
+tests/fm-on.test.sh
+tests/fm-remote-doctor.test.sh
+tests/fm-tmux-agent-liveness.test.sh
+tests/fm-test-fixture-cleanup.test.sh
+tests/fm-supervision-events.test.sh
+tests/fm-merge-local.test.sh
+tests/fm-send-secondmate-marker-herdr-e2e.test.sh
+tests/fm-gitignore-config.test.sh
+tests/fm-quota-array-dispatch-live-e2e.test.sh
+tests/fm-sessionstart-instruction-refresh-live-e2e.test.sh

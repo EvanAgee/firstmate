@@ -1,0 +1,15 @@
+tests/fm-watch-triage.test.sh
+tests/fm-procevent.test.sh
+tests/fm-inactive-reconcile.test.sh
+tests/fm-trace-context-spawn.test.sh
+tests/fm-busy-adapter-wiring.test.sh
+tests/fm-secondmate-liveness.test.sh
+tests/fm-tangle-guard.test.sh
+tests/fm-fleet-snapshot-view.test.sh
+tests/fm-send-secondmate-marker.test.sh
+tests/fm-remote-job-orphan-reap.test.sh
+tests/fm-busy-state.test.sh
+tests/fm-test-isolation-proof.test.sh
+tests/fm-afk-pi-herdr-return-e2e.test.sh
+tests/fm-operational-input.test.sh
+tests/fm-cursor-primary-live-e2e.test.sh

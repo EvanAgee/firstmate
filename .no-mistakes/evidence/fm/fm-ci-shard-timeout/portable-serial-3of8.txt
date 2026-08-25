@@ -1,0 +1,15 @@
+tests/fm-remote-secondmate-lifecycle-e2e.test.sh
+tests/fm-startup-network.test.sh
+tests/fm-bootstrap.test.sh
+tests/fm-cursor-harness.test.sh
+tests/fm-pending-reply.test.sh
+tests/fm-kimi-harness.test.sh
+tests/fm-wake-drain-unread-status.test.sh
+tests/fm-secondmate-lifecycle-e2e.test.sh
+tests/fm-shared-captain-inheritance.test.sh
+tests/fm-subagent-pretool-check.test.sh
+tests/fm-gotmp.test.sh
+tests/fm-calm-pi-extension.test.sh
+tests/fm-claude-watch-coordinator-live-e2e.test.sh
+tests/fm-muse-signals-live-e2e.test.sh
+tests/fm-composer-matrix-live-e2e.test.sh
