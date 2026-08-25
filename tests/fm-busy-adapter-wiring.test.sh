@@ -453,6 +453,27 @@ test_claude_fable_relaunch_restores_recorded_model() {
   pass "a direct relaunch without --model restores the recorded Fable deny list"
 }
 
+test_claude_fable_harness_switch_relaunch_drops_recorded_model() {
+  local rec id=busy-cl-fable-switch out settings model harness
+  rec=$(make_spawn_case claude-fable-switch claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" --model claude-fable-5)
+  expect_code 0 $? "claude fable spawn should succeed: $out"
+  settings="$WT_DIR/.claude/settings.local.json"
+  assert_present "$settings" "fable spawn did not write hook settings"
+  out=$(run_relaunch "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" --harness pi)
+  expect_code 0 $? "harness-switch relaunch without --model should succeed: $out"
+  harness=$(grep '^harness=' "$HOME_DIR/state/$id.meta" | tail -1 | cut -d= -f2-)
+  [ "$harness" = pi ] \
+    || fail "a harness-switch relaunch must record the new harness, got '$harness'"
+  model=$(grep '^model=' "$HOME_DIR/state/$id.meta" | tail -1 | cut -d= -f2-)
+  [ "$model" = default ] \
+    || fail "a harness-switch relaunch must not keep the previous Fable pin, got '$model'"
+  [ ! -e "$settings" ] \
+    || fail "a harness-switch relaunch must retire the previous Fable deny list"
+  pass "a harness-switch relaunch without --model drops the previous Fable pin"
+}
+
 test_codex_unverified_until_a_semantic_source_exists() {
   local rec id=busy-cx-1 out state
   rec=$(make_spawn_case codex-unverified codex "$id")
@@ -497,6 +518,7 @@ test_claude_fable_denies_subagent_delegation
 test_claude_non_fable_keeps_delegation
 test_claude_fable_match_is_case_insensitive
 test_claude_fable_relaunch_restores_recorded_model
+test_claude_fable_harness_switch_relaunch_drops_recorded_model
 test_codex_unverified_until_a_semantic_source_exists
 
 echo "all fm-busy-adapter-wiring tests passed"

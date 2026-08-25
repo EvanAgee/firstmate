@@ -28,8 +28,9 @@
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
 #   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. An omitted --model reuses the recorded model, and a
-#   recorded default means no pin. It refuses unless the recorded endpoint is positively
+#   ordinary relaunch. An omitted --model reuses the recorded model only when
+#   the replacement harness equals the recorded one; a recorded default means
+#   no pin, and a harness change with no --model still means default/no pin. It refuses unless the recorded endpoint is positively
 #   agent-free or authoritatively gone on a backend with a recovery-grade
 #   agent-state classifier (tmux or herdr), refuses unless a still-present
 #   endpoint's shell is sitting in the recorded worktree, and clears the
@@ -1065,11 +1066,13 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: task $ID has no recorded harness; pass --harness to relaunch it" >&2
     exit 1
   }
-  # With no explicit model, a relaunch reuses the model already recorded
-  # for this task. A recorded `default` means no pin, matching how a fresh
-  # spawn records an unspecified model. This keeps a Fable worker's generated
-  # deny list intact on a direct relaunch that does not pass --model.
-  if [ "$MODEL_SET" -eq 0 ]; then
+  # With no explicit model, a same-harness relaunch reuses the model already
+  # recorded for this task. A recorded `default` means no pin, matching how a
+  # fresh spawn records an unspecified model. This keeps a Fable worker's
+  # generated deny list intact on a direct same-harness relaunch that does
+  # not pass --model. A harness change still treats omitted --model as
+  # default/no pin, so a pin chosen for the old harness cannot follow.
+  if [ "$MODEL_SET" -eq 0 ] && [ "$ARG3" = "$RELAUNCH_PRIOR_HARNESS" ]; then
     RELAUNCH_MODEL=$(fm_meta_get "$RELAUNCH_META" model)
     if [ -n "$RELAUNCH_MODEL" ] && [ "$RELAUNCH_MODEL" != default ]; then
       MODEL=$RELAUNCH_MODEL
