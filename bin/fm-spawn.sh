@@ -28,17 +28,23 @@
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
 #   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
-#   agent-free or authoritatively gone on a backend with a recovery-grade
+#   ordinary relaunch. An omitted --model reuses the recorded model only when
+#   the replacement harness equals the recorded one; a recorded default means
+#   no pin, and a harness change with no --model still means default/no pin.
+#   The token default on an explicit --model is also no pin, and it still
+#   counts as --model being set, so a same-harness relaunch that names default
+#   does not restore a recorded pin. It refuses unless the recorded endpoint is
+#   positively agent-free or authoritatively gone on a backend with a recovery-grade
 #   agent-state classifier (tmux or herdr), refuses unless a still-present
 #   endpoint's shell is sitting in the recorded worktree, and clears the
 #   previous harness's per-task wiring before arming the new incarnation.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
-#   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
-#   axes chosen by firstmate at intake. They are only threaded into harnesses whose
-#   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed.
+#   --model <name> and --effort <low|medium|high|xhigh|max> are profile axes
+#   chosen by firstmate at intake. On --model, the token default means no pin.
+#   They are only threaded into harnesses whose installed CLIs were verified to
+#   support that axis; unsupported axes are omitted from that harness's launch
+#   rather than guessed.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -189,7 +195,7 @@
 # park owns that home's supervision (docs/supervision-protocols/cursor.md).
 # Claude crew worktrees get an untracked .claude/settings.local.json: busy-state
 # lifecycle hooks for every Claude model, plus permissions.deny of Agent and Task
-# when the model name contains "fable", so those delegation tools leave the
+# when the model name contains "fable" (case-insensitive), so those delegation tools leave the
 # schema. Other Claude models get no permissions key.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
@@ -342,6 +348,7 @@ done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 [ "$HARNESS_SET" -eq 0 ] || [ -n "$HARNESS_ARG" ] || { echo "error: --harness requires a non-empty value" >&2; exit 1; }
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
+[ "$MODEL" != default ] || MODEL=
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
@@ -1064,6 +1071,18 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: task $ID has no recorded harness; pass --harness to relaunch it" >&2
     exit 1
   }
+  # With no explicit model, a same-harness relaunch reuses the model already
+  # recorded for this task. A recorded `default` means no pin, matching how a
+  # fresh spawn records an unspecified model. This keeps a Fable worker's
+  # generated deny list intact on a direct same-harness relaunch that does
+  # not pass --model. A harness change still treats omitted --model as
+  # default/no pin, so a pin chosen for the old harness cannot follow.
+  if [ "$MODEL_SET" -eq 0 ] && [ "$ARG3" = "$RELAUNCH_PRIOR_HARNESS" ]; then
+    RELAUNCH_MODEL=$(fm_meta_get "$RELAUNCH_META" model)
+    if [ -n "$RELAUNCH_MODEL" ] && [ "$RELAUNCH_MODEL" != default ]; then
+      MODEL=$RELAUNCH_MODEL
+    fi
+  fi
 elif [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
     ''|claude|codex|opencode|omp|pi|pi-signed|grok|kimi|cursor|muse)
@@ -2535,7 +2554,7 @@ if [ "$KIND" != secondmate ]; then
       # Fable usage). Deny the delegation tool names so they leave the model's
       # schema entirely for Fable launches; other Claude models are unaffected.
       claude_perms=""
-      case "${MODEL:-}" in
+      case "$(printf '%s' "${MODEL:-}" | tr '[:upper:]' '[:lower:]')" in
         *fable*) claude_perms=',"permissions":{"deny":["Agent","Task"]}' ;;
       esac
       cat > "$WT/.claude/settings.local.json" <<EOF

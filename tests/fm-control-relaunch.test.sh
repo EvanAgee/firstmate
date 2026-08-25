@@ -541,6 +541,24 @@ test_relaunch_onto_an_unverified_harness_is_refused() {
   pass "fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics"
 }
 
+test_relaunch_onto_disabled_omitted_model_rung_is_refused() {
+  local dir out rc
+  dir=$(new_case dispatchoff rl36)
+  add_ship_task "$dir" rl36 pi
+  mkdir -p "$dir/home/config"
+  printf '%s\n' '{"rules":[{"when":"big feature","use":[{"harness":"claude","enabled":false},{"harness":"codex"}]}],"default":{"harness":"codex"}}' \
+    > "$dir/home/config/crew-dispatch.json"
+  printf 'pi' > "$dir/fake/command"
+  out=$(run_control "$dir" rl36 relaunch --harness claude --note "switching runtime"); rc=$?
+  expect_code 1 "$rc" "relaunch onto a disabled omitted-model rung should refuse"$'\n'"$out"
+  assert_contains "$out" "that rung is switched off" "the refusal should name the switched-off rung"
+  [ "$(meta_field "$dir" rl36 harness)" = pi ] \
+    || fail "a refused relaunch must leave the recorded harness, got '$(meta_field "$dir" rl36 harness)'"
+  [ "$(meta_field "$dir" rl36 model)" = default ] \
+    || fail "a refused relaunch must leave the recorded model, got '$(meta_field "$dir" rl36 model)'"
+  pass "fm-control relaunch: a disabled omitted-model rung still refuses the replacement"
+}
+
 test_prior_harness_turnend_registry_entry_is_cleared() {
   local dir auth
   dir=$(new_case grokauth rl9)
@@ -640,6 +658,41 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
     || fail "the configured effort token should come with the pin"
   assert_not_contains "$out" "not a verified harness" "codex is a verified harness"
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
+}
+
+test_secondmate_relaunch_configured_default_does_not_freeze_prior_model() {
+  local dir home out rc
+  dir=$(new_case smdefault sm8)
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/sm8"
+  printf 'claude\n' > "$home/config/secondmate-harness"
+  printf '# secondmate brief\n' > "$home/data/sm8/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'sm8\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-sm8"
+    echo "endpoint_task_id=sm8"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=claude-fable-5"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+  } > "$home/state/sm8.meta"
+  printf '%s\n' "fm-sm8" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  out=$(run_control "$dir" sm8 relaunch); rc=$?
+  expect_code 0 "$rc" "a same-harness secondmate relaunch should succeed"$'\n'"$out"
+  [ "$(journal_field "$dir" sm8 to_model)" = default ] \
+    || fail "a configured default should resolve to no pin, got '$(journal_field "$dir" sm8 to_model)'"
+  [ "$(meta_field "$dir" sm8 model)" = default ] \
+    || fail "a same-harness secondmate relaunch must not freeze the prior pin, got '$(meta_field "$dir" sm8 model)'"
+  pass "fm-control relaunch: a same-harness secondmate configured default does not freeze a prior pin"
 }
 
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
@@ -1326,10 +1379,12 @@ test_prefixed_recorded_harness_requires_explicit_replacement
 test_same_harness_relaunch_keeps_the_profile_axes
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
+test_relaunch_onto_disabled_omitted_model_rung_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
 test_secondmate_relaunch_picks_up_the_configured_harness_pin
+test_secondmate_relaunch_configured_default_does_not_freeze_prior_model
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop
 test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes

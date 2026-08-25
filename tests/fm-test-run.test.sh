@@ -109,7 +109,8 @@ init_changed_fixture_repo() {
     fm-bearings-snapshot.test.sh \
     fm-backend-cmux.test.sh \
     fm-backend-zellij.test.sh \
-    fm-backend-orca.test.sh; do
+    fm-backend-orca.test.sh \
+    fm-skills-lock.test.sh; do
     printf '#!/usr/bin/env bash\n# tests/lib.sh\n' >"$repo/tests/$script"
     chmod +x "$repo/tests/$script"
   done
@@ -127,6 +128,9 @@ init_changed_fixture_repo() {
   # script alongside its SKILL.md.
   : >"$repo/.agents/skills/example/REFERENCE.md"
   : >"$repo/.agents/skills/example/scripts/helper.sh"
+  mkdir -p "$repo/.agents/skills/quota-array-dispatch"
+  : >"$repo/.agents/skills/quota-array-dispatch/SKILL.md"
+  : >"$repo/.agents/skills/quota-array-dispatch/notes.md"
   : >"$repo/skills-lock.json"
   : >"$repo/.claude/settings.json"
   : >"$repo/.pi/extensions/fm-primary-pi-watch.ts"
@@ -184,6 +188,8 @@ test_changed_dependency_selection_and_unmapped_failure() {
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
     "a skill reference page selects the same coverage as its SKILL.md"
+  assert_contains "$listed" "tests/fm-skills-lock.test.sh" \
+    "a skill reference page selects the vendored lock check"
   git -C "$repo" add .agents
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm skill-reference-change
 
@@ -191,14 +197,29 @@ test_changed_dependency_selection_and_unmapped_failure() {
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
     "a skill bundled script selects the same coverage as its SKILL.md"
+  assert_contains "$listed" "tests/fm-skills-lock.test.sh" \
+    "a skill bundled script selects the vendored lock check"
   git -C "$repo" add .agents
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm skill-script-change
 
-  # The vendoring lock file carries no behavior, so it selects no suite while
-  # still being a mapped path.
+  # A quota-array-dispatch supporting file must keep both families that skill's
+  # SKILL.md owns, not only pure-contract-unit.
+  printf '\n' >>"$repo/.agents/skills/quota-array-dispatch/notes.md"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
+    "a quota-array-dispatch supporting file selects pure-contract-unit"
+  assert_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" \
+    "a quota-array-dispatch supporting file selects live-harness-optin"
+  assert_contains "$listed" "tests/fm-skills-lock.test.sh" \
+    "a quota-array-dispatch supporting file selects the vendored lock check"
+  git -C "$repo" add .agents
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-support-change
+
+  # The vendoring lock file selects the lock-hash test and stays a mapped path.
   printf '{}\n' >"$repo/skills-lock.json"
-  (cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD) >/dev/null 2>&1 \
-    || fail "the skills lock file must be a mapped path, not an unmapped refusal"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-skills-lock.test.sh" \
+    "the skills lock file must select the vendored lock check"
   git -C "$repo" add skills-lock.json
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm lock-change
 

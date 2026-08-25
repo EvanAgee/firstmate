@@ -70,6 +70,18 @@ run_spawn() {  # <home> <wt> <fakebin> <spawn-args...>
     "$SPAWN" "$@" 2>&1
 }
 
+run_relaunch() {  # <home> <wt> <fakebin> <id> [spawn-args...]
+  # A relaunch reuses the recorded delivery contract, so --mode/--yolo refuse.
+  local home=$1 wt=$2 fakebin=$3
+  shift 3
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
+    "$SPAWN" "$@" --relaunch 2>&1
+}
+
 read_case_record() {
   # shellcheck disable=SC2034 # CASE_DIR is part of the shared record shape
   IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR <<EOF
@@ -408,6 +420,60 @@ test_claude_non_fable_keeps_delegation() {
   pass "a non-fable claude launch carries no delegation deny list"
 }
 
+test_claude_fable_match_is_case_insensitive() {
+  local rec id=busy-cl-fable-case out settings deny
+  rec=$(make_spawn_case claude-fable-case claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" --model Claude-Fable-5)
+  expect_code 0 $? "mixed-case fable spawn should succeed: $out"
+  settings="$WT_DIR/.claude/settings.local.json"
+  deny=$(jq -r '(.permissions.deny // []) | sort | join(",")' "$settings")
+  [ "$deny" = "Agent,Task" ] \
+    || fail "a mixed-case Fable model must still deny both delegation tools, got '$deny'"
+  pass "a mixed-case Fable model name still installs the delegation deny list"
+}
+
+test_claude_fable_relaunch_restores_recorded_model() {
+  local rec id=busy-cl-fable-rl out settings deny model
+  rec=$(make_spawn_case claude-fable-relaunch claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" --model claude-fable-5)
+  expect_code 0 $? "claude fable spawn should succeed: $out"
+  settings="$WT_DIR/.claude/settings.local.json"
+  rm -f "$settings"
+  out=$(run_relaunch "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id")
+  expect_code 0 $? "direct fable relaunch without --model should succeed: $out"
+  assert_present "$settings" "fable relaunch did not regenerate hook settings"
+  deny=$(jq -r '(.permissions.deny // []) | sort | join(",")' "$settings")
+  [ "$deny" = "Agent,Task" ] \
+    || fail "a direct relaunch must restore the recorded Fable deny list, got '$deny'"
+  model=$(grep '^model=' "$HOME_DIR/state/$id.meta" | tail -1 | cut -d= -f2-)
+  [ "$model" = "claude-fable-5" ] \
+    || fail "a direct relaunch must keep the recorded Fable model, got '$model'"
+  pass "a direct relaunch without --model restores the recorded Fable deny list"
+}
+
+test_claude_fable_harness_switch_relaunch_drops_recorded_model() {
+  local rec id=busy-cl-fable-switch out settings model harness
+  rec=$(make_spawn_case claude-fable-switch claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" --model claude-fable-5)
+  expect_code 0 $? "claude fable spawn should succeed: $out"
+  settings="$WT_DIR/.claude/settings.local.json"
+  assert_present "$settings" "fable spawn did not write hook settings"
+  out=$(run_relaunch "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" --harness pi)
+  expect_code 0 $? "harness-switch relaunch without --model should succeed: $out"
+  harness=$(grep '^harness=' "$HOME_DIR/state/$id.meta" | tail -1 | cut -d= -f2-)
+  [ "$harness" = pi ] \
+    || fail "a harness-switch relaunch must record the new harness, got '$harness'"
+  model=$(grep '^model=' "$HOME_DIR/state/$id.meta" | tail -1 | cut -d= -f2-)
+  [ "$model" = default ] \
+    || fail "a harness-switch relaunch must not keep the previous Fable pin, got '$model'"
+  [ ! -e "$settings" ] \
+    || fail "a harness-switch relaunch must retire the previous Fable deny list"
+  pass "a harness-switch relaunch without --model drops the previous Fable pin"
+}
+
 test_codex_unverified_until_a_semantic_source_exists() {
   local rec id=busy-cx-1 out state
   rec=$(make_spawn_case codex-unverified codex "$id")
@@ -450,6 +516,9 @@ test_claude_hooks_semantic_lifecycle
 test_claude_hooks_stale_incarnation_harmless
 test_claude_fable_denies_subagent_delegation
 test_claude_non_fable_keeps_delegation
+test_claude_fable_match_is_case_insensitive
+test_claude_fable_relaunch_restores_recorded_model
+test_claude_fable_harness_switch_relaunch_drops_recorded_model
 test_codex_unverified_until_a_semantic_source_exists
 
 echo "all fm-busy-adapter-wiring tests passed"
