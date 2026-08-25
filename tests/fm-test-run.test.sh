@@ -678,10 +678,18 @@ job = doc.fetch("jobs").fetch("tests-portable-serial")
 puts job.fetch("timeout-minutes")
 ' "$ROOT/.github/workflows/ci.yml") \
     || fail "could not read the portable serial job cap from ci.yml"
+  # Count what the matrix actually expands to, not just the shard list length:
+  # an include or exclude would otherwise change the real shard count while this
+  # check kept reading the original list and passing.
   matrix_width=$(ruby -ryaml -e '
 doc = YAML.load_file(ARGV[0])
 job = doc.fetch("jobs").fetch("tests-portable-serial")
-puts job.fetch("strategy").fetch("matrix").fetch("shard").length
+matrix = job.fetch("strategy").fetch("matrix")
+extra = matrix.keys - ["shard", "include", "exclude"]
+raise "unexpected serial matrix axes: #{extra.join(", ")}" unless extra.empty?
+raise "serial matrix uses include; budget guard cannot count shards" if matrix.key?("include")
+raise "serial matrix uses exclude; budget guard cannot count shards" if matrix.key?("exclude")
+puts matrix.fetch("shard").length
 ' "$ROOT/.github/workflows/ci.yml") \
     || fail "could not read the portable serial matrix width from ci.yml"
 

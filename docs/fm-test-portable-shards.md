@@ -56,7 +56,8 @@ Membership is derived rather than enumerated, so a newly added test lands here b
 ## Portable serial CI shards
 
 That remainder grows as tests are added: it measured 19m04s of script time on 2026-08-02 and 47m30s on 2026-08-25.
-At four shards that growth put shards 1 and 4 past the 15-minute job cap, and CI cancelled them mid-run on four consecutive pushes to main.
+At four shards that growth put shards 1 and 4 past the 15-minute job cap, and CI cancelled those jobs on four consecutive pushes to main.
+A cancelled job still reports the shard as failed, whether the cap lands during a script or during artifact upload after the last one.
 `portable-serial-<k>of<n>` splits it across `n` separate CI runners, and `n` rises when the lane outgrows the cap.
 Each shard is still strictly serial in itself, and separate runners mean no two of these stateful scripts ever share a machine, so the split needs no concurrency isolation proof.
 
@@ -88,7 +89,7 @@ A regression in `tests/fm-test-run.test.sh` reads that budget, checks the CI mat
 That fraction is the drift alarm rather than the real limit: the estimate excludes runner setup and normal variance, so a shard already past it is on track to be cancelled.
 Answer that failure by refreshing the hints and raising the shard count, never by raising the alarm threshold or the job cap.
 
-Refresh the hints by downloading the per-shard timing artifacts from a green CI run, replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the measured `path`/`duration_ms` pairs, and updating the table above:
+Refresh the hints by downloading the per-shard timing artifacts from a CI run whose serial shards all completed their scripts, replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the measured `path`/`duration_ms` pairs, and updating the table above:
 
 ```sh
 gh run download <run-id> --pattern 'fm-test-timing-portable-serial-*' -D /tmp/fm-serial
