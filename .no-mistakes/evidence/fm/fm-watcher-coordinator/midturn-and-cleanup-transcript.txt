@@ -1,0 +1,30 @@
+=== mid-turn live-watcher sample (grace=6s, sample window=10s) ===
+session_lock=16643
+coordinator_pid=16663 first_watch_pid=16821
+ready_record:
+  ready_seq=0
+  recovery_generation=none
+  predecessor_arm_pid=none
+  successor_watch_pid=16821
+  successor_watch_identity=Mon Aug 24 20:09:39 2026     bash /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0V4KW7KS71DMYA2X9J7WNCX/bin/fm-watch.sh
+  coordinator_generation=coord-16643-16663
+  session_owner=16643
+  published_at=1787620181
+t=1s watcher_pid=16821 alive=yes beacon_age=1s
+t=2s watcher_pid=16821 alive=yes beacon_age=0s
+t=3s watcher_pid=16821 alive=yes beacon_age=1s
+t=4s watcher_pid=16821 alive=yes beacon_age=1s
+t=5s watcher_pid=16821 alive=yes beacon_age=1s
+t=6s watcher_pid=16821 alive=yes beacon_age=0s
+t=7s watcher_pid=16821 alive=yes beacon_age=1s
+t=8s watcher_pid=16821 alive=yes beacon_age=1s
+t=9s watcher_pid=16821 alive=yes beacon_age=0s
+t=10s watcher_pid=16821 alive=yes beacon_age=1s
+last_watch_pid=16821
+PASS: live watcher 16821 owned the lock with a fresh beacon for 10s > 6s grace
+
+=== live-e2e cleanup signals recorded watcher pid ===
+dummy_watcher_pid=19959 (alive before cleanup)
+PASS: recorded pid 19959 was signalled and is gone; lab deleted
+
+ALL EVIDENCE CHECKS PASSED

@@ -1,0 +1,62 @@
+FM_TEST_BEGIN 2026-08-25T01:07:21Z tests/fm-cursor-primary.test.sh family=watcher-wake-lock expected_gate_skip=none
+ok - fm-turnend-guard: Cursor payload is inert without --cursor and blocks with it
+ok - fm-turnend-guard: a non-Cursor payload keeps blocking
+ok - fm-claude-watch: both Claude Stop hooks stay inert on a Cursor-delivered payload
+ok - fm-sessionstart-run: inert on a Cursor payload, unchanged otherwise
+ok - fm-arm-pretool-check: Cursor duplicate allows, --cursor denies in Cursor's own shape
+ok - fm-cd-pretool-check: Cursor duplicate allows, --cursor denies in Cursor's own shape
+ok - cursor park: silent no-op when no supervision is needed
+ok - cursor park: an actionable close is delivered as one watcher-kind follow-up
+ok - cursor park: always exits 0, even when supervision is genuinely down
+ok - cursor park: the repair nag is bounded and then goes quiet
+ok - cursor park: a repair nag is emitted only after its budget persists
+ok - cursor park: a delivered wake resets the bounded repair budget
+ok - cursor park: the loop_count ceiling warns exactly once, then stops the loop
+ok - cursor park: an older park stands down after a newer stop claim
+ok - cursor park: the newest stop exclusively owns a concurrent commit
+ok - cursor park: a superseded park cannot consume repair budget
+ok - cursor park: inert while away mode is active
+ok - cursor park: an away-mode transition wins before follow-up commit
+ok - cursor park: inert when this session does not hold the home lock
+ok - cursor park: session takeover stops polling without output or state mutation
+ok - cursor park: inert inside a child crewmate worktree
+ok - cursor park: malformed payloads fail open without arming
+ok - fm-sessionstart-cursor: sessionStart injects context
+ok - fm-sessionstart-cursor: silent inside a child crewmate worktree
+ok - cursor registration: covers every primary event with a bounded stop loop
+ok - cursor bounds nest: firstmate's default ceiling stops the loop before Cursor's loop_limit does
+FM_TEST_END 2026-08-25T01:08:26Z tests/fm-cursor-primary.test.sh exit=0 duration_ms=65781 gate_skip=false
+FM_TEST_BEGIN 2026-08-25T01:08:26Z tests/fm-session-lock-ancestry.test.sh family=watcher-wake-lock expected_gate_skip=none
+ok - session-lock: a version-named Claude Code session is identified from its install path and argv[0]
+ok - session-lock: ordinary script paths under a harness directory are not harness processes
+ok - session-lock: ownership stops at the first non-harness gap above the contiguous run
+ok - session-lock: a live version-named session holding the lock is not mistaken for a stale owner
+ok - session-lock e2e: a version-named session claims the home and wakes on the ready record
+ok - session-lock e2e: a session parented by a harness-named daemon claims the home and wakes on the ready record
+ok - session-lock e2e: a version-named session under a harness-named daemon keeps its own lock
+FM_TEST_END 2026-08-25T01:08:32Z tests/fm-session-lock-ancestry.test.sh exit=0 duration_ms=5550 gate_skip=false
+FM_TEST_BEGIN 2026-08-25T01:08:32Z tests/fm-supervision-instructions.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - every harness render carries the steer-capture and heartbeat cadence duties; read-only omits them
+ok - renderer prints exactly the selected harness block
+ok - renderer falls back to unknown.md for unverified harness names
+ok - renderer includes read-only, afk, and effective x-mode current-state stanzas
+ok - renderer repair-line mode is harness-aware and honors conditional state
+ok - renderer preserves every harness ordinary-continuation and missing-cycle repair path
+ok - pi-signed keeps its identity while sharing Pi's supervision protocol
+ok - grok supervision is Claude-shaped background notify with passive Stop-hook backstop
+ok - grok rendered command sources the effective x-mode config
+ok - pi supervision snippet renders the effective extension path
+ok - omp supervision snippet renders the effective extension path
+FM_TEST_END 2026-08-25T01:08:33Z tests/fm-supervision-instructions.test.sh exit=0 duration_ms=1108 gate_skip=false
+FM_TEST_BEGIN 2026-08-25T01:08:33Z tests/fm-claude-watch-coordinator-live-e2e.test.sh family=unclassified expected_gate_skip=none
+skip: set FM_CLAUDE_LIVE_E2E=1 to run the Claude watcher coordinator regression
+FM_TEST_END 2026-08-25T01:08:33Z tests/fm-claude-watch-coordinator-live-e2e.test.sh exit=0 duration_ms=38 gate_skip=true
+FM_TEST_SUMMARY total=4 failed=0 skipped_gate=1 duration_ms=72740
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=1108 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=38 failed=0
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=2 duration_ms=71331 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-cursor-primary.test.sh duration_ms=65781
+FM_TEST_SLOWEST rank=2 script=tests/fm-session-lock-ancestry.test.sh duration_ms=5550
+FM_TEST_SLOWEST rank=3 script=tests/fm-supervision-instructions.test.sh duration_ms=1108
+FM_TEST_SLOWEST rank=4 script=tests/fm-claude-watch-coordinator-live-e2e.test.sh duration_ms=38
+EXIT=0

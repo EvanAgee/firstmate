@@ -1,0 +1,16 @@
+FM_TEST_BEGIN 2026-08-25T01:03:07Z tests/fm-claude-watch-coordinator.test.sh family=unclassified expected_gate_skip=none
+ok - coordinator: a verified live successor owns the lock before the ready record is published
+ok - coordinator: one stable live watcher keeps the beacon fresh across a turn longer than grace
+ok - coordinator: an actionable close arms a verified successor and re-publishes the ready high-water mark
+ok - notifier: parks, then exits 2 exactly once keyed to ready_seq, and does not re-wake the same event
+ok - notifier: leftover wake-queue.seq on an upgraded empty home does not open a handling turn
+ok - handshake: a duplicated-row event advances one monotonic high-water mark and wakes exactly once
+ok - coordinator: concurrent firings admit exactly one coordinator owner
+ok - guard: a coordinator lock alone never satisfies the turn-end guard
+ok - coordinator: stands down cleanly when a new session generation owns the session lock
+ok - coordinator: stands down after a bounded successor-timeout streak so the guard blocks an idle Stop
+FM_TEST_END 2026-08-25T01:07:15Z tests/fm-claude-watch-coordinator.test.sh exit=0 duration_ms=248289 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=248427
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=248289 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-claude-watch-coordinator.test.sh duration_ms=248289
+EXIT=0
