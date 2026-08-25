@@ -28,7 +28,8 @@
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
 #   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
+#   ordinary relaunch. An omitted --model reuses the recorded model, and a
+#   recorded default means no pin. It refuses unless the recorded endpoint is positively
 #   agent-free or authoritatively gone on a backend with a recovery-grade
 #   agent-state classifier (tmux or herdr), refuses unless a still-present
 #   endpoint's shell is sitting in the recorded worktree, and clears the
@@ -189,7 +190,7 @@
 # park owns that home's supervision (docs/supervision-protocols/cursor.md).
 # Claude crew worktrees get an untracked .claude/settings.local.json: busy-state
 # lifecycle hooks for every Claude model, plus permissions.deny of Agent and Task
-# when the model name contains "fable", so those delegation tools leave the
+# when the model name contains "fable" (case-insensitive), so those delegation tools leave the
 # schema. Other Claude models get no permissions key.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
@@ -1064,6 +1065,16 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: task $ID has no recorded harness; pass --harness to relaunch it" >&2
     exit 1
   }
+  # With no explicit model, a relaunch reuses the model already recorded
+  # for this task. A recorded `default` means no pin, matching how a fresh
+  # spawn records an unspecified model. This keeps a Fable worker's generated
+  # deny list intact on a direct relaunch that does not pass --model.
+  if [ "$MODEL_SET" -eq 0 ]; then
+    RELAUNCH_MODEL=$(fm_meta_get "$RELAUNCH_META" model)
+    if [ -n "$RELAUNCH_MODEL" ] && [ "$RELAUNCH_MODEL" != default ]; then
+      MODEL=$RELAUNCH_MODEL
+    fi
+  fi
 elif [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
     ''|claude|codex|opencode|omp|pi|pi-signed|grok|kimi|cursor|muse)
@@ -2535,7 +2546,7 @@ if [ "$KIND" != secondmate ]; then
       # Fable usage). Deny the delegation tool names so they leave the model's
       # schema entirely for Fable launches; other Claude models are unaffected.
       claude_perms=""
-      case "${MODEL:-}" in
+      case "$(printf '%s' "${MODEL:-}" | tr '[:upper:]' '[:lower:]')" in
         *fable*) claude_perms=',"permissions":{"deny":["Agent","Task"]}' ;;
       esac
       cat > "$WT/.claude/settings.local.json" <<EOF

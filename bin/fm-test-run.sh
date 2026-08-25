@@ -146,7 +146,7 @@ family_for_basename() {
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
-    fm-test-run.test.sh|fm-test-isolation-proof.test.sh)
+    fm-test-run.test.sh|fm-test-isolation-proof.test.sh|fm-skills-lock.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
     fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
@@ -970,19 +970,25 @@ families_for_changed_path() {
     bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*|bin/fm-omp.sh)
       printf '%s\n' pure-contract-unit
       ;;
-    .agents/skills/quota-array-dispatch/SKILL.md)
+    .agents/skills/quota-array-dispatch/*)
+      # The skill and any supporting file select both families the SKILL.md
+      # owns, so a later second file does not drop live-harness-optin.
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
+      printf '%s\n' "__script__:fm-skills-lock.test.sh"
       ;;
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
+      printf '%s\n' "__script__:fm-skills-lock.test.sh"
       ;;
     .agents/skills/*/*)
       # A skill's supporting material - reference pages, agent manifests, and
       # bundled scripts - is selected by the same family as its SKILL.md, so a
       # skill that ships more than one file does not fall through to the
-      # catch-all and refuse as unmapped.
+      # catch-all and refuse as unmapped. The lock-hash test owns vendored
+      # integrity for every skill path.
       printf '%s\n' pure-contract-unit
+      printf '%s\n' "__script__:fm-skills-lock.test.sh"
       ;;
     .github/workflows/ci.yml|.no-mistakes.yaml)
       printf '%s\n' pure-contract-unit
@@ -1024,7 +1030,10 @@ families_for_changed_path() {
     tests/*)
       printf '%s\n' "__unmapped__:$path"
       ;;
-    README.md|LICENSE|assets/*|docs/*|.gitignore|skills-lock.json)
+    skills-lock.json)
+      printf '%s\n' "__script__:fm-skills-lock.test.sh"
+      ;;
+    README.md|LICENSE|assets/*|docs/*|.gitignore)
       ;;
     *)
       families_for_test_reference "$path" \
