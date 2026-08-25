@@ -1,0 +1,71 @@
+# Portable-shard hint-refresh recipe — operator verification
+# 2026-08-25T11:05:17Z
+
+## Scope vs base 78406bb
+docs/fm-test-portable-shards.md
+
+## Before (hard-coded dest)
+gh run download <run-id> --pattern 'fm-test-timing-portable-serial-*' -D /tmp/fm-serial
+jq -r '.scripts[] | [.path, .duration_ms] | @tsv' /tmp/fm-serial/*/*.json | LC_ALL=C sort
+bin/fm-test-run.sh --check-coverage
+bin/fm-test-run.sh --serial-shard-budget
+
+## After (operator-owned dest)
+dir=$(mktemp -d)
+gh run download <run-id> --pattern 'fm-test-timing-portable-serial-*' -D "$dir"
+jq -r '.scripts[] | [.path, .duration_ms] | @tsv' "$dir"/*/*.json | LC_ALL=C sort
+bin/fm-test-run.sh --check-coverage
+bin/fm-test-run.sh --serial-shard-budget
+
+## 1. dir=$(mktemp -d) yields a unique writable directory each time
+invocation 1: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.IjrdVuOFTn
+invocation 2: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.5QQOuzqXTX
+unique and writable: yes
+
+## 2. Operator picks the directory by assigning dir=
+dir=/Users/evanagee/.no-mistakes/evidence/01M0W9BK1Q2MSQ3PNZJE148VXK/operator-sandbox/operator-chosen
+recipe then uses -D "$dir" and "$dir"/*/*.json — no /tmp/fm-serial
+
+## 3. Collision: leftover at the old hard-coded path is not reused
+existing leftover: /Users/evanagee/.no-mistakes/evidence/01M0W9BK1Q2MSQ3PNZJE148VXK/operator-sandbox/fm-serial/leftover.txt
+old recipe: gh run download ... -D /tmp/fm-serial   # would write into that leftover
+new recipe dest: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/tmp.LhIVvPPFns
+new dest is not the leftover path: yes
+leftover untouched: yes
+
+## 4. Simulated gh download into $dir, then the documented jq line
+tree:
+$dir/fm-test-timing-portable-serial-1of8/timing.json
+$dir/fm-test-timing-portable-serial-8of8/timing.json
+
+$ jq -r '.scripts[] | [.path, .duration_ms] | @tsv' "$dir"/*/*.json | LC_ALL=C sort
+tests/fm-composer-lib.test.sh	64
+tests/fm-pr-check-security.test.sh	239763
+tests/fm-x-mode.test.sh	52939
+
+## 5. Documented follow-up commands still run
+$ bin/fm-test-run.sh --serial-shard-budget
+FM_TEST_SERIAL_BUDGET shard=1of8 estimated_ms=356328
+FM_TEST_SERIAL_BUDGET shard=2of8 estimated_ms=356327
+FM_TEST_SERIAL_BUDGET shard=3of8 estimated_ms=356317
+FM_TEST_SERIAL_BUDGET shard=4of8 estimated_ms=356324
+FM_TEST_SERIAL_BUDGET shard=5of8 estimated_ms=356318
+FM_TEST_SERIAL_BUDGET shard=6of8 estimated_ms=356326
+FM_TEST_SERIAL_BUDGET shard=7of8 estimated_ms=356324
+FM_TEST_SERIAL_BUDGET shard=8of8 estimated_ms=356313
+
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=156 parallel=24 serial=120 serial_shards=8 herdr=12
+
+## 6. Deliberately kept maintainer-verification surface
+kept 19m04s: yes
+kept 47m30s: yes
+kept 2026-08-02: yes
+kept 2026-08-25: yes
+kept 32798661565: yes
+kept portable-serial-1of8: yes
+kept 356328 ms: yes
+kept portable_serial_weight_hints: yes
+hard-coded /tmp/fm-serial remaining in file: False
+
+RESULT: documented recipe uses mktemp -d + $dir; no /tmp/fm-serial; measurements kept.

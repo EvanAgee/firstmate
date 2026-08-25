@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fm-test portable shards — hint-refresh recipe</title>
+<style>
+  body { font: 15px/1.45 ui-sans-serif, system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1.25rem; color: #111; }
+  h1 { font-size: 1.25rem; }
+  h2 { font-size: 1.05rem; margin-top: 2rem; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 1rem 1.1rem; border-radius: 8px; overflow: auto; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .note { background: #ecfdf3; border: 1px solid #86efac; padding: .75rem 1rem; border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #cbd5e1; padding: .4rem .6rem; text-align: left; }
+  th { background: #f8fafc; }
+</style>
+</head>
+<body>
+<h1>Published maintainer recipe (docs/fm-test-portable-shards.md)</h1>
+<p class="note">After: download dest is <code>dir=$(mktemp -d)</code> then <code>-D "$dir"</code>. The dated measurements, run id, and per-shard estimate table are unchanged.</p>
+<h2>Kept packing evidence</h2>
+<pre><code>## Portable serial CI shards
+
+That remainder grows as tests are added: it measured 19m04s of script time on 2026-08-02 and 47m30s on 2026-08-25.
+At four shards that growth put shards 1 and 4 past the 15-minute job cap, and CI cancelled those jobs on four consecutive pushes to main.
+A cancelled job still reports the shard as failed, whether the cap lands during a script or during artifact upload after the last one.
+`portable-serial-&lt;k&gt;of&lt;n&gt;` splits it across `n` separate CI runners, and `n` rises when the lane outgrows the cap.
+Each shard is still strictly serial in itself, and separate runners mean no two of these stateful scripts ever share a machine, so the split needs no concurrency isolation proof.
+
+`bin/fm-test-run.sh` owns `n` and refuses any lane whose `of&lt;n&gt;` disagrees with it.
+`.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
+
+Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
+The hints came from the per-shard timing artifacts of run [32798661565](https://github.com/EvanAgee/firstmate/actions/runs/32798661565) on 2026-08-25, where the lane ran 120 scripts in 2850577 ms of serial work.
+Every current lane member has a measured hint.
+A script with no hint gets the `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default, set to the measured per-script mean.
+Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
+
+| Lane | Script count | Estimated duration |
+|---|---:|---:|
+| `portable-serial-1of8` | 15 | 356328 ms (~356.3 s) |
+| `portable-serial-2of8` | 13 | 356327 ms (~356.3 s) |
+| `portable-serial-3of8` | 15 | 356317 ms (~356.3 s) |
+| `portable-serial-4of8` | 15 | 356324 ms (~356.3 s) |
+| `portable-serial-5of8` | 15 | 356318 ms (~356.3 s) |
+| `portable-serial-6of8` | 16 | 356326 ms (~356.3 s) |
+| `portable-serial-7of8` | 18 | 356324 ms (~356.3 s) |
+| `portable-serial-8of8` | 13 | 356313 ms (~356.3 s) |
+| imbalance | | 15 ms |
+
+The single longest script, `tests/fm-pr-check-security.test.sh` at 239763 ms, is the floor for any shard count.
+
+`bin/fm-test-run.sh --serial-shard-budget` prints each shard&#x27;s estimated milliseconds.
+A regression in `tests/fm-test-run.test.sh` reads that budget, checks the CI matrix width against the runner&#x27;s shard count, and fails when the worst shard projects past two thirds of the job cap.
+That fraction is the drift alarm rather than the real limit: the estimate excludes runner setup and normal variance, so a shard already past it is on track to be cancelled.
+Answer that failure by refreshing the hints and raising the shard count, never by raising the alarm threshold or the job cap.</code></pre>
+<h2>Hint-refresh recipe</h2>
+<pre><code>Refresh the hints by downloading the per-shard timing artifacts from a CI run whose serial shards all completed their scripts, replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the measured `path`/`duration_ms` pairs, and updating the table above:
+
+```sh
+dir=$(mktemp -d)
+gh run download &lt;run-id&gt; --pattern &#x27;fm-test-timing-portable-serial-*&#x27; -D &quot;$dir&quot;
+jq -r &#x27;.scripts[] | [.path, .duration_ms] | @tsv&#x27; &quot;$dir&quot;/*/*.json | LC_ALL=C sort
+bin/fm-test-run.sh --check-coverage
+bin/fm-test-run.sh --serial-shard-budget
+```</code></pre>
+</body>
+</html>
