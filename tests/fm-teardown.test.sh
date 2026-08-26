@@ -2591,6 +2591,54 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+test_remote_secondmate_teardown_removes_pane_tail() {
+  local case_dir rc remote_root remote_home
+  case_dir=$(make_case remote-pane-tail)
+  mkdir -p "$case_dir/data" "$case_dir/data/task-x1"
+  remote_root=$(cd "$case_dir" && pwd -P)/remote-root
+  remote_home=$(cd "$case_dir" && pwd -P)/remote-home
+  mkdir -p "$remote_root" "$remote_home"
+  write_meta "$case_dir" local-only secondmate
+  cat >> "$case_dir/state/task-x1.meta" <<EOF
+remote_host=remote-mac
+remote_root=$remote_root
+home=$remote_home
+EOF
+  cat > "$case_dir/data/secondmates.md" <<EOF
+- task-x1 - iOS delivery (host: remote-mac; root: $remote_root; home: $remote_home; scope: iOS work; projects: alpha; added 2026-08-02)
+EOF
+  printf 'working: still visible after remote retirement\n' > "$case_dir/state/task-x1.status"
+  printf 'Remote secondmate brief.\n' > "$case_dir/data/task-x1/brief.md"
+  printf 'last watcher snapshot\n' > "$case_dir/state/task-x1.pane-tail"
+  : > "$case_dir/state/task-x1.turn-ended"
+  cat > "$case_dir/fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/ssh"
+
+  rc=0
+  FM_HOME="$case_dir" \
+  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_DATA_OVERRIDE="$case_dir/data" \
+  FM_CONFIG_OVERRIDE="$case_dir/config" \
+  FM_SSH_BIN="$case_dir/fakebin/ssh" \
+  PATH="$case_dir/fakebin:${FM_TEARDOWN_TEST_PATH:-$PATH}" \
+    "$TEARDOWN" task-x1 > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "remote-pane-tail: remote secondmate teardown should complete"
+  assert_grep "teardown task-x1 complete (remote remote-mac:$remote_home)" "$case_dir/stdout" \
+    "remote-pane-tail: teardown did not report remote completion"
+  assert_absent "$case_dir/state/task-x1.meta" "remote-pane-tail: teardown left task metadata"
+  assert_absent "$case_dir/state/task-x1.turn-ended" "remote-pane-tail: teardown left turn-ended"
+  assert_absent "$case_dir/state/task-x1.pane-tail" \
+    "remote-pane-tail: teardown left the watcher pane snapshot"
+  assert_present "$case_dir/data/task-x1/brief.md" \
+    "remote-pane-tail: teardown removed the remaining brief"
+  pass "remote secondmate teardown removes the task pane-tail with other runtime records"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -2649,3 +2697,4 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_remote_secondmate_teardown_removes_pane_tail

@@ -83,12 +83,21 @@ pull_request:
 EOF
     ;;
   "pr checks")
-    cat <<'EOF'
+    if [ "${FM_TEST_GH_CHECKS:-}" = skip-mix ]; then
+      cat <<'EOF'
+summary: "1 passed, 0 failed, 1 skipped, 2 total"
+checks[2]{name,conclusion}:
+  Build,skip
+  Test,pass
+EOF
+    else
+      cat <<'EOF'
 summary: "2 passed, 0 failed, 2 total"
 checks[2]{name,conclusion}:
   Bash tests,pass
   Lint shell scripts,pass
 EOF
+    fi
     ;;
   "api POST")
     cat <<'EOF'
@@ -204,7 +213,47 @@ test_unknown_task_returns_json_404() {
   pass "unknown task ids return a JSON 404"
 }
 
+test_skipped_github_check_is_kept_without_failing_ci() {
+  local home wt fakebin port resp
+  home=$(fm_test_api_home api-task-skip-check)
+  wt=$(make_task_worktree "$home")
+  fakebin="$home/fakebin"
+  make_activity_tools "$fakebin"
+  mkdir -p "$home/data/skip-task"
+  printf 'Keep skipped checks.\n' > "$home/data/skip-task/brief.md"
+  cat > "$home/state/skip-task.meta" <<EOF
+window=fixture:fm-skip-task
+worktree=$wt
+project=widget
+harness=codex
+kind=ship
+mode=no-mistakes
+pr=https://github.com/acme/widget/pull/77
+EOF
+  printf 'done: PR https://github.com/acme/widget/pull/77 checks green\n' > "$home/state/skip-task.status"
+
+  port=$(PATH="$fakebin:$PATH" FM_TEST_GH_CHECKS=skip-mix fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /tasks/skip-task GET 12000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "skip-check status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pull_request.ci.status')" = passed ] || \
+    fail "skipped check treated as CI failure: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pull_request.ci.checks.length')" = 2 ] || \
+    fail "skipped check dropped: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pull_request.ci.checks[0].name')" = Build ] || \
+    fail "skipped check name: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pull_request.ci.checks[0].status')" = skip ] || \
+    fail "skipped check status: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pull_request.ci.checks[1].name')" = Test ] || \
+    fail "passing check name: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pull_request.ci.checks[1].status')" = pass ] || \
+    fail "passing check status: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "a gh-axi skip conclusion is returned and does not fail CI"
+}
+
 test_task_detail_returns_full_worker_activity
 test_unknown_task_returns_json_404
+test_skipped_github_check_is_kept_without_failing_ci
 
 echo "# fm-api-task-detail.test.sh: all assertions passed"

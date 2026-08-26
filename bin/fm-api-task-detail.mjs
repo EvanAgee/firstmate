@@ -314,7 +314,7 @@ function stepTracker(timeline, attestation, liveSteps, ci) {
 function parseChecks(text) {
   const checks = [];
   for (const line of text.split(/\r?\n/)) {
-    const match = line.match(/^\s{2,}(.+),(pass|fail|pending|cancelled|skipping|neutral)$/);
+    const match = line.match(/^\s{2,}(.+),(pass|fail|pending|cancelled|skipping|skip|neutral)$/);
     if (!match) continue;
     let name = match[1];
     if (name.startsWith('"')) {

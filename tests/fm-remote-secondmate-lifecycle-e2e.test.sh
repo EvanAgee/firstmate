@@ -1115,6 +1115,7 @@ SIBLING_PANE=$(printf '%s' "$SIBLING_CREATE" | jq -r '.result.root_pane.pane_id'
 [ -n "$SIBLING_PANE" ] && [ "$SIBLING_PANE" != null ] \
   || fail "the shared-session sibling fixture did not create a pane"
 printf 'kind=ship\n' > "$REMOTE_HOME/state/child.meta"
+printf 'last watcher snapshot\n' > "$PARENT/state/ios.pane-tail"
 rm -rf "$PARENT/state/procevent"
 : > "$PARENT/state/procevent"
 if remote_env "$ROOT/bin/fm-teardown.sh" ios >/dev/null 2>&1; then
@@ -1122,6 +1123,7 @@ if remote_env "$ROOT/bin/fm-teardown.sh" ios >/dev/null 2>&1; then
 fi
 assert_present "$REMOTE_HOME" "refused remote retirement removed the home"
 assert_present "$PARENT/state/ios.meta" "refused remote retirement removed parent metadata"
+assert_present "$PARENT/state/ios.pane-tail" "refused remote retirement removed the pane snapshot"
 assert_grep '- ios ' "$PARENT/data/secondmates.md" "refused remote retirement removed the route"
 rm -f "$PARENT/state/procevent"
 mkdir "$PARENT/state/procevent"
@@ -1199,6 +1201,7 @@ if ! wait "$teardown_pid"; then
 fi
 assert_absent "$REMOTE_HOME" "remote retirement did not remove the remote home"
 assert_absent "$PARENT/state/ios.meta" "remote retirement did not remove parent metadata"
+assert_absent "$PARENT/state/ios.pane-tail" "remote retirement left the watcher pane snapshot"
 assert_no_grep '- ios ' "$PARENT/data/secondmates.md" "remote retirement did not remove the registry route"
 jq -e --arg workspace "$SIBLING_WORKSPACE" --arg pane "$SIBLING_PANE" '
   any(.workspaces[]; .workspace_id == $workspace and .label == "2ndmate-macos")
