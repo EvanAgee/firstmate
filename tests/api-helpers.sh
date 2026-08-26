@@ -107,6 +107,19 @@ process.stdout.write(String(v));
 '
 }
 
+# fm_test_json <json> <js-expr>: evaluate a JS expression with `d` bound to the
+# parsed object. Prints a scalar, or JSON for an object/array. Exit 1 if the
+# result is null or undefined.
+fm_test_json() {
+  JSON=$1 EXPR=$2 node -e '
+const d = JSON.parse(process.env.JSON);
+const v = Function("d", "return (" + process.env.EXPR + ");")(d);
+if (v === null || v === undefined) process.exit(1);
+if (typeof v === "object") process.stdout.write(JSON.stringify(v));
+else process.stdout.write(String(v));
+'
+}
+
 # fm_test_non_loopback_ipv4: echo a non-internal IPv4 address, or return 1.
 fm_test_non_loopback_ipv4() {
   node -e '
