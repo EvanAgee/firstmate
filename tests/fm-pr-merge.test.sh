@@ -20,6 +20,8 @@
 #   (l) a failed thread query fails closed (no merge)
 #   (m) --allow-unresolved-threads bypasses the gate, is logged, and merges
 #   (n) --allow-unresolved-threads still forwards extra args after --
+#   (o) more than 100 review threads is refused before merging
+#   (p) --allow-unresolved-threads after -- does not bypass the gate
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -503,6 +505,50 @@ test_allow_unresolved_threads_still_forwards_extra_args() {
   pass "fm-pr-merge keeps forwarding extra flags when --allow-unresolved-threads precedes the -- separator"
 }
 
+test_over_page_size_threads_refuse_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case over-page-size-threads)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_THREADS_TOTAL=101 FM_TEST_THREADS_UNRESOLVED=0 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/45 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "over-page-size-threads: fm-pr-merge should refuse a PR past the 100-thread page"
+  assert_grep 'more than the 100 this check reads' "$case_dir/stderr" \
+    "over-page-size-threads: refusal did not explain the 100-thread bound"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "over-page-size-threads: gh-axi pr merge was invoked despite a thread page overflow"
+  pass "fm-pr-merge refuses to merge when reviewThreads.totalCount exceeds 100"
+}
+
+test_allow_flag_after_separator_does_not_bypass() {
+  local case_dir rc
+  case_dir=$(make_case allow-flag-after-separator)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" ffffffffffffffffffffffffffffffffffffffff
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_THREADS_TOTAL=4 FM_TEST_THREADS_UNRESOLVED=4 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/46 -- --allow-unresolved-threads \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "allow-flag-after-separator: flag after -- must not bypass the gate"
+  assert_grep '4 unresolved review thread(s)' "$case_dir/stderr" \
+    "allow-flag-after-separator: unresolved threads were not refused"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "allow-flag-after-separator: gh-axi pr merge was invoked when the override was only after --"
+  pass "fm-pr-merge does not treat --allow-unresolved-threads after -- as a gate bypass"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -519,3 +565,5 @@ test_garbled_thread_query_refuses
 test_failed_thread_query_refuses
 test_allow_unresolved_threads_bypasses_and_logs
 test_allow_unresolved_threads_still_forwards_extra_args
+test_over_page_size_threads_refuse_before_merge
+test_allow_flag_after_separator_does_not_bypass
