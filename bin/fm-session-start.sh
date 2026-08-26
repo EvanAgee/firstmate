@@ -14,7 +14,7 @@
 # COMPOSITION, NOT DUPLICATION: this script calls fm-lock.sh, fm-bootstrap.sh,
 # fm-wake-drain.sh, fm-startup-network.sh, and (when locked) fm-api.sh as real
 # subprocesses and prints their real output. It never re-implements their logic; all
-# sequencing/formatting logic added here stays local to this file. Those four
+# sequencing/formatting logic added here stays local to this file. Those
 # scripts remain fully working
 # standalone with unchanged default behavior - other flows (fm-bootstrap.sh
 # install <tools> after consent, /updatefirstmate, the afk daemon, existing
