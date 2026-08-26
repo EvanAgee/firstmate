@@ -60,21 +60,60 @@ test_anchor_prints_only_on_heartbeat_wakes() {
   pass "the ANCHOR block prints only on heartbeat wakes"
 }
 
-test_anchor_is_bounded() {
-  local dir out lines
-  dir=$(make_home bounded)
+test_anchor_covers_all_rules_by_default_and_honors_explicit_line_bound() {
+  local dir out i
+  dir=$(make_home all-rules)
   {
     printf '# C\n\n## Working style\n\n'
-    seq 1 40 | while read -r i; do printf '%s\n' "- steer $i"; done
+    seq 1 26 | while read -r i; do printf '%s\n' "- standing rule $i"; done
+    printf '\n## Other\nx\n'
+  } > "$dir/data/captain.md"
+  append_wake "$dir/state" heartbeat - "no changes"
+  out=$(run_drain "$dir")
+  for i in $(seq 1 26); do
+    grep -Fx "  - standing rule $i" <<< "$out" >/dev/null \
+      || fail "the default ANCHOR omitted standing rule $i from a 26-rule captain.md"
+  done
+  if grep -F 'standing-steer lines omitted' <<< "$out" >/dev/null; then
+    fail "the default ANCHOR still truncated a 26-rule captain.md: $(grep -F 'standing-steer lines omitted' <<< "$out")"
+  fi
+
+  dir=$(make_home explicit-line-bound)
+  {
+    printf '# C\n\n## Working style\n\n'
+    seq 1 26 | while read -r i; do printf '%s\n' "- standing rule $i"; done
     printf '\n## Other\nx\n'
   } > "$dir/data/captain.md"
   append_wake "$dir/state" heartbeat - "no changes"
   out=$(run_drain "$dir" FM_ANCHOR_STEERS_MAX_LINES=12)
-  lines=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
-  [ "$lines" -le 25 ] || fail "a 40-steer captain.md burst the ANCHOR bound: $lines lines"
-  grep -F 'more lines; full file' <<< "$out" >/dev/null \
-    || fail "the bounded excerpt lost its omission pointer"
-  pass "a long captain.md yields a bounded excerpt with an omission pointer"
+  grep -F '  - standing rule 12' <<< "$out" >/dev/null \
+    || fail "the explicit 12-line override stopped before its bound"
+  if grep -F '  - standing rule 13' <<< "$out" >/dev/null; then
+    fail "the explicit 12-line override did not bound the ANCHOR"
+  fi
+  grep -F 'WARNING: 14 standing-steer lines omitted at explicit 12-line override' <<< "$out" >/dev/null \
+    || fail "the bounded excerpt did not name its explicit line bound"
+  pass "the default ANCHOR covers 26 rules and an explicit line override remains bounded"
+}
+
+test_anchor_byte_budget_is_explicit() {
+  local dir out
+  dir=$(make_home byte-bound)
+  {
+    printf '# C\n\n## Working style\n\n'
+    printf '%s\n' '- first short rule' '- second short rule' '- third short rule'
+    printf '\n## Other\nx\n'
+  } > "$dir/data/captain.md"
+  append_wake "$dir/state" heartbeat - "no changes"
+  out=$(run_drain "$dir" FM_ANCHOR_STEERS_MAX_BYTES=25)
+  grep -F '  - first short rule' <<< "$out" >/dev/null \
+    || fail "the byte budget stopped before content that fit"
+  if grep -F '  - second short rule' <<< "$out" >/dev/null; then
+    fail "the explicit byte budget did not bound the ANCHOR"
+  fi
+  grep -F 'WARNING: 2 standing-steer lines omitted at explicit 25-byte budget' <<< "$out" >/dev/null \
+    || fail "the bounded excerpt did not name its explicit byte budget"
+  pass "the byte budget bounds output and names every omission"
 }
 
 test_odometer_starts_on_first_drain_and_counts_wakes() {
@@ -171,7 +210,8 @@ test_flags_surface_when_present() {
 }
 
 test_anchor_prints_only_on_heartbeat_wakes
-test_anchor_is_bounded
+test_anchor_covers_all_rules_by_default_and_honors_explicit_line_bound
+test_anchor_byte_budget_is_explicit
 test_odometer_starts_on_first_drain_and_counts_wakes
 test_odometer_prompts_advice_over_threshold_via_next_anchor
 test_config_file_threshold_binds
