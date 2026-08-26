@@ -338,10 +338,87 @@ SH
   pass "a PR URL repo named test does not create test-step evidence"
 }
 
+test_timeline_carries_times_and_meta_runtime() {
+  local home port resp status_path expected
+  home=$(fm_test_api_home api-detail-times)
+  cat > "$home/state/timed-task.meta" <<'EOF'
+window=fixture:fm-timed-task
+spawn_gen=s1756150000.123
+harness=codex
+model=gpt-5.6-sol
+kind=ship
+EOF
+  cat > "$home/state/timed-task.status" <<'EOF'
+spawned: work begins
+working: first pass done
+done: PR merged
+EOF
+  # The watcher and the server resolve the home the same way, so the log
+  # carries the resolved path. /tmp is a symlink on macOS; resolve it here too.
+  status_path="$(cd "$home/state" && pwd -P)/timed-task.status"
+  # Real observation times, the way the watcher's delivery log records them.
+  cat > "$home/state/.watch-deliveries.log" <<EOF
+delivered Tue Aug 26 10:00:00 2026 $status_path
+delivered Tue Aug 26 10:05:00 2026 $status_path
+delivered Tue Aug 26 10:15:00 2026 $status_path
+delivered Tue Aug 26 10:20:00 2026 $home/state/other-task.status
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /tasks/timed-task GET 15000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "timed task status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.harness')" = codex ] || \
+    fail "task harness from meta: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.model')" = gpt-5.6-sol ] || \
+    fail "task model from meta: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'new Date(d.task.started_at).getTime() === 1756150000000')" = true ] || \
+    fail "started_at from spawn_gen epoch: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.timeline.length')" = 3 ] || \
+    fail "timeline length: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" \
+      'd.task.timeline.every(e => typeof e.observed_at === "string" && !isNaN(Date.parse(e.observed_at)))')" = true ] || \
+    fail "every timeline event carries a parseable observed_at: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" \
+      'd.task.timeline.every(e => e.time_approximate === true)')" = true ] || \
+    fail "timeline times are marked approximate: $HTTP_BODY"
+  # Three delivery-log entries name this status file, so the three events pin
+  # to those observed times instead of an interpolation.
+  expected=$(node -e '
+const t = ["Tue Aug 26 10:00:00 2026", "Tue Aug 26 10:05:00 2026", "Tue Aug 26 10:15:00 2026"];
+process.stdout.write(t.map((s) => Date.parse(s)).join(","));
+')
+  [ "$(fm_test_json "$HTTP_BODY" \
+      'd.task.timeline.map(e => Date.parse(e.observed_at)).join(",")')" = "$expected" ] || \
+    fail "timeline pinned to the delivery-log times: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "task detail carries meta runtime, started_at, and per-event observed times"
+}
+
+test_started_at_falls_back_to_status_birth() {
+  local home port resp
+  home=$(fm_test_api_home api-detail-birth)
+  printf 'working: no meta for this one\n' > "$home/state/bare-task.status"
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /tasks/bare-task GET 15000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "bare task status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" \
+      'typeof d.task.started_at === "string" && !isNaN(Date.parse(d.task.started_at))')" = true ] || \
+    fail "started_at should fall back to the status file birth time: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.harness === ""')" = true ] || \
+    fail "absent meta harness should be empty: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.model === ""')" = true ] || \
+    fail "absent meta model should be empty: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "started_at falls back to the status file birth time without meta"
+}
+
 test_task_detail_returns_full_worker_activity
 test_unknown_task_returns_json_404
 test_skipped_github_check_is_kept_without_failing_ci
 test_mixed_status_line_keeps_pipeline_steps_independent
 test_pr_url_repo_named_test_is_not_test_step_evidence
+test_timeline_carries_times_and_meta_runtime
+test_started_at_falls_back_to_status_birth
 
 echo "# fm-api-task-detail.test.sh: all assertions passed"
