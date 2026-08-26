@@ -1,0 +1,208 @@
+home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-write-demo.1rhbxt/home
+port=52680
+token_present=yes
+
+======== answer without token ========
+REQUEST POST /decisions/answer
+Authorization: (none)
+Body: {"task":"sample-task","key":"deploy-target","text":"ship to prod"}
+STATUS 401
+RESPONSE {"ok":false,"error":"unauthorized"}
+
+======== answer with wrong token ========
+REQUEST POST /decisions/answer
+Authorization: Bearer <redacted>
+Body: {"task":"sample-task","key":"deploy-target","text":"ship to prod"}
+STATUS 401
+RESPONSE {"ok":false,"error":"unauthorized"}
+
+======== answer unknown task ========
+REQUEST POST /decisions/answer
+Authorization: Bearer <redacted>
+Body: {"task":"ghost-task","key":"deploy-target","text":"ship to prod"}
+STATUS 404
+RESPONSE {"ok":false,"error":"not found"}
+
+======== answer with token ========
+REQUEST POST /decisions/answer
+Authorization: Bearer <redacted>
+Body: {"task":"sample-task","key":"deploy-target","text":"ship to prod"}
+STATUS 200
+RESPONSE {"ok":true}
+
+======== wake queue after authorized answer ========
+persisted /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-write-demo.1rhbxt/home/state/.wake-queue:
+1787781797	1	check	decision-answer:sample-task:b31337ceaa71ba74	check: decision-answer: ⁣FIRSTMATE_OP: v1 away-supervisor: answer decision [key=deploy-target] on task sample-task with: ship to prod
+
+decoded operational-input payload:
+
+======== GET /rigs (shape the dashboard already consumes) ========
+REQUEST GET /rigs
+Authorization: (none)
+Body: 
+STATUS 200
+RESPONSE {"ok":true,"note":"","rigs":[{"name":"builder class: ordinary","rungs":[{"harness":"codex","model":"gpt-5.6","effort":"high","enabled":true},{"harness":"claude","model":"opus","effort":"high","enabled":true}],"pin":null},{"name":"default","rungs":[{"harness":"codex","model":"gpt-5.5","effort":"medium","enabled":true},{"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"medium","enabled":true}],"pin":null}],"defaultPin":null,"crew":"","secondmate":""}
+
+======== crew-dispatch.json before rung writes ========
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
+        { "harness": "claude", "model": "opus", "effort": "high" }
+      ]
+    }
+  ],
+  "default": [
+    { "harness": "codex", "model": "gpt-5.5", "effort": "medium" },
+    { "harness": "pi", "model": "anthropic/claude-sonnet-5", "effort": "medium" }
+  ]
+}
+
+======== rung toggle without token ========
+REQUEST POST /rigs/rung
+Authorization: (none)
+Body: {"rig":"builder class: ordinary","rung":1,"enabled":false}
+STATUS 401
+RESPONSE {"ok":false,"error":"unauthorized"}
+
+======== turn off rung 1 (authorized) ========
+REQUEST POST /rigs/rung
+Authorization: Bearer <redacted>
+Body: {"rig":"builder class: ordinary","rung":1,"enabled":false}
+STATUS 200
+RESPONSE {"ok":true,"rig":"builder class: ordinary","rung":1,"enabled":false}
+
+======== crew-dispatch.json after turning off rung 1 ========
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        {
+          "harness": "codex",
+          "model": "gpt-5.6",
+          "effort": "high"
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "enabled": false
+        }
+      ]
+    }
+  ],
+  "default": [
+    {
+      "harness": "codex",
+      "model": "gpt-5.5",
+      "effort": "medium"
+    },
+    {
+      "harness": "pi",
+      "model": "anthropic/claude-sonnet-5",
+      "effort": "medium"
+    }
+  ]
+}
+
+======== turn rung 1 back on ========
+REQUEST POST /rigs/rung
+Authorization: Bearer <redacted>
+Body: {"rig":"builder class: ordinary","rung":1,"enabled":true}
+STATUS 200
+RESPONSE {"ok":true,"rig":"builder class: ordinary","rung":1,"enabled":true}
+
+======== turn off rung 0 so rung 1 is last on ========
+REQUEST POST /rigs/rung
+Authorization: Bearer <redacted>
+Body: {"rig":"builder class: ordinary","rung":0,"enabled":false}
+STATUS 200
+RESPONSE {"ok":true,"rig":"builder class: ordinary","rung":0,"enabled":false}
+
+======== refuse last enabled rung ========
+REQUEST POST /rigs/rung
+Authorization: Bearer <redacted>
+Body: {"rig":"builder class: ordinary","rung":1,"enabled":false}
+STATUS 400
+RESPONSE {"ok":false,"error":"can't turn off the last enabled rung"}
+
+======== crew-dispatch.json after last-rung refusal (must still have rung 1 on) ========
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        {
+          "harness": "codex",
+          "model": "gpt-5.6",
+          "effort": "high",
+          "enabled": false
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high"
+        }
+      ]
+    }
+  ],
+  "default": [
+    {
+      "harness": "codex",
+      "model": "gpt-5.5",
+      "effort": "medium"
+    },
+    {
+      "harness": "pi",
+      "model": "anthropic/claude-sonnet-5",
+      "effort": "medium"
+    }
+  ]
+}
+
+======== toggle default ladder rung 0 ========
+REQUEST POST /rigs/rung
+Authorization: Bearer <redacted>
+Body: {"rig":"default","rung":0,"enabled":false}
+STATUS 200
+RESPONSE {"ok":true,"rig":"default","rung":0,"enabled":false}
+
+======== crew-dispatch.json after default ladder toggle ========
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        {
+          "harness": "codex",
+          "model": "gpt-5.6",
+          "effort": "high",
+          "enabled": false
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high"
+        }
+      ]
+    }
+  ],
+  "default": [
+    {
+      "harness": "codex",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "enabled": false
+    },
+    {
+      "harness": "pi",
+      "model": "anthropic/claude-sonnet-5",
+      "effort": "medium"
+    }
+  ]
+}
+
+demo complete

@@ -1,0 +1,1 @@
+answer decision [key=deploy-target] on task sample-task with: ship to prod

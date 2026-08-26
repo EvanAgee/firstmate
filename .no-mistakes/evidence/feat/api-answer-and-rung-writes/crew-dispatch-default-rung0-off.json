@@ -1,0 +1,33 @@
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        {
+          "harness": "codex",
+          "model": "gpt-5.6",
+          "effort": "high",
+          "enabled": false
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high"
+        }
+      ]
+    }
+  ],
+  "default": [
+    {
+      "harness": "codex",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "enabled": false
+    },
+    {
+      "harness": "pi",
+      "model": "anthropic/claude-sonnet-5",
+      "effort": "medium"
+    }
+  ]
+}

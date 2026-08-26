@@ -1,0 +1,7 @@
+ok - answering a decision without the token is refused with 401
+ok - answering a decision with the token lands the answer on the wake queue for firstmate
+ok - answering a decision on an unknown task is 404
+ok - toggling a rung without the token is refused with 401
+ok - toggling a rung with the token flips its enabled state in the config
+ok - a toggle that would turn off a ladder's last rung is refused with a clear error
+# fm-api.test.sh: all assertions passed
