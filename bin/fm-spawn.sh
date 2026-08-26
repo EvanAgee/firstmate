@@ -2928,6 +2928,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fm_lock_release "$SPAWN_META_LOCK"
   SPAWN_META_LOCK_HELD=0
 fi
+# A new worker process must not expose a prior process's last pane as live.
+# The watcher publishes the current pane after its next successful capture.
+rm -f "$STATE/$ID.pane-tail"
 if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
   # The record is published, so this task is now part of the set a teardown
   # enumerates and locks per task. The set lock is only needed across that

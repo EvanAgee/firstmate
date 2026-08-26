@@ -58,6 +58,8 @@
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
+# Each successful recorded-window capture also replaces state/<id>.pane-tail
+# atomically with at most 40 lines and 65,536 characters for GET /tasks/<id>.
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
@@ -275,6 +277,25 @@ recorded_windows() {
     seen="$seen|$w|"
     printf '%s\n' "$w"
   done
+}
+
+persist_pane_tail() {  # <task-id> <captured-text>
+  local task=$1 captured=$2 start tmp old_umask
+  [ -n "$task" ] && fm_task_id_path_safe "$task" || return 0
+  if [ "${#captured}" -gt 65536 ]; then
+    start=$(( ${#captured} - 65536 ))
+    captured=${captured:$start}
+  fi
+  tmp="$STATE/.$task.pane-tail.${BASHPID:-$$}"
+  old_umask=$(umask)
+  umask 077
+  if printf '%s\n' "$captured" > "$tmp" && mv -f "$tmp" "$STATE/$task.pane-tail"; then
+    umask "$old_umask"
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  umask "$old_umask"
+  return 1
 }
 
 # Consecutive wedge-escalation count for a window past FM_WEDGE_DEMAND_INSPECT_COUNT
@@ -1051,10 +1072,11 @@ EOF
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$w"
     fi
+    tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
+    persist_pane_tail "$task" "$tail40" || true
     if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
       continue
     fi
-    tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
     hf="$STATE/.hash-$key"

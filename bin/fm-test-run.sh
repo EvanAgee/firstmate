@@ -178,7 +178,7 @@ family_for_basename() {
     fm-send-secondmate-marker.test.sh|fm-shared-captain-inheritance.test.sh)
       printf '%s\n' secondmate
       ;;
-    fm-api.test.sh|fm-api-reads.test.sh|fm-bootstrap.test.sh|fm-chrome-devtools-axi.test.sh|fm-fleet-sync.test.sh|fm-gate-refuse.test.sh|fm-gotmp.test.sh|\
+    fm-api.test.sh|fm-api-reads.test.sh|fm-api-task-detail.test.sh|fm-bootstrap.test.sh|fm-chrome-devtools-axi.test.sh|fm-fleet-sync.test.sh|fm-gate-refuse.test.sh|fm-gotmp.test.sh|\
     fm-session-start.test.sh|fm-sessionstart-nudge.test.sh|fm-startup-network.test.sh|\
     fm-tangle-guard.test.sh|fm-update.test.sh)
       printf '%s\n' session-bootstrap
@@ -988,7 +988,7 @@ families_for_changed_path() {
       ;;
     bin/fm-session-start.sh|bin/fm-bootstrap.sh|bin/fm-fleet-sync.sh|\
     bin/fm-sessionstart-nudge.sh|bin/fm-startup-network.sh|bin/fm-tangle*|bin/fm-update.sh|\
-    bin/fm-gate-refuse*|bin/fm-lock*|bin/fm-quota-axi-lib.sh|bin/fm-api.sh|bin/fm-api-server.mjs|bin/fm-api-reads.mjs)
+    bin/fm-gate-refuse*|bin/fm-lock*|bin/fm-quota-axi-lib.sh|bin/fm-api.sh|bin/fm-api-server.mjs|bin/fm-api-reads.mjs|bin/fm-api-task-detail.mjs)
       printf '%s\n' session-bootstrap
       ;;
     bin/fm-sessionstart-run.sh|.claude/settings.json|.codex/hooks.json|\

@@ -12,6 +12,9 @@
 // GET /fleet
 //   fm-fleet-snapshot.v1 JSON from bin/fm-fleet-snapshot.sh --json
 //   Empty home: empty fleet, not an error. That script's header owns the contract.
+// GET /tasks/<id>
+//   One task's brief, status timeline, current stage, and worker activity.
+//   bin/fm-api-task-detail.mjs owns the exact JSON contract.
 // GET /captain-queue
 //   { ok, decisions: [{ task, key, summary }] }
 //   Parked decisions still open in this home. Empty home: decisions is [].
@@ -32,6 +35,7 @@ import crypto from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { blockedListBody, captainQueueBody, rigsBody } from "./fm-api-reads.mjs";
+import { taskDetailBody } from "./fm-api-task-detail.mjs";
 
 export const API_VERSION = "1";
 const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -136,20 +140,23 @@ function sendFleetSnapshot(req, res, home) {
   );
 }
 
-function readWriteToken(tokenFile) {
-  if (!tokenFile) return "";
+function readTokenFile(tokenFile) {
   try {
     if (fs.lstatSync(tokenFile).isSymbolicLink()) return "";
-    const text = fs.readFileSync(tokenFile, "utf8");
-    return (
-      text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line && !line.startsWith("#")) || ""
-    );
+    return fs.readFileSync(tokenFile, "utf8");
   } catch {
     return "";
   }
+}
+
+function readWriteToken(tokenFile) {
+  if (!tokenFile) return "";
+  return (
+    readTokenFile(tokenFile)
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("#")) || ""
+  );
 }
 
 function bearerToken(req) {
@@ -362,6 +369,21 @@ function handleCaptainNote(req, res, home, options) {
     });
 }
 
+function handleTaskDetail(req, res, home, stateDir, task) {
+  taskDetailBody(home, task, { stateDir })
+    .then((body) => {
+      if (!body) {
+        json(res, 404, { ok: false, error: "task not found" });
+        return;
+      }
+      sendGet(req, res, body);
+    })
+    .catch((error) => {
+      process.stderr.write(`task detail failed for ${task}: ${error.message}\n`);
+      if (!res.headersSent) json(res, 500, { ok: false, error: "task detail failed" });
+    });
+}
+
 function handle(req, res, home, options) {
   const stateDir = options.stateDir || path.join(home, "state");
   let url;
@@ -371,11 +393,26 @@ function handle(req, res, home, options) {
     json(res, 400, { ok: false, error: "malformed url" });
     return;
   }
+  const taskMatch = url.pathname.match(/^\/tasks\/([^/]+)$/);
+  let task = null;
+  if (taskMatch) {
+    try {
+      task = decodeURIComponent(taskMatch[1]);
+    } catch {
+      json(res, 400, { ok: false, error: "malformed url" });
+      return;
+    }
+    if (!TASK_SLUG.test(task)) {
+      json(res, 404, { ok: false, error: "task not found" });
+      return;
+    }
+  }
   const read = url.pathname === "/health"
     || url.pathname === "/fleet"
     || url.pathname === "/captain-queue"
     || url.pathname === "/blocked"
-    || url.pathname === "/rigs";
+    || url.pathname === "/rigs"
+    || task !== null;
   if (read && req.method !== "GET" && req.method !== "HEAD") {
     json(res, 405, { ok: false, error: "method not allowed" });
     return;
@@ -407,6 +444,10 @@ function handle(req, res, home, options) {
   if (url.pathname === "/fleet") {
     // JSON contract: bin/fm-fleet-snapshot.sh --json (schema fm-fleet-snapshot.v1).
     sendFleetSnapshot(req, res, home);
+    return;
+  }
+  if (task !== null) {
+    handleTaskDetail(req, res, home, stateDir, task);
     return;
   }
   if (url.pathname === "/captain-notes") {
