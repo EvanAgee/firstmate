@@ -1,0 +1,46 @@
+# Composed prompts delivered to the public Pi skill-loading interface
+# Composition rule matches tests/fm-quota-array-dispatch-live-e2e.test.sh run_case:
+#   if live_counts: 'Live workers already dispatched from this same pool in this home: {live_counts}. {prompt}'
+#   else: prompt
+
+## case 1: fewest live workers beat higher headroom
+expected_final_line: SELECTED=claude
+live_counts: claude=0,codex=3
+composed_prompt:
+Live workers already dispatched from this same pool in this home: claude=0,codex=3. Resolve this matched dispatch pool now. Load quota-array-dispatch and run quota-axi --json exactly once. Both pool members have comparable required task fit and the same strongest reasoning class. The authoritative catalogs already prove Claude/Sonnet and Codex/GPT models supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Return exact lines FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1 and FACT=codex|live=3|headroom=55|runway_seconds=14400|reserve=-40 to preserve candidate accounting, then an exact final line SELECTED=<claude|codex>. Do not use other vendor or model commands and do not modify files.
+required_accounting_lines:
+  FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1
+  FACT=codex|live=3|headroom=55|runway_seconds=14400|reserve=-40
+
+## case 2: equal live counts break ties on higher headroom
+expected_final_line: SELECTED=codex
+live_counts: claude=0,codex=0
+composed_prompt:
+Live workers already dispatched from this same pool in this home: claude=0,codex=0. Resolve this matched dispatch pool now. Load quota-array-dispatch and run quota-axi --json exactly once. Both pool members have comparable required task fit and the same strongest reasoning class. The authoritative catalogs already prove Claude/Sonnet and Codex/GPT models supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Return exact lines FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1 and FACT=codex|live=0|headroom=55|runway_seconds=14400|reserve=-40 to preserve candidate accounting, then an exact final line SELECTED=<claude|codex>. Do not use other vendor or model commands and do not modify files.
+required_accounting_lines:
+  FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1
+  FACT=codex|live=0|headroom=55|runway_seconds=14400|reserve=-40
+
+## case 3: unmeasurable runway stays eligible and loses a live-count tie on headroom
+expected_final_line: DECISION=CLAUDE
+live_counts: claude=0,codex=0
+composed_prompt:
+Live workers already dispatched from this same pool in this home: claude=0,codex=0. Resolve this matched dispatch pool now. Load quota-array-dispatch and run quota-axi --json exactly once. Both pool members have comparable required task fit and the same strongest reasoning class. The authoritative catalogs already prove both models supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Claude has higher known headroom but explicitly unmeasurable runway, while Codex has lower known headroom and established runway that supports completion. Unmeasurable runway does not drop a member; both stay eligible and the uncertainty must be disclosed. Return exact lines FACT=claude|eligible=yes|live=0|headroom=55|runway=unknown|unmeasurable=weekly and FACT=codex|eligible=yes|live=0|headroom=45|runway_seconds=14400|supports_horizon=yes, then an exact final line DECISION=<CLAUDE|CODEX>. Do not use other vendor or model commands and do not modify files.
+required_accounting_lines:
+  FACT=claude|eligible=yes|live=0|headroom=55|runway=unknown|unmeasurable=weekly
+  FACT=codex|eligible=yes|live=0|headroom=45|runway_seconds=14400|supports_horizon=yes
+
+## case 4: required strongest reasoning class is not downgraded for quota
+expected_final_line: SELECTED=claude
+live_counts: (none)
+composed_prompt:
+Resolve this matched dispatch pool now. Load quota-array-dispatch and run quota-axi --json exactly once. The likely task-completion horizon is two hours with established confidence. Claude/Sonnet is catalog-supported with usable authentication and is the only pool member that meets the task's required strongest reasoning class. Codex/GPT is catalog-supported with usable authentication but is a weaker reasoning class and cannot meet the requirement. Return exact lines FACT=claude|reasoning=required|headroom=1|runway_seconds=10800 and FACT=codex|reasoning=weaker|headroom=80|runway_seconds=28800, then an exact final line SELECTED=<claude|codex>. Do not use other vendor or model commands and do not modify files.
+required_accounting_lines:
+  FACT=claude|reasoning=required|headroom=1|runway_seconds=10800
+  FACT=codex|reasoning=weaker|headroom=80|runway_seconds=28800
+
+## wording contract checks
+prompt_count=4
+all_prompts_open_with_matched_dispatch_pool=True
+retired_profile_array_wording_absent=True
+prompts_naming_pool_member_or_members=4/4

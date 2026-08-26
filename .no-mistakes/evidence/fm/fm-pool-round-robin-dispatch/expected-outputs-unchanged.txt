@@ -1,0 +1,16 @@
+parent_expected:
+  fewest live workers beat higher headroom -> SELECTED=claude facts=['FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1', 'FACT=codex|live=3|headroom=55|runway_seconds=14400|reserve=-40']
+  equal live counts break ties on higher headroom -> SELECTED=codex facts=['FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1', 'FACT=codex|live=0|headroom=55|runway_seconds=14400|reserve=-40']
+  unmeasurable runway stays eligible and loses a live-count tie on headroom -> DECISION=CLAUDE facts=['FACT=claude|eligible=yes|live=0|headroom=55|runway=unknown|unmeasurable=weekly', 'FACT=codex|eligible=yes|live=0|headroom=45|runway_seconds=14400|supports_horizon=yes']
+  required strongest reasoning class is not downgraded for quota -> SELECTED=claude facts=['FACT=claude|reasoning=required|headroom=1|runway_seconds=10800', 'FACT=codex|reasoning=weaker|headroom=80|runway_seconds=28800']
+current_expected:
+  fewest live workers beat higher headroom -> SELECTED=claude facts=['FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1', 'FACT=codex|live=3|headroom=55|runway_seconds=14400|reserve=-40']
+  equal live counts break ties on higher headroom -> SELECTED=codex facts=['FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1', 'FACT=codex|live=0|headroom=55|runway_seconds=14400|reserve=-40']
+  unmeasurable runway stays eligible and loses a live-count tie on headroom -> DECISION=CLAUDE facts=['FACT=claude|eligible=yes|live=0|headroom=55|runway=unknown|unmeasurable=weekly', 'FACT=codex|eligible=yes|live=0|headroom=45|runway_seconds=14400|supports_horizon=yes']
+  required strongest reasoning class is not downgraded for quota -> SELECTED=claude facts=['FACT=claude|reasoning=required|headroom=1|runway_seconds=10800', 'FACT=codex|reasoning=weaker|headroom=80|runway_seconds=28800']
+labels_equal=True
+expected_final_lines_equal=True
+fact_lines_equal=True
+live_count_inputs_equal=True
+all_behavioral_outputs_unchanged=True
+prompt_wording_changed=True

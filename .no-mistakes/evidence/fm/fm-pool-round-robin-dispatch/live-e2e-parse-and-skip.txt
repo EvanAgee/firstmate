@@ -1,0 +1,8 @@
+# live-e2e parse and default-skip transcript
+
+$ bash -n tests/fm-quota-array-dispatch-live-e2e.test.sh
+exit=0
+
+$ env -u FM_QUOTA_ARRAY_DISPATCH_LIVE_E2E bash tests/fm-quota-array-dispatch-live-e2e.test.sh
+skip: set FM_QUOTA_ARRAY_DISPATCH_LIVE_E2E=1 to run the credentialed Pi dispatch-selection regression
+exit=0
