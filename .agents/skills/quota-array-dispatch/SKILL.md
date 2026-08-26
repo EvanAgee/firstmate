@@ -47,11 +47,15 @@ For an ordinary builder, complete the fact collection and candidate accounting b
 Treat a split candidate as healthy when the existing quota, authentication, fit, and strongest-reasoning rules leave it usable for this task.
 Unknown or unmeasurable evidence stays eligible exactly as the authentication and selection rules require.
 
-Immediately before the spawn, call `bin/fm-builder-split.sh` once with the matched rule's zero-based index and one `--healthy <harness>` argument for each healthy split candidate.
+After that accounting, call `bin/fm-builder-split.sh` once with the matched rule's zero-based index and one `--healthy <harness>` argument for each healthy split candidate.
 The script reads the rule's `split` weights, selects the counter's planned harness, advances `state/.builder-dispatch-counter`, and prints the chosen harness.
 An absent or malformed split uses codex=50 and pi=50 and prints a `BUILDER_DISPATCH` note rather than silently skipping the split.
 If the planned harness is unavailable, the script prints another healthy split harness while still advancing the counter.
-If no split harness is healthy, it prints `fallback` and still advances the counter; continue through the matched builder rule's remaining lower ladder under the existing selection rules.
+If no split harness is healthy, it prints `fallback` and still advances the counter.
+A printed harness name is the remaining candidate set: keep only profiles whose harness equals that name.
+Printed `fallback` keeps only profiles whose harness is not a key in the weights the helper used.
+Those weights are the matched rule's valid `split` object, or the noted codex=50 and pi=50 pair when that field is absent or malformed.
+Then apply Selection order to that remaining set and spawn from its result.
 Never invoke the helper more than once for one assignment.
 
 For a high-tier builder, keep the existing entry point and take the first healthy rung at or below it in the configured order.
@@ -122,7 +126,7 @@ Conservation pressure is present for effective pace status `ahead`, effective pa
 
 ## Selection order
 
-Apply this order after the ordinary-builder split above has either selected a split harness or handed control to the lower ladder.
+For an ordinary builder, apply this order only to the candidate set left by the split above.
 For every other task class and for high-tier builders, apply it to the matched array as before.
 
 Apply only among candidates satisfying required fit and strongest reasoning class.
