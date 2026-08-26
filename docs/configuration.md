@@ -558,6 +558,7 @@ Never describe this path as at-least-once, no-loss, or lossless.
 
 The localhost API binds `127.0.0.1` only and serves the resolved `FM_HOME`.
 Port comes from `FM_API_PORT`, else the first non-empty non-comment line of gitignored `config/api-port`, else `18787`.
+A `config/api-port` symlink is refused rather than treated as that default.
 Port `0` asks the kernel for an ephemeral port, which tests use.
 The file is per-home and is not inherited by secondmates, because two homes cannot share a port.
 `GET /health` reports API version `1` and the home this process serves.

@@ -8,10 +8,10 @@
 #   fm-api.sh --help    print this usage
 #
 # The server binds 127.0.0.1 only. Port comes from FM_API_PORT, else the first
-# non-empty non-comment line of config/api-port, else 18787. Port 0 asks the
-# kernel for an ephemeral port. The served home is the resolved FM_HOME; there
-# are no hardcoded filesystem paths. bin/fm-api-server.mjs is the Node process.
-# This wrapper owns pid identity, attach, and stop.
+# non-empty non-comment line of config/api-port, else 18787. A config/api-port
+# symlink is refused. Port 0 asks the kernel for an ephemeral port. The served
+# home is the resolved FM_HOME; there are no hardcoded filesystem paths.
+# bin/fm-api-server.mjs is the Node process. This wrapper owns pid identity, attach, and stop.
 #
 # start attaches only when the recorded session pid is the current live lock
 # holder; otherwise it stops the old process and starts one this session owns.
