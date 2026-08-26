@@ -13,12 +13,13 @@
 # are no hardcoded filesystem paths. bin/fm-api-server.mjs is the Node process.
 # This wrapper owns pid identity, attach, and stop.
 #
-# Session start calls start when it holds the fleet lock, unless FM_API is 0,
-# off, false, or no. Stop is explicit, and the server also exits when the
-# session-lock pid it was started under dies.
+# start attaches only when the recorded session pid is the current live lock
+# holder; otherwise it stops the old process and starts one this session owns.
+# Stop is explicit. A session-bound server stays up while state/.lock names a
+# live holder and exits when there is no live holder.
 #
 # State files under $STATE, owned here:
-#   .api.pid .api.pid-identity .api.port .api.log .api.lock
+#   .api.pid .api.pid-identity .api.port .api.session-pid .api.log .api.lock
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,11 +37,12 @@ START_TIMEOUT=${FM_API_START_TIMEOUT:-5}
 PID_FILE="$STATE/.api.pid"
 IDENTITY_FILE="$STATE/.api.pid-identity"
 PORT_FILE="$STATE/.api.port"
+SESSION_PID_FILE="$STATE/.api.session-pid"
 LOG_FILE="$STATE/.api.log"
 LOCK_DIR="$STATE/.api.lock"
 
 usage() {
-  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -145,7 +147,7 @@ bound_port() {
 }
 
 clear_records() {
-  rm -f "$PID_FILE" "$IDENTITY_FILE" "$PORT_FILE"
+  rm -f "$PID_FILE" "$IDENTITY_FILE" "$PORT_FILE" "$SESSION_PID_FILE"
 }
 
 session_lock_pid() {
@@ -157,6 +159,26 @@ session_lock_pid() {
   esac
   fm_pid_alive "$pid" || return 1
   printf '%s\n' "$pid"
+}
+
+recorded_session_pid() {
+  local pid
+  pid=$(cat "$SESSION_PID_FILE" 2>/dev/null) || pid=
+  case "$pid" in
+    ''|*[!0-9]*) pid= ;;
+  esac
+  printf '%s\n' "$pid"
+}
+
+api_is_attachable() {
+  local pid=$1 bound recorded current
+  pid_is_ours "$pid" || return 1
+  bound=$(bound_port) || return 1
+  [ -n "$bound" ] || return 1
+  health_ok "$bound" || return 1
+  recorded=$(recorded_session_pid)
+  current=$(session_lock_pid) || current=
+  [ "$recorded" = "$current" ]
 }
 
 api_status_line() {
@@ -219,12 +241,11 @@ cmd_start() {
   port=$(resolve_port)
 
   pid=$(recorded_pid) || pid=
+  if [ -n "$pid" ] && api_is_attachable "$pid"; then
+    api_status_line attached
+    return 0
+  fi
   if [ -n "$pid" ] && pid_is_ours "$pid"; then
-    bound=$(bound_port) || bound=
-    if [ -n "$bound" ] && health_ok "$bound"; then
-      api_status_line attached
-      return 0
-    fi
     cmd_stop >/dev/null
   elif [ -n "$pid" ]; then
     clear_records
@@ -240,12 +261,14 @@ cmd_start() {
   trap 'fm_lock_release "$LOCK_DIR"' EXIT
 
   pid=$(recorded_pid) || pid=
+  if [ -n "$pid" ] && api_is_attachable "$pid"; then
+    api_status_line attached
+    return 0
+  fi
   if [ -n "$pid" ] && pid_is_ours "$pid"; then
-    bound=$(bound_port) || bound=
-    if [ -n "$bound" ] && health_ok "$bound"; then
-      api_status_line attached
-      return 0
-    fi
+    cmd_stop >/dev/null
+  elif [ -n "$pid" ]; then
+    clear_records
   fi
 
   rm -f "$PORT_FILE"
@@ -260,6 +283,7 @@ cmd_start() {
   identity=$(fm_pid_identity "$child") || identity=
   printf '%s\n' "$child" > "$PID_FILE"
   printf '%s\n' "$identity" > "$IDENTITY_FILE"
+  printf '%s\n' "$session_pid" > "$SESSION_PID_FILE"
 
   i=0
   bound=

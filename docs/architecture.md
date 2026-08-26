@@ -340,7 +340,8 @@ Use `/stow` before an intentional reset when the conversation may hold durable k
 ## Local API
 
 Firstmate answers a small HTTP API on `127.0.0.1` so dashboards and scripts do not read its private files.
-A locked session start brings the server up, and it exits when that session dies or `bin/fm-api.sh stop` runs.
+A locked primary session start brings the server up; secondmate homes skip that bring-up.
+It stays up while the lock holder is live, and it exits when there is no live holder or `bin/fm-api.sh stop` runs.
 Port and home come from firstmate config; [`docs/configuration.md`](configuration.md) owns those knobs, and `bin/fm-api.sh`'s header owns start, stop, and the state files.
 [`CONTEXT.md`](../CONTEXT.md) is the glossary for the words the API uses.
 

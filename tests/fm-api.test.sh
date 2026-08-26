@@ -160,6 +160,106 @@ test_start_is_idempotent() {
   pass "start attaches when the API is already running"
 }
 
+test_start_replaces_server_when_lock_holder_changes() {
+  local home port first second out resp holder_a holder_b
+  home=$(fm_test_api_home api-session-replace)
+  sleep 60 &
+  holder_a=$!
+  printf '%s\n' "$holder_a" > "$home/state/.lock"
+  port=$(fm_test_api_start "$home")
+  first=$(cat "$home/state/.api.pid")
+  sleep 60 &
+  holder_b=$!
+  printf '%s\n' "$holder_b" > "$home/state/.lock"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-api.sh" start 2>&1) || \
+    fail "start under a new lock holder failed: $out"
+  assert_contains "$out" "api: started" "start under a new lock holder should not attach: $out"
+  second=$(cat "$home/state/.api.pid")
+  [ "$second" != "$first" ] || fail "start reused the previous session's pid $first"
+  [ "$(cat "$home/state/.api.session-pid")" = "$holder_b" ] || \
+    fail "recorded session pid was $(cat "$home/state/.api.session-pid"), wanted $holder_b"
+  port=$(cat "$home/state/.api.port")
+  kill "$holder_a" 2>/dev/null || true
+  wait "$holder_a" 2>/dev/null || true
+  sleep 2.5
+  resp=$(fm_test_api_http "$port" /health)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "API went down after the previous session pid died: $HTTP_CODE $HTTP_BODY"
+  fm_test_api_stop "$home"
+  kill "$holder_b" 2>/dev/null || true
+  wait "$holder_b" 2>/dev/null || true
+  pass "start replaces a server that belongs to another lock holder"
+}
+
+test_api_stays_up_when_lock_holder_is_replaced() {
+  local home port resp holder_a holder_b i
+  home=$(fm_test_api_home api-lock-watch)
+  sleep 60 &
+  holder_a=$!
+  printf '%s\n' "$holder_a" > "$home/state/.lock"
+  port=$(fm_test_api_start "$home")
+  sleep 60 &
+  holder_b=$!
+  printf '%s\n' "$holder_b" > "$home/state/.lock"
+  kill "$holder_a" 2>/dev/null || true
+  wait "$holder_a" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 20 ]; do
+    resp=$(fm_test_api_http "$port" /health)
+    split_http <<<"$resp"
+    [ "$HTTP_CODE" = 200 ] || fail "API exited while a new lock holder was live: $HTTP_CODE $HTTP_BODY"
+    sleep 0.2
+    i=$((i + 1))
+  done
+  kill "$holder_b" 2>/dev/null || true
+  wait "$holder_b" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 40 ]; do
+    resp=$(fm_test_api_http "$port" /health)
+    split_http <<<"$resp"
+    [ "$HTTP_CODE" = 0 ] && break
+    sleep 0.2
+    i=$((i + 1))
+  done
+  [ "$HTTP_CODE" = 0 ] || fail "API still answered after no live lock holder remained"
+  pass "API stays up while state/.lock names a live holder"
+}
+
+test_malformed_url_returns_400_and_keeps_serving() {
+  local home port resp
+  home=$(fm_test_api_home api-bad-url)
+  port=$(fm_test_api_start "$home")
+  resp=$(node -e '
+const net = require("net");
+const port = Number(process.argv[1]);
+const sock = net.connect(port, "127.0.0.1", () => {
+  sock.write("GET //[ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+});
+const chunks = [];
+sock.on("data", (c) => chunks.push(c));
+sock.on("error", () => {
+  process.stdout.write("0\n");
+  process.exit(0);
+});
+sock.on("end", () => {
+  const text = Buffer.concat(chunks).toString("utf8");
+  const nl = text.indexOf("\r\n");
+  const statusLine = nl === -1 ? text : text.slice(0, nl);
+  const parts = statusLine.split(" ");
+  process.stdout.write((parts[1] || "0") + "\n");
+  const bodyAt = text.indexOf("\r\n\r\n");
+  if (bodyAt !== -1) process.stdout.write(text.slice(bodyAt + 4));
+});
+' "$port")
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "malformed url status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  resp=$(fm_test_api_http "$port" /health)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "server died after a malformed URL: $HTTP_CODE $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "malformed URL returns 400 and the server keeps serving"
+}
+
 test_api_exits_when_session_pid_dies() {
   local home port holder resp i
   home=$(fm_test_api_home api-session)
@@ -207,6 +307,9 @@ test_port_and_home_come_from_config
 test_two_homes_do_not_share_a_server
 test_start_stop_lifecycle
 test_start_is_idempotent
+test_start_replaces_server_when_lock_holder_changes
+test_api_stays_up_when_lock_holder_is_replaced
+test_malformed_url_returns_400_and_keeps_serving
 test_api_exits_when_session_pid_dies
 test_env_port_overrides_config
 

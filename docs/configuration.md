@@ -561,8 +561,10 @@ Port comes from `FM_API_PORT`, else the first non-empty non-comment line of giti
 Port `0` asks the kernel for an ephemeral port, which tests use.
 The file is per-home and is not inherited by secondmates, because two homes cannot share a port.
 `GET /health` reports API version `1` and the home this process serves.
-A locked session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`; `bin/fm-api.sh` owns start, stop, status, and the `state/.api.*` records.
-The server also exits when the session-lock pid it was started under dies.
+A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.
+Secondmate homes marked by `.fm-secondmate-home` skip API bring-up at session start.
+`bin/fm-api.sh` owns start, stop, status, and the `state/.api.*` records.
+A session-bound server stays up while `state/.lock` names a live holder and exits when there is no live holder.
 [`CONTEXT.md`](../CONTEXT.md) is the glossary for the words later endpoints use.
 
 ## Environment variables
@@ -571,7 +573,7 @@ Runtime tuning via environment variables (defaults shown):
 
 ```sh
 FM_HOME=                 # optional operational home for most scripts, unset means this repo root; fm-send requires it explicitly
-FM_API=                 # optional session-start API bring-up override; 0/off/false/no skips, unset starts
+FM_API=                 # optional session-start API bring-up override; 0/off/false/no skips, unset starts on the primary home only
 FM_API_PORT=            # optional localhost API port override; else config/api-port, else 18787; 0 is ephemeral
 FM_API_START_TIMEOUT=5  # seconds fm-api.sh start waits for /health
 FM_ROOT_OVERRIDE=        # override firstmate repo root, tangle-guard target, and zellij/cmux home-title hash; also legacy whole-root override when FM_HOME is unset

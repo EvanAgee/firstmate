@@ -29,7 +29,8 @@
 #   1. lock          - acquire the per-home session lock FIRST, before any
 #                       mutating step runs. A held lock also starts or attaches
 #                       the localhost API via bin/fm-api.sh unless FM_API is
-#                       0/off/false/no.
+#                       0/off/false/no or this home is a secondmate home
+#                       marked by .fm-secondmate-home.
 #   2. bootstrap      - home-local stale Herdr projection cleanup runs only
 #                       when this session actually holds the lock. Detect-only
 #                       diagnostics always run. Bootstrap's six MUTATING sweeps
@@ -664,8 +665,10 @@ if [ "$READ_ONLY" -eq 0 ]; then
   case "${FM_API:-}" in
     0|off|false|no) ;;
     *)
-      API_OUT=$("$SCRIPT_DIR/fm-api.sh" start 2>&1) || true
-      [ -n "$API_OUT" ] && printf '%s\n' "$API_OUT"
+      if [ ! -e "$FM_HOME/.fm-secondmate-home" ] && [ ! -L "$FM_HOME/.fm-secondmate-home" ]; then
+        API_OUT=$("$SCRIPT_DIR/fm-api.sh" start 2>&1) || true
+        [ -n "$API_OUT" ] && printf '%s\n' "$API_OUT"
+      fi
       ;;
   esac
 fi

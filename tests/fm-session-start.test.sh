@@ -2512,6 +2512,25 @@ http.get({ host: "127.0.0.1", port, path: "/health" }, (res) => {
   pass "locked session start brings the API up"
 }
 
+test_secondmate_session_does_not_start_api() {
+  local rec root home fakebin out
+  rec=$(new_world api-secondmate)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  install_real_node "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf 'sm-fixture\n' > "$home/.fm-secondmate-home"
+  printf '0\n' > "$home/config/api-port"
+  out=$(FM_API=1 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  FM_HOME="$home" "$ROOT/bin/fm-api.sh" stop >/dev/null 2>&1 || true
+  assert_not_contains "$out" "api: started" "secondmate session start started the API"
+  assert_not_contains "$out" "api: attached" "secondmate session start attached the API"
+  assert_absent "$home/state/.api.pid" "secondmate session start left an API pid file"
+  pass "secondmate session start does not start the API"
+}
+
 test_read_only_session_does_not_start_api() {
   local rec root home fakebin holder_pid out
   rec=$(new_world api-readonly)
@@ -2536,6 +2555,7 @@ EOF
 }
 
 test_locked_session_start_brings_api_up
+test_secondmate_session_does_not_start_api
 test_read_only_session_does_not_start_api
 
 echo "# fm-session-start.test.sh: all assertions passed"

@@ -80,7 +80,7 @@ config/wedge-alarm  optional active-alert channel directives for the away-mode w
 config/session-odometer  optional session-age and handled-wake thresholds for heartbeat ANCHOR restart advice; LOCAL, gitignored; absent uses 21600s/200 wakes; see docs/configuration.md "Session odometer"
 config/supervision.env  optional supervision knob file the watcher, the guard, and the watcher-beat alert all read, so every harness and scheduler resolves one value per home; LOCAL, gitignored; real env wins; see docs/configuration.md "Supervision knobs"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
-config/api-port  localhost API bind port; LOCAL, gitignored, not inherited; FM_API_PORT overrides; absent uses 18787; see docs/configuration.md "Local API"
+config/api-port  localhost API bind port; LOCAL, gitignored, not inherited; FM_API_PORT overrides; absent uses 18787; session start brings the API up on the primary home only; see docs/configuration.md "Local API"
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         this home's domain-local captain preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
@@ -137,7 +137,7 @@ state/               runtime records and signals; gitignored
   .last-anchor       mtime of the last printed heartbeat ANCHOR; attended no-change heartbeats present when this is missing or older than FM_ANCHOR_INTERVAL (default HEARTBEAT_MAX); touched only by bin/fm-anchor-lib.sh via the drain
   .beat-alarm-fired .beat-alarm.log .beat-alarm.launchd.log   session-independent watcher-beat alert episode marker and its logs; written only by bin/fm-watcher-beat-alarm.sh
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
-  .api.pid .api.pid-identity .api.port .api.log .api.lock  localhost API process records; bin/fm-api.sh
+  .api.pid .api.pid-identity .api.port .api.session-pid .api.log .api.lock  localhost API process records; bin/fm-api.sh
 .no-mistakes/        local validation state and evidence; gitignored
 ```
 

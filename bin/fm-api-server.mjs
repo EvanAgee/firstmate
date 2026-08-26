@@ -51,7 +51,13 @@ function json(res, status, body) {
 }
 
 function handle(req, res, home) {
-  const url = new URL(req.url || "/", "http://127.0.0.1");
+  let url;
+  try {
+    url = new URL(req.url || "/", "http://127.0.0.1");
+  } catch {
+    json(res, 400, { ok: false, error: "malformed url" });
+    return;
+  }
   if (url.pathname === "/health") {
     if (req.method !== "GET" && req.method !== "HEAD") {
       json(res, 405, { ok: false, error: "method not allowed" });
@@ -95,9 +101,28 @@ function sessionPidAlive(pid) {
   }
 }
 
+function lockHolderAlive(stateDir) {
+  if (!stateDir) return false;
+  try {
+    const raw = fs.readFileSync(path.join(stateDir, ".lock"), "utf8").trim();
+    if (!/^[1-9][0-9]*$/.test(raw)) return false;
+    return sessionPidAlive(Number(raw));
+  } catch {
+    return false;
+  }
+}
+
 export function createApiServer(home) {
   return http.createServer((req, res) => {
-    handle(req, res, home);
+    try {
+      handle(req, res, home);
+    } catch {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      json(res, 400, { ok: false, error: "malformed url" });
+    }
   });
 }
 
@@ -134,6 +159,9 @@ function main() {
   if (sessionPid && !sessionPidAlive(sessionPid)) {
     throw new Error(`session pid is not alive: ${sessionPid}`);
   }
+  if (sessionPid && !stateDir) {
+    throw new Error("--state is required with --session-pid");
+  }
 
   server.listen({ host: "127.0.0.1", port }, () => {
     const address = server.address();
@@ -151,7 +179,7 @@ function main() {
 
   if (sessionPid) {
     const timer = setInterval(() => {
-      if (!sessionPidAlive(sessionPid)) shutdown();
+      if (!lockHolderAlive(stateDir)) shutdown();
     }, 2000);
     timer.unref();
   }
