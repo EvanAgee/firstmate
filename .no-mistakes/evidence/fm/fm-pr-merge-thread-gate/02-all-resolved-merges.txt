@@ -1,0 +1,23 @@
+=== CASE: 02-all-resolved-merges ===
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/40
+
+PR_CHECK_MIGRATION: quarantined polls remain unarmed; review state/.pr-check-migration.log before rearming
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+armed: state/task-x1.check.sh
+merged pr merge 40 --repo example/repo --squash
+
+exit=0
+
+--- gh-axi invocations ---
+api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:40){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq .data.repository.pullRequest.reviewThreads.totalCount
+api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:40){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq [.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length
+pr merge 40 --repo example/repo --squash
+
+--- task meta ---
+window=fm-task-x1
+worktree=/tmp/fm-pr-merge-demo.6kTK1N/wt
+project=/tmp/fm-pr-merge-demo.6kTK1N/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/example/repo/pull/40
+pr_head=deadbeefcafefeed0000000000000000deadbeef

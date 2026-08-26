@@ -1,0 +1,91 @@
+fm-pr-merge.sh review-thread gate
+The script under test is the real bin/fm-pr-merge.sh. gh-axi and gh are stubs
+that record every invocation and return configured thread counts.
+
+----------------------------------------------------------------------
+1. Unresolved threads (platform PR #39 shape: 13 open conversations)
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/39
+error: PR has 13 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+exit=1
+
+gh-axi:
+  api POST /graphql ... reviewThreads(first:100) ... --jq .data.repository.pullRequest.reviewThreads.totalCount
+  api POST /graphql ... --jq [.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length
+  (no pr merge)
+
+pr= was recorded before the refusal:
+  pr=https://github.com/example/repo/pull/39
+
+----------------------------------------------------------------------
+2. Some unresolved (13 total, 3 open)
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/47
+error: PR has 3 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+exit=1
+  (no pr merge)
+
+----------------------------------------------------------------------
+3. Every thread resolved
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/40
+merged pr merge 40 --repo example/repo --squash
+exit=0
+
+gh-axi:
+  api POST /graphql ... totalCount
+  api POST /graphql ... nodes[]|select(.isResolved==false)|length
+  pr merge 40 --repo example/repo --squash
+
+----------------------------------------------------------------------
+4. Garbled GraphQL (YAML envelope instead of a bare integer)
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/41
+error: could not read the PR's review threads; refusing to merge
+exit=1
+  (graphql called once; no pr merge)
+
+----------------------------------------------------------------------
+5. GraphQL request failed
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/42
+error: graphql request failed
+error: could not read the PR's review threads; refusing to merge
+exit=1
+  (no pr merge)
+
+----------------------------------------------------------------------
+6. More than 100 review threads (fail closed on the documented page bound)
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/45
+error: PR has 101 review threads, more than the 100 this check reads; refusing to merge
+exit=1
+  (only totalCount queried; no pr merge)
+
+----------------------------------------------------------------------
+7. --allow-unresolved-threads before -- (logged bypass, merge proceeds)
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/43 --allow-unresolved-threads
+note: --allow-unresolved-threads set; skipping the review-thread gate for https://github.com/example/repo/pull/43
+merged pr merge 43 --repo example/repo --squash
+exit=0
+
+gh-axi:
+  pr merge 43 --repo example/repo --squash
+  (no graphql; only this gate is skipped)
+
+----------------------------------------------------------------------
+8. Override still forwards extra merge args after --
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/44 --allow-unresolved-threads -- --merge --delete-branch
+note: --allow-unresolved-threads set; skipping the review-thread gate for https://github.com/example/repo/pull/44
+merged pr merge 44 --repo example/repo --merge --delete-branch
+exit=0
+
+----------------------------------------------------------------------
+9. --allow-unresolved-threads after -- is a gh-axi flag, not a bypass
+
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/46 -- --allow-unresolved-threads
+error: PR has 4 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+exit=1
+  (no pr merge)

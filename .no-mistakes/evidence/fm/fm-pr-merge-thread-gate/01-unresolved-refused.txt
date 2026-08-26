@@ -1,0 +1,27 @@
+=== CASE: 01-unresolved-refused ===
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/39
+
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z4C89CAR39W7KH0SSZV54X/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z4C89CAR39W7KH0SSZV54X/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+error: PR has 13 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+
+exit=1
+
+--- gh-axi invocations ---
+api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:39){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq .data.repository.pullRequest.reviewThreads.totalCount
+api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:39){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq [.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length
+
+--- task meta ---
+window=fm-task-x1
+worktree=/tmp/fm-pr-merge-demo.6kTK1N/wt
+project=/tmp/fm-pr-merge-demo.6kTK1N/project
+kind=ship
+mode=no-mistakes
+pr=https://github.com/example/repo/pull/39
+pr_head=deadbeefcafefeed0000000000000000deadbeef
