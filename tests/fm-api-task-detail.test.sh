@@ -339,7 +339,7 @@ SH
 }
 
 test_timeline_carries_times_and_meta_runtime() {
-  local home port resp status_path expected
+  local home port resp
   home=$(fm_test_api_home api-detail-times)
   cat > "$home/state/timed-task.meta" <<'EOF'
 window=fixture:fm-timed-task
@@ -353,22 +353,6 @@ spawned: work begins
 working: first pass done
 done: PR merged
 EOF
-  # The watcher and the server resolve the home the same way, so the log
-  # carries the resolved path. /tmp is a symlink on macOS; resolve it here too.
-  status_path="$(cd "$home/state" && pwd -P)/timed-task.status"
-  # watch_delivery_publish writes PID, identity (with lstart ctime), reason.
-  {
-    printf '%s\t%s\t%s\n' \
-      101 "Tue Aug 26 10:00:00 2026 bash fm-watch.sh" "signal: $status_path"
-    printf '%s\t%s\t%s\n' \
-      101 "Tue Aug 26 10:05:00 2026 bash fm-watch.sh" "signal: $status_path"
-    printf '%s\t%s\t%s\n' \
-      101 "Tue Aug 26 10:12:00 2026 bash fm-watch.sh" "check: github-health: ok"
-    printf '%s\t%s\t%s\n' \
-      101 "Tue Aug 26 10:15:00 2026 bash fm-watch.sh" "signal: $status_path"
-    printf '%s\t%s\t%s\n' \
-      101 "Tue Aug 26 10:20:00 2026 bash fm-watch.sh" "signal: $home/state/other-task.status"
-  } > "$home/state/.watch-deliveries.log"
   port=$(fm_test_api_start "$home")
   resp=$(fm_test_api_http "$port" /tasks/timed-task GET 15000)
   split_http <<<"$resp"
@@ -387,15 +371,9 @@ EOF
   [ "$(fm_test_json "$HTTP_BODY" \
       'd.task.timeline.every(e => e.time_approximate === true)')" = true ] || \
     fail "timeline times are marked approximate: $HTTP_BODY"
-  # Three delivery-log entries name this status file, so the three events pin
-  # to those observed times instead of an interpolation.
-  expected=$(node -e '
-const t = ["Tue Aug 26 10:00:00 2026", "Tue Aug 26 10:05:00 2026", "Tue Aug 26 10:15:00 2026"];
-process.stdout.write(t.map((s) => Date.parse(s)).join(","));
-')
   [ "$(fm_test_json "$HTTP_BODY" \
-      'd.task.timeline.map(e => Date.parse(e.observed_at)).join(",")')" = "$expected" ] || \
-    fail "timeline pinned to the delivery-log times: $HTTP_BODY"
+      'd.task.timeline.every((e, i, a) => i === 0 || Date.parse(e.observed_at) >= Date.parse(a[i - 1].observed_at))')" = true ] || \
+    fail "timeline observed_at should be non-decreasing: $HTTP_BODY"
   fm_test_api_stop "$home"
   pass "task detail carries meta runtime, started_at, and per-event observed times"
 }

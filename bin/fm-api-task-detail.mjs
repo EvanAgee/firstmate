@@ -8,10 +8,9 @@
 // started_at is the spawn_gen epoch from meta, else the status file's birth
 // time, else null.
 // Each timeline event carries observed_at (ISO) and time_approximate: true.
-// The times pin to the watcher delivery log entries naming the status file
-// when enough exist, and otherwise interpolate between the status file's
-// birth and modification times, so a screen can show when each event was
-// seen without reading firstmate's files itself.
+// The times interpolate between the status file's birth and modification
+// times, so a screen can show when each event was seen without reading
+// firstmate's files itself.
 // activity contains the task worktree and branch, commits since origin/main,
 // diff totals and stat text, the uncommitted-file count, review/test/lint/ci
 // pipeline steps, pull-request checks and review-thread counts, and the latest
@@ -99,40 +98,13 @@ function timelineFrom(text) {
 
 // --- timeline clock ---------------------------------------------------------
 //
-// The status file records no times, so each event's observed_at is
-// reconstructed: delivery-log entries naming the status file pin real
-// observation times, and the rest interpolates between the file's birth and
-// modification times. Every reconstructed time is marked approximate.
+// The status file records no times, so each event's observed_at interpolates
+// between the file's birth and modification times. Every reconstructed time
+// is marked approximate.
 
-const WATCH_DATE_PATTERN =
-  /\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}\b/;
-
-function parseWatchTimes(deliveryLog, statusPath) {
-  if (!statusPath) return [];
-  return deliveryLog.split(/\r?\n/).flatMap((line) => {
-    if (!line) return [];
-    const fields = line.split("\t");
-    if (fields.length < 3) return [];
-    const identity = fields[1];
-    const reason = fields.slice(2).join("\t");
-    if (!reason.includes(statusPath)) return [];
-    const dateText = identity.match(WATCH_DATE_PATTERN)?.[0];
-    const timestamp = dateText ? Date.parse(dateText) : Number.NaN;
-    return Number.isFinite(timestamp) ? [timestamp] : [];
-  });
-}
-
-function buildTimelineTimes(count, birthtimeMs, modifiedAtMs, watchTimes) {
+function buildTimelineTimes(count, birthtimeMs, modifiedAtMs) {
   if (count === 0) return [];
-  if (count === 1) return [watchTimes.at(-1) ?? modifiedAtMs];
-
-  const observedTimes = [...new Set(watchTimes)]
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-  if (observedTimes.length >= count) return observedTimes.slice(-count);
-  if (observedTimes.length === count - 1 && Number.isFinite(birthtimeMs)) {
-    return [birthtimeMs, ...observedTimes];
-  }
+  if (count === 1) return [modifiedAtMs];
 
   const start = Number.isFinite(birthtimeMs) ? birthtimeMs : modifiedAtMs;
   const end = Math.max(start, modifiedAtMs);
@@ -142,7 +114,7 @@ function buildTimelineTimes(count, birthtimeMs, modifiedAtMs, watchTimes) {
   });
 }
 
-function statusClock(statusFile, count, deliveryLog) {
+function statusClock(statusFile, count) {
   let birthtimeMs = Number.NaN;
   let modifiedAtMs = Date.now();
   try {
@@ -156,12 +128,7 @@ function statusClock(statusFile, count, deliveryLog) {
     };
   }
   return {
-    times: buildTimelineTimes(
-      count,
-      birthtimeMs,
-      modifiedAtMs,
-      parseWatchTimes(deliveryLog, statusFile),
-    ),
+    times: buildTimelineTimes(count, birthtimeMs, modifiedAtMs),
     birthtime: Number.isFinite(birthtimeMs) ? new Date(birthtimeMs).toISOString() : null,
   };
 }
@@ -553,8 +520,7 @@ export async function taskDetailBody(home, id, options = {}) {
   const brief = readRegularFile(briefFile) || "";
   const fields = metaFields(metaText);
   const timeline = timelineFrom(statusText);
-  const deliveryLog = readRegularFile(path.join(stateDir, ".watch-deliveries.log")) || "";
-  const clock = statusClock(statusFile, timeline.length, deliveryLog);
+  const clock = statusClock(statusFile, timeline.length);
   for (let i = 0; i < timeline.length; i += 1) {
     timeline[i].observed_at = new Date(clock.times[i]).toISOString();
     timeline[i].time_approximate = true;
