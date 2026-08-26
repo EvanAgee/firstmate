@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/fm-api.test.sh - localhost API front door: health, bind, config, lifecycle,
-# and the fleet snapshot read.
+# the fleet snapshot read, write token, and captain notes.
 #
 # Speaks real HTTP against a throwaway firstmate home. Does not read the live
 # home and does not inspect server source.
@@ -452,6 +452,144 @@ test_env_port_overrides_config() {
   pass "FM_API_PORT overrides config/api-port"
 }
 
+test_first_start_writes_token_later_starts_keep_it() {
+  local home port first second mode
+  home=$(fm_test_api_home api-token-gen)
+  [ ! -f "$home/config/api-token" ] || fail "fixture home already had a write token"
+  port=$(fm_test_api_start "$home")
+  [ -f "$home/config/api-token" ] || fail "first start did not write config/api-token"
+  first=$(fm_test_api_token "$home")
+  [ "${#first}" -eq 64 ] || fail "generated token length ${#first}, wanted 64"
+  mode=$(node -e 'const fs=require("fs"); process.stdout.write((fs.statSync(process.argv[1]).mode & 0o777).toString(8))' "$home/config/api-token")
+  [ "$mode" = 600 ] || fail "token file mode $mode, wanted 600"
+  fm_test_api_stop "$home"
+  port=$(fm_test_api_start "$home")
+  second=$(fm_test_api_token "$home")
+  [ "$first" = "$second" ] || fail "later start rotated the write token"
+  fm_test_api_stop "$home"
+  pass "first start writes a write token and later starts keep it"
+}
+
+test_preexisting_token_is_kept() {
+  local home port kept
+  home=$(fm_test_api_home api-token-keep)
+  printf '%s\n' "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    > "$home/config/api-token"
+  port=$(fm_test_api_start "$home")
+  kept=$(fm_test_api_token "$home")
+  [ "$kept" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] \
+    || fail "start replaced a preexisting write token"
+  fm_test_api_stop "$home"
+  pass "a preexisting write token survives start"
+}
+
+test_symlinked_api_token_refuses_start() {
+  local home target out status
+  home=$(fm_test_api_home api-token-symlink)
+  FM_TEST_API_HOMES+=("$home")
+  target="$home/config/api-token-real"
+  printf '%s\n' "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" > "$target"
+  ln -s "$target" "$home/config/api-token"
+  status=0
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-api.sh" start 2>&1) || status=$?
+  [ "$status" -ne 0 ] || fail "start accepted a symlinked config/api-token: $out"
+  assert_contains "$out" "must not be a symlink" "token symlink refusal: $out"
+  [ ! -f "$home/state/.api.pid" ] || fail "start recorded a pid after refusing a token symlink"
+  fm_test_api_stop "$home"
+  pass "start refuses a symlinked config/api-token"
+}
+
+test_captain_note_without_token_is_unauthorized() {
+  local home port resp queue
+  home=$(fm_test_api_home api-note-no-token)
+  printf 'working: implementing\n' > "$home/state/sample-task.status"
+  port=$(fm_test_api_start "$home")
+  HTTP_BODY='{"task":"sample-task","text":"please go smaller"}' \
+    resp=$(fm_test_api_http "$port" /captain-notes POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
+  HTTP_BODY='{"task":"sample-task","text":"please go smaller"}' \
+    HTTP_AUTHORIZATION='Bearer definitely-not-the-token' \
+    resp=$(fm_test_api_http "$port" /captain-notes POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 401 ] || fail "wrong token status $HTTP_CODE, wanted 401: $HTTP_BODY"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -z "$queue" ] || fail "unauthorized note still reached the wake queue: $queue"
+  fm_test_api_stop "$home"
+  pass "a captain note without the token is refused with 401"
+}
+
+test_captain_note_with_token_lands_in_wake_queue() {
+  local home port token resp expected queue
+  home=$(fm_test_api_home api-note-ok)
+  printf 'working: implementing\n' > "$home/state/sample-task.status"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  expected=$(printf '%s' 'captain-note on running task sample-task: please go smaller' \
+    | "$ROOT/bin/fm-operational-input.sh" encode away-supervisor) \
+    || fail "could not encode the expected captain note"
+  HTTP_BODY='{"task":"sample-task","text":"please go smaller"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-notes POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "authorized note status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -n "$queue" ] || fail "authorized note did not reach the wake queue"
+  printf '%s\n' "$queue" | grep -F "$expected" >/dev/null \
+    || fail "wake queue missing the encoded captain note: $queue"
+  printf '%s\n' "$queue" | grep -F 'check: captain-note:' >/dev/null \
+    || fail "wake queue missing the captain-note check payload: $queue"
+  printf '%s\n' "$queue" | awk -F '\t' '$3=="check" { found=1 } END { exit found?0:1 }' \
+    || fail "wake queue did not record a check wake: $queue"
+  fm_test_api_stop "$home"
+  pass "a captain note with the token lands in the wake queue encoded for firstmate"
+}
+
+test_reads_need_no_token() {
+  local home port token resp
+  home=$(fm_test_api_home api-read-no-token)
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  [ -n "$token" ] || fail "start did not write a write token"
+  resp=$(fm_test_api_http "$port" /health)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "health without token status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "reads still need no token after a write token exists"
+}
+
+test_question_back_note_does_not_close_a_hold() {
+  local home port token resp before after queue
+  home=$(fm_test_api_home api-note-question)
+  printf 'needs-decision: which target? [key=deploy-target]\n' > "$home/state/sample-task.status"
+  mkdir -p "$home/data"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] sample-task-decision-deploy-target - which target? (kind: captain)
+
+## Done
+EOF
+  before=$(cat "$home/data/backlog.md")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"task":"sample-task","text":"what is this for?"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-notes POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "question-back note status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  after=$(cat "$home/data/backlog.md")
+  [ "$before" = "$after" ] || fail "a question-back note rewrote the backlog"
+  [ ! -f "$home/state/captain-replies.jsonl" ] \
+    || fail "a captain note wrote state/captain-replies.jsonl"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  printf '%s\n' "$queue" | grep -F 'what is this for?' >/dev/null \
+    || fail "question-back note did not reach firstmate: $queue"
+  fm_test_api_stop "$home"
+  pass "a clarifying question-back stays a captain note and does not close a hold"
+}
+
 test_health_reports_version_and_home
 test_unknown_path_is_not_found
 test_binds_localhost_only
@@ -465,6 +603,13 @@ test_malformed_url_returns_400_and_keeps_serving
 test_api_exits_when_session_pid_dies
 test_env_port_overrides_config
 test_symlinked_api_port_refuses_start
+test_first_start_writes_token_later_starts_keep_it
+test_preexisting_token_is_kept
+test_symlinked_api_token_refuses_start
+test_captain_note_without_token_is_unauthorized
+test_captain_note_with_token_lands_in_wake_queue
+test_reads_need_no_token
+test_question_back_note_does_not_close_a_hold
 
 if command -v jq >/dev/null 2>&1; then
   test_empty_home_fleet_is_empty_not_error

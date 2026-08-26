@@ -562,13 +562,22 @@ The published `lavish-axi poll` clears feedback destructively before returning i
 Never describe this path as at-least-once, no-loss, or lossless.
 `docs/verification/process-event-sources.md` holds the measurements and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
 
-## Local API (config/api-port / FM_API_PORT)
+## Local API (config/api-port / config/api-token / FM_API_PORT)
 
 The localhost API binds `127.0.0.1` only and serves the resolved `FM_HOME`.
 Port comes from `FM_API_PORT`, else the first non-empty non-comment line of gitignored `config/api-port`, else `18787`.
 A `config/api-port` symlink is refused rather than treated as that default.
 Port `0` asks the kernel for an ephemeral port, which tests use.
 The file is per-home and is not inherited by secondmates, because two homes cannot share a port.
+On first start, `bin/fm-api.sh` writes a random write token to gitignored `config/api-token` if that file is absent.
+Later starts keep the existing token.
+A `config/api-token` symlink is refused.
+The token file is per-home and is not inherited by secondmates.
+Write endpoints require `Authorization: Bearer <token>`.
+A missing or wrong token is refused with 401.
+Reads and the event stream do not.
+`POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate on the wake queue, encoded as operational input.
+A captain note never closes a parked decision.
 `GET /health` reports API version `1` and the home this process serves.
 `GET /fleet` returns the fleet snapshot for that home as JSON.
 The body is the output of `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.
@@ -576,7 +585,7 @@ An empty home returns an empty fleet, not an error.
 `GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig ladders; `bin/fm-api-server.mjs` owns those JSON contracts.
 A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.
 Secondmate homes marked by `.fm-secondmate-home` skip API bring-up at session start.
-`bin/fm-api.sh` owns start, stop, status, and the `state/.api.*` records.
+`bin/fm-api.sh` owns start, stop, status, token generation, and the `state/.api.*` records.
 A session-bound server stays up while `state/.lock` names a live holder and exits when there is no live holder.
 [`CONTEXT.md`](../CONTEXT.md) is the glossary for the words the API uses.
 

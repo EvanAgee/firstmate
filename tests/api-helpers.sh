@@ -68,18 +68,41 @@ fm_test_api_stop() {
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-api.sh" stop >/dev/null 2>&1 || true
 }
 
+# fm_test_api_token <home>: print the first non-comment token line from config/api-token.
+fm_test_api_token() {
+  local home=$1 line
+  [ -n "$home" ] || fail "fm_test_api_token requires a home"
+  [ -f "$home/config/api-token" ] || fail "missing $home/config/api-token"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|\#*) continue ;;
+    esac
+    printf '%s\n' "$line"
+    return 0
+  done < "$home/config/api-token"
+  fail "$home/config/api-token is empty"
+}
+
 # fm_test_api_http <port> <path> [method] [timeout-ms]: GET (or method)
-# 127.0.0.1:<port><path>. Prints "<status>\n<body>" on success. Status 0 means
-# the request failed to connect. timeout-ms defaults to 2000.
+# 127.0.0.1:<port><path>. Optional env: HTTP_BODY (request body),
+# HTTP_AUTHORIZATION (Authorization header). Prints "<status>\n<body>" on
+# success. Status 0 means the request failed to connect. timeout-ms defaults
+# to 2000.
 fm_test_api_http() {
   local port=$1 req_path=$2 method=${3:-GET} timeout_ms=${4:-2000}
-  node -e '
+  HTTP_BODY=${HTTP_BODY-} HTTP_AUTHORIZATION=${HTTP_AUTHORIZATION-} node -e '
 const http = require("http");
 const port = process.argv[1];
 const reqPath = process.argv[2];
 const method = process.argv[3];
 const timeoutMs = Number(process.argv[4] || 2000);
-const req = http.request({ host: "127.0.0.1", port, path: reqPath, method }, (res) => {
+const body = process.env.HTTP_BODY || "";
+const authorization = process.env.HTTP_AUTHORIZATION || "";
+const headers = {};
+if (body) headers["Content-Type"] = "application/json; charset=utf-8";
+if (authorization) headers.Authorization = authorization;
+if (body) headers["Content-Length"] = Buffer.byteLength(body);
+const req = http.request({ host: "127.0.0.1", port, path: reqPath, method, headers }, (res) => {
   const chunks = [];
   res.on("data", (c) => chunks.push(c));
   res.on("end", () => {
@@ -94,7 +117,8 @@ req.setTimeout(timeoutMs, () => {
   req.destroy();
   process.stdout.write("0\n");
 });
-req.end();
+if (body) req.end(body);
+else req.end();
 ' "$port" "$req_path" "$method" "$timeout_ms"
 }
 
