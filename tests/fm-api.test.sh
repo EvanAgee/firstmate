@@ -39,6 +39,7 @@ EOF
     "worktree=$home/projects/alpha" \
     "project=alpha" \
     "harness=claude" \
+    "model=claude-opus-4-8" \
     "kind=ship" \
     "mode=ship" \
     "yolo=off"
@@ -62,7 +63,9 @@ function strip(v) {
   if (v && typeof v === "object") {
     const out = {};
     for (const [k, val] of Object.entries(v)) {
-      if (k === "generated" || k === "observed_at") continue;
+      // enrich is the one documented API addition on top of the snapshot
+      // script output; the dedicated enrich test covers it.
+      if (k === "generated" || k === "observed_at" || k === "enrich") continue;
       out[k] = strip(val);
     }
     return out;
@@ -611,11 +614,47 @@ test_captain_note_with_token_lands_in_wake_queue
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
 
+test_fleet_tasks_carry_enrich() {
+  local home port resp
+  home=$(fm_test_api_home api-fleet-enrich)
+  write_fleet_fixture "$home"
+  mkdir -p "$home/data/ship-task"
+  cat > "$home/data/ship-task/brief.md" <<'EOF'
+# Task
+
+Build the enrich window end to end.
+
+# Extra
+
+Not part of the prompt.
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /fleet GET 10000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "enrich fleet status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" 'd.tasks.find(t => t.id === "ship-task").enrich.title')" = "Ship Task" ] || \
+    fail "enrich title from the backlog record: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" 'd.tasks.find(t => t.id === "ship-task").enrich.first_prompt')" = \
+    "Build the enrich window end to end." ] || \
+    fail "enrich first_prompt is the brief Task section: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" 'd.tasks.find(t => t.id === "ship-task").enrich.model')" = "claude-opus-4-8" ] || \
+    fail "enrich model comes from the task meta: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" \
+      '((e) => typeof e.started_at === "string" && !isNaN(Date.parse(e.started_at)))(d.tasks.find(t => t.id === "ship-task").enrich)')" = true ] || \
+    fail "enrich started_at is a parseable time: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" \
+      '((e) => typeof e.last_activity_at === "string" && !isNaN(Date.parse(e.last_activity_at)))(d.tasks.find(t => t.id === "ship-task").enrich)')" = true ] || \
+    fail "enrich last_activity_at is a parseable time: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "fleet tasks carry the enrich window: title, brief prompt, and activity times"
+}
+
 if command -v jq >/dev/null 2>&1; then
   test_empty_home_fleet_is_empty_not_error
   test_fleet_snapshot_for_fixture_home
   test_fleet_body_matches_snapshot_script
   test_fleet_rejects_non_get
+  test_fleet_tasks_carry_enrich
 else
   echo "skip: jq not found (fleet snapshot endpoint)"
 fi

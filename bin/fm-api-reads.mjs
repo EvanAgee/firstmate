@@ -4,15 +4,19 @@
 // This module reads one home and returns the bodies those routes send.
 // Parked decisions and blocked tasks come from fm-classify-lib.sh's
 // scan_open_decisions fold so the API cannot disagree with firstmate.
-// Rigs come from config/crew-dispatch.json.
+// Rigs come from config/crew-dispatch.json, plus the dispatch note, per-rig
+// and default pins, and the crew and secondmate pin lines from
+// config/crew-harness and config/secondmate-harness. Consumers parse
+// presentation out of those raw strings; this module never interprets them.
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCAN_TIMEOUT_MS = 5000;
+const TASKS_AXI_TIMEOUT_MS = 10000;
 
 function classifyEnv() {
   const env = { ...process.env };
@@ -92,6 +96,11 @@ function asRungs(value) {
   return rungs;
 }
 
+function asPin(value) {
+  const pins = asRungs(value);
+  return pins.length > 0 ? pins[0] : null;
+}
+
 export function assembleRigs(data) {
   const rigs = [];
   if (!data || typeof data !== "object") return rigs;
@@ -101,22 +110,49 @@ export function assembleRigs(data) {
     const name = typeof rule.when === "string" ? rule.when : "";
     const rungs = asRungs(rule.use);
     if (!name && rungs.length === 0) continue;
-    rigs.push({ name, rungs });
+    rigs.push({ name, rungs, pin: asPin(rule.pin) });
   }
   const fallback = asRungs(data.default);
   if (fallback.length > 0) {
-    rigs.push({ name: "default", rungs: fallback });
+    rigs.push({ name: "default", rungs: fallback, pin: null });
   }
   return rigs;
 }
 
+// First non-empty non-comment line of a config file. Absent, unreadable, or
+// symlinked files read as "".
+function pinLine(file) {
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return "";
+  } catch {
+    return "";
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    return trimmed;
+  }
+  return "";
+}
+
 export function rigsBody(home) {
-  const file = path.join(home, "config", "crew-dispatch.json");
+  const config = path.join(home, "config");
+  const file = path.join(config, "crew-dispatch.json");
+  const crew = pinLine(path.join(config, "crew-harness"));
+  const secondmate = pinLine(path.join(config, "secondmate-harness"));
   let raw;
   try {
     raw = fs.readFileSync(file, "utf8");
   } catch (error) {
-    if (error && error.code === "ENOENT") return { ok: true, rigs: [] };
+    if (error && error.code === "ENOENT") {
+      return { ok: true, note: "", rigs: [], defaultPin: null, crew, secondmate };
+    }
     throw error;
   }
   let data;
@@ -127,5 +163,249 @@ export function rigsBody(home) {
     err.code = "INVALID_RIG_CONFIG";
     throw err;
   }
-  return { ok: true, rigs: assembleRigs(data) };
+  return {
+    ok: true,
+    note: typeof data?.note === "string" ? data.note : "",
+    rigs: assembleRigs(data),
+    defaultPin: asPin(data?.defaultPin),
+    crew,
+    secondmate,
+  };
+}
+
+// --- fleet enrich -----------------------------------------------------------
+//
+// GET /fleet serves fm-fleet-snapshot.sh --json plus one API-owned addition:
+// task.enrich = { title, first_prompt, model, started_at, last_activity_at }.
+// title falls back from the backlog record to the brief heading, first_prompt
+// is the brief's "# Task" section capped at PROMPT_CAP, model is the task's
+// meta model field, and the times come from the task's meta and status file
+// stamps. The snapshot already carries each task's harness; model is not on
+// the task row, so a board card reads it from here. Absent sources leave nulls.
+
+const PROMPT_CAP = 6000;
+
+// The `key=value` model line from a task's meta file, or "" when absent.
+function metaModel(metaPath) {
+  if (!metaPath) return "";
+  let raw;
+  try {
+    const stat = fs.lstatSync(metaPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return "";
+    raw = fs.readFileSync(metaPath, "utf8");
+  } catch {
+    return "";
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const at = line.indexOf("=");
+    if (at > 0 && line.slice(0, at) === "model") return line.slice(at + 1).trim();
+  }
+  return "";
+}
+
+// Everything after the "# Task" heading up to the next top-level heading.
+// Falls back to the whole file minus a leading top-level heading when there
+// is no "# Task" section.
+function briefTaskSection(raw) {
+  const lines = raw.split("\n");
+  const start = lines.findIndex((line) => /^#\s+Task\b/i.test(line));
+  if (start >= 0) {
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (/^#\s/.test(lines[i])) {
+        end = i;
+        break;
+      }
+    }
+    return lines.slice(start + 1, end).join("\n").trim();
+  }
+  return raw.replace(/^#\s+[^\n]*\n+/, "").trim();
+}
+
+function statTime(filePath, field) {
+  try {
+    const stats = fs.statSync(filePath);
+    const time =
+      field === "birth" && stats.birthtimeMs > 0 ? stats.birthtime : stats.mtime;
+    return time.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function enrichOneTask(task, dataRoot) {
+  const enrich = {
+    title: task?.backlog?.title ?? null,
+    first_prompt: null,
+    model: metaModel(task?.paths?.meta?.path),
+    started_at: null,
+    last_activity_at: null,
+  };
+
+  if (task?.id) {
+    // Same posture as /tasks/<id>: a symlinked brief is refused, not followed.
+    const briefFile = path.join(dataRoot, task.id, "brief.md");
+    let raw = null;
+    try {
+      const stat = fs.lstatSync(briefFile);
+      raw = stat.isFile() && !stat.isSymbolicLink() ? fs.readFileSync(briefFile, "utf8") : null;
+    } catch {
+      raw = null;
+    }
+    if (raw !== null) {
+      const prompt = briefTaskSection(raw);
+      if (prompt) {
+        enrich.first_prompt =
+          prompt.length > PROMPT_CAP ? `${prompt.slice(0, PROMPT_CAP)}\n…` : prompt;
+      }
+      if (!enrich.title) {
+        const heading = raw.match(/^#\s+(.+)$/m);
+        const headingText =
+          heading && !/^task$/i.test(heading[1].trim()) ? heading[1].trim() : null;
+        enrich.title = (headingText || prompt.split("\n")[0].replace(/^#+\s*/, "")).slice(0, 140);
+      }
+    }
+  }
+
+  const metaPath = task?.paths?.meta?.path;
+  const statusPath = task?.paths?.status_log?.path;
+  if (metaPath) enrich.started_at = statTime(metaPath, "birth");
+  const activity = [
+    statusPath ? statTime(statusPath, "mtime") : null,
+    metaPath ? statTime(metaPath, "mtime") : null,
+  ]
+    .filter((value) => value !== null)
+    .sort();
+  if (activity.length) enrich.last_activity_at = activity[activity.length - 1];
+
+  return enrich;
+}
+
+export function enrichFleetTasks(home, snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.tasks)) return snapshot;
+  const dataRoot =
+    (snapshot.roots && typeof snapshot.roots.data === "string" && snapshot.roots.data) ||
+    path.join(home, "data");
+  for (const task of snapshot.tasks) {
+    if (task && typeof task === "object") task.enrich = enrichOneTask(task, dataRoot);
+  }
+  return snapshot;
+}
+
+// --- captain holds ----------------------------------------------------------
+//
+// GET /captain-holds serves the decisions firstmate is waiting on the captain
+// for, the same set `tasks-axi list --kind captain` returns, each read in full
+// with `tasks-axi show <id> --full`. This is the one holds query the dashboard
+// used to run itself; the API runs it now so no consumer parses tasks-axi
+// output. Each hold: { id, title, reason, repo, createdAt, blockedBy[],
+// actionable, done, answerable }. Answer options are a consumer concern and
+// stay out of this contract.
+
+function tasksAxiEnv(home) {
+  return {
+    ...process.env,
+    FM_HOME: home,
+    FM_STATE_OVERRIDE: path.join(home, "state"),
+    FM_DATA_OVERRIDE: path.join(home, "data"),
+    FM_CONFIG_OVERRIDE: path.join(home, "config"),
+    FM_PROJECTS_OVERRIDE: path.join(home, "projects"),
+  };
+}
+
+function runTasksAxi(home, args) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "tasks-axi",
+      args,
+      { cwd: home, env: tasksAxiEnv(home), encoding: "utf8", timeout: TASKS_AXI_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(String(stdout));
+      },
+    );
+  });
+}
+
+// Ids from `tasks-axi list`, whose rows are two-space indented CSV.
+function parseCaptainIdList(output) {
+  const ids = [];
+  for (const line of output.split("\n")) {
+    const match = /^ {2}([a-z0-9][a-z0-9._-]*),/.exec(line);
+    if (match) ids.push(match[1]);
+  }
+  return ids;
+}
+
+// One `key: value` line from `tasks-axi show --full`, quotes stripped, with the
+// dash and "none" placeholders normalized to "".
+function parseHoldField(line) {
+  const match = /^\s*([a-z_]+):\s*(.*)$/.exec(line);
+  if (!match) return null;
+  let value = match[2].trim();
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    value = value.slice(1, -1);
+  }
+  return [match[1], value === "-" || value === "none" ? "" : value];
+}
+
+function parseHoldRecord(output) {
+  const fields = new Map();
+  for (const line of output.split("\n")) {
+    const field = parseHoldField(line);
+    if (field) fields.set(field[0], field[1]);
+  }
+  const id = fields.get("id");
+  const title = fields.get("title");
+  if (!id || !title) return null;
+
+  const blockedBy = (fields.get("blocked_by") || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return {
+    id,
+    title,
+    reason: fields.get("hold_reason") || "",
+    repo: fields.get("repo") || "",
+    createdAt: fields.get("created") || "",
+    blockedBy,
+    actionable: fields.get("blocked") !== "yes" && blockedBy.length === 0,
+    done: fields.get("state") === "done",
+    answerable: id.includes("-decision-"),
+  };
+}
+
+export async function captainHoldsBody(home) {
+  let listing;
+  try {
+    listing = await runTasksAxi(home, ["list", "--kind", "captain"]);
+  } catch {
+    // tasks-axi absent or firstmate not set up: no holds, not an error, the
+    // same posture the dashboard's own loader took.
+    return { ok: true, holds: [] };
+  }
+
+  const ids = parseCaptainIdList(listing);
+  const records = await Promise.all(
+    ids.map(async (id) => {
+      try {
+        return parseHoldRecord(await runTasksAxi(home, ["show", id, "--full"]));
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const holds = records
+    .filter((hold) => hold !== null)
+    // firstmate keeps resolved decisions in the captain listing; answering one
+    // is refused, so a done hold is dropped rather than shown as open.
+    .filter((hold) => !hold.done)
+    .sort((a, b) => {
+      if (a.actionable !== b.actionable) return a.actionable ? -1 : 1;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+  return { ok: true, holds };
 }

@@ -1,8 +1,17 @@
 // Assemble GET /tasks/<id> from one firstmate home's task records.
 //
 // A known task (meta, status, or brief present) returns:
-//   { ok, task: { id, kind, project, brief, timeline, stage, activity } }
+//   { ok, task: { id, kind, project, harness, model, started_at, brief,
+//     timeline, stage, activity } }
 // An unknown id returns null so the server can send JSON 404.
+// harness and model come from the task's meta record ("" when absent).
+// started_at is the spawn_gen epoch from meta, else the status file's birth
+// time, else null.
+// Each timeline event carries observed_at (ISO) and time_approximate: true.
+// The times pin to the watcher delivery log entries naming the status file
+// when enough exist, and otherwise interpolate between the status file's
+// birth and modification times, so a screen can show when each event was
+// seen without reading firstmate's files itself.
 // activity contains the task worktree and branch, commits since origin/main,
 // diff totals and stat text, the uncommitted-file count, review/test/lint/ci
 // pipeline steps, pull-request checks and review-thread counts, and the latest
@@ -86,6 +95,79 @@ function timelineFrom(text) {
     });
   }
   return timeline;
+}
+
+// --- timeline clock ---------------------------------------------------------
+//
+// The status file records no times, so each event's observed_at is
+// reconstructed: delivery-log entries naming the status file pin real
+// observation times, and the rest interpolates between the file's birth and
+// modification times. Every reconstructed time is marked approximate.
+
+const WATCH_DATE_PATTERN =
+  /\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}\b/;
+
+function parseWatchTimes(deliveryLog, statusPath) {
+  return deliveryLog
+    .split(/\r?\n/)
+    .filter((line) => line.includes(statusPath))
+    .flatMap((line) => {
+      const dateText = line.match(WATCH_DATE_PATTERN)?.[0];
+      const timestamp = dateText ? Date.parse(dateText) : Number.NaN;
+      return Number.isFinite(timestamp) ? [timestamp] : [];
+    });
+}
+
+function buildTimelineTimes(count, birthtimeMs, modifiedAtMs, watchTimes) {
+  if (count === 0) return [];
+  if (count === 1) return [watchTimes.at(-1) ?? modifiedAtMs];
+
+  const observedTimes = [...new Set(watchTimes)]
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (observedTimes.length >= count) return observedTimes.slice(-count);
+  if (observedTimes.length === count - 1 && Number.isFinite(birthtimeMs)) {
+    return [birthtimeMs, ...observedTimes];
+  }
+
+  const start = Number.isFinite(birthtimeMs) ? birthtimeMs : modifiedAtMs;
+  const end = Math.max(start, modifiedAtMs);
+  return Array.from({ length: count }, (_, index) => {
+    const progress = index / (count - 1);
+    return Math.round(start + (end - start) * progress);
+  });
+}
+
+function statusClock(statusFile, count, deliveryLog) {
+  let birthtimeMs = Number.NaN;
+  let modifiedAtMs = Date.now();
+  try {
+    const stats = fs.statSync(statusFile);
+    birthtimeMs = stats.birthtimeMs > 0 ? stats.birthtimeMs : Number.NaN;
+    modifiedAtMs = stats.mtimeMs;
+  } catch {
+    return {
+      times: Array.from({ length: count }, () => Date.now()),
+      birthtime: null,
+    };
+  }
+  return {
+    times: buildTimelineTimes(
+      count,
+      birthtimeMs,
+      modifiedAtMs,
+      parseWatchTimes(deliveryLog, statusFile),
+    ),
+    birthtime: Number.isFinite(birthtimeMs) ? new Date(birthtimeMs).toISOString() : null,
+  };
+}
+
+function startedAtFromMeta(fields, fallback) {
+  const match = (fields.spawn_gen || "").match(/^s?(\d{10,13})(?:\.|$)/);
+  if (!match) return fallback;
+  const rawTimestamp = Number(match[1]);
+  const timestampMs = rawTimestamp < 1_000_000_000_000 ? rawTimestamp * 1_000 : rawTimestamp;
+  return Number.isFinite(timestampMs) ? new Date(timestampMs).toISOString() : fallback;
 }
 
 function taskIsPresent(metaFile, statusFile, briefFile) {
@@ -467,6 +549,12 @@ export async function taskDetailBody(home, id, options = {}) {
   const brief = readRegularFile(briefFile) || "";
   const fields = metaFields(metaText);
   const timeline = timelineFrom(statusText);
+  const deliveryLog = readRegularFile(path.join(stateDir, ".watch-deliveries.log")) || "";
+  const clock = statusClock(statusFile, timeline.length, deliveryLog);
+  for (let i = 0; i < timeline.length; i += 1) {
+    timeline[i].observed_at = new Date(clock.times[i]).toISOString();
+    timeline[i].time_approximate = true;
+  }
   const git = await gitActivity(fields.worktree || "");
   const branch = git.worktree.branch;
   const head = git.worktree.head;
@@ -494,6 +582,9 @@ export async function taskDetailBody(home, id, options = {}) {
       id,
       kind: fields.kind || "ship",
       project: fields.project || "",
+      harness: fields.harness || "",
+      model: fields.model || "",
+      started_at: startedAtFromMeta(fields, clock.birthtime),
       brief,
       timeline,
       stage,
