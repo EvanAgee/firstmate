@@ -30,15 +30,21 @@
 #   AGENTS.md a restart is a designed non-event and the decision stays human.
 #
 #   FM_ODOMETER_MAX_AGE / FM_ODOMETER_MAX_WAKES override the file for tests.
-#   FM_ANCHOR_STEERS_MAX_LINES overrides the steers excerpt cap (default 12).
+#   The standing-steers excerpt defaults to a 16 KiB output budget so short
+#   one-line rules stay cheap without an accidental rule-count cutoff.
+#   FM_ANCHOR_STEERS_MAX_BYTES overrides that byte budget.
+#   FM_ANCHOR_STEERS_MAX_LINES remains an optional additional line cap for
+#   config/supervision.env compatibility; unset means no separate line cap.
 
 FM_ANCHOR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$FM_ANCHOR_LIB_DIR/fm-supervision-lib.sh"
 
-FM_ANCHOR_STEERS_MAX_LINES=${FM_ANCHOR_STEERS_MAX_LINES:-12}
-case "$FM_ANCHOR_STEERS_MAX_LINES" in ''|*[!0-9]*) FM_ANCHOR_STEERS_MAX_LINES=12 ;; esac
-[ "$FM_ANCHOR_STEERS_MAX_LINES" -gt 0 ] || FM_ANCHOR_STEERS_MAX_LINES=12
+FM_ANCHOR_STEERS_MAX_BYTES=${FM_ANCHOR_STEERS_MAX_BYTES:-16384}
+case "$FM_ANCHOR_STEERS_MAX_BYTES" in ''|*[!0-9]*) FM_ANCHOR_STEERS_MAX_BYTES=16384 ;; esac
+[ "$FM_ANCHOR_STEERS_MAX_BYTES" -gt 0 ] || FM_ANCHOR_STEERS_MAX_BYTES=16384
+FM_ANCHOR_STEERS_MAX_LINES=${FM_ANCHOR_STEERS_MAX_LINES:-0}
+case "$FM_ANCHOR_STEERS_MAX_LINES" in ''|*[!0-9]*) FM_ANCHOR_STEERS_MAX_LINES=0 ;; esac
 
 fm_odometer_file() {
   printf '%s/.session-odometer\n' "$STATE"
@@ -124,6 +130,7 @@ fm_odometer_advice() {
 # Print the bounded ANCHOR body on heartbeat wake presentations.
 fm_anchor_on_heartbeat() {
   local home=${FM_HOME:-$FM_ROOT} captain steers total_lines=0 line excerpt_lines=0
+  local excerpt_bytes=0 line_bytes=0 excerpt_bound=''
   local open_lines open_count=0 flags=''
   printf '%s\n' 'ANCHOR (durable truth re-read on this heartbeat; survives context compaction):'
 
@@ -136,13 +143,25 @@ fm_anchor_on_heartbeat() {
     if [ -n "$steers" ]; then
       total_lines=$(printf '%s\n' "$steers" | awk 'NF{c++} END{print c+0}')
       printf 'standing steers (data/captain.md ## Working style):\n'
-      while IFS= read -r line && [ "$excerpt_lines" -lt "$FM_ANCHOR_STEERS_MAX_LINES" ]; do
+      while IFS= read -r line; do
         [ -n "$line" ] || continue
+        if [ "$FM_ANCHOR_STEERS_MAX_LINES" -gt 0 ] \
+          && [ "$excerpt_lines" -ge "$FM_ANCHOR_STEERS_MAX_LINES" ]; then
+          excerpt_bound="$FM_ANCHOR_STEERS_MAX_LINES-line override"
+          break
+        fi
+        line_bytes=$(LC_ALL=C printf '  %s\n' "$line" | wc -c | tr -d '[:space:]')
+        if [ "$((excerpt_bytes + line_bytes))" -gt "$FM_ANCHOR_STEERS_MAX_BYTES" ]; then
+          excerpt_bound="$FM_ANCHOR_STEERS_MAX_BYTES-byte budget"
+          break
+        fi
         printf '  %s\n' "$line"
         excerpt_lines=$((excerpt_lines + 1))
+        excerpt_bytes=$((excerpt_bytes + line_bytes))
       done <<< "$steers"
       if [ "$excerpt_lines" -lt "$total_lines" ]; then
-        printf '  ... (%s more lines; full file at %s)\n' "$((total_lines - excerpt_lines))" "$captain"
+        printf '  WARNING: %s standing-steer lines omitted at explicit %s; full file at %s\n' \
+          "$((total_lines - excerpt_lines))" "$excerpt_bound" "$captain"
       fi
     fi
   fi
