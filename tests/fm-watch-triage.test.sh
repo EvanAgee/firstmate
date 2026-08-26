@@ -1958,6 +1958,42 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
   pass "AFK changed paused panes hand off plain stale identities for daemon-owned pause triage"
 }
 
+test_watcher_refreshes_task_pane_tail() {
+  local dir state fakebin out capture window pid i
+  dir=$(make_case pane-tail); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture="$dir/pane.txt"; window="test:fm-pane-tail"
+  printf 'building the task detail endpoint\n' > "$capture"
+  printf 'window=%s\nkind=secondmate\n' "$window" > "$state/pane-tail.meta"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_GH_HEALTH_PROBE_CMD=true FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 40 ]; do
+    grep -F "building the task detail endpoint" "$state/pane-tail.pane-tail" >/dev/null 2>&1 && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -F "building the task detail endpoint" "$state/pane-tail.pane-tail" >/dev/null 2>&1 || {
+    reap "$pid"
+    fail "watcher did not publish the first pane tail: $(cat "$out")"
+  }
+
+  printf 'running the API bash tests\n' > "$capture"
+  i=0
+  while [ "$i" -lt 40 ]; do
+    grep -F "running the API bash tests" "$state/pane-tail.pane-tail" >/dev/null 2>&1 && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  reap "$pid"
+  grep -F "running the API bash tests" "$state/pane-tail.pane-tail" >/dev/null 2>&1 || \
+    fail "watcher did not refresh the pane tail on the next cycle: $(cat "$out")"
+  pass "watcher refreshes the bounded pane snapshot each supervision cycle"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -2009,3 +2045,4 @@ test_heartbeat_backstop_surfaces_unsurfaced_status
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale
+test_watcher_refreshes_task_pane_tail
