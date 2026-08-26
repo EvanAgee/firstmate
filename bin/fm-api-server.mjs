@@ -2,11 +2,15 @@
 // Localhost HTTP server for one firstmate home.
 //
 // Bind 127.0.0.1 only. Port, home, and state directory come from argv; this
-// file has no default filesystem paths. bin/fm-api.sh owns process lifecycle.
+// file has no default home filesystem paths. bin/fm-api.sh owns process lifecycle.
 // bin/fm-api-reads.mjs assembles the read windows from firstmate files.
+// GET /fleet runs bin/fm-fleet-snapshot.sh --json from this file's directory.
 //
 // GET /health
 //   { ok, version, home }
+// GET /fleet
+//   fm-fleet-snapshot.v1 JSON from bin/fm-fleet-snapshot.sh --json
+//   Empty home: empty fleet, not an error. That script's header owns the contract.
 // GET /captain-queue
 //   { ok, decisions: [{ task, key, summary }] }
 //   Parked decisions still open in this home. Empty home: decisions is [].
@@ -20,10 +24,13 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { blockedListBody, captainQueueBody, rigsBody } from "./fm-api-reads.mjs";
 
 export const API_VERSION = "1";
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SNAPSHOT_SCRIPT = path.join(SCRIPT_DIR, "fm-fleet-snapshot.sh");
 
 function parseArguments(argv) {
   const result = { home: "", port: "", state: "", sessionPid: "" };
@@ -72,6 +79,46 @@ function sendGet(req, res, body) {
   json(res, 200, body);
 }
 
+function snapshotEnv(home) {
+  return {
+    ...process.env,
+    FM_HOME: home,
+    FM_STATE_OVERRIDE: path.join(home, "state"),
+    FM_DATA_OVERRIDE: path.join(home, "data"),
+    FM_CONFIG_OVERRIDE: path.join(home, "config"),
+    FM_PROJECTS_OVERRIDE: path.join(home, "projects"),
+  };
+}
+
+function sendFleetSnapshot(req, res, home) {
+  execFile(
+    SNAPSHOT_SCRIPT,
+    ["--json"],
+    { env: snapshotEnv(home), maxBuffer: 8 * 1024 * 1024 },
+    (error, stdout) => {
+      if (res.headersSent) return;
+      if (error) {
+        process.stderr.write(`fleet snapshot failed: ${error.message}\n`);
+        json(res, 500, { ok: false, error: "fleet snapshot failed" });
+        return;
+      }
+      const payload = Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout));
+      try {
+        JSON.parse(payload.toString("utf8"));
+      } catch {
+        process.stderr.write("fleet snapshot failed: invalid json\n");
+        json(res, 500, { ok: false, error: "fleet snapshot failed" });
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": payload.length,
+      });
+      res.end(req.method === "HEAD" ? undefined : payload);
+    },
+  );
+}
+
 function handle(req, res, home, stateDir) {
   let url;
   try {
@@ -81,6 +128,7 @@ function handle(req, res, home, stateDir) {
     return;
   }
   const read = url.pathname === "/health"
+    || url.pathname === "/fleet"
     || url.pathname === "/captain-queue"
     || url.pathname === "/blocked"
     || url.pathname === "/rigs";
@@ -110,6 +158,11 @@ function handle(req, res, home, stateDir) {
       }
       throw error;
     }
+    return;
+  }
+  if (url.pathname === "/fleet") {
+    // JSON contract: bin/fm-fleet-snapshot.sh --json (schema fm-fleet-snapshot.v1).
+    sendFleetSnapshot(req, res, home);
     return;
   }
   json(res, 404, { ok: false, error: "not found" });

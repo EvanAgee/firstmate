@@ -570,6 +570,9 @@ A `config/api-port` symlink is refused rather than treated as that default.
 Port `0` asks the kernel for an ephemeral port, which tests use.
 The file is per-home and is not inherited by secondmates, because two homes cannot share a port.
 `GET /health` reports API version `1` and the home this process serves.
+`GET /fleet` returns the fleet snapshot for that home as JSON.
+The body is the output of `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.
+An empty home returns an empty fleet, not an error.
 `GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig ladders; `bin/fm-api-server.mjs` owns those JSON contracts.
 A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.
 Secondmate homes marked by `.fm-secondmate-home` skip API bring-up at session start.
