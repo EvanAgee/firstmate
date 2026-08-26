@@ -615,7 +615,7 @@ function watchHome(home, record) {
 
   function watchDirectory(name) {
     const directory = path.join(home, name);
-    if (!fs.existsSync(directory)) return;
+    fs.mkdirSync(directory, { recursive: true });
     const watcher = fs.watch(directory, { recursive: true, encoding: "utf8" }, (_eventType, filename) => {
       if (!filename) return;
       const absolute = path.resolve(directory, filename);

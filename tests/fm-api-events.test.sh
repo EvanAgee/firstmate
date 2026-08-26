@@ -183,6 +183,30 @@ test_mapped_unmapped_and_created_types() {
   pass "task-created, rig-config, and unmapped changed events fire"
 }
 
+test_absent_data_dir_then_backlog_emits_captain_queue() {
+  local home port out sse_pid line type
+  export FM_API_EVENT_QUIET_MS=80 FM_API_EVENT_DEADLINE_MS=400 FM_API_HEARTBEAT_MS=30000
+  home=$(fm_test_api_home api-events-late-data)
+  rmdir "$home/data"
+  [ ! -e "$home/data" ] || fail "fixture data/ was still present before start"
+  port=$(fm_test_api_start "$home")
+  out="$home/../events.ndjson"
+  open_events "$port" "$out"
+  mkdir -p "$home/data"
+  printf '%s\n' '- parked: demo' > "$home/data/backlog.md"
+  line=$(fm_test_api_sse_wait "$out" event captain-queue 5) \
+    || fail "late data/backlog.md produced no captain-queue event: $(cat "$out")"
+  type=$(event_field "$line" type) || fail "captain-queue missing type: $line"
+  [ "$type" = captain-queue ] || fail "type $type, wanted captain-queue"
+  if event_field "$line" task >/dev/null 2>&1; then
+    fail "captain-queue should not name a task: $line"
+  fi
+  iso_timestamp "$(event_field "$line" timestamp)"
+  fm_test_api_sse_stop "$sse_pid"
+  fm_test_api_stop "$home"
+  pass "creating data/backlog.md after start emits captain-queue"
+}
+
 test_heartbeat_and_disconnect_leaks_nothing() {
   local home port out sse_pid line n i resp
   export FM_API_EVENT_QUIET_MS=80 FM_API_EVENT_DEADLINE_MS=400 FM_API_HEARTBEAT_MS=200
@@ -224,6 +248,7 @@ test_burst_coalesces_to_one_event
 test_continuous_burst_flushes_at_deadline
 test_hidden_bookkeeping_emits_nothing
 test_mapped_unmapped_and_created_types
+test_absent_data_dir_then_backlog_emits_captain_queue
 test_heartbeat_and_disconnect_leaks_nothing
 
 echo "# fm-api-events.test.sh: all assertions passed"
