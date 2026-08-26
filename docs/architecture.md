@@ -337,6 +337,13 @@ For herdr, respawning after a server-restored layout closes and replaces confirm
 At session start, confirmed-dead secondmate agent endpoints are closed and relaunched through the same secondmate spawn path, while ambiguous liveness reads are left untouched to avoid duplicate supervisors.
 Use `/stow` before an intentional reset when the conversation may hold durable knowledge that has not yet been written to disk; after that, the next firstmate session can reconcile and carry on.
 
+## Local API
+
+Firstmate answers a small HTTP API on `127.0.0.1` so dashboards and scripts do not read its private files.
+A locked session start brings the server up, and it exits when that session dies or `bin/fm-api.sh stop` runs.
+Port and home come from firstmate config; [`docs/configuration.md`](configuration.md) owns those knobs, and `bin/fm-api.sh`'s header owns start, stop, and the state files.
+[`CONTEXT.md`](../CONTEXT.md) is the glossary for the words the API uses.
+
 ## Development notes
 
 The current watcher reliability work combines always-on bash triage with a durable queue for actionable wakes, generation-bound post-handling acknowledgement, deterministic re-arm recovery after watcher downtime, a race-proof singleton lock, duplicate self-eviction, drain-time liveness assertion, and a self-verifying tracked-child arm wrapper.

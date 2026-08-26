@@ -424,6 +424,10 @@
       "audience": "public-product"
     },
     {
+      "path": "CONTEXT.md",
+      "audience": "public-product"
+    },
+    {
       "path": "docs/agent-control.md",
       "audience": "maintainer-architecture"
     },
