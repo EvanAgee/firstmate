@@ -161,7 +161,7 @@ EOF
     "full brief: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.task.timeline.length')" = 3 ] || fail "timeline: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.task.timeline[0].verb')" = working ] || fail "timeline verb: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.task.stage.state')" = done ] || fail "current stage: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.stage.state')" = "done" ] || fail "current stage: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.task.stage.source')" = run-step ] || fail "stage source: $HTTP_BODY"
 
   [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.worktree.path')" = "$(cd "$wt" && pwd -P)" ] || fail "worktree: $HTTP_BODY"
