@@ -33,7 +33,6 @@
 # bootstrap may read that cache and must not write it.
 
 FM_CHROME_DEVTOOLS_AXI_MIN=0.1.30
-FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION=fm-bootstrap-chrome-probe
 FM_CHROME_DEVTOOLS_AXI_PROBE_URL=https://example.com
 FM_CHROME_DEVTOOLS_AXI_PROBE_TIMEOUT_MS=30000
 
@@ -159,9 +158,14 @@ fm_chrome_devtools_axi_export_mcp_path() {
   export CHROME_DEVTOOLS_AXI_MCP_PATH=$launcher
 }
 
+fm_chrome_devtools_axi_probe_session() {
+  printf '%s\n' "${FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION:-fm-bootstrap-chrome-probe-$$}"
+}
+
 fm_chrome_devtools_axi_probe_cmd() {
-  local launcher timeout_ms
+  local launcher timeout_ms session
   launcher=$(fm_chrome_devtools_mcp_launcher_path) || return 1
+  session=$(fm_chrome_devtools_axi_probe_session) || return 1
   timeout_ms=${FM_CHROME_DEVTOOLS_AXI_PROBE_TIMEOUT_MS:-30000}
   case "$timeout_ms" in
     ''|*[!0-9]*|0) timeout_ms=30000 ;;
@@ -174,7 +178,7 @@ fm_chrome_devtools_axi_probe_cmd() {
     -u CHROME_DEVTOOLS_AXI_WS_HEADERS \
     -u CHROME_DEVTOOLS_AXI_HEADED \
     "CHROME_DEVTOOLS_AXI_MCP_PATH=$launcher" \
-    "CHROME_DEVTOOLS_AXI_SESSION=$FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION" \
+    "CHROME_DEVTOOLS_AXI_SESSION=$session" \
     "CHROME_DEVTOOLS_AXI_BRIDGE_TIMEOUT_MS=$timeout_ms" \
     "$@"
 }
@@ -188,15 +192,49 @@ fm_chrome_devtools_axi_stop_probe_session() {
   fm_chrome_devtools_axi_probe_cmd chrome-devtools-axi stop >/dev/null 2>&1 || true
 }
 
+fm_chrome_devtools_axi_on_probe_exit() {
+  local prev_cmd=${FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD:-true}
+  FM_CHROME_DEVTOOLS_AXI_PROBE_CLEANUP_ARMED=0
+  fm_chrome_devtools_axi_stop_probe_session
+  eval "$prev_cmd"
+}
+
+fm_chrome_devtools_axi_arm_probe_cleanup() {
+  local prev
+  [ "${FM_CHROME_DEVTOOLS_AXI_PROBE_CLEANUP_ARMED:-0}" = 1 ] && return 0
+  FM_CHROME_DEVTOOLS_AXI_PROBE_CLEANUP_ARMED=1
+  FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD=true
+  prev=$(trap -p EXIT 2>/dev/null || true)
+  if [ -n "$prev" ]; then
+    prev=${prev#trap -- \'}
+    prev=${prev%\' EXIT}
+    FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD=$prev
+  fi
+  trap fm_chrome_devtools_axi_on_probe_exit EXIT
+}
+
+fm_chrome_devtools_axi_disarm_probe_cleanup() {
+  [ "${FM_CHROME_DEVTOOLS_AXI_PROBE_CLEANUP_ARMED:-0}" = 1 ] || return 0
+  FM_CHROME_DEVTOOLS_AXI_PROBE_CLEANUP_ARMED=0
+  if [ "${FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD:-true}" = true ]; then
+    trap - EXIT
+  else
+    trap "$FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD" EXIT
+  fi
+  FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD=true
+}
+
 fm_chrome_devtools_axi_live_probe() {
   local output status
   if [ "${FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE:-0}" = 1 ]; then
     return 0
   fi
   fm_chrome_devtools_axi_probe_cache_hit && return 0
+  fm_chrome_devtools_axi_arm_probe_cleanup
   output=$(fm_chrome_devtools_axi_run_open 2>&1)
   status=$?
   fm_chrome_devtools_axi_stop_probe_session
+  fm_chrome_devtools_axi_disarm_probe_cleanup
   [ "$status" -eq 0 ] || return 1
   fm_chrome_devtools_axi_snapshot_ok "$output" || return 1
   fm_chrome_devtools_axi_probe_cache_store || true

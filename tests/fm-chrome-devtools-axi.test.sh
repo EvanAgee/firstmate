@@ -198,7 +198,7 @@ write_probe_env_axi() {
   printf 'MCP_PATH=%s\n' "\${CHROME_DEVTOOLS_AXI_MCP_PATH-<unset>}"
   printf 'SESSION=%s\n' "\${CHROME_DEVTOOLS_AXI_SESSION-<unset>}"
   printf 'BRIDGE_TIMEOUT_MS=%s\n' "\${CHROME_DEVTOOLS_AXI_BRIDGE_TIMEOUT_MS-<unset>}"
-} > "$dump"
+} > "\${FM_CHROME_AXI_ENV_DUMP:-$dump}"
 if [ "\${1:-}" = open ]; then
   cat <<'OUT'
 page:
@@ -214,7 +214,7 @@ SH
 }
 
 assert_probe_env_isolated() {
-  local dump=$1 launcher=$2 timeout_ms
+  local dump=$1 launcher=$2 timeout_ms expected_session
   grep -Fxq 'AUTO_CONNECT=<unset>' "$dump" || fail "probe inherited AUTO_CONNECT: $(cat "$dump")"
   grep -Fxq 'BROWSER_URL=<unset>' "$dump" || fail "probe inherited BROWSER_URL: $(cat "$dump")"
   grep -Fxq 'USER_DATA_DIR=<unset>' "$dump" || fail "probe inherited USER_DATA_DIR: $(cat "$dump")"
@@ -222,8 +222,9 @@ assert_probe_env_isolated() {
   grep -Fxq 'WS_HEADERS=<unset>' "$dump" || fail "probe inherited WS_HEADERS: $(cat "$dump")"
   grep -Fxq 'HEADED=<unset>' "$dump" || fail "probe inherited HEADED: $(cat "$dump")"
   grep -Fxq "MCP_PATH=$launcher" "$dump" || fail "probe did not pin MCP_PATH: $(cat "$dump")"
-  grep -Fxq "SESSION=$FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION" "$dump" \
-    || fail "probe did not use the probe session: $(cat "$dump")"
+  expected_session=$(fm_chrome_devtools_axi_probe_session)
+  grep -Fxq "SESSION=$expected_session" "$dump" \
+    || fail "probe did not use the probe session $expected_session: $(cat "$dump")"
   timeout_ms=$(sed -n 's/^BRIDGE_TIMEOUT_MS=//p' "$dump")
   case "$timeout_ms" in
     ''|*[!0-9]*) fail "probe did not set a numeric bridge timeout: $(cat "$dump")" ;;
@@ -282,6 +283,59 @@ test_probe_stop_unsets_attach_env() {
   pass "probe stop drops attach env and stays isolated"
 }
 
+test_probe_sessions_are_process_unique() {
+  local case_dir fakebin dump_a dump_b session_a session_b pid_a pid_b
+  case_dir="$TMP_ROOT/probe-unique"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  dump_a="$case_dir/a.env"
+  dump_b="$case_dir/b.env"
+  write_probe_env_axi "$fakebin" "$case_dir/unused.env"
+  PATH="$fakebin:$PATH" FM_CHROME_AXI_ENV_DUMP="$dump_a" bash -c '
+    . "$1"
+    fm_chrome_devtools_axi_run_open
+  ' _ "$ROOT/bin/fm-chrome-devtools-axi-lib.sh" &
+  pid_a=$!
+  PATH="$fakebin:$PATH" FM_CHROME_AXI_ENV_DUMP="$dump_b" bash -c '
+    . "$1"
+    fm_chrome_devtools_axi_run_open
+  ' _ "$ROOT/bin/fm-chrome-devtools-axi-lib.sh" &
+  pid_b=$!
+  wait "$pid_a" || fail "unique-session probe A failed"
+  wait "$pid_b" || fail "unique-session probe B failed"
+  session_a=$(sed -n 's/^SESSION=//p' "$dump_a")
+  session_b=$(sed -n 's/^SESSION=//p' "$dump_b")
+  [ -n "$session_a" ] || fail "probe A recorded no session: $(cat "$dump_a" 2>/dev/null)"
+  [ -n "$session_b" ] || fail "probe B recorded no session: $(cat "$dump_b" 2>/dev/null)"
+  [ "$session_a" != "$session_b" ] || fail "concurrent probes shared session $session_a"
+  [ "$session_a" = "fm-bootstrap-chrome-probe-$pid_a" ] \
+    || fail "probe A session $session_a was not pid-unique for $pid_a"
+  [ "$session_b" = "fm-bootstrap-chrome-probe-$pid_b" ] \
+    || fail "probe B session $session_b was not pid-unique for $pid_b"
+  pass "concurrent probes use distinct process-unique sessions"
+}
+
+test_probe_stop_runs_on_exit() {
+  local case_dir fakebin dump session
+  case_dir="$TMP_ROOT/probe-exit"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  dump="$case_dir/exit.env"
+  write_probe_env_axi "$fakebin" "$dump"
+  PATH="$fakebin:$PATH" FM_CHROME_AXI_ENV_DUMP="$dump" bash -c '
+    . "$1"
+    fm_chrome_devtools_axi_arm_probe_cleanup
+    exit 0
+  ' _ "$ROOT/bin/fm-chrome-devtools-axi-lib.sh" \
+    || fail "probe EXIT cleanup process failed"
+  [ -f "$dump" ] || fail "EXIT cleanup did not invoke axi stop"
+  grep -Fxq 'cmd=stop' "$dump" || fail "EXIT cleanup did not stop the probe: $(cat "$dump")"
+  session=$(sed -n 's/^SESSION=//p' "$dump")
+  printf '%s\n' "$session" | grep -Eq '^fm-bootstrap-chrome-probe-[0-9]+$' \
+    || fail "EXIT cleanup used a non-unique session: $session"
+  pass "probe stop runs on EXIT for a process-unique session"
+}
+
 test_mcp_path_export_is_inheritable() {
   local launcher line
   launcher=$(fm_chrome_devtools_mcp_launcher_path) || fail "launcher missing"
@@ -318,5 +372,7 @@ test_bootstrap_reports_pageid_probe_failure
 test_bootstrap_accepts_named_session_snapshot
 test_probe_open_unsets_attach_env
 test_probe_stop_unsets_attach_env
+test_probe_sessions_are_process_unique
+test_probe_stop_runs_on_exit
 test_mcp_path_export_is_inheritable
 test_session_start_prints_mcp_path_export
