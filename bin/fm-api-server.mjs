@@ -22,8 +22,8 @@
 //   { ok, rigs: [{ name, rungs: [{ harness, model, effort, enabled }] }] }
 //   Dispatch ladders and each rung's enabled state. Missing config: rigs is [].
 // POST /captain-notes requires Authorization: Bearer <token> and queues a
-// captain note for firstmate through the operational-input relay and the wake
-// queue. Reads need no token. A captain note never closes a parked decision.
+// captain note for firstmate on the wake queue, encoded as operational input.
+// Reads need no token. A captain note never closes a parked decision.
 
 import http from "node:http";
 import fs from "node:fs";

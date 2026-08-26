@@ -562,7 +562,7 @@ The published `lavish-axi poll` clears feedback destructively before returning i
 Never describe this path as at-least-once, no-loss, or lossless.
 `docs/verification/process-event-sources.md` holds the measurements and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
 
-## Local API (config/api-port / FM_API_PORT)
+## Local API (config/api-port / config/api-token / FM_API_PORT)
 
 The localhost API binds `127.0.0.1` only and serves the resolved `FM_HOME`.
 Port comes from `FM_API_PORT`, else the first non-empty non-comment line of gitignored `config/api-port`, else `18787`.
@@ -574,8 +574,9 @@ Later starts keep the existing token.
 A `config/api-token` symlink is refused.
 The token file is per-home and is not inherited by secondmates.
 Write endpoints require `Authorization: Bearer <token>`.
+A missing or wrong token is refused with 401.
 Reads and the event stream do not.
-`POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate through the operational-input relay and the wake queue.
+`POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate on the wake queue, encoded as operational input.
 A captain note never closes a parked decision.
 `GET /health` reports API version `1` and the home this process serves.
 `GET /fleet` returns the fleet snapshot for that home as JSON.
