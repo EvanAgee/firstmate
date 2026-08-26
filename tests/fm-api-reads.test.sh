@@ -260,6 +260,25 @@ EOF
   pass "rigs extras default to empty values when the config files are absent"
 }
 
+test_rigs_refuses_a_symlinked_config() {
+  local home port resp
+  home=$(fm_test_api_home api-rigs-symlink)
+  # A crew-dispatch.json that is a symlink is refused, not followed: the answer
+  # is the same empty response a missing file gives.
+  printf '{"note":"secret","rules":[]}\n' > "$home/elsewhere.json"
+  ln -s "$home/elsewhere.json" "$home/config/crew-dispatch.json"
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /rigs)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "symlinked rigs status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.note === ""')" = true ] || \
+    fail "symlinked config note should be empty, not read: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.rigs.length')" = 0 ] || \
+    fail "symlinked config should give no rigs: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "a symlinked crew-dispatch.json is refused, not read"
+}
+
 make_fake_tasks_axi() {  # <dir> <expected-file>
   local fakebin=$1 expected=$2
   mkdir -p "$fakebin"
@@ -399,6 +418,7 @@ test_empty_home_rigs_is_empty
 test_rigs_returns_pools_and_rung_enabled_state
 test_rigs_returns_note_pins_and_harness_pins
 test_rigs_extras_default_to_empty_when_absent
+test_rigs_refuses_a_symlinked_config
 test_captain_holds_returns_open_holds_actionable_first
 test_captain_holds_empty_without_tasks_axi
 

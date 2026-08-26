@@ -146,13 +146,20 @@ export function rigsBody(home) {
   const file = path.join(config, "crew-dispatch.json");
   const crew = pinLine(path.join(config, "crew-harness"));
   const secondmate = pinLine(path.join(config, "secondmate-harness"));
+  const empty = { ok: true, note: "", rigs: [], defaultPin: null, crew, secondmate };
+  // A symlinked config is refused, not followed, the same posture as pinLine
+  // and the brief reads. A missing file is the same empty answer.
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return empty;
+  } catch (error) {
+    if (error && error.code === "ENOENT") return empty;
+    throw error;
+  }
   let raw;
   try {
     raw = fs.readFileSync(file, "utf8");
   } catch (error) {
-    if (error && error.code === "ENOENT") {
-      return { ok: true, note: "", rigs: [], defaultPin: null, crew, secondmate };
-    }
+    if (error && error.code === "ENOENT") return empty;
     throw error;
   }
   let data;
@@ -244,13 +251,18 @@ function enrichOneTask(task, dataRoot) {
 
   if (task?.id) {
     // Same posture as /tasks/<id>: a symlinked brief is refused, not followed.
+    // A task id carrying ".." could point the brief path outside dataRoot, so
+    // the resolved path is confirmed to stay inside it before any read.
     const briefFile = path.join(dataRoot, task.id, "brief.md");
+    const rootPrefix = path.resolve(dataRoot) + path.sep;
     let raw = null;
-    try {
-      const stat = fs.lstatSync(briefFile);
-      raw = stat.isFile() && !stat.isSymbolicLink() ? fs.readFileSync(briefFile, "utf8") : null;
-    } catch {
-      raw = null;
+    if (path.resolve(briefFile).startsWith(rootPrefix)) {
+      try {
+        const stat = fs.lstatSync(briefFile);
+        raw = stat.isFile() && !stat.isSymbolicLink() ? fs.readFileSync(briefFile, "utf8") : null;
+      } catch {
+        raw = null;
+      }
     }
     if (raw !== null) {
       const prompt = briefTaskSection(raw);
