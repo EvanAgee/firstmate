@@ -1,0 +1,5 @@
+: connected
+
+event: task-status
+data: {"type":"task-status","task":"demo","timestamp":"2026-08-26T16:50:44.260Z"}
+
