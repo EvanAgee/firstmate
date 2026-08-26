@@ -590,6 +590,7 @@ The body is the output of `bin/fm-fleet-snapshot.sh --json`, whose header owns s
 An empty home returns an empty fleet, not an error.
 `GET /tasks/<id>` returns one task's brief, status timeline, current stage, and worker activity.
 `bin/fm-api-task-detail.mjs` owns that JSON contract, including unavailable-source markers.
+An unknown task ID returns JSON 404.
 The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
 `GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig ladders; `bin/fm-api-server.mjs` owns those JSON contracts.
 A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.

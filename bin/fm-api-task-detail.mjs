@@ -1,7 +1,8 @@
 // Assemble GET /tasks/<id> from one firstmate home's task records.
 //
-// The route returns:
+// A known task (meta, status, or brief present) returns:
 //   { ok, task: { id, kind, project, brief, timeline, stage, activity } }
+// An unknown id returns null so the server can send JSON 404.
 // activity contains the task worktree and branch, commits since origin/main,
 // diff totals and stat text, the uncommitted-file count, review/test/lint/ci
 // pipeline steps, pull-request checks and review-thread counts, and the latest

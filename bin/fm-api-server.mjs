@@ -14,7 +14,8 @@
 //   Empty home: empty fleet, not an error. That script's header owns the contract.
 // GET /tasks/<id>
 //   One task's brief, status timeline, current stage, and worker activity.
-//   bin/fm-api-task-detail.mjs owns the exact JSON contract.
+//   Unknown id: JSON 404 { ok: false, error: "task not found" }.
+//   bin/fm-api-task-detail.mjs owns the exact success JSON contract.
 // GET /captain-queue
 //   { ok, decisions: [{ task, key, summary }] }
 //   Parked decisions still open in this home. Empty home: decisions is [].
