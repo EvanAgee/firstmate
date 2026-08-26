@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# tests/fm-api.test.sh - localhost API front door: health, bind, config, lifecycle.
+# tests/fm-api.test.sh - localhost API front door: health, bind, config, lifecycle,
+# and the fleet snapshot read.
 #
 # Speaks real HTTP against a throwaway firstmate home. Does not read the live
 # home and does not inspect server source.
@@ -18,6 +19,140 @@ split_http() {
   HTTP_BODY=
   IFS= read -r HTTP_CODE || true
   HTTP_BODY=$(cat)
+}
+
+write_fleet_fixture() {  # <home>
+  local home=$1
+  mkdir -p "$home/projects/alpha"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] ship-task - Ship Task (repo: alpha) (kind: ship) (since 2026-07-07)
+
+## Queued
+- [ ] queued-task - Queued Task (repo: alpha) (kind: ship) (since 2026-07-08)
+
+## Done
+- [x] done-task - Done Task (repo: alpha) (kind: ship) (merged 2026-07-06)
+EOF
+  fm_write_meta "$home/state/ship-task.meta" \
+    "window=firstmate:fm-ship-task" \
+    "worktree=$home/projects/alpha" \
+    "project=alpha" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=ship" \
+    "yolo=off"
+  printf 'working: implementing the snapshot\n' > "$home/state/ship-task.status"
+}
+
+json_query() {  # <json> <node-expr> - print one JSON.stringify of the expr, or exit 1
+  JSON=$1 EXPR=$2 node -e '
+const d = JSON.parse(process.env.JSON);
+let v;
+try { v = new Function("d", "return (" + process.env.EXPR + ");")(d); } catch { process.exit(1); }
+if (v === undefined) process.exit(1);
+process.stdout.write(typeof v === "string" ? v : JSON.stringify(v));
+'
+}
+
+strip_snapshot_times() {
+  node -e '
+function strip(v) {
+  if (Array.isArray(v)) return v.map(strip);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (k === "generated" || k === "observed_at") continue;
+      out[k] = strip(val);
+    }
+    return out;
+  }
+  return v;
+}
+let raw = "";
+process.stdin.on("data", (c) => { raw += c; });
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify(strip(JSON.parse(raw))));
+});
+'
+}
+
+test_empty_home_fleet_is_empty_not_error() {
+  local home port resp schema ntasks nrecords
+  home=$(fm_test_api_home api-fleet-empty)
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /fleet GET 10000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "empty fleet status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  schema=$(fm_test_json_field "$HTTP_BODY" schema) || fail "empty fleet missing schema: $HTTP_BODY"
+  [ "$schema" = "fm-fleet-snapshot.v1" ] || fail "empty fleet schema $schema"
+  ntasks=$(json_query "$HTTP_BODY" 'd.tasks.length') || fail "empty fleet missing tasks: $HTTP_BODY"
+  nrecords=$(json_query "$HTTP_BODY" 'd.backlog.records.length') || fail "empty fleet missing backlog.records: $HTTP_BODY"
+  [ "$ntasks" = 0 ] || fail "empty fleet tasks length $ntasks, wanted 0"
+  [ "$nrecords" = 0 ] || fail "empty fleet backlog.records length $nrecords, wanted 0"
+  fm_test_api_stop "$home"
+  pass "empty home answers with an empty fleet, not an error"
+}
+
+test_fleet_snapshot_for_fixture_home() {
+  local home port resp schema served ids states stages status
+  home=$(fm_test_api_home api-fleet-fixture)
+  write_fleet_fixture "$home"
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /fleet GET 10000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "fixture fleet status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  schema=$(fm_test_json_field "$HTTP_BODY" schema) || fail "fixture fleet missing schema: $HTTP_BODY"
+  [ "$schema" = "fm-fleet-snapshot.v1" ] || fail "fixture fleet schema $schema"
+  served=$(fm_test_json_field "$HTTP_BODY" fm_home) || fail "fixture fleet missing fm_home: $HTTP_BODY"
+  [ "$served" = "$(cd "$home" && pwd)" ] || fail "fixture fleet fm_home $served"
+  ids=$(json_query "$HTTP_BODY" 'd.tasks.map(t => t.id)') || fail "fixture fleet missing tasks: $HTTP_BODY"
+  assert_contains "$ids" '"ship-task"' "fixture fleet tasks: $ids"
+  status=$(json_query "$HTTP_BODY" 'd.tasks.find(t => t.id === "ship-task").current_state.state') \
+    || fail "fixture fleet missing current_state.state: $HTTP_BODY"
+  [ -n "$status" ] || fail "fixture fleet status was empty"
+  states=$(json_query "$HTTP_BODY" 'd.backlog.records.map(r => r.state)') \
+    || fail "fixture fleet missing backlog stages: $HTTP_BODY"
+  assert_contains "$states" '"in_flight"' "fixture fleet stages: $states"
+  assert_contains "$states" '"queued"' "fixture fleet stages: $states"
+  assert_contains "$states" '"done"' "fixture fleet stages: $states"
+  stages=$(json_query "$HTTP_BODY" 'd.tasks.find(t => t.id === "ship-task").current_state') \
+    || fail "fixture fleet missing current_state: $HTTP_BODY"
+  assert_contains "$stages" '"state"' "fixture fleet current_state: $stages"
+  fm_test_api_stop "$home"
+  pass "GET /fleet returns tasks, statuses, and stages for a fixture home"
+}
+
+test_fleet_body_matches_snapshot_script() {
+  local home port resp script served api_stripped script_stripped
+  home=$(fm_test_api_home api-fleet-agree)
+  write_fleet_fixture "$home"
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /fleet GET 10000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "agree fleet status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  served=$(fm_test_json_field "$HTTP_BODY" fm_home) || fail "agree fleet missing fm_home: $HTTP_BODY"
+  script=$(FM_HOME="$served" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+    || fail "fm-fleet-snapshot.sh --json failed"
+  api_stripped=$(printf '%s' "$HTTP_BODY" | strip_snapshot_times) \
+    || fail "API fleet body was not JSON: $HTTP_BODY"
+  script_stripped=$(printf '%s' "$script" | strip_snapshot_times) \
+    || fail "snapshot script body was not JSON"
+  [ "$api_stripped" = "$script_stripped" ] \
+    || fail "GET /fleet disagreed with fm-fleet-snapshot.sh --json for $served"
+  fm_test_api_stop "$home"
+  pass "GET /fleet matches firstmate's own snapshot script"
+}
+
+test_fleet_rejects_non_get() {
+  local home port resp
+  home=$(fm_test_api_home api-fleet-post)
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /fleet POST 2000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 405 ] || fail "POST /fleet status $HTTP_CODE, wanted 405: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "POST /fleet is method not allowed"
 }
 
 test_health_reports_version_and_home() {
@@ -330,5 +465,14 @@ test_malformed_url_returns_400_and_keeps_serving
 test_api_exits_when_session_pid_dies
 test_env_port_overrides_config
 test_symlinked_api_port_refuses_start
+
+if command -v jq >/dev/null 2>&1; then
+  test_empty_home_fleet_is_empty_not_error
+  test_fleet_snapshot_for_fixture_home
+  test_fleet_body_matches_snapshot_script
+  test_fleet_rejects_non_get
+else
+  echo "skip: jq not found (fleet snapshot endpoint)"
+fi
 
 echo "# fm-api.test.sh: all assertions passed"

@@ -68,15 +68,17 @@ fm_test_api_stop() {
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-api.sh" stop >/dev/null 2>&1 || true
 }
 
-# fm_test_api_http <port> <path> [method]: GET (or method) 127.0.0.1:<port><path>.
-# Prints "<status>\n<body>" on success. Status 0 means the request failed to connect.
+# fm_test_api_http <port> <path> [method] [timeout-ms]: GET (or method)
+# 127.0.0.1:<port><path>. Prints "<status>\n<body>" on success. Status 0 means
+# the request failed to connect. timeout-ms defaults to 2000.
 fm_test_api_http() {
-  local port=$1 req_path=$2 method=${3:-GET}
+  local port=$1 req_path=$2 method=${3:-GET} timeout_ms=${4:-2000}
   node -e '
 const http = require("http");
 const port = process.argv[1];
 const reqPath = process.argv[2];
 const method = process.argv[3];
+const timeoutMs = Number(process.argv[4] || 2000);
 const req = http.request({ host: "127.0.0.1", port, path: reqPath, method }, (res) => {
   const chunks = [];
   res.on("data", (c) => chunks.push(c));
@@ -88,12 +90,12 @@ req.on("error", () => {
   process.stdout.write("0\n");
   process.exit(0);
 });
-req.setTimeout(2000, () => {
+req.setTimeout(timeoutMs, () => {
   req.destroy();
   process.stdout.write("0\n");
 });
 req.end();
-' "$port" "$req_path" "$method"
+' "$port" "$req_path" "$method" "$timeout_ms"
 }
 
 # fm_test_json_field <json> <field>: print one top-level JSON string/number/bool.
