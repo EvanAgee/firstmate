@@ -2,7 +2,8 @@
 name: quota-array-dispatch
 description: >-
   Agent-only decision procedure for resolving a matched crew-dispatch profile
-  array from current quota-axi output, including effective headroom and usable-runway evidence.
+  array from current quota-axi output, including the ordinary-builder split,
+  effective headroom, and usable-runway evidence.
   Load when a dispatch rule or default resolves to more than one profile candidate.
 user-invocable: false
 metadata:
@@ -34,6 +35,29 @@ Never fall through to `config/crew-harness`, to a pay-per-token surface, or to a
 
 A switch takes effect on the NEXT dispatch only.
 A worker already running finishes on the tool it launched with; never switch a live worker mid-task.
+
+## Apply the ordinary-builder split
+
+Use the class and tier judgment already made for entry-rung selection from the matched rule and its surrounding config note.
+Do not add a second high-tier marker or reinterpret the task after intake.
+The split applies only when that existing judgment says this is an ordinary builder task.
+Researchers, designers, testers, scouts, and high-tier builders continue through their configured selection path without reading or changing the builder counter.
+
+For an ordinary builder, complete the fact collection and candidate accounting below first.
+Treat a split candidate as healthy when the existing quota, authentication, fit, and strongest-reasoning rules leave it usable for this task.
+Unknown or unmeasurable evidence stays eligible exactly as the authentication and selection rules require.
+
+Immediately before the spawn, call `bin/fm-builder-split.sh` once with the matched rule's zero-based index and one `--healthy <harness>` argument for each healthy split candidate.
+The script reads the rule's `split` weights, selects the counter's planned harness, advances `state/.builder-dispatch-counter`, and prints the chosen harness.
+An absent or malformed split uses codex=50 and pi=50 and prints a `BUILDER_DISPATCH` note rather than silently skipping the split.
+If the planned harness is unavailable, the script prints another healthy split harness while still advancing the counter.
+If no split harness is healthy, it prints `fallback` and still advances the counter; continue through the matched builder rule's remaining lower ladder under the existing selection rules.
+Never invoke the helper more than once for one assignment.
+
+For a high-tier builder, keep the existing entry point and take the first healthy rung at or below it in the configured order.
+Either skip the helper or call it with `--high-tier` and treat its `bypass` output as confirmation that the existing high-tier ladder remains in control.
+The helper does not touch the counter on that path.
+The helper's header and `--help` own its exact arguments, output, counter path, and write mechanics.
 
 ## Collect facts
 
@@ -97,6 +121,9 @@ Conservation pressure is present for effective pace status `ahead`, effective pa
 `unknown` is valid explicit uncertainty from quota-axi, not parser failure or permission to assume health.
 
 ## Selection order
+
+Apply this order after the ordinary-builder split above has either selected a split harness or handed control to the lower ladder.
+For every other task class and for high-tier builders, apply it to the matched array as before.
 
 Apply only among candidates satisfying required fit and strongest reasoning class.
 Never use headroom, runway, pace, or reserve to silently replace that reasoning class.

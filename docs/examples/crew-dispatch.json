@@ -11,6 +11,17 @@
       "why": "Use the cheapest fast profile when the task is narrow and low ambiguity."
     },
     {
+      "when": "The task is an ordinary builder assignment that implements code and was not flagged high tier during intake.",
+      "use": [
+        { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+        { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" },
+        { "harness": "claude", "model": "opus", "effort": "high" },
+        { "harness": "claude", "model": "sonnet", "effort": "high" }
+      ],
+      "split": { "codex": 50, "pi": 50 },
+      "why": "Keep ordinary builder assignments balanced over time between the Codex/GPT and Pi/Grok subscription lanes."
+    },
+    {
       "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
       "use": [
         { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
