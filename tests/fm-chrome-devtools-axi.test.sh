@@ -197,6 +197,7 @@ write_probe_env_axi() {
   printf 'HEADED=%s\n' "\${CHROME_DEVTOOLS_AXI_HEADED-<unset>}"
   printf 'MCP_PATH=%s\n' "\${CHROME_DEVTOOLS_AXI_MCP_PATH-<unset>}"
   printf 'SESSION=%s\n' "\${CHROME_DEVTOOLS_AXI_SESSION-<unset>}"
+  printf 'BRIDGE_TIMEOUT_MS=%s\n' "\${CHROME_DEVTOOLS_AXI_BRIDGE_TIMEOUT_MS-<unset>}"
 } > "$dump"
 if [ "\${1:-}" = open ]; then
   cat <<'OUT'
@@ -213,7 +214,7 @@ SH
 }
 
 assert_probe_env_isolated() {
-  local dump=$1 launcher=$2
+  local dump=$1 launcher=$2 timeout_ms
   grep -Fxq 'AUTO_CONNECT=<unset>' "$dump" || fail "probe inherited AUTO_CONNECT: $(cat "$dump")"
   grep -Fxq 'BROWSER_URL=<unset>' "$dump" || fail "probe inherited BROWSER_URL: $(cat "$dump")"
   grep -Fxq 'USER_DATA_DIR=<unset>' "$dump" || fail "probe inherited USER_DATA_DIR: $(cat "$dump")"
@@ -223,6 +224,12 @@ assert_probe_env_isolated() {
   grep -Fxq "MCP_PATH=$launcher" "$dump" || fail "probe did not pin MCP_PATH: $(cat "$dump")"
   grep -Fxq "SESSION=$FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION" "$dump" \
     || fail "probe did not use the probe session: $(cat "$dump")"
+  timeout_ms=$(sed -n 's/^BRIDGE_TIMEOUT_MS=//p' "$dump")
+  case "$timeout_ms" in
+    ''|*[!0-9]*) fail "probe did not set a numeric bridge timeout: $(cat "$dump")" ;;
+  esac
+  [ "$timeout_ms" -ge 30000 ] \
+    || fail "probe bridge timeout $timeout_ms is below axi's 30000 default: $(cat "$dump")"
 }
 
 with_attach_env() {

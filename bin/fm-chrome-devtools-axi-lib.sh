@@ -35,7 +35,7 @@
 FM_CHROME_DEVTOOLS_AXI_MIN=0.1.30
 FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION=fm-bootstrap-chrome-probe
 FM_CHROME_DEVTOOLS_AXI_PROBE_URL=https://example.com
-FM_CHROME_DEVTOOLS_AXI_PROBE_TIMEOUT_MS=15000
+FM_CHROME_DEVTOOLS_AXI_PROBE_TIMEOUT_MS=30000
 
 FM_CHROME_DEVTOOLS_AXI_COMPATIBLE_MEMO=${FM_CHROME_DEVTOOLS_AXI_COMPATIBLE:-}
 unset FM_CHROME_DEVTOOLS_AXI_COMPATIBLE
@@ -162,9 +162,9 @@ fm_chrome_devtools_axi_export_mcp_path() {
 fm_chrome_devtools_axi_probe_cmd() {
   local launcher timeout_ms
   launcher=$(fm_chrome_devtools_mcp_launcher_path) || return 1
-  timeout_ms=${FM_CHROME_DEVTOOLS_AXI_PROBE_TIMEOUT_MS:-15000}
+  timeout_ms=${FM_CHROME_DEVTOOLS_AXI_PROBE_TIMEOUT_MS:-30000}
   case "$timeout_ms" in
-    ''|*[!0-9]*|0) timeout_ms=15000 ;;
+    ''|*[!0-9]*|0) timeout_ms=30000 ;;
   esac
   env \
     -u CHROME_DEVTOOLS_AXI_AUTO_CONNECT \
