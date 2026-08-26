@@ -14,6 +14,12 @@
 #   (f) malformed PR URL fails fast without calling gh-axi
 #   (g) explicit merge method is not overridden by the default --squash
 #   (h) repo override args fail fast because the repo comes from the URL
+#   (i) a PR with unresolved review threads is refused before merging
+#   (j) a PR with every thread resolved merges normally
+#   (k) an unreadable thread-query result fails closed (no merge)
+#   (l) a failed thread query fails closed (no merge)
+#   (m) --allow-unresolved-threads bypasses the gate, is logged, and merges
+#   (n) --allow-unresolved-threads still forwards extra args after --
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -44,10 +50,27 @@ make_case() {
 
 # gh-axi mock recording every invocation to a log file, and gh mock answering
 # headRefOid for fm-pr-check.sh's pr_head lookup. Args: case_dir head_sha
+#
+# The gh-axi stub also answers the review-thread gate's GraphQL call: it returns
+# FM_TEST_THREADS_TOTAL for the totalCount query and FM_TEST_THREADS_UNRESOLVED
+# for the unresolved-count query, matching on the jq expression the gate passes.
+# Both default to 0 (all threads resolved) so a case that does not set them keeps
+# merging as before. It records only non-graphql calls to the log so existing
+# `pr merge` assertions are unaffected by the added thread reads.
 add_gh_mocks() {
   local case_dir=$1 head=$2
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
+if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
+  # The query body carries both totalCount and isResolved, so match on the jq
+  # expression instead: only the unresolved-count call carries "length".
+  case "$*" in
+    *length*) printf '%s\n' "${FM_TEST_THREADS_UNRESOLVED:-0}" ;;
+    *totalCount*) printf '%s\n' "${FM_TEST_THREADS_TOTAL:-0}" ;;
+    *) exit 1 ;;
+  esac
+  exit 0
+fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 exit 0
 SH
@@ -71,10 +94,60 @@ add_gh_mocks_merge_fails() {
   local case_dir=$1
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
+if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
+  case "$*" in
+    *length*) printf '%s\n' "${FM_TEST_THREADS_UNRESOLVED:-0}" ;;
+    *totalCount*) printf '%s\n' "${FM_TEST_THREADS_TOTAL:-0}" ;;
+    *) exit 1 ;;
+  esac
+  exit 0
+fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 case "${1:-} ${2:-}" in
   "pr merge") echo "error: pr merge failed" >&2 ; exit 1 ;;
 esac
+exit 0
+SH
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+}
+
+# gh-axi mock whose review-thread query fails: the GraphQL call exits non-zero
+# (a network or API error). Everything else, including pr merge, would succeed,
+# so a merge that still happens proves the gate did not fail closed.
+add_gh_mocks_thread_query_fails() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
+  echo "error: graphql request failed" >&2
+  exit 1
+fi
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+exit 0
+SH
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+}
+
+# gh-axi mock whose review-thread query returns garbage instead of an integer,
+# as a mangled or enveloped response would. The gate must refuse rather than
+# treat unreadable output as zero unresolved threads.
+add_gh_mocks_thread_query_garbled() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
+  printf '%s\n' "api_response:"
+  exit 0
+fi
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 exit 0
 SH
   cat > "$case_dir/fakebin/gh" <<'SH'
@@ -89,6 +162,8 @@ run_pr_merge() {
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
+  FM_TEST_THREADS_TOTAL="${FM_TEST_THREADS_TOTAL:-0}" \
+  FM_TEST_THREADS_UNRESOLVED="${FM_TEST_THREADS_UNRESOLVED:-0}" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -301,6 +376,133 @@ test_parses_pr_url_for_gh_axi() {
   pass "fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments"
 }
 
+test_unresolved_threads_refuse_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case unresolved-threads)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_THREADS_TOTAL=13 FM_TEST_THREADS_UNRESOLVED=13 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/39 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unresolved-threads: fm-pr-merge should refuse an open-thread PR"
+  assert_grep '13 unresolved review thread(s)' "$case_dir/stderr" \
+    "unresolved-threads: refusal did not name the unresolved count"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "unresolved-threads: gh-axi pr merge was invoked despite open review threads"
+  pass "fm-pr-merge refuses to merge a PR with unresolved review threads"
+}
+
+test_resolved_threads_merge_normally() {
+  local case_dir rc
+  case_dir=$(make_case resolved-threads)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_THREADS_TOTAL=13 FM_TEST_THREADS_UNRESOLVED=0 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/40 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "resolved-threads: fm-pr-merge should merge when all threads are resolved"
+  grep -qxF 'pr merge 40 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "resolved-threads: gh-axi pr merge was not invoked for an all-resolved PR"
+  pass "fm-pr-merge merges normally when every review thread is resolved"
+}
+
+test_garbled_thread_query_refuses() {
+  local case_dir rc
+  case_dir=$(make_case garbled-threads)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks_thread_query_garbled "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/41 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "garbled-threads: fm-pr-merge should fail closed on an unreadable thread query"
+  assert_grep 'could not read the PR' "$case_dir/stderr" \
+    "garbled-threads: refusal did not explain the unreadable thread query"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "garbled-threads: gh-axi pr merge was invoked despite an unreadable thread query"
+  pass "fm-pr-merge fails closed when the review-thread query is unreadable"
+}
+
+test_failed_thread_query_refuses() {
+  local case_dir rc
+  case_dir=$(make_case failed-thread-query)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks_thread_query_fails "$case_dir"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/42 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "failed-thread-query: fm-pr-merge should fail closed when the thread query errors"
+  assert_grep 'could not read the PR' "$case_dir/stderr" \
+    "failed-thread-query: refusal did not explain the failed thread query"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "failed-thread-query: gh-axi pr merge was invoked despite a failed thread query"
+  pass "fm-pr-merge fails closed when the review-thread query itself errors"
+}
+
+test_allow_unresolved_threads_bypasses_and_logs() {
+  local case_dir rc
+  case_dir=$(make_case allow-unresolved)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" cccccccccccccccccccccccccccccccccccccccc
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_THREADS_TOTAL=13 FM_TEST_THREADS_UNRESOLVED=13 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/43 --allow-unresolved-threads \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "allow-unresolved: override should let the merge through"
+  assert_grep '--allow-unresolved-threads set' "$case_dir/stdout" \
+    "allow-unresolved: the override bypass was not logged"
+  grep -qxF 'pr merge 43 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "allow-unresolved: gh-axi pr merge was not invoked under the override"
+  pass "fm-pr-merge bypasses the review-thread gate under --allow-unresolved-threads and logs it"
+}
+
+test_allow_unresolved_threads_still_forwards_extra_args() {
+  local case_dir rc
+  case_dir=$(make_case allow-unresolved-extra-args)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" dddddddddddddddddddddddddddddddddddddddd
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_THREADS_UNRESOLVED=5 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/44 \
+    --allow-unresolved-threads -- --merge --delete-branch \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "allow-unresolved-extra-args: override with extra args should merge"
+  grep -qxF 'pr merge 44 --repo example/repo --merge --delete-branch' "$case_dir/gh-axi.log" \
+    || fail "allow-unresolved-extra-args: extra gh-axi flags were not forwarded after the override"
+  pass "fm-pr-merge keeps forwarding extra flags when --allow-unresolved-threads precedes the -- separator"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -311,3 +513,9 @@ test_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
+test_unresolved_threads_refuse_before_merge
+test_resolved_threads_merge_normally
+test_garbled_thread_query_refuses
+test_failed_thread_query_refuses
+test_allow_unresolved_threads_bypasses_and_logs
+test_allow_unresolved_threads_still_forwards_extra_args
