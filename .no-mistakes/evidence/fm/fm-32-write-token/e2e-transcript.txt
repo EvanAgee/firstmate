@@ -1,0 +1,117 @@
+=== 1. first start generates write token ===
+token file before start: absent
+api: started pid=87882 port=53094 home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-32-e2e.8ukkmP
+bound_port=53094
+token_length=64
+token_mode=0o600
+token_prefix=3245f378...
+
+=== 2. GET /health with no token (read stays open) ===
+--- response headers ---
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 101
+Date: Wed, 26 Aug 2026 11:22:55 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+--- body ---
+{"ok":true,"version":"1","home":"/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-32-e2e.8ukkmP"}
+
+
+=== 3. POST /captain-notes without token -> 401 ===
+--- response headers ---
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json; charset=utf-8
+Content-Length: 36
+Date: Wed, 26 Aug 2026 11:22:55 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+--- body ---
+{"ok":false,"error":"unauthorized"}
+
+wake-queue after unauthorized:
+(empty/absent)
+
+=== 4. POST /captain-notes with wrong token -> 401 ===
+--- response headers ---
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json; charset=utf-8
+Content-Length: 36
+Date: Wed, 26 Aug 2026 11:22:55 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+--- body ---
+{"ok":false,"error":"unauthorized"}
+
+
+=== 5. POST /captain-notes with real token -> 200 and wake queue ===
+--- response headers ---
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 12
+Date: Wed, 26 Aug 2026 11:22:55 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+--- body ---
+{"ok":true}
+
+--- wake-queue ---
+1787743375	1	check	captain-note:sample-task:b37d1938b1cb5325	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task sample-task: please go smaller
+--- expected encoded payload ---
+⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task sample-task: please go smaller
+--- captain-replies.jsonl ---
+(absent, as required)
+
+=== 6. question-back note does not close a hold ===
+--- response headers ---
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 12
+Date: Wed, 26 Aug 2026 11:22:56 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+--- body ---
+{"ok":true}
+
+--- backlog before ---
+## In flight
+
+## Queued
+- [ ] hold-task-decision-deploy-target - which target? (kind: captain)
+
+## Done
+--- backlog after ---
+## In flight
+
+## Queued
+- [ ] hold-task-decision-deploy-target - which target? (kind: captain)
+
+## Done
+backlog_unchanged=yes
+--- hold-task.status after ---
+needs-decision: which target? [key=deploy-target]
+--- captain-replies.jsonl ---
+(absent, as required)
+--- wake-queue (includes question-back) ---
+1787743375	1	check	captain-note:sample-task:b37d1938b1cb5325	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task sample-task: please go smaller
+1787743375	2	check	captain-note:hold-task:4f2e5d04fb75dcbc	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task hold-task: what is this for?
+
+=== 7. this door does not own parked-decision answers or rig-rung ===
+POST /parked-decisions -> 404
+POST /parked-decisions/answer -> 404
+POST /answers -> 404
+POST /decision-holds -> 404
+POST /rig-rung -> 404
+POST /rig-rungs -> 404
+
+=== 8. later start keeps the same token ===
+api: started pid=89620 port=53112 home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-32-e2e.8ukkmP
+token_unchanged=yes
+health after restart:
+{"ok":true,"version":"1","home":"/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-32-e2e.8ukkmP"}
+
