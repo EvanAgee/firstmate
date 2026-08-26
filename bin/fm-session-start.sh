@@ -33,12 +33,17 @@
 #                       marked by .fm-secondmate-home.
 #   2. bootstrap      - home-local stale Herdr projection cleanup runs only
 #                       when this session actually holds the lock. Detect-only
-#                       diagnostics always run. Bootstrap's six MUTATING sweeps
-#                       (legacy PR-check migration, secondmate convergence,
-#                       secondmate liveness, pending remote handoff retry,
-#                       X-mode artifact writes, fleet sync) also run only when
-#                       locked; the four network sweeps run in the deferred
-#                       stage rather than this synchronous bootstrap section.
+#                       diagnostics always run. This script exports
+#                       CHROME_DEVTOOLS_AXI_MCP_PATH before that detect so
+#                       bootstrap inherits the pin, then prints the same export
+#                       after detect output so later chrome-devtools-axi opens
+#                       in this session inherit bin/fm-chrome-devtools-mcp.js.
+#                       Bootstrap's six MUTATING sweeps (legacy PR-check
+#                       migration, secondmate convergence, secondmate liveness,
+#                       pending remote handoff retry, X-mode artifact writes,
+#                       fleet sync) also run only when locked; the four network
+#                       sweeps run in the deferred stage rather than this
+#                       synchronous bootstrap section.
 #   3. inactive outcomes + wake-drain - runs the local bounded inactive-outcome
 #                       reconciliation before presenting durable wakes and advancing
 #                       recovery handling state, so both only run when locked.
@@ -330,6 +335,9 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-chrome-devtools-axi-lib.sh
+. "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
+fm_chrome_devtools_axi_export_mcp_path || true
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
@@ -696,6 +704,9 @@ if [ -n "$BOOT_OUT" ]; then
   printf '%s\n' "$BOOT_OUT"
 else
   printf '(silent - all good)\n'
+fi
+if CHROME_AXI_EXPORT=$(fm_chrome_devtools_axi_mcp_path_export 2>/dev/null); then
+  printf '%s\n' "$CHROME_AXI_EXPORT"
 fi
 
 # --- 3. inactive outcomes + wake-drain -----------------------------------

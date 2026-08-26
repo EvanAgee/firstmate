@@ -342,8 +342,8 @@ Secondmate homes inherit this file from the primary, so a secondmate's own crewm
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.
 It installs automatically supported tools only after you say go; manual-only tools remain for you to install from the printed instructions.
 Required tools come in two parts: a universal toolchain every home needs regardless of backend, and a per-backend delta that follows the runtime backend actually resolved for this home.
-The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.31.2 or newer, compatible gh-axi, chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
-[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh) hold their own tools' floor constants.
+The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.31.2 or newer, compatible gh-axi, compatible chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
+[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh), and [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh) hold their own tools' floor constants.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 In that list, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
 The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
@@ -357,6 +357,12 @@ When Relay is opted in, bootstrap also requires `curl` and `jq` before arming th
 `tasks-axi` and `quota-axi` are required bootstrap tools in every profile, the same class as `lavish-axi`.
 An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
 An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
+An absent or incompatible `chrome-devtools-axi` reports `MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)`.
+Published `chrome-devtools-axi` 0.1.29 and 0.1.30 launch `chrome-devtools-mcp@latest` and omit `pageId` on page-scoped calls, while Chrome DevTools MCP 1.8.0 requires `pageId` by default.
+Firstmate therefore points the CLI at [`bin/fm-chrome-devtools-mcp.js`](../bin/fm-chrome-devtools-mcp.js), which pins `chrome-devtools-mcp@1.8.0` and adds `--no-page-id-routing` until axi itself routes by page id.
+Session start exports `CHROME_DEVTOOLS_AXI_MCP_PATH` to that launcher and prints the same export in the digest so the captain can run it before any later `chrome-devtools-axi` open in this session.
+Spawn still exports that path and sets `CHROME_DEVTOOLS_AXI_SESSION` to the task id so workers do not share the default bridge or pick up `@latest`.
+Bootstrap's chrome-devtools-axi check is the version floor plus a named-session open-and-snapshot probe owned by [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh).
 An absent or incompatible `lavish-axi` reports `MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)`.
 An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array without a compatible binary.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
