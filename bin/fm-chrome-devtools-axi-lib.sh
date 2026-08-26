@@ -14,8 +14,10 @@
 #     probe is skipped) `chrome-devtools-axi open` against a named session
 #     returns a snapshot instead of the pageId schema error.
 # bin/fm-bootstrap.sh turns a failing check into the operator-facing MISSING
-# diagnostic. bin/fm-spawn.sh exports the launcher path and a per-task session
-# name so workers do not inherit @latest or the default bridge.
+# diagnostic. bin/fm-session-start.sh exports CHROME_DEVTOOLS_AXI_MCP_PATH and
+# prints that export in the digest so the captain inherits the pin.
+# bin/fm-spawn.sh still exports the launcher path and a per-task session name
+# so workers do not inherit @latest or the default bridge.
 #
 # COMPATIBILITY VERDICT REUSE. The live probe launches Chrome, so one session
 # start must not pay for it twice. Two reuse layers collapse that:
@@ -138,25 +140,52 @@ fm_chrome_devtools_axi_snapshot_ok() {
   return 0
 }
 
-fm_chrome_devtools_axi_run_open() {
+fm_chrome_devtools_axi_shell_quote() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+fm_chrome_devtools_axi_mcp_path_export() {
+  local launcher
+  launcher=$(fm_chrome_devtools_mcp_launcher_path) || return 1
+  printf 'export CHROME_DEVTOOLS_AXI_MCP_PATH=%s\n' \
+    "$(fm_chrome_devtools_axi_shell_quote "$launcher")"
+}
+
+fm_chrome_devtools_axi_export_mcp_path() {
+  local launcher
+  launcher=$(fm_chrome_devtools_mcp_launcher_path) || return 1
+  export CHROME_DEVTOOLS_AXI_MCP_PATH=$launcher
+}
+
+fm_chrome_devtools_axi_probe_cmd() {
   local launcher timeout_ms
   launcher=$(fm_chrome_devtools_mcp_launcher_path) || return 1
   timeout_ms=${FM_CHROME_DEVTOOLS_AXI_PROBE_TIMEOUT_MS:-15000}
   case "$timeout_ms" in
     ''|*[!0-9]*|0) timeout_ms=15000 ;;
   esac
-  CHROME_DEVTOOLS_AXI_MCP_PATH=$launcher \
-    CHROME_DEVTOOLS_AXI_SESSION=$FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION \
-    CHROME_DEVTOOLS_AXI_BRIDGE_TIMEOUT_MS=$timeout_ms \
-    chrome-devtools-axi open "$FM_CHROME_DEVTOOLS_AXI_PROBE_URL"
+  env \
+    -u CHROME_DEVTOOLS_AXI_AUTO_CONNECT \
+    -u CHROME_DEVTOOLS_AXI_BROWSER_URL \
+    -u CHROME_DEVTOOLS_AXI_USER_DATA_DIR \
+    -u CHROME_DEVTOOLS_AXI_PORT \
+    -u CHROME_DEVTOOLS_AXI_WS_HEADERS \
+    -u CHROME_DEVTOOLS_AXI_HEADED \
+    "CHROME_DEVTOOLS_AXI_MCP_PATH=$launcher" \
+    "CHROME_DEVTOOLS_AXI_SESSION=$FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION" \
+    "CHROME_DEVTOOLS_AXI_BRIDGE_TIMEOUT_MS=$timeout_ms" \
+    "$@"
+}
+
+fm_chrome_devtools_axi_run_open() {
+  fm_chrome_devtools_axi_probe_cmd chrome-devtools-axi open "$FM_CHROME_DEVTOOLS_AXI_PROBE_URL"
 }
 
 fm_chrome_devtools_axi_stop_probe_session() {
-  local launcher
-  launcher=$(fm_chrome_devtools_mcp_launcher_path) || return 0
-  CHROME_DEVTOOLS_AXI_MCP_PATH=$launcher \
-    CHROME_DEVTOOLS_AXI_SESSION=$FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION \
-    chrome-devtools-axi stop >/dev/null 2>&1 || true
+  fm_chrome_devtools_mcp_launcher_path >/dev/null 2>&1 || return 0
+  fm_chrome_devtools_axi_probe_cmd chrome-devtools-axi stop >/dev/null 2>&1 || true
 }
 
 fm_chrome_devtools_axi_live_probe() {

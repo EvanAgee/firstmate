@@ -183,9 +183,133 @@ test_bootstrap_accepts_named_session_snapshot() {
   pass "bootstrap stays silent when a named-session snapshot succeeds"
 }
 
+write_probe_env_axi() {
+  local fakebin=$1 dump=$2
+  cat > "$fakebin/chrome-devtools-axi" <<SH
+#!/usr/bin/env bash
+{
+  printf 'cmd=%s\n' "\${1:-}"
+  printf 'AUTO_CONNECT=%s\n' "\${CHROME_DEVTOOLS_AXI_AUTO_CONNECT-<unset>}"
+  printf 'BROWSER_URL=%s\n' "\${CHROME_DEVTOOLS_AXI_BROWSER_URL-<unset>}"
+  printf 'USER_DATA_DIR=%s\n' "\${CHROME_DEVTOOLS_AXI_USER_DATA_DIR-<unset>}"
+  printf 'PORT=%s\n' "\${CHROME_DEVTOOLS_AXI_PORT-<unset>}"
+  printf 'WS_HEADERS=%s\n' "\${CHROME_DEVTOOLS_AXI_WS_HEADERS-<unset>}"
+  printf 'HEADED=%s\n' "\${CHROME_DEVTOOLS_AXI_HEADED-<unset>}"
+  printf 'MCP_PATH=%s\n' "\${CHROME_DEVTOOLS_AXI_MCP_PATH-<unset>}"
+  printf 'SESSION=%s\n' "\${CHROME_DEVTOOLS_AXI_SESSION-<unset>}"
+} > "$dump"
+if [ "\${1:-}" = open ]; then
+  cat <<'OUT'
+page:
+  url: "https://example.com"
+  refs: 1
+snapshot:
+RootWebArea "Example Domain"
+OUT
+fi
+exit 0
+SH
+  chmod +x "$fakebin/chrome-devtools-axi"
+}
+
+assert_probe_env_isolated() {
+  local dump=$1 launcher=$2
+  grep -Fxq 'AUTO_CONNECT=<unset>' "$dump" || fail "probe inherited AUTO_CONNECT: $(cat "$dump")"
+  grep -Fxq 'BROWSER_URL=<unset>' "$dump" || fail "probe inherited BROWSER_URL: $(cat "$dump")"
+  grep -Fxq 'USER_DATA_DIR=<unset>' "$dump" || fail "probe inherited USER_DATA_DIR: $(cat "$dump")"
+  grep -Fxq 'PORT=<unset>' "$dump" || fail "probe inherited PORT: $(cat "$dump")"
+  grep -Fxq 'WS_HEADERS=<unset>' "$dump" || fail "probe inherited WS_HEADERS: $(cat "$dump")"
+  grep -Fxq 'HEADED=<unset>' "$dump" || fail "probe inherited HEADED: $(cat "$dump")"
+  grep -Fxq "MCP_PATH=$launcher" "$dump" || fail "probe did not pin MCP_PATH: $(cat "$dump")"
+  grep -Fxq "SESSION=$FM_CHROME_DEVTOOLS_AXI_PROBE_SESSION" "$dump" \
+    || fail "probe did not use the probe session: $(cat "$dump")"
+}
+
+with_attach_env() {
+  CHROME_DEVTOOLS_AXI_AUTO_CONNECT=1
+  CHROME_DEVTOOLS_AXI_BROWSER_URL=http://127.0.0.1:9222
+  CHROME_DEVTOOLS_AXI_USER_DATA_DIR=/tmp/chrome-profile
+  CHROME_DEVTOOLS_AXI_PORT=9224
+  CHROME_DEVTOOLS_AXI_WS_HEADERS='{"Authorization":"Bearer x"}'
+  CHROME_DEVTOOLS_AXI_HEADED=1
+  export CHROME_DEVTOOLS_AXI_AUTO_CONNECT CHROME_DEVTOOLS_AXI_BROWSER_URL \
+    CHROME_DEVTOOLS_AXI_USER_DATA_DIR CHROME_DEVTOOLS_AXI_PORT \
+    CHROME_DEVTOOLS_AXI_WS_HEADERS CHROME_DEVTOOLS_AXI_HEADED
+}
+
+test_probe_open_unsets_attach_env() {
+  local case_dir fakebin dump launcher
+  case_dir="$TMP_ROOT/probe-open-env"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  dump="$case_dir/open.env"
+  launcher=$(fm_chrome_devtools_mcp_launcher_path) || fail "launcher missing"
+  write_probe_env_axi "$fakebin" "$dump"
+  with_attach_env
+  PATH="$fakebin:$PATH" fm_chrome_devtools_axi_run_open \
+    || fail "isolated probe open failed"
+  [ -f "$dump" ] || fail "probe open did not record env"
+  grep -Fxq 'cmd=open' "$dump" || fail "probe open did not run open: $(cat "$dump")"
+  assert_probe_env_isolated "$dump" "$launcher"
+  [ "${CHROME_DEVTOOLS_AXI_AUTO_CONNECT:-}" = 1 ] \
+    || fail "probe open unset AUTO_CONNECT in the parent shell"
+  pass "probe open drops attach env and stays isolated"
+}
+
+test_probe_stop_unsets_attach_env() {
+  local case_dir fakebin dump launcher
+  case_dir="$TMP_ROOT/probe-stop-env"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  dump="$case_dir/stop.env"
+  launcher=$(fm_chrome_devtools_mcp_launcher_path) || fail "launcher missing"
+  write_probe_env_axi "$fakebin" "$dump"
+  with_attach_env
+  PATH="$fakebin:$PATH" fm_chrome_devtools_axi_stop_probe_session \
+    || fail "isolated probe stop failed"
+  [ -f "$dump" ] || fail "probe stop did not record env"
+  grep -Fxq 'cmd=stop' "$dump" || fail "probe stop did not run stop: $(cat "$dump")"
+  assert_probe_env_isolated "$dump" "$launcher"
+  [ "${CHROME_DEVTOOLS_AXI_AUTO_CONNECT:-}" = 1 ] \
+    || fail "probe stop unset AUTO_CONNECT in the parent shell"
+  pass "probe stop drops attach env and stays isolated"
+}
+
+test_mcp_path_export_is_inheritable() {
+  local launcher line
+  launcher=$(fm_chrome_devtools_mcp_launcher_path) || fail "launcher missing"
+  line=$(fm_chrome_devtools_axi_mcp_path_export) || fail "mcp path export failed"
+  unset CHROME_DEVTOOLS_AXI_MCP_PATH
+  eval "$line"
+  [ "${CHROME_DEVTOOLS_AXI_MCP_PATH:-}" = "$launcher" ] \
+    || fail "export did not pin the launcher: ${CHROME_DEVTOOLS_AXI_MCP_PATH:-} ($line)"
+  pass "MCP_PATH export pins the firstmate launcher"
+}
+
+test_session_start_prints_mcp_path_export() {
+  local case_dir fakebin out line launcher
+  case_dir="$TMP_ROOT/session-pin"
+  fakebin=$(make_bootstrap_home "$case_dir")
+  mkdir -p "$case_dir/home/state" "$case_dir/home/data"
+  launcher=$(fm_chrome_devtools_mcp_launcher_path) || fail "launcher missing"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_API=0 "$ROOT/bin/fm-session-start.sh")
+  line=$(printf '%s\n' "$out" | grep '^export CHROME_DEVTOOLS_AXI_MCP_PATH=' | head -1)
+  [ -n "$line" ] || fail "session start did not print MCP_PATH export: $out"
+  unset CHROME_DEVTOOLS_AXI_MCP_PATH
+  eval "$line"
+  [ "${CHROME_DEVTOOLS_AXI_MCP_PATH:-}" = "$launcher" ] \
+    || fail "session-start export did not pin the launcher: ${CHROME_DEVTOOLS_AXI_MCP_PATH:-}"
+  pass "session start prints an inheritable MCP_PATH export"
+}
+
 test_launcher_prints_pin_and_routing_flag
 test_launcher_ok_accepts_the_shipped_script
 test_snapshot_classifier_accepts_a_named_session_page
 test_snapshot_classifier_rejects_pageid_schema_error
 test_bootstrap_reports_pageid_probe_failure
 test_bootstrap_accepts_named_session_snapshot
+test_probe_open_unsets_attach_env
+test_probe_stop_unsets_attach_env
+test_mcp_path_export_is_inheritable
+test_session_start_prints_mcp_path_export
