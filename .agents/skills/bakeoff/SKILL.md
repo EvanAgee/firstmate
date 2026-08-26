@@ -24,7 +24,7 @@ Compare harness and model combinations on one identical coding task, then publis
    Pass `<brief>` as the same file saved in step 2. The script resolves it to an absolute path before launch so a relative `scratch/bakeoff/BRIEF.md` is not reread from inside each worktree.
    The script creates one isolated worktree per default-roster entry from `<base-ref>`, installs dependencies, launches each agent headless, times it, and captures its diff, `RESULT.md`, and `manifest.tsv` row.
    It keeps existing per-slug manifest rows across canary-then-full invocations.
-   Use `slug-filter` to run one canary before the full roster.
+   Use `slug-filter` to run one canary before the full roster. A non-numeric fifth argument is the slug filter and keeps the default timeout, so `... <work-root> grok46` runs only that canary.
    Luna and Terra stay off this command unless you opt in. See Default roster.
 4. Run `scripts/review-bakeoff.sh <work-root> <brief> <reference-diff> <trap-field> <trap-criteria> <scope-criteria>`.
    Supply this run's trap field name and the trap/scope criteria. Do not edit the script to hardcode them.

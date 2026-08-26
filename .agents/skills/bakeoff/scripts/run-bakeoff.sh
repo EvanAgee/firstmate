@@ -15,8 +15,16 @@ CLONE="${1:?clone dir}"
 BASE="${2:?base branch}"
 BRIEF="${3:?brief file}"
 ROOT="${4:?work root}"
-TIMEOUT="${5:-2400}"   # 40 min per agent default
-FILTER="${6:-}"        # optional single-slug canary
+TIMEOUT=2400
+FILTER=""
+if [ -n "${5:-}" ]; then
+  if [[ "$5" =~ ^[0-9]+$ ]]; then
+    TIMEOUT="$5"
+    FILTER="${6:-}"
+  else
+    FILTER="$5"
+  fi
+fi
 
 if [ ! -f "$BRIEF" ]; then
   echo "brief not found: $BRIEF" >&2

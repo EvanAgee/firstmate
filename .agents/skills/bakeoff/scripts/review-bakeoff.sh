@@ -19,6 +19,15 @@ if [ ! -d "$ROOT" ]; then
 fi
 ROOT="$(cd "$ROOT" && pwd)"
 
+if [ ! -r "$BRIEF" ]; then
+  echo "brief not found: $BRIEF" >&2
+  exit 1
+fi
+if [ ! -r "$REF" ]; then
+  echo "reference diff not found: $REF" >&2
+  exit 1
+fi
+
 if ! [[ "$TRAP_FIELD" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
   echo "trap field must be a JSON identifier: $TRAP_FIELD" >&2
   exit 1
