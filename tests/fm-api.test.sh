@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/fm-api.test.sh - localhost API front door: health, bind, config, lifecycle,
-# the fleet snapshot read, write token, and captain notes.
+# the fleet snapshot read, write token, captain notes, decision answers, and rung toggles.
 #
 # Speaks real HTTP against a throwaway firstmate home. Does not read the live
 # home and does not inspect server source.

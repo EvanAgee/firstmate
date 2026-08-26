@@ -582,6 +582,12 @@ A missing or wrong token is refused with 401.
 Reads and the event stream do not.
 `POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate on the wake queue, encoded as operational input.
 A captain note never closes a parked decision.
+`POST /decisions/answer` accepts JSON `{"task":"<id>","key":"<key>","text":"<one line>"}` and queues an answer for firstmate on the same wake queue, encoded as operational input.
+Firstmate closes the parked decision with `bin/fm-send.sh --resolve-key` on its next supervision turn.
+`POST /rigs/rung` accepts JSON `{"rig":"<when line or default>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
+`rig` is the rule's `when` line, or `default` for the fallback ladder, the same name `GET /rigs` already serves.
+`rung` is that ladder's index, because harness and model can repeat.
+A change that would turn off a ladder's last enabled rung is refused with 400.
 `GET /health` reports API version `1` and the home this process serves.
 `GET /fleet` returns that home's fleet snapshot plus a per-task enrich window for board cards.
 The snapshot is `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.
