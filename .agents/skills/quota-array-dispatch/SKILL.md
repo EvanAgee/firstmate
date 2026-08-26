@@ -114,7 +114,8 @@ Apply this only to the healthy members left after the switch-off filter and the 
 Apply only among members satisfying required fit and strongest reasoning class; never use live-worker count, headroom, or reserve to silently replace that reasoning class.
 
 1. Count the live workers each remaining member is currently carrying from this pool in this home.
-   Read live task metadata for the harness each in-flight worker launched with, and count only workers dispatched from this same pool.
+   Match each in-flight worker to a pool member by the launched harness/model/effort tuple in spawn task metadata, and count only workers dispatched from this same pool.
+   Two members on the same harness, such as claude/opus and claude/sonnet, are counted separately.
    Choose the member carrying the fewest.
 2. If two or more members are tied on the fewest live workers, prefer the one with the most applicable effective headroom.
    Compare only on comparable known evidence, and never treat absent, `unknown`, or unmeasurable headroom as zero or as a healthy value.
