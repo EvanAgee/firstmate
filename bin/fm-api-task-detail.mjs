@@ -273,12 +273,14 @@ function timelineStepEvidence(timeline) {
   const evidence = {};
   for (const event of timeline) {
     const text = `${event.verb} ${event.note}`.toLowerCase();
-    for (const step of PIPELINE_STEPS) {
-      const namesStep = new RegExp(`\\b${step}\\b`).test(text);
-      if (!namesStep && !(step === "ci" && text.includes("checks green"))) continue;
-      if (/\b(fail|failed|red)\b/.test(text)) evidence[step] = "failed";
-      else if (/\b(pass|passed|green|completed|checks green)\b/.test(text)) evidence[step] = "passed";
-      else if (/\b(run|running|working|validating)\b/.test(text)) evidence[step] = "running";
+    for (const clause of text.split(";")) {
+      for (const step of PIPELINE_STEPS) {
+        const namesStep = new RegExp(`\\b${step}\\b`).test(clause);
+        if (!namesStep && !(step === "ci" && clause.includes("checks green"))) continue;
+        if (/\b(fail|failed|red)\b/.test(clause)) evidence[step] = "failed";
+        else if (/\b(pass|passed|green|completed|checks green)\b/.test(clause)) evidence[step] = "passed";
+        else if (/\b(run|running|working|validating)\b/.test(clause)) evidence[step] = "running";
+      }
     }
   }
   return evidence;

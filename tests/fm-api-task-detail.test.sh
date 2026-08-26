@@ -252,8 +252,54 @@ EOF
   pass "a gh-axi skip conclusion is returned and does not fail CI"
 }
 
+test_mixed_status_line_keeps_pipeline_steps_independent() {
+  local home port resp
+  home=$(fm_test_api_home api-task-mixed-steps)
+  mkdir -p "$home/data/mixed-task" "$home/fakebin"
+  printf 'Mixed pipeline outcomes stay independent.\n' > "$home/data/mixed-task/brief.md"
+  cat > "$home/state/mixed-task.meta" <<'EOF'
+window=fixture:fm-mixed-task
+project=widget
+harness=codex
+kind=ship
+mode=no-mistakes
+EOF
+  cat > "$home/state/mixed-task.status" <<'EOF'
+working: review passed; test failed; lint passed
+EOF
+  cat > "$home/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  cat > "$home/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$home/fakebin/no-mistakes" "$home/fakebin/gh-axi"
+
+  port=$(PATH="$home/fakebin:$PATH" fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /tasks/mixed-task GET 12000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "mixed-step status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.review.status')" = passed ] || \
+    fail "review poisoned by sibling failure: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.review.source')" = status-timeline ] || \
+    fail "review source: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.test.status')" = failed ] || \
+    fail "test step: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.test.source')" = status-timeline ] || \
+    fail "test source: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.lint.status')" = passed ] || \
+    fail "lint poisoned by sibling failure: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.lint.source')" = status-timeline ] || \
+    fail "lint source: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "mixed status-line pipeline steps stay independent"
+}
+
 test_task_detail_returns_full_worker_activity
 test_unknown_task_returns_json_404
 test_skipped_github_check_is_kept_without_failing_ci
+test_mixed_status_line_keeps_pipeline_steps_independent
 
 echo "# fm-api-task-detail.test.sh: all assertions passed"
