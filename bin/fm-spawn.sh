@@ -265,6 +265,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
+# shellcheck source=bin/fm-chrome-devtools-axi-lib.sh
+. "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-control-lib.sh
@@ -2006,10 +2008,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
       present) ;;
       dead)
         HERDR_LABEL_HOME=$FM_HOME
-        HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+        HERDR_LAUNCHER_RELATIONSHIP="launcher-home"
         if [ "$KIND" = secondmate ]; then
           HERDR_LABEL_HOME=$PROJ_ABS
-          HERDR_LAUNCHER_RELATIONSHIP=other-home
+          HERDR_LAUNCHER_RELATIONSHIP="other-home"
         fi
         HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$WT" "$HERDR_LAUNCHER_RELATIONSHIP") || {
           echo "error: herdr workspace for task $ID could not be re-ensured; refusing to recreate a missing endpoint" >&2
@@ -2085,10 +2087,10 @@ case "$BACKEND" in
     # it stands up a DIFFERENT home's own workspace by design - so it asks for
     # the per-home container instead of inheriting this launcher's.
     HERDR_LABEL_HOME=$FM_HOME
-    HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+    HERDR_LAUNCHER_RELATIONSHIP="launcher-home"
     if [ "$KIND" = secondmate ]; then
       HERDR_LABEL_HOME=$PROJ_ABS
-      HERDR_LAUNCHER_RELATIONSHIP=other-home
+      HERDR_LAUNCHER_RELATIONSHIP="other-home"
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
@@ -3025,6 +3027,15 @@ spawn_record_traceparent() {
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+# Point chrome-devtools-axi at firstmate's pinned MCP launcher and give this
+# task its own session so workers do not share the default bridge or pick up
+# chrome-devtools-mcp@latest. Soft: a missing launcher does not block spawn;
+# bootstrap reports the incompatible tool instead.
+if CHROME_AXI_LAUNCHER=$(fm_chrome_devtools_mcp_launcher_path 2>/dev/null); then
+  spawn_send_text_line "$T" "export CHROME_DEVTOOLS_AXI_MCP_PATH=$(shell_quote "$CHROME_AXI_LAUNCHER")"
+  spawn_send_text_line "$T" "export CHROME_DEVTOOLS_AXI_SESSION=$(shell_quote "$ID")"
+fi
+unset CHROME_AXI_LAUNCHER
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.

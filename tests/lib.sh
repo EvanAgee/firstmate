@@ -15,6 +15,10 @@
 #
 # ROOT is exported as the firstmate repo root (this file lives in tests/), so a
 # sourcing test can use "$ROOT/bin/..." without recomputing it.
+#
+# chrome-devtools-axi's bootstrap probe launches a real browser. Portable tests
+# skip that live step unless they set FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE=0; the
+# live-optin guard is the end-to-end check.
 
 # Idempotent guard: behavior-area helper files (secondmate-helpers.sh,
 # wake-helpers.sh) source this library for ROOT/fail/pass, and the test that
@@ -24,6 +28,7 @@ if [ -n "${FM_TEST_LIB_SOURCED:-}" ]; then
   return 0
 fi
 FM_TEST_LIB_SOURCED=1
+export FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE=${FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE:-1}
 
 # Exempt firstmate's own test suite from the gate-lifecycle refusal
 # (bin/fm-gate-refuse-lib.sh). The no-mistakes gate runs this suite FROM a gate

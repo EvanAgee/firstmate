@@ -57,6 +57,9 @@
 #          build below its floor reports MISSING like no-mistakes, so the operator
 #          is asked to upgrade rather than silently running an older tool.
 #          tasks-axi feature probes remain a separate defense-in-depth check.
+#          chrome-devtools-axi also runs a named-session open-and-snapshot
+#          probe so a pageId or floating @latest MCP contract break cannot stay
+#          silent; bin/fm-chrome-devtools-axi-lib.sh owns that probe and its floor.
 #          tasks-axi and quota-axi are required bootstrap tools (same class as
 #          lavish-axi). A compatible tasks-axi default backend is silent.
 #          quota-axi is required for the agent-owned dispatch-profile array
@@ -134,6 +137,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-chrome-devtools-axi-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh disable=SC1091
@@ -800,6 +805,8 @@ NO_MISTAKES_MIN=1.31.2
 # earliest release that happens to satisfy some depended-on behavior. The
 # tasks-axi feature probes are an independent defense-in-depth concern, not part
 # of its floor.
+# chrome-devtools-axi's snapshot probe is the same kind of independent check;
+# bin/fm-chrome-devtools-axi-lib.sh owns that floor and probe.
 GH_AXI_MIN=0.1.29
 LAVISH_AXI_MIN=0.1.46
 
@@ -1160,6 +1167,9 @@ detect_local_tools() {
   fi
   if command -v gh-axi >/dev/null 2>&1 && ! tool_version_at_least gh-axi "$GH_AXI_MIN"; then
     echo "MISSING: gh-axi (install: $(install_cmd gh-axi))"
+  fi
+  if command -v chrome-devtools-axi >/dev/null 2>&1 && ! fm_chrome_devtools_axi_compatible; then
+    echo "MISSING: chrome-devtools-axi (install: $(install_cmd chrome-devtools-axi))"
   fi
   if command -v lavish-axi >/dev/null 2>&1 && ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
     echo "MISSING: lavish-axi (install: $(install_cmd lavish-axi))"
