@@ -1,0 +1,114 @@
+{
+  "ok": true,
+  "task": {
+    "id": "timed-task",
+    "kind": "ship",
+    "project": "",
+    "harness": "codex",
+    "model": "gpt-5.6-sol",
+    "started_at": "2025-08-25T19:26:40.000Z",
+    "brief": "",
+    "timeline": [
+      {
+        "index": 1,
+        "raw": "spawned: work begins",
+        "verb": "spawned",
+        "note": "work begins",
+        "observed_at": "2026-08-26T19:56:10.563Z",
+        "time_approximate": true
+      },
+      {
+        "index": 2,
+        "raw": "working: first pass done",
+        "verb": "working",
+        "note": "first pass done",
+        "observed_at": "2026-08-26T19:56:10.594Z",
+        "time_approximate": true
+      },
+      {
+        "index": 3,
+        "raw": "done: PR merged",
+        "verb": "done",
+        "note": "PR merged",
+        "observed_at": "2026-08-26T19:56:10.626Z",
+        "time_approximate": true
+      }
+    ],
+    "stage": {
+      "state": "unknown",
+      "source": "none",
+      "detail": "worktree gone (torn down?)"
+    },
+    "activity": {
+      "worktree": {
+        "path": null,
+        "branch": null,
+        "available": false
+      },
+      "commits": {
+        "base": "origin/main",
+        "count": 0,
+        "items": [],
+        "available": false
+      },
+      "diff": {
+        "base": "origin/main",
+        "files_changed": null,
+        "additions": null,
+        "deletions": null,
+        "stat": "",
+        "available": false
+      },
+      "uncommitted_file_count": null,
+      "pipeline": {
+        "steps": {
+          "review": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "test": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "lint": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "ci": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          }
+        },
+        "run": null,
+        "attestation": null,
+        "available": false
+      },
+      "pull_request": {
+        "url": null,
+        "state": null,
+        "ci": {
+          "status": "unknown",
+          "summary": "",
+          "checks": [],
+          "available": false
+        },
+        "review_threads": {
+          "open": null,
+          "resolved": null,
+          "total": null,
+          "available": false
+        },
+        "available": false
+      },
+      "pane_tail": {
+        "text": "",
+        "captured_at": null,
+        "available": false
+      }
+    }
+  }
+}

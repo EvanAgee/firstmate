@@ -1,0 +1,18 @@
+{
+  "outside_brief_path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/prove-enrich-dotdot.mdESEs/home/brief.md",
+  "would_resolve_to": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/prove-enrich-dotdot.mdESEs/home/brief.md",
+  "escaped": {
+    "title": null,
+    "first_prompt": null,
+    "model": "",
+    "started_at": null,
+    "last_activity_at": null
+  },
+  "safe": {
+    "title": "Inside the data root",
+    "first_prompt": "Inside the data root",
+    "model": "",
+    "started_at": null,
+    "last_activity_at": null
+  }
+}

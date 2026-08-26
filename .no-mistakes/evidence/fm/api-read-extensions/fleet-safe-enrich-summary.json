@@ -1,0 +1,15 @@
+{
+  "status": "200",
+  "tasks": [
+    {
+      "id": "safe-task",
+      "enrich": {
+        "title": "Legitimate in-data prompt",
+        "first_prompt": "Legitimate in-data prompt",
+        "model": "xai/grok-4.6",
+        "started_at": "2026-08-26T19:56:09.362Z",
+        "last_activity_at": "2026-08-26T19:56:09.362Z"
+      }
+    }
+  ]
+}
