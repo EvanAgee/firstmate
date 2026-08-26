@@ -222,6 +222,8 @@ fm_chrome_devtools_axi_disarm_probe_cleanup() {
   if [ "${FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD:-true}" = true ]; then
     trap - EXIT
   else
+    # Intended restore of the EXIT command captured at arm time.
+    # shellcheck disable=SC2064
     trap "$FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD" EXIT
   fi
   FM_CHROME_DEVTOOLS_AXI_PREV_EXIT_CMD=true
