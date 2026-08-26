@@ -770,8 +770,15 @@ elif [ "$FM_RECOVERY_MARKER_ACTION" = recover ]; then
   WATCHER_RECOVERY_PENDING=1
 fi
 watcher_cleanup() {
-  local cleanup_status=0 owns_lock=0 transition=release-lock
-  if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "${WATCHER_PID:-}" ]; then
+  local cleanup_status=0 owns_lock=0 transition=release-lock lock_pid=
+  # Read the lock pid without command substitution. Bash re-enters this EXIT
+  # trap from HUP/INT/TERM while the main loop is often already inside $(), and
+  # a nested $(cat ...) in the trap body then fails with "unexpected EOF while
+  # looking for matching `)'" and leaves the process unkillable.
+  if [ -n "${WATCHER_PID:-}" ] && [ -r "$WATCH_LOCK/pid" ]; then
+    IFS= read -r lock_pid < "$WATCH_LOCK/pid" || lock_pid=
+  fi
+  if [ -n "$lock_pid" ] && [ "$lock_pid" = "$WATCHER_PID" ]; then
     owns_lock=1
     if [ "${WATCHER_RECOVERY_PENDING:-0}" -eq 1 ] \
       && [ "${FM_WATCH_DELIVERED_REASON:-}" = "check: rearm-resurface" ]; then

@@ -275,9 +275,11 @@ cmd_start() {
   session_pid=$(session_lock_pid) || session_pid=
   : >>"$LOG_FILE"
   if [ -n "$session_pid" ]; then
-    node "$SERVER" --home "$home" --port "$port" --state "$STATE" --session-pid "$session_pid" >>"$LOG_FILE" 2>&1 &
+    node "$SERVER" --home "$home" --port "$port" --state "$STATE" --session-pid "$session_pid" \
+      >>"$LOG_FILE" 2>&1 < /dev/null &
   else
-    node "$SERVER" --home "$home" --port "$port" --state "$STATE" >>"$LOG_FILE" 2>&1 &
+    node "$SERVER" --home "$home" --port "$port" --state "$STATE" \
+      >>"$LOG_FILE" 2>&1 < /dev/null &
   fi
   child=$!
   identity=$(fm_pid_identity "$child") || identity=
