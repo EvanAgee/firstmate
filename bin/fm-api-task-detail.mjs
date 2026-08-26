@@ -108,14 +108,18 @@ const WATCH_DATE_PATTERN =
   /\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}\b/;
 
 function parseWatchTimes(deliveryLog, statusPath) {
-  return deliveryLog
-    .split(/\r?\n/)
-    .filter((line) => line.includes(statusPath))
-    .flatMap((line) => {
-      const dateText = line.match(WATCH_DATE_PATTERN)?.[0];
-      const timestamp = dateText ? Date.parse(dateText) : Number.NaN;
-      return Number.isFinite(timestamp) ? [timestamp] : [];
-    });
+  if (!statusPath) return [];
+  return deliveryLog.split(/\r?\n/).flatMap((line) => {
+    if (!line) return [];
+    const fields = line.split("\t");
+    if (fields.length < 3) return [];
+    const identity = fields[1];
+    const reason = fields.slice(2).join("\t");
+    if (!reason.includes(statusPath)) return [];
+    const dateText = identity.match(WATCH_DATE_PATTERN)?.[0];
+    const timestamp = dateText ? Date.parse(dateText) : Number.NaN;
+    return Number.isFinite(timestamp) ? [timestamp] : [];
+  });
 }
 
 function buildTimelineTimes(count, birthtimeMs, modifiedAtMs, watchTimes) {

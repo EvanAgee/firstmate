@@ -356,13 +356,19 @@ EOF
   # The watcher and the server resolve the home the same way, so the log
   # carries the resolved path. /tmp is a symlink on macOS; resolve it here too.
   status_path="$(cd "$home/state" && pwd -P)/timed-task.status"
-  # Real observation times, the way the watcher's delivery log records them.
-  cat > "$home/state/.watch-deliveries.log" <<EOF
-delivered Tue Aug 26 10:00:00 2026 $status_path
-delivered Tue Aug 26 10:05:00 2026 $status_path
-delivered Tue Aug 26 10:15:00 2026 $status_path
-delivered Tue Aug 26 10:20:00 2026 $home/state/other-task.status
-EOF
+  # watch_delivery_publish writes PID, identity (with lstart ctime), reason.
+  {
+    printf '%s\t%s\t%s\n' \
+      101 "Tue Aug 26 10:00:00 2026 bash fm-watch.sh" "signal: $status_path"
+    printf '%s\t%s\t%s\n' \
+      101 "Tue Aug 26 10:05:00 2026 bash fm-watch.sh" "signal: $status_path"
+    printf '%s\t%s\t%s\n' \
+      101 "Tue Aug 26 10:12:00 2026 bash fm-watch.sh" "check: github-health: ok"
+    printf '%s\t%s\t%s\n' \
+      101 "Tue Aug 26 10:15:00 2026 bash fm-watch.sh" "signal: $status_path"
+    printf '%s\t%s\t%s\n' \
+      101 "Tue Aug 26 10:20:00 2026 bash fm-watch.sh" "signal: $home/state/other-task.status"
+  } > "$home/state/.watch-deliveries.log"
   port=$(fm_test_api_start "$home")
   resp=$(fm_test_api_http "$port" /tasks/timed-task GET 15000)
   split_http <<<"$resp"

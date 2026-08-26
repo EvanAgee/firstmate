@@ -303,7 +303,7 @@ export function enrichFleetTasks(home, snapshot) {
 // stay out of this contract.
 
 function tasksAxiEnv(home) {
-  return {
+  const env = {
     ...process.env,
     FM_HOME: home,
     FM_STATE_OVERRIDE: path.join(home, "state"),
@@ -311,13 +311,15 @@ function tasksAxiEnv(home) {
     FM_CONFIG_OVERRIDE: path.join(home, "config"),
     FM_PROJECTS_OVERRIDE: path.join(home, "projects"),
   };
+  delete env.TASKS_AXI_FILE;
+  return env;
 }
 
 function runTasksAxi(home, args) {
   return new Promise((resolve, reject) => {
     execFile(
       "tasks-axi",
-      args,
+      [...args, "--file", path.join(home, "data", "backlog.md")],
       { cwd: home, env: tasksAxiEnv(home), encoding: "utf8", timeout: TASKS_AXI_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => {
         if (error) reject(error);

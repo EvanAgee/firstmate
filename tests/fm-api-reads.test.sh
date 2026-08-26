@@ -260,21 +260,35 @@ EOF
   pass "rigs extras default to empty values when the config files are absent"
 }
 
-make_fake_tasks_axi() {  # <dir>
-  local fakebin=$1
+make_fake_tasks_axi() {  # <dir> <expected-file>
+  local fakebin=$1 expected=$2
   mkdir -p "$fakebin"
-  cat > "$fakebin/tasks-axi" <<'SH'
+  cat > "$fakebin/tasks-axi" <<SH
 #!/usr/bin/env bash
 set -u
-if [ "${1:-}" = list ]; then
+[ -z "\${TASKS_AXI_FILE:-}" ] || exit 1
+file=
+args=()
+while [ "\$#" -gt 0 ]; do
+  if [ "\$1" = --file ]; then
+    file=\$2
+    shift 2
+    continue
+  fi
+  args+=("\$1")
+  shift
+done
+[ "\$file" = $(printf '%q' "$expected") ] || exit 1
+set -- "\${args[@]}"
+if [ "\${1:-}" = list ]; then
   # Two-space indented CSV rows, the shape parseCaptainIdList reads.
   printf '%s\n' '  ready-decision-key-a,captain,queued'
   printf '%s\n' '  blocked-hold,captain,queued'
   printf '%s\n' '  done-hold,captain,done'
   exit 0
 fi
-if [ "${1:-}" = show ]; then
-  case "$2" in
+if [ "\${1:-}" = show ]; then
+  case "\$2" in
     ready-decision-key-a)
       cat <<'EOF'
 task:
@@ -328,8 +342,9 @@ test_captain_holds_returns_open_holds_actionable_first() {
   local home port resp fakebin
   home=$(fm_test_api_home api-holds)
   fakebin="$home/fakebin"
-  make_fake_tasks_axi "$fakebin"
-  port=$(PATH="$fakebin:$PATH" fm_test_api_start "$home")
+  : > "$home/data/backlog.md"
+  make_fake_tasks_axi "$fakebin" "$(cd "$home" && pwd)/data/backlog.md"
+  port=$(TASKS_AXI_FILE="$home/other-backlog.md" PATH="$fakebin:$PATH" fm_test_api_start "$home")
   resp=$(fm_test_api_http "$port" /captain-holds GET 8000)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 200 ] || fail "holds status $HTTP_CODE, wanted 200: $HTTP_BODY"
