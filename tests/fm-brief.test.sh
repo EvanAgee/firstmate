@@ -229,8 +229,10 @@ test_ship_modes_generate_clean_briefs() {
     ' "$brief" || fail "$id: ordinary ship brief changed spacing before the Rules section"
     assert_grep "After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid." "$brief" \
       "$id: brief missing the PR review-feedback definition-of-done rule"
-    assert_grep "Before reporting done for any PR with user-visible UI changes, use the exact upload command supplied by the project brief to upload viewport screenshots and embed them in the PR body; local paths do not count." "$brief" \
-      "$id: brief missing the uploaded UI screenshot definition-of-done rule"
+    assert_grep "node ~/Sites/agent-workflow-kit/scripts/upload-artifact.mjs --ref pr-<PR#> --pr <PR#> <screenshot-file>..." "$brief" \
+      "$id: brief missing the Cloudflare upload command in the UI screenshot rule"
+    assert_grep "Committed repo paths (for example \`docs/reference/151/foo.png\`) and local file paths do NOT render in a private-repo PR and do NOT count." "$brief" \
+      "$id: brief missing the committed/local paths do-not-count clause"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
