@@ -176,3 +176,4 @@ It asserts that the script accepts no harness, model, or provider input, never c
 `tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
 `tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake `quota-axi --json` snapshot per case.
 It covers round-robin fewest-live-workers selection, the quota-headroom tie-break when live counts are equal, and the strongest-reasoning-class constraint.
+The equal-live tie-break case also holds the unmeasurable-runway invariant: a member with unmeasurable runway stays eligible rather than being dropped, and loses the tie only on lower known headroom.
