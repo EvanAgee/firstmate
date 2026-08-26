@@ -1,0 +1,209 @@
+{
+  "schema": "fm-fleet-snapshot.v1",
+  "generated": "2026-08-26T19:29:03Z",
+  "fm_home": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home",
+  "roots": {
+    "fm_root": "/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0ZQ2EBCQ57W9NZQN0N0XGDT",
+    "state": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/state",
+    "data": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/data",
+    "config": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/config",
+    "projects": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/projects"
+  },
+  "backlog": {
+    "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/data/backlog.md",
+    "present": true,
+    "records": [
+      {
+        "order": 1,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task",
+        "checked": false,
+        "title": "Ship Task",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task - Ship Task (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "ship-task",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/state/ship-task.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/state/ship-task.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "done",
+            "note": "PR merged",
+            "raw": "done: PR merged"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-evidence.4iZsJq/home/projects/alpha",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/data/ship-task/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown \u00b7 source: pane \u00b7 harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-26T19:29:03Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-26T19:29:03Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "done: PR merged"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task",
+        "steer": "bin/fm-send.sh fm-ship-task '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 1,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task",
+        "checked": false,
+        "title": "Ship Task",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task - Ship Task (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      "enrich": {
+        "title": "Ship Task",
+        "first_prompt": "Build the enrich window end to end.",
+        "model": "claude-opus-4-8",
+        "started_at": "2026-08-26T19:29:00.951Z",
+        "last_activity_at": "2026-08-26T19:29:02.990Z"
+      }
+    }
+  ],
+  "main_inventory": {
+    "valid": true,
+    "reason": null,
+    "orphan_in_flight": [],
+    "unstructured_current_count": 0
+  },
+  "scout_reports": [],
+  "secondmate_current": {
+    "registry": {
+      "present": false,
+      "available": true,
+      "complete": true,
+      "reason": null,
+      "provenance": "registered-table",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-evidence.4iZsJq/home/data/secondmates.md",
+      "freshness": {
+        "status": "fresh",
+        "observed_at": "2026-08-26T19:29:03Z"
+      },
+      "records": [],
+      "input_truncated": false,
+      "records_truncated": false,
+      "reasons": [],
+      "lines_in_window": 0,
+      "records_in_window": 0
+    },
+    "records": [],
+    "total_registered": 0,
+    "total": 0,
+    "shown": 0,
+    "truncated": 0
+  },
+  "secondmate_landed": {
+    "records": [],
+    "truncated": [],
+    "unreadable": [],
+    "partial": []
+  },
+  "secondmate_guidance": {
+    "note": "For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
+  }
+}

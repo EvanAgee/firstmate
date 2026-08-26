@@ -1,0 +1,37 @@
+{
+  "harness": "claude",
+  "model": "claude-opus-4-8",
+  "started_at": "2025-08-25T19:26:40.000Z",
+  "status_birth_ms": 1787772540953,
+  "status_mtime_ms": 1787772542990,
+  "first_observed_ms": 1787772540953,
+  "last_observed_ms": 1787772542990,
+  "first_vs_birth_ms": 0,
+  "last_vs_mtime_ms": 0,
+  "all_approximate": true,
+  "non_decreasing": true,
+  "ignored_delivery_log": true,
+  "events": [
+    {
+      "index": 1,
+      "verb": "spawned",
+      "observed_at": "2026-08-26T19:29:00.953Z",
+      "observed_ms": 1787772540953,
+      "time_approximate": true
+    },
+    {
+      "index": 2,
+      "verb": "working",
+      "observed_at": "2026-08-26T19:29:01.972Z",
+      "observed_ms": 1787772541972,
+      "time_approximate": true
+    },
+    {
+      "index": 3,
+      "verb": "done",
+      "observed_at": "2026-08-26T19:29:02.990Z",
+      "observed_ms": 1787772542990,
+      "time_approximate": true
+    }
+  ]
+}

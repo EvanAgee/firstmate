@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "note": "FLOOR RULE: nothing drops below Grok. codex gpt-5.6-sol is capped until 2026-09-01.",
+  "rigs": [
+    {
+      "name": "The task is a builder assignment.",
+      "rungs": [
+        {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "enabled": true
+        }
+      ],
+      "pin": {
+        "harness": "claude",
+        "model": "claude-opus-4-8",
+        "effort": "high",
+        "enabled": true
+      }
+    },
+    {
+      "name": "default",
+      "rungs": [
+        {
+          "harness": "pi",
+          "model": "xai/grok-4.6",
+          "effort": "medium",
+          "enabled": true
+        }
+      ],
+      "pin": null
+    }
+  ],
+  "defaultPin": {
+    "harness": "pi",
+    "model": "xai/grok-4.6",
+    "effort": "",
+    "enabled": true
+  },
+  "crew": "pi",
+  "secondmate": "claude opus high"
+}

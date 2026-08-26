@@ -1,0 +1,9 @@
+{
+  "ship-task": {
+    "title": "Ship Task",
+    "first_prompt": "Build the enrich window end to end.",
+    "model": "claude-opus-4-8",
+    "started_at": "2026-08-26T19:29:00.951Z",
+    "last_activity_at": "2026-08-26T19:29:02.990Z"
+  }
+}

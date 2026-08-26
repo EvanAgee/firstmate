@@ -1,0 +1,114 @@
+{
+  "ok": true,
+  "task": {
+    "id": "ship-task",
+    "kind": "ship",
+    "project": "alpha",
+    "harness": "claude",
+    "model": "claude-opus-4-8",
+    "started_at": "2025-08-25T19:26:40.000Z",
+    "brief": "# Task\n\nBuild the enrich window end to end.\n\n# Extra\n\nNot part of the prompt.\n",
+    "timeline": [
+      {
+        "index": 1,
+        "raw": "spawned: work begins",
+        "verb": "spawned",
+        "note": "work begins",
+        "observed_at": "2026-08-26T19:29:00.953Z",
+        "time_approximate": true
+      },
+      {
+        "index": 2,
+        "raw": "working: first pass done",
+        "verb": "working",
+        "note": "first pass done",
+        "observed_at": "2026-08-26T19:29:01.972Z",
+        "time_approximate": true
+      },
+      {
+        "index": 3,
+        "raw": "done: PR merged",
+        "verb": "done",
+        "note": "PR merged",
+        "observed_at": "2026-08-26T19:29:02.990Z",
+        "time_approximate": true
+      }
+    ],
+    "stage": {
+      "state": "unknown",
+      "source": "pane",
+      "detail": "harness state unavailable (unknown missing)"
+    },
+    "activity": {
+      "worktree": {
+        "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-evidence.4iZsJq/home/projects/alpha",
+        "branch": null,
+        "available": false
+      },
+      "commits": {
+        "base": "origin/main",
+        "count": 0,
+        "items": [],
+        "available": false
+      },
+      "diff": {
+        "base": "origin/main",
+        "files_changed": null,
+        "additions": null,
+        "deletions": null,
+        "stat": "",
+        "available": false
+      },
+      "uncommitted_file_count": null,
+      "pipeline": {
+        "steps": {
+          "review": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "test": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "lint": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "ci": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          }
+        },
+        "run": null,
+        "attestation": null,
+        "available": false
+      },
+      "pull_request": {
+        "url": null,
+        "state": null,
+        "ci": {
+          "status": "unknown",
+          "summary": "",
+          "checks": [],
+          "available": false
+        },
+        "review_threads": {
+          "open": null,
+          "resolved": null,
+          "total": null,
+          "available": false
+        },
+        "available": false
+      },
+      "pane_tail": {
+        "text": "",
+        "captured_at": null,
+        "available": false
+      }
+    }
+  }
+}

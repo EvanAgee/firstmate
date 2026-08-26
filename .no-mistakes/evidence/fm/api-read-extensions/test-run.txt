@@ -1,0 +1,55 @@
+bin/fm-test-run.sh tests/fm-api-reads.test.sh tests/fm-api-task-detail.test.sh tests/fm-api.test.sh
+
+FM_TEST_BEGIN 2026-08-26T19:29:01Z tests/fm-api-reads.test.sh
+ok - empty home captain queue is an empty list
+ok - captain queue returns the fixture parked decision and ignores a later working line
+ok - a resolved parked decision does not appear in the captain queue
+ok - empty home blocked list is an empty list
+ok - blocked list returns the fixture blocked task and not the parked decision
+ok - empty home rigs is an empty list
+ok - rigs returns pools, rungs, and each rung's enabled state
+ok - rigs carries the dispatch note, rig pins, and the crew and secondmate pin lines
+ok - rigs extras default to empty values when the config files are absent
+ok - captain holds returns open holds, actionable first, done dropped
+ok - captain holds is empty, not an error, when tasks-axi is absent
+FM_TEST_END tests/fm-api-reads.test.sh exit=0 duration_ms=9632
+
+FM_TEST_BEGIN 2026-08-26T19:29:10Z tests/fm-api-task-detail.test.sh
+ok - task detail returns the brief, timeline, stage, git, pipeline, PR, and live pane activity
+ok - unknown task ids return a JSON 404
+ok - a gh-axi skip conclusion is returned and does not fail CI
+ok - mixed status-line pipeline steps stay independent
+ok - a PR URL repo named test does not create test-step evidence
+ok - task detail carries meta runtime, started_at, and per-event observed times
+ok - started_at falls back to the status file birth time without meta
+FM_TEST_END tests/fm-api-task-detail.test.sh exit=0 duration_ms=8435
+
+FM_TEST_BEGIN 2026-08-26T19:29:19Z tests/fm-api.test.sh
+ok - health reports version and the served throwaway home
+ok - unknown paths return 404
+ok - server answers on 127.0.0.1 and not on a non-loopback address
+ok - port and home come from firstmate config, not hardcoded paths
+ok - each throwaway home gets its own API
+ok - start brings the API up and stop takes it down
+ok - start attaches when the API is already running
+ok - start replaces a server that belongs to another lock holder
+ok - API stays up while state/.lock names a live holder
+ok - malformed URL returns 400 and the server keeps serving
+ok - API exits when the session it was started under dies
+ok - FM_API_PORT overrides config/api-port
+ok - start refuses a symlinked config/api-port
+ok - first start writes a write token and later starts keep it
+ok - a preexisting write token survives start
+ok - start refuses a symlinked config/api-token
+ok - a captain note without the token is refused with 401
+ok - a captain note with the token lands in the wake queue encoded for firstmate
+ok - reads still need no token after a write token exists
+ok - a clarifying question-back stays a captain note and does not close a hold
+ok - empty home answers with an empty fleet, not an error
+ok - GET /fleet returns tasks, statuses, and stages for a fixture home
+ok - GET /fleet matches firstmate's own snapshot script
+ok - POST /fleet is method not allowed
+ok - fleet tasks carry the enrich window: title, brief prompt, and activity times
+FM_TEST_END tests/fm-api.test.sh exit=0 duration_ms=33040
+
+FM_TEST_SUMMARY total=3 failed=0 skipped_gate=0 duration_ms=51300
