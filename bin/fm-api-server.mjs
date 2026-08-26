@@ -42,6 +42,14 @@
 // POST /captain-notes requires Authorization: Bearer <token> and queues a
 // captain note for firstmate on the wake queue, encoded as operational input.
 // Reads need no token. A captain note never closes a parked decision.
+// POST /decisions/answer requires the token; body { task, key, text }. Queues
+//   an answer for firstmate on the same relay, which runs
+//   bin/fm-send.sh <task> --resolve-key <key> '<text>' on its next turn to
+//   close the parked decision. Unknown task: 404. Bad body: 400.
+// POST /rigs/rung requires the token; body { rig, rung, enabled }. Sets a
+//   rung's enabled state in config/crew-dispatch.json, where rig is the rule's
+//   `when` line or "default" and rung is its index. A change that would turn
+//   off a ladder's last enabled rung is refused 400. Unknown rig/rung: 404.
 
 import http from "node:http";
 import fs from "node:fs";
@@ -65,6 +73,8 @@ const MAX_BODY_BYTES = 16384;
 const MAX_NOTE_TEXT = 2000;
 const NOTE_KIND = "away-supervisor";
 const TASK_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+// The same key charset fm-send.sh accepts for --resolve-key.
+const DECISION_KEY = /^[A-Za-z0-9._-]{1,128}$/;
 const ENDED_VERBS = new Set(["done", "closed", "cancelled"]);
 
 const EVENT_QUIET_MS = 100;
@@ -402,6 +412,273 @@ function handleCaptainNote(req, res, home, options) {
     });
 }
 
+function parseDecisionAnswer(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  const task = body.task;
+  const key = body.key;
+  const text = body.text;
+  if (typeof task !== "string" || !TASK_SLUG.test(task)) {
+    const error = new Error("invalid task");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof key !== "string" || !DECISION_KEY.test(key)) {
+    const error = new Error("invalid key");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof text !== "string" || !text.trim()) {
+    const error = new Error("missing text");
+    error.status = 400;
+    throw error;
+  }
+  if (/[\r\n\u2028\u2029]/.test(text)) {
+    const error = new Error("text must be one line");
+    error.status = 400;
+    throw error;
+  }
+  if (text.length > MAX_NOTE_TEXT) {
+    const error = new Error("text too long");
+    error.status = 400;
+    throw error;
+  }
+  return { task, key, text };
+}
+
+// An answer rides the same operational-input relay as a captain note: this
+// server never types into a crewmate pane (it does not know the pane id).
+// Firstmate reads the queued line on its next supervision turn and runs
+// bin/fm-send.sh <task> --resolve-key <key> '<answer>' itself, which is the
+// close command fm-wake-drain prints for every open decision.
+async function queueDecisionAnswer(home, stateDir, answer) {
+  const body = `answer decision [key=${answer.key}] on task ${answer.task} with: ${answer.text}`;
+  const encoded = await encodeOperationalInput(body);
+  const key = `decision-answer:${answer.task}:${crypto.randomBytes(8).toString("hex")}`;
+  await enqueueCheckWake(home, stateDir, key, `check: decision-answer: ${encoded}`);
+}
+
+function handleDecisionAnswer(req, res, home, options) {
+  if (req.method !== "POST") {
+    req.resume();
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
+  if (!writeAuthorized(req, options.tokenFile)) {
+    req.resume();
+    json(res, 401, { ok: false, error: "unauthorized" });
+    return;
+  }
+  readBody(req, MAX_BODY_BYTES)
+    .then((raw) => {
+      const answer = parseDecisionAnswer(raw);
+      if (!taskExists(home, answer.task)) {
+        const error = new Error("not found");
+        error.status = 404;
+        throw error;
+      }
+      return queueDecisionAnswer(home, options.stateDir, answer);
+    })
+    .then(() => {
+      json(res, 200, { ok: true });
+    })
+    .catch((error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      const status = error && error.status ? error.status : 500;
+      const message = status === 500 ? "failed" : error.message;
+      json(res, status, { ok: false, error: message });
+    });
+}
+
+function parseRungToggle(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  const rig = body.rig;
+  const rung = body.rung;
+  const enabled = body.enabled;
+  if (typeof rig !== "string" || !rig) {
+    const error = new Error("invalid rig");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof rung !== "number" || !Number.isInteger(rung) || rung < 0) {
+    const error = new Error("invalid rung");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof enabled !== "boolean") {
+    const error = new Error("invalid enabled");
+    error.status = 400;
+    throw error;
+  }
+  return { rig, rung, enabled };
+}
+
+// The list of rung objects for one ladder: the fallback ("default") is the
+// top-level `default`, every other rig is the `use` of the rule whose `when`
+// matches. A single-object `use` counts as a one-rung list. Returns null when
+// the named rig is not in the config.
+function ladderList(config, rig) {
+  if (rig === "default") {
+    if (Array.isArray(config.default)) return config.default;
+    if (config.default && typeof config.default === "object") return [config.default];
+    return null;
+  }
+  if (!Array.isArray(config.rules)) return null;
+  for (const rule of config.rules) {
+    if (!rule || typeof rule !== "object") continue;
+    if (rule.when !== rig) continue;
+    if (Array.isArray(rule.use)) return rule.use;
+    if (rule.use && typeof rule.use === "object") return [rule.use];
+    return [];
+  }
+  return null;
+}
+
+function rungEnabled(rung) {
+  return Boolean(rung) && typeof rung === "object" && rung.enabled !== false;
+}
+
+// Set enabled on the rung at `index` in `list`, refusing a change that would
+// leave the ladder with no enabled rung. Returns { error } or the new list.
+function setRungEnabled(list, index, enabled) {
+  if (index >= list.length) return { error: "rung not found" };
+  const target = list[index];
+  if (!target || typeof target !== "object") return { error: "rung not found" };
+  const next = list.map((rung, i) => {
+    if (i !== index) return rung;
+    const copy = { ...rung };
+    if (enabled) delete copy.enabled;
+    else copy.enabled = false;
+    return copy;
+  });
+  if (!next.some(rungEnabled)) {
+    return { error: "can't turn off the last enabled rung" };
+  }
+  return { list: next };
+}
+
+// Apply a rung toggle to the parsed crew-dispatch config, returning the new
+// config or { error }. Ported from the dashboard's applyRungEnabled so the
+// config owner enforces the same last-rung-on rule.
+function applyRungToggle(config, toggle) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return { error: "dispatch file is not valid json" };
+  }
+  const list = ladderList(config, toggle.rig);
+  if (list === null) return { error: "rig not found" };
+  const next = setRungEnabled(list, toggle.rung, toggle.enabled);
+  if ("error" in next) return next;
+  if (toggle.rig === "default") {
+    return { config: { ...config, default: next.list } };
+  }
+  const rules = config.rules.map((rule) => {
+    if (!rule || typeof rule !== "object" || rule.when !== toggle.rig) return rule;
+    return { ...rule, use: next.list };
+  });
+  return { config: { ...config, rules } };
+}
+
+function readDispatchConfig(home) {
+  const file = path.join(home, "config", "crew-dispatch.json");
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) {
+      const error = new Error("dispatch file is a symlink");
+      error.status = 400;
+      throw error;
+    }
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      const missing = new Error("rig not found");
+      missing.status = 404;
+      throw missing;
+    }
+    throw error;
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    const error = new Error("rig not found");
+    error.status = 404;
+    throw error;
+  }
+  try {
+    return { file, config: JSON.parse(raw) };
+  } catch {
+    const error = new Error("dispatch file is not valid json");
+    error.status = 400;
+    throw error;
+  }
+}
+
+function writeDispatchConfig(file, config) {
+  const payload = `${JSON.stringify(config, null, 2)}\n`;
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, payload);
+  fs.renameSync(tmp, file);
+}
+
+function handleRungToggle(req, res, home, options) {
+  if (req.method !== "POST") {
+    req.resume();
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
+  if (!writeAuthorized(req, options.tokenFile)) {
+    req.resume();
+    json(res, 401, { ok: false, error: "unauthorized" });
+    return;
+  }
+  readBody(req, MAX_BODY_BYTES)
+    .then((raw) => {
+      const toggle = parseRungToggle(raw);
+      const { file, config } = readDispatchConfig(home);
+      const next = applyRungToggle(config, toggle);
+      if ("error" in next) {
+        const error = new Error(next.error);
+        error.status = next.error === "rig not found" || next.error === "rung not found" ? 404 : 400;
+        throw error;
+      }
+      writeDispatchConfig(file, next.config);
+      json(res, 200, { ok: true, rig: toggle.rig, rung: toggle.rung, enabled: toggle.enabled });
+    })
+    .catch((error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      const status = error && error.status ? error.status : 500;
+      const message = status === 500 ? "failed" : error.message;
+      json(res, status, { ok: false, error: message });
+    });
+}
+
 function handleTaskDetail(req, res, home, stateDir, task) {
   taskDetailBody(home, task, { stateDir })
     .then((body) => {
@@ -499,6 +776,14 @@ function handle(req, res, home, options, events) {
   }
   if (url.pathname === "/captain-notes") {
     handleCaptainNote(req, res, home, options);
+    return;
+  }
+  if (url.pathname === "/decisions/answer") {
+    handleDecisionAnswer(req, res, home, options);
+    return;
+  }
+  if (url.pathname === "/rigs/rung") {
+    handleRungToggle(req, res, home, options);
     return;
   }
   if (url.pathname === "/events") {
