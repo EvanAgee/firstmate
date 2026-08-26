@@ -1,0 +1,19 @@
+=== locked primary session start (FM_API=1) ===
+api: started pid=92433 port=50468 home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-api-evidence.5tQQiq/session/home
+
+=== api lines from digest ===
+api: started pid=92433 port=50468 home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-api-evidence.5tQQiq/session/home
+
+=== state after session start ===
+port=50468
+pid=92433
+
+=== GET /health after session start ===
+HTTP/1.1 200
+content-type: application/json; charset=utf-8
+content-length: 120
+date: Wed, 26 Aug 2026 01:55:14 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"version":"1","home":"/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-api-evidence.5tQQiq/session/home"}

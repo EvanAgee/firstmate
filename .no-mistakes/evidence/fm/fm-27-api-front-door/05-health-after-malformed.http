@@ -1,0 +1,8 @@
+HTTP/1.1 200
+content-type: application/json; charset=utf-8
+content-length: 120
+date: Wed, 26 Aug 2026 01:55:10 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"version":"1","home":"/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-api-evidence.5tQQiq/primary/home"}

@@ -1,0 +1,7 @@
+=== secondmate session start (FM_API=1, .fm-secondmate-home present) ===
+
+=== api lines from digest ===
+(no api: lines)
+
+=== pid file after secondmate session start ===
+no .api.pid (API not started)

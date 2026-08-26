@@ -1,0 +1,7 @@
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Content-Length: 37
+Date: Wed, 26 Aug 2026 01:55:10 GMT
+Connection: close
+
+{"ok":false,"error":"malformed url"}

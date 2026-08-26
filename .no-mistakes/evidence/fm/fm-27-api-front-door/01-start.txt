@@ -1,0 +1,8 @@
+=== fm-api.sh start (throwaway home) ===
+api: started pid=92058 port=50455 home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-api-evidence.5tQQiq/primary/home
+
+=== persisted state ===
+port=50455
+pid=92058
+session-pid-file=
+home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-api-evidence.5tQQiq/primary/home

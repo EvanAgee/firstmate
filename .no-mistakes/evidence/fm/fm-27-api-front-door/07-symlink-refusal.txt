@@ -1,0 +1,7 @@
+=== config/api-port is a symlink ===
+lrwxr-xr-x@ 1 evanagee  staff  106 Aug 25 20:55 /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-api-evidence.5tQQiq/symlink/home/config/api-port -> /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-api-evidence.5tQQiq/symlink/home/config/api-port-real
+
+=== fm-api.sh start ===
+api: FAILED - config/api-port must not be a symlink
+exit=1
+pid-file-exists=no
