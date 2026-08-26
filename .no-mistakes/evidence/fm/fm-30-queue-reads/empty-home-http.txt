@@ -1,0 +1,33 @@
+=== empty home start ===
+api: started pid=63446 port=49778 home=/tmp/fm-api-reads-evidence.qFQAxA/empty-home
+bound port: 49778
+
+=== GET /captain-queue (empty home) ===
+HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+content-length: 27
+date: Wed, 26 Aug 2026 11:16:47 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"decisions":[]}
+
+=== GET /blocked (empty home) ===
+HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+content-length: 25
+date: Wed, 26 Aug 2026 11:16:47 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"blocked":[]}
+
+=== GET /rigs (empty home) ===
+HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+content-length: 22
+date: Wed, 26 Aug 2026 11:16:47 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"rigs":[]}

@@ -1,0 +1,33 @@
+=== fixture home start ===
+api: started pid=63808 port=49781 home=/tmp/fm-api-reads-evidence.qFQAxA/fixture-home
+bound port: 49781
+
+=== GET /captain-queue ===
+HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+content-length: 113
+date: Wed, 26 Aug 2026 11:16:47 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"decisions":[{"task":"ask-me","key":"api-shape","summary":"which JSON shape should the queue use?"}]}
+
+=== GET /blocked ===
+HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+content-length: 99
+date: Wed, 26 Aug 2026 11:16:47 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"blocked":[{"task":"stuck-task","key":"missing-tool","summary":"jq is not installed"}]}
+
+=== GET /rigs ===
+HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+content-length: 319
+date: Wed, 26 Aug 2026 11:16:47 GMT
+connection: keep-alive
+keep-alive: timeout=5
+
+{"ok":true,"rigs":[{"name":"The task is a builder assignment.","rungs":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":true},{"harness":"grok","model":"grok-4","effort":"high","enabled":false}]},{"name":"default","rungs":[{"harness":"pi","model":"xai/grok-4.6","effort":"medium","enabled":true}]}]}

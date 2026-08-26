@@ -1,0 +1,11 @@
+// GET /health
+//   { ok, version, home }
+// GET /captain-queue
+//   { ok, decisions: [{ task, key, summary }] }
+//   Parked decisions still open in this home. Empty home: decisions is [].
+// GET /blocked
+//   { ok, blocked: [{ task, key, summary }] }
+//   Blocked tasks still open in this home. Empty home: blocked is [].
+// GET /rigs
+//   { ok, rigs: [{ name, rungs: [{ harness, model, effort, enabled }] }] }
+//   Dispatch ladders and each rung's enabled state. Missing config: rigs is [].
