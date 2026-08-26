@@ -53,7 +53,6 @@ die() {
 read_port_config() {
   local line
   [ -f "$CONFIG/api-port" ] || return 0
-  [ -L "$CONFIG/api-port" ] && die "config/api-port must not be a symlink"
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       ''|\#*) continue ;;
@@ -66,6 +65,7 @@ read_port_config() {
 resolve_port() {
   local port=${FM_API_PORT:-}
   if [ -z "$port" ]; then
+    [ -L "$CONFIG/api-port" ] && die "config/api-port must not be a symlink"
     port=$(read_port_config) || port=
   fi
   port=${port:-$DEFAULT_PORT}

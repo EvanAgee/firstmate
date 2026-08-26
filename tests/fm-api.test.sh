@@ -284,6 +284,23 @@ test_api_exits_when_session_pid_dies() {
   pass "API exits when the session it was started under dies"
 }
 
+test_symlinked_api_port_refuses_start() {
+  local home target out status
+  home=$(fm_test_api_home api-port-symlink)
+  FM_TEST_API_HOMES+=("$home")
+  target="$home/config/api-port-real"
+  printf '0\n' > "$target"
+  rm -f "$home/config/api-port"
+  ln -s "$target" "$home/config/api-port"
+  status=0
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-api.sh" start 2>&1) || status=$?
+  [ "$status" -ne 0 ] || fail "start accepted a symlinked config/api-port: $out"
+  assert_contains "$out" "must not be a symlink" "symlink refusal: $out"
+  [ ! -f "$home/state/.api.pid" ] || fail "start recorded a pid after refusing a symlink"
+  fm_test_api_stop "$home"
+  pass "start refuses a symlinked config/api-port"
+}
+
 test_env_port_overrides_config() {
   local home port resp
   home=$(fm_test_api_home api-env-port)
@@ -312,5 +329,6 @@ test_api_stays_up_when_lock_holder_is_replaced
 test_malformed_url_returns_400_and_keeps_serving
 test_api_exits_when_session_pid_dies
 test_env_port_overrides_config
+test_symlinked_api_port_refuses_start
 
 echo "# fm-api.test.sh: all assertions passed"
