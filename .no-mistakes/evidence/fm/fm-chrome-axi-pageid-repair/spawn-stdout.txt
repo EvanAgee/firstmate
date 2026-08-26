@@ -1,0 +1,2 @@
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-chrome-spawn-evidence.RHlFaA/home/data/chrome-pin-z1/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned chrome-pin-z1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-chrome-pin-z1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-chrome-spawn-evidence.RHlFaA/wt

@@ -1,0 +1,4 @@
+pinned_exit=0
+unpinned_exit=0
+screenshot_exit=0
+axi_version=0.1.29

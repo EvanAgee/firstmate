@@ -1,0 +1,5 @@
+treehouse get
+export GOTMPDIR=/tmp/fm-chrome-pin-z1/gotmp
+export CHROME_DEVTOOLS_AXI_MCP_PATH='/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0YZGSD7QP4XBF0N1GF0V2C9/bin/fm-chrome-devtools-mcp.js'
+export CHROME_DEVTOOLS_AXI_SESSION='chrome-pin-z1'
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0YZGSD7QP4XBF0N1GF0V2C9/bin/fm-operational-input.sh' encode launch-brief < '/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-chrome-spawn-evidence.RHlFaA/home/data/chrome-pin-z1/brief.md')"

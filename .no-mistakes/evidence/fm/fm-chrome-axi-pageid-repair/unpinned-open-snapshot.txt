@@ -1,0 +1,7 @@
+page:
+  url: "https://example.com"
+  refs: 0
+snapshot:
+MCP error -32602: Input validation error: Invalid arguments for tool take_snapshot: Required at pageId
+help[1]:
+  Use `chrome-devtools-axi eval <expr>` for JS expressions. For multi-statement code, pass a function: `eval "() => { ...; return result }"`
