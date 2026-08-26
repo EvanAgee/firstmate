@@ -1,0 +1,6 @@
+AFTER exit=0
+--- pane-tail exists? ---
+NO
+--- brief still present? ---
+YES
+Remote secondmate brief.

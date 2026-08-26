@@ -1,0 +1,152 @@
+{
+  "ok": true,
+  "task": {
+    "id": "detail-task",
+    "kind": "ship",
+    "project": "widget",
+    "brief": "# Build the task detail API\n\nReturn the whole worker picture.\n",
+    "timeline": [
+      {
+        "index": 1,
+        "raw": "working: setup complete",
+        "verb": "working",
+        "note": "setup complete"
+      },
+      {
+        "index": 2,
+        "raw": "working: review passed; test passed; lint passed",
+        "verb": "working",
+        "note": "review passed; test passed; lint passed"
+      },
+      {
+        "index": 3,
+        "raw": "done: PR https://github.com/acme/widget/pull/77 checks green",
+        "verb": "done",
+        "note": "PR https://github.com/acme/widget/pull/77 checks green"
+      }
+    ],
+    "stage": {
+      "state": "done",
+      "source": "run-step",
+      "detail": "checks green: PR ready for review (still monitoring for merge/close)"
+    },
+    "activity": {
+      "worktree": {
+        "path": "/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-task-detail-evidence.l6vGxZ/home/projects/widget",
+        "branch": "fm/api-detail",
+        "head": "d32d51d28713137927b55e1019621dfb7ec6a57e",
+        "available": true
+      },
+      "commits": {
+        "base": "origin/main",
+        "count": 2,
+        "items": [
+          {
+            "sha": "d32d51d28713137927b55e1019621dfb7ec6a57e",
+            "time": "2026-08-26T09:39:57-05:00",
+            "message": "add second file"
+          },
+          {
+            "sha": "10e7238483e0b24e036a17c52f6f1bc61a40b934",
+            "time": "2026-08-26T09:39:57-05:00",
+            "message": "add beta"
+          }
+        ],
+        "available": true
+      },
+      "diff": {
+        "base": "origin/main",
+        "files_changed": 2,
+        "additions": 2,
+        "deletions": 0,
+        "stat": " first.txt  | 1 +\n second.txt | 1 +\n 2 files changed, 2 insertions(+)",
+        "available": true
+      },
+      "uncommitted_file_count": 1,
+      "pipeline": {
+        "steps": {
+          "review": {
+            "status": "passed",
+            "raw": "completed",
+            "source": "no-mistakes"
+          },
+          "test": {
+            "status": "passed",
+            "raw": "completed",
+            "source": "no-mistakes"
+          },
+          "lint": {
+            "status": "passed",
+            "raw": "completed",
+            "source": "no-mistakes"
+          },
+          "ci": {
+            "status": "passed",
+            "raw": "2 passed, 0 failed, 2 total",
+            "source": "github-checks"
+          }
+        },
+        "run": {
+          "id": "fixture-run",
+          "branch": "fm/api-detail",
+          "head": "d32d51d2",
+          "status": "ci",
+          "outcome": null
+        },
+        "attestation": {
+          "head_sha": "fixture-head",
+          "steps": [
+            {
+              "step": "review",
+              "status": "completed"
+            },
+            {
+              "step": "test",
+              "status": "completed"
+            },
+            {
+              "step": "lint",
+              "status": "completed"
+            },
+            {
+              "step": "ci",
+              "status": "pending"
+            }
+          ]
+        },
+        "available": true
+      },
+      "pull_request": {
+        "url": "https://github.com/acme/widget/pull/77",
+        "state": "open",
+        "ci": {
+          "status": "passed",
+          "summary": "2 passed, 0 failed, 2 total",
+          "checks": [
+            {
+              "name": "Bash tests",
+              "status": "pass"
+            },
+            {
+              "name": "Lint shell scripts",
+              "status": "pass"
+            }
+          ],
+          "available": true
+        },
+        "review_threads": {
+          "open": 1,
+          "resolved": 2,
+          "total": 3,
+          "available": true
+        },
+        "available": true
+      },
+      "pane_tail": {
+        "text": "running bash tests\nlatest assertion passed",
+        "captured_at": "2026-08-26T14:39:57.678Z",
+        "available": true
+      }
+    }
+  }
+}

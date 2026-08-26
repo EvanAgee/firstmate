@@ -1,0 +1,31 @@
+GET /tasks/detail-task  -> 200
+  ok=true
+  task.id=detail-task
+  brief includes "Return the whole worker picture."
+  timeline.length=3  stage.state=done  stage.source=run-step
+  activity.worktree.branch=fm/api-detail
+  activity.commits.count=2  first message="add second file"
+  activity.diff.files_changed=2  additions=2  deletions=0
+  activity.uncommitted_file_count=1
+  pipeline.steps.review/test/lint/ci=passed
+  pull_request.url=https://github.com/acme/widget/pull/77
+  pull_request.ci.status=passed
+  review_threads.open=1  resolved=2
+  pane_tail.available=true  text includes "running bash tests"
+
+GET /tasks/no-such-task  -> 404
+  {"ok":false,"error":"task not found"}
+
+GET /tasks/skip-task  -> 200
+  pull_request.ci.status=passed
+  checks=[{name:Build,status:skip},{name:Test,status:pass}]
+
+GET /tasks/mixed-task  -> 200
+  pipeline.steps.review=passed (status-timeline)
+  pipeline.steps.test=failed (status-timeline)
+  pipeline.steps.lint=passed (status-timeline)
+
+GET /tasks/url-task  -> 200
+  status line: done: PR https://github.com/acme/test/pull/77 checks green
+  pipeline.steps.test.status=unknown  source=none
+  pipeline.steps.ci.status=passed  source=status-timeline

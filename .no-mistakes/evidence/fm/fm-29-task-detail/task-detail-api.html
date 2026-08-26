@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GET /tasks/&lt;id&gt; live responses</title>
+  <style>
+    body { font: 15px/1.45 ui-sans-serif, system-ui, sans-serif; margin: 24px; color: #111; background: #f6f5f1; }
+    h1 { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
+    h2 { font-size: 16px; margin: 28px 0 8px; }
+    p.lead { margin: 0 0 20px; color: #444; max-width: 72ch; }
+    .req { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    .code { display: inline-block; padding: 1px 7px; border-radius: 4px; background: #e8e4d9; }
+    .ok { color: #0b6b2b; font-weight: 650; }
+    .err { color: #9b1c1c; font-weight: 650; }
+    pre { background: #1e1e1c; color: #f3f0e7; padding: 14px 16px; border-radius: 8px; overflow: auto; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    table { border-collapse: collapse; background: #fff; }
+    td, th { border: 1px solid #d9d4c8; padding: 6px 10px; text-align: left; font-size: 13px; }
+    th { background: #efeae0; }
+  </style>
+</head>
+<body>
+  <h1>Task detail API, live HTTP</h1>
+  <p class="lead">Captured from a throwaway Firstmate home talking to the real localhost server. Dashboard consumers get this JSON. They never open firstmate state files.</p>
+
+  <h2><span class="req">GET /tasks/detail-task</span> <span class="ok">200</span></h2>
+  <table>
+    <tr><th>Field</th><th>Value</th></tr>
+    <tr><td>brief</td><td>full markdown, includes "Return the whole worker picture."</td></tr>
+    <tr><td>timeline</td><td>3 events, last verb <span class="code">done</span></td></tr>
+    <tr><td>stage</td><td>state=done, source=run-step</td></tr>
+    <tr><td>worktree / branch</td><td>available, fm/api-detail</td></tr>
+    <tr><td>commits</td><td>2 since origin/main; newest “add second file”</td></tr>
+    <tr><td>diff --stat</td><td>2 files changed, 2 insertions(+)</td></tr>
+    <tr><td>uncommitted files</td><td>1</td></tr>
+    <tr><td>review / test / lint / ci</td><td>passed</td></tr>
+    <tr><td>PR</td><td>https://github.com/acme/widget/pull/77, CI passed, 1 open / 2 resolved threads</td></tr>
+    <tr><td>pane_tail</td><td>available, "running bash tests"</td></tr>
+  </table>
+
+  <h2><span class="req">GET /tasks/no-such-task</span> <span class="err">404</span></h2>
+  <pre>{
+  "ok": false,
+  "error": "task not found"
+}</pre>
+
+  <h2>Review-round cases</h2>
+  <table>
+    <tr><th>Request</th><th>What the body proved</th></tr>
+    <tr><td class="req">GET /tasks/skip-task</td><td>Build check status=skip kept; overall CI still passed</td></tr>
+    <tr><td class="req">GET /tasks/mixed-task</td><td>review passed, test failed, lint passed from one status line</td></tr>
+    <tr><td class="req">GET /tasks/url-task</td><td>repo path acme/test did not create a test step; ci=passed from "checks green"</td></tr>
+  </table>
+</body>
+</html>

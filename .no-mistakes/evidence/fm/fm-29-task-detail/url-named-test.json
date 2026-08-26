@@ -1,0 +1,93 @@
+{
+  "ok": true,
+  "task": {
+    "id": "url-task",
+    "kind": "ship",
+    "project": "widget",
+    "brief": "A repo named test is not a test step.\n",
+    "timeline": [
+      {
+        "index": 1,
+        "raw": "done: PR https://github.com/acme/test/pull/77 checks green",
+        "verb": "done",
+        "note": "PR https://github.com/acme/test/pull/77 checks green"
+      }
+    ],
+    "stage": {
+      "state": "unknown",
+      "source": "none",
+      "detail": "worktree gone (torn down?)"
+    },
+    "activity": {
+      "worktree": {
+        "path": null,
+        "branch": null,
+        "available": false
+      },
+      "commits": {
+        "base": "origin/main",
+        "count": 0,
+        "items": [],
+        "available": false
+      },
+      "diff": {
+        "base": "origin/main",
+        "files_changed": null,
+        "additions": null,
+        "deletions": null,
+        "stat": "",
+        "available": false
+      },
+      "uncommitted_file_count": null,
+      "pipeline": {
+        "steps": {
+          "review": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "test": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "lint": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          },
+          "ci": {
+            "status": "passed",
+            "raw": "passed",
+            "source": "status-timeline"
+          }
+        },
+        "run": null,
+        "attestation": null,
+        "available": true
+      },
+      "pull_request": {
+        "url": "https://github.com/acme/test/pull/77",
+        "state": null,
+        "ci": {
+          "status": "unknown",
+          "summary": "",
+          "checks": [],
+          "available": false
+        },
+        "review_threads": {
+          "open": null,
+          "resolved": null,
+          "total": null,
+          "available": false
+        },
+        "available": false
+      },
+      "pane_tail": {
+        "text": "",
+        "captured_at": null,
+        "available": false
+      }
+    }
+  }
+}

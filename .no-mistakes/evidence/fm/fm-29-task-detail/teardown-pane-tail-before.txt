@@ -1,0 +1,7 @@
+BEFORE
+task-x1.meta
+task-x1.pane-tail
+task-x1.status
+task-x1.turn-ended
+--- pane-tail ---
+last watcher snapshot

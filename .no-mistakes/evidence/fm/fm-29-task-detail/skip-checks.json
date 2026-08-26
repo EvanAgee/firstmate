@@ -1,0 +1,140 @@
+{
+  "ok": true,
+  "task": {
+    "id": "skip-task",
+    "kind": "ship",
+    "project": "widget",
+    "brief": "Keep skipped checks.\n",
+    "timeline": [
+      {
+        "index": 1,
+        "raw": "done: PR https://github.com/acme/widget/pull/77 checks green",
+        "verb": "done",
+        "note": "PR https://github.com/acme/widget/pull/77 checks green"
+      }
+    ],
+    "stage": {
+      "state": "done",
+      "source": "run-step",
+      "detail": "checks green: PR ready for review (still monitoring for merge/close)"
+    },
+    "activity": {
+      "worktree": {
+        "path": "/private/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-task-skip-evidence.Uxurou/home/projects/widget",
+        "branch": "fm/api-detail",
+        "head": "80c32d7c3a567fa0af92aa681183bc636b19ed8e",
+        "available": true
+      },
+      "commits": {
+        "base": "origin/main",
+        "count": 2,
+        "items": [
+          {
+            "sha": "80c32d7c3a567fa0af92aa681183bc636b19ed8e",
+            "time": "2026-08-26T09:39:59-05:00",
+            "message": "add second file"
+          },
+          {
+            "sha": "dbf280d9fde982b1b5e30fd2cb7e0c0550038be7",
+            "time": "2026-08-26T09:39:59-05:00",
+            "message": "add beta"
+          }
+        ],
+        "available": true
+      },
+      "diff": {
+        "base": "origin/main",
+        "files_changed": 2,
+        "additions": 2,
+        "deletions": 0,
+        "stat": " first.txt  | 1 +\n second.txt | 1 +\n 2 files changed, 2 insertions(+)",
+        "available": true
+      },
+      "uncommitted_file_count": 1,
+      "pipeline": {
+        "steps": {
+          "review": {
+            "status": "passed",
+            "raw": "completed",
+            "source": "no-mistakes"
+          },
+          "test": {
+            "status": "passed",
+            "raw": "completed",
+            "source": "no-mistakes"
+          },
+          "lint": {
+            "status": "passed",
+            "raw": "completed",
+            "source": "no-mistakes"
+          },
+          "ci": {
+            "status": "passed",
+            "raw": "1 passed, 0 failed, 1 skipped, 2 total",
+            "source": "github-checks"
+          }
+        },
+        "run": {
+          "id": "fixture-run",
+          "branch": "fm/api-detail",
+          "head": "80c32d7c",
+          "status": "ci",
+          "outcome": null
+        },
+        "attestation": {
+          "head_sha": "fixture-head",
+          "steps": [
+            {
+              "step": "review",
+              "status": "completed"
+            },
+            {
+              "step": "test",
+              "status": "completed"
+            },
+            {
+              "step": "lint",
+              "status": "completed"
+            },
+            {
+              "step": "ci",
+              "status": "pending"
+            }
+          ]
+        },
+        "available": true
+      },
+      "pull_request": {
+        "url": "https://github.com/acme/widget/pull/77",
+        "state": "open",
+        "ci": {
+          "status": "passed",
+          "summary": "1 passed, 0 failed, 1 skipped, 2 total",
+          "checks": [
+            {
+              "name": "Build",
+              "status": "skip"
+            },
+            {
+              "name": "Test",
+              "status": "pass"
+            }
+          ],
+          "available": true
+        },
+        "review_threads": {
+          "open": 1,
+          "resolved": 2,
+          "total": 3,
+          "available": true
+        },
+        "available": true
+      },
+      "pane_tail": {
+        "text": "",
+        "captured_at": null,
+        "available": false
+      }
+    }
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "ok": true,
+  "task": {
+    "id": "mixed-task",
+    "kind": "ship",
+    "project": "widget",
+    "brief": "Mixed pipeline outcomes stay independent.\n",
+    "timeline": [
+      {
+        "index": 1,
+        "raw": "working: review passed; test failed; lint passed",
+        "verb": "working",
+        "note": "review passed; test failed; lint passed"
+      }
+    ],
+    "stage": {
+      "state": "unknown",
+      "source": "none",
+      "detail": "worktree gone (torn down?)"
+    },
+    "activity": {
+      "worktree": {
+        "path": null,
+        "branch": null,
+        "available": false
+      },
+      "commits": {
+        "base": "origin/main",
+        "count": 0,
+        "items": [],
+        "available": false
+      },
+      "diff": {
+        "base": "origin/main",
+        "files_changed": null,
+        "additions": null,
+        "deletions": null,
+        "stat": "",
+        "available": false
+      },
+      "uncommitted_file_count": null,
+      "pipeline": {
+        "steps": {
+          "review": {
+            "status": "passed",
+            "raw": "passed",
+            "source": "status-timeline"
+          },
+          "test": {
+            "status": "failed",
+            "raw": "failed",
+            "source": "status-timeline"
+          },
+          "lint": {
+            "status": "passed",
+            "raw": "passed",
+            "source": "status-timeline"
+          },
+          "ci": {
+            "status": "unknown",
+            "raw": null,
+            "source": "none"
+          }
+        },
+        "run": null,
+        "attestation": null,
+        "available": true
+      },
+      "pull_request": {
+        "url": null,
+        "state": null,
+        "ci": {
+          "status": "unknown",
+          "summary": "",
+          "checks": [],
+          "available": false
+        },
+        "review_threads": {
+          "open": null,
+          "resolved": null,
+          "total": null,
+          "available": false
+        },
+        "available": false
+      },
+      "pane_tail": {
+        "text": "",
+        "captured_at": null,
+        "available": false
+      }
+    }
+  }
+}
