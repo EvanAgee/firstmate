@@ -20,8 +20,19 @@
 if [ -z "${FM_TEST_API_HELPERS_SOURCED:-}" ]; then
   FM_TEST_API_HELPERS_SOURCED=1
   FM_TEST_API_HOMES=()
+  FM_TEST_API_SSE_PIDS=()
+  fm_test_api_sse_stop_all() {
+    local pid
+    for pid in "${FM_TEST_API_SSE_PIDS[@]:-}"; do
+      [ -n "$pid" ] || continue
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    done
+    FM_TEST_API_SSE_PIDS=()
+  }
   fm_test_api_stop_all() {
     local home
+    fm_test_api_sse_stop_all
     for home in "${FM_TEST_API_HOMES[@]:-}"; do
       [ -n "$home" ] || continue
       FM_HOME="$home" "$ROOT/bin/fm-api.sh" stop >/dev/null 2>&1 || true
@@ -161,4 +172,159 @@ for (const list of Object.values(nets)) {
 }
 process.exit(1);
 ' 2>/dev/null
+}
+
+# fm_test_api_sse_start <port> <out-file>: hold GET /events and append one JSON
+# line per frame to out-file. Sets FM_TEST_API_SSE_PID to the collector pid.
+fm_test_api_sse_start() {
+  local port=$1 out=$2 pid
+  [ -n "$port" ] || fail "fm_test_api_sse_start requires a port"
+  [ -n "$out" ] || fail "fm_test_api_sse_start requires an output file"
+  : > "$out"
+  PORT=$port OUT=$out node - <<'EOF' &
+const http = require("http");
+const fs = require("fs");
+const port = process.env.PORT;
+const out = process.env.OUT;
+
+function writeLine(obj) {
+  fs.appendFileSync(out, JSON.stringify(obj) + "\n");
+}
+
+function handleFrame(frame) {
+  const lines = frame.split(/\r?\n/);
+  let event = "";
+  const data = [];
+  let comment = "";
+  for (const line of lines) {
+    if (line.startsWith(":")) {
+      comment = line.replace(/^:\s?/, "");
+      continue;
+    }
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  }
+  if (comment && data.length === 0 && !event) {
+    writeLine({ kind: "comment", text: comment });
+    return;
+  }
+  if (data.length === 0 && !event) return;
+  let parsed = data.join("\n");
+  try {
+    parsed = JSON.parse(parsed);
+  } catch {
+    /* keep the raw string */
+  }
+  writeLine({ kind: "event", event, data: parsed });
+}
+
+const req = http.get({
+  host: "127.0.0.1",
+  port,
+  path: "/events",
+  headers: { Accept: "text/event-stream" },
+}, (res) => {
+  writeLine({ kind: "open", status: res.statusCode });
+  let buf = "";
+  res.on("data", (chunk) => {
+    buf += chunk.toString("utf8");
+    for (;;) {
+      const idx = buf.search(/\r?\n\r?\n/);
+      if (idx === -1) break;
+      const nl = buf[idx] === "\r" ? 4 : 2;
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + nl);
+      handleFrame(frame);
+    }
+  });
+});
+req.setTimeout(0);
+req.on("error", (error) => {
+  writeLine({ kind: "error", message: error.message });
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  req.destroy();
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  req.destroy();
+  process.exit(0);
+});
+EOF
+  pid=$!
+  FM_TEST_API_SSE_PIDS+=("$pid")
+  # The calling test reads this after the helper returns.
+  # shellcheck disable=SC2034
+  FM_TEST_API_SSE_PID=$pid
+}
+
+# fm_test_api_sse_stop <pid>
+fm_test_api_sse_stop() {
+  local pid=$1 other
+  local -a kept=()
+  [ -n "$pid" ] || return 0
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  for other in "${FM_TEST_API_SSE_PIDS[@]:-}"; do
+    [ -n "$other" ] || continue
+    [ "$other" = "$pid" ] && continue
+    kept+=("$other")
+  done
+  FM_TEST_API_SSE_PIDS=("${kept[@]+"${kept[@]}"}")
+}
+
+# fm_test_api_sse_wait <out-file> <kind> [event-type] [timeout-seconds]
+# Wait until a JSON line of that kind (and event type, when given) appears.
+# Prints the matching line.
+fm_test_api_sse_wait() {
+  local out=$1 kind=$2 event=${3:-} timeout=${4:-5} line
+  line=$(KIND=$kind EVENT=$event TIMEOUT=$timeout OUT=$out node -e '
+const fs = require("fs");
+const out = process.env.OUT;
+const kind = process.env.KIND;
+const event = process.env.EVENT;
+const timeoutMs = Number(process.env.TIMEOUT) * 1000;
+const start = Date.now();
+function check() {
+  const text = fs.existsSync(out) ? fs.readFileSync(out, "utf8") : "";
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    if (obj.kind !== kind) continue;
+    if (event) {
+      if (kind === "event" && obj.event !== event) continue;
+      if (kind === "comment" && String(obj.text || "").indexOf(event) !== 0) continue;
+    }
+    process.stdout.write(line);
+    process.exit(0);
+  }
+  if (Date.now() - start >= timeoutMs) process.exit(1);
+  setTimeout(check, 40);
+}
+check();
+') || return 1
+  printf '%s\n' "$line"
+}
+
+# fm_test_api_sse_count <out-file> <kind> [event-type]: count matching frames.
+fm_test_api_sse_count() {
+  local out=$1 kind=$2 event=${3:-}
+  KIND=$kind EVENT=$event OUT=$out node -e '
+const fs = require("fs");
+const text = fs.existsSync(process.env.OUT) ? fs.readFileSync(process.env.OUT, "utf8") : "";
+const kind = process.env.KIND;
+const event = process.env.EVENT;
+let n = 0;
+for (const line of text.split("\n")) {
+  if (!line) continue;
+  let obj;
+  try { obj = JSON.parse(line); } catch { continue; }
+  if (obj.kind !== kind) continue;
+  if (event && obj.event !== event) continue;
+  n += 1;
+}
+process.stdout.write(String(n));
+'
 }

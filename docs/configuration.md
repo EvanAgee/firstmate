@@ -587,6 +587,19 @@ An empty home returns an empty fleet, not an error.
 An unknown task ID returns JSON 404.
 The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
 `GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig pools; `bin/fm-api-server.mjs` owns those JSON contracts.
+`GET /events` holds open a server-sent event stream of typed home changes.
+Each frame's event name and JSON `type` are one of `task-status`, `task-created`, `captain-queue`, `rig-config`, or `changed`.
+A task-scoped event includes JSON `task`.
+Every event includes an ISO-8601 `timestamp`.
+`state/<id>.status` maps to `task-status`, `state/<id>.meta` to `task-created`, `data/backlog.md` to `captain-queue`, and `config/crew-dispatch.json` to `rig-config`.
+Any other path under `state/`, `data/`, or `config/` maps to `changed`.
+Hidden bookkeeping files emit nothing.
+A hidden file is any watched path with a segment that starts with `.`.
+Writes of the same type and task coalesce behind a quiet window with a deadline.
+Heartbeat comments keep idle connections alive.
+`FM_API_EVENT_QUIET_MS`, `FM_API_EVENT_DEADLINE_MS`, and `FM_API_HEARTBEAT_MS` own that timing.
+Each value must be a positive integer, and the deadline cannot be shorter than the quiet window.
+The stream needs no auth.
 A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.
 Secondmate homes marked by `.fm-secondmate-home` skip API bring-up at session start.
 `bin/fm-api.sh` owns start, stop, status, token generation, and the `state/.api.*` records.
@@ -602,6 +615,9 @@ FM_HOME=                 # optional operational home for most scripts, unset mea
 FM_API=                 # optional session-start API bring-up override; 0/off/false/no skips, unset starts on the primary home only
 FM_API_PORT=            # optional localhost API port override; else config/api-port, else 18787; 0 is ephemeral
 FM_API_START_TIMEOUT=5  # seconds fm-api.sh start waits for /health
+FM_API_EVENT_QUIET_MS=100   # milliseconds of quiet before a coalesced /events flush
+FM_API_EVENT_DEADLINE_MS=1000  # maximum milliseconds a /events burst may wait before flush
+FM_API_HEARTBEAT_MS=15000   # milliseconds between /events heartbeat comments
 FM_ROOT_OVERRIDE=        # override firstmate repo root, tangle-guard target, and zellij/cmux home-title hash; also legacy whole-root override when FM_HOME is unset
 FM_STATE_OVERRIDE=       # alternate state dir, mainly for tests
 FM_DATA_OVERRIDE=        # alternate data dir, mainly for tests
