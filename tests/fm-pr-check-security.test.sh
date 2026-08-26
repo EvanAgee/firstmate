@@ -87,6 +87,17 @@ esac
 SH
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
+# fm-pr-merge.sh reads review threads via GraphQL before `pr merge`. Return a
+# bare integer so that gate can proceed; 0 means every thread is resolved.
+# Non-graphql calls stay logged as before.
+if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
+  case "$*" in
+    *length*) printf '%s\n' "${FM_TEST_THREADS_UNRESOLVED:-0}" ;;
+    *totalCount*) printf '%s\n' "${FM_TEST_THREADS_TOTAL:-0}" ;;
+    *) exit 1 ;;
+  esac
+  exit 0
+fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 exit "${FM_TEST_GH_AXI_RC:-0}"
 SH
