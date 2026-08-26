@@ -10,21 +10,31 @@
 // GET /health
 //   { ok, version, home }
 // GET /fleet
-//   fm-fleet-snapshot.v1 JSON from bin/fm-fleet-snapshot.sh --json
-//   Empty home: empty fleet, not an error. That script's header owns the contract.
+//   fm-fleet-snapshot.v1 JSON from bin/fm-fleet-snapshot.sh --json, plus one
+//   API-owned addition per task: enrich (bin/fm-api-reads.mjs owns its shape).
+//   Empty home: empty fleet, not an error. The script's header owns the rest.
 // GET /tasks/<id>
-//   One task's brief, status timeline, current stage, and worker activity.
+//   One task's brief, status timeline (with observed times), current stage,
+//   meta runtime, and worker activity.
 //   Unknown id: JSON 404 { ok: false, error: "task not found" }.
 //   bin/fm-api-task-detail.mjs owns the exact success JSON contract.
 // GET /captain-queue
 //   { ok, decisions: [{ task, key, summary }] }
 //   Parked decisions still open in this home. Empty home: decisions is [].
+// GET /captain-holds
+//   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
+//   actionable, done, answerable }] }
+//   The captain-kind decisions from tasks-axi, read in full and sorted
+//   actionable-first. tasks-axi absent: holds is [].
 // GET /blocked
 //   { ok, blocked: [{ task, key, summary }] }
 //   Blocked tasks still open in this home. Empty home: blocked is [].
 // GET /rigs
-//   { ok, rigs: [{ name, rungs: [{ harness, model, effort, enabled }] }] }
-//   Dispatch pools and each rung's enabled state. Missing config: rigs is [].
+//   { ok, note, rigs: [{ name, rungs: [{ harness, model, effort, enabled }],
+//   pin }], defaultPin, crew, secondmate }
+//   Dispatch pools, each rung's enabled state, the dispatch note, per-rig and
+//   default pins, and the raw crew/secondmate pin lines. Missing config:
+//   rigs is [] and the extras are empty.
 // GET /events
 //   Server-sent event stream of typed home changes. Event timing comes from
 //   FM_API_EVENT_QUIET_MS, FM_API_EVENT_DEADLINE_MS, and FM_API_HEARTBEAT_MS;
@@ -39,7 +49,13 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { blockedListBody, captainQueueBody, rigsBody } from "./fm-api-reads.mjs";
+import {
+  blockedListBody,
+  captainHoldsBody,
+  captainQueueBody,
+  enrichFleetTasks,
+  rigsBody,
+} from "./fm-api-reads.mjs";
 import { taskDetailBody } from "./fm-api-task-detail.mjs";
 
 export const API_VERSION = "1";
@@ -139,14 +155,15 @@ function sendFleetSnapshot(req, res, home) {
         json(res, 500, { ok: false, error: "fleet snapshot failed" });
         return;
       }
-      const payload = Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout));
+      let snapshot;
       try {
-        JSON.parse(payload.toString("utf8"));
+        snapshot = JSON.parse(String(stdout));
       } catch {
         process.stderr.write("fleet snapshot failed: invalid json\n");
         json(res, 500, { ok: false, error: "fleet snapshot failed" });
         return;
       }
+      const payload = Buffer.from(`${JSON.stringify(enrichFleetTasks(home, snapshot))}\n`);
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": payload.length,
@@ -426,6 +443,7 @@ function handle(req, res, home, options, events) {
   const read = url.pathname === "/health"
     || url.pathname === "/fleet"
     || url.pathname === "/captain-queue"
+    || url.pathname === "/captain-holds"
     || url.pathname === "/blocked"
     || url.pathname === "/rigs"
     || task !== null;
@@ -439,6 +457,19 @@ function handle(req, res, home, options, events) {
   }
   if (url.pathname === "/captain-queue") {
     sendGet(req, res, captainQueueBody(stateDir));
+    return;
+  }
+  if (url.pathname === "/captain-holds") {
+    if (req.method === "HEAD") {
+      sendGet(req, res, { ok: true, holds: [] });
+      return;
+    }
+    captainHoldsBody(home)
+      .then((body) => json(res, 200, body))
+      .catch((error) => {
+        process.stderr.write(`captain holds failed: ${error.message}\n`);
+        if (!res.headersSent) json(res, 500, { ok: false, error: "captain holds failed" });
+      });
     return;
   }
   if (url.pathname === "/blocked") {
