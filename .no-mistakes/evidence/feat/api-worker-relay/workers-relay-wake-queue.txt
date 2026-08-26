@@ -1,0 +1,5 @@
+# Wake queue after authorized POST /workers/relay
+# body {"task":"sample-task","text":"try the smaller batch first"}
+# decoded body firstmate will read: captain-relay to worker sample-task: try the smaller batch first
+
+1787788080	1	check	worker-relay:sample-task:c5ef900a6e20baad	check: worker-relay: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-relay to worker sample-task: try the smaller batch first

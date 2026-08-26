@@ -1,0 +1,16 @@
+{
+  "without_token": {
+    "status": 401,
+    "body": {"ok": false, "error": "unauthorized"},
+    "wake_queue": null
+  },
+  "with_token": {
+    "status": 200,
+    "body": {"ok": true},
+    "decoded_operational_input": "captain-relay to worker sample-task: try the smaller batch first"
+  },
+  "unknown_task": {
+    "status": 404,
+    "body": {"ok": false, "error": "not found"}
+  }
+}

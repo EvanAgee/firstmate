@@ -1,0 +1,38 @@
+# POST /workers/relay end-to-end transcript
+# Throwaway firstmate home; real HTTP against bin/fm-api.sh
+# This is the dashboard path: token-guarded JSON {task,text} onto the wake queue
+
+home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-relay-evidence.mdhsNS/home
+sample-task.status:
+working: implementing
+
+api=http://127.0.0.1:54083
+token_present=yes
+
+== 1. POST /workers/relay without Authorization ==
+401
+{"ok":false,"error":"unauthorized"}
+wake-queue after unauthorized:
+(missing, nothing queued)
+
+== 2. POST /workers/relay with Bearer token ==
+200
+{"ok":true}
+wake-queue after authorized:
+1787788080	1	check	worker-relay:sample-task:c5ef900a6e20baad	check: worker-relay: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-relay to worker sample-task: try the smaller batch first
+
+decoded operational-input body (what firstmate reads on the next supervision turn):
+captain-relay to worker sample-task: try the smaller batch first
+
+encoded payload (raw, as stored on the queue):
+⁣FIRSTMATE_OP: v1 away-supervisor: captain-relay to worker sample-task: try the smaller batch first
+
+== 3. POST /workers/relay unknown task ==
+404
+{"ok":false,"error":"not found"}
+
+== 4. GET /health (reads still work without token) ==
+200
+{"ok":true,"version":"1","home":"/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/api-relay-evidence.mdhsNS/home"}
+
+api stopped
