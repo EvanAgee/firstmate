@@ -24,7 +24,7 @@
 //   Blocked tasks still open in this home. Empty home: blocked is [].
 // GET /rigs
 //   { ok, rigs: [{ name, rungs: [{ harness, model, effort, enabled }] }] }
-//   Dispatch ladders and each rung's enabled state. Missing config: rigs is [].
+//   Dispatch pools and each rung's enabled state. Missing config: rigs is [].
 // POST /captain-notes requires Authorization: Bearer <token> and queues a
 // captain note for firstmate on the wake queue, encoded as operational input.
 // Reads need no token. A captain note never closes a parked decision.

@@ -345,7 +345,7 @@ A locked primary session start brings the server up; secondmate homes skip that 
 It stays up while the lock holder is live, and it exits when there is no live holder or `bin/fm-api.sh stop` runs.
 Port, home, and the write token come from firstmate config; [`docs/configuration.md`](configuration.md) owns those knobs and write authorization, and `bin/fm-api.sh`'s header owns start, stop, token generation, and the state files.
 [`CONTEXT.md`](../CONTEXT.md) is the glossary for the words the API uses.
-The parked-decision, blocked-task, and rig-ladder reads are assembled by `bin/fm-api-reads.mjs`; `bin/fm-api-server.mjs` owns those HTTP routes and JSON contracts.
+The parked-decision, blocked-task, and rig-pool reads are assembled by `bin/fm-api-reads.mjs`; `bin/fm-api-server.mjs` owns those HTTP routes and JSON contracts.
 `GET /tasks/<id>` is assembled by `bin/fm-api-task-detail.mjs`.
 
 ## Development notes

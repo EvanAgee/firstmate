@@ -136,7 +136,7 @@ test_empty_home_rigs_is_empty() {
   pass "empty home rigs is an empty list"
 }
 
-test_rigs_returns_ladders_and_rung_enabled_state() {
+test_rigs_returns_pools_and_rung_enabled_state() {
   local home port resp
   home=$(fm_test_api_home api-rigs)
   cat > "$home/config/crew-dispatch.json" <<'EOF'
@@ -183,7 +183,7 @@ EOF
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].rungs[0].enabled')" = true ] || \
     fail "default rung should be on: $HTTP_BODY"
   fm_test_api_stop "$home"
-  pass "rigs returns ladders, rungs, and each rung's enabled state"
+  pass "rigs returns pools, rungs, and each rung's enabled state"
 }
 
 test_empty_home_queue_is_empty
@@ -192,6 +192,6 @@ test_resolved_decision_leaves_the_queue
 test_empty_home_blocked_is_empty
 test_blocked_list_returns_blocked_tasks
 test_empty_home_rigs_is_empty
-test_rigs_returns_ladders_and_rung_enabled_state
+test_rigs_returns_pools_and_rung_enabled_state
 
 echo "# fm-api-reads.test.sh: all assertions passed"

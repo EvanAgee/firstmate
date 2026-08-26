@@ -285,12 +285,12 @@ For omp secondmate launches, `fm-spawn.sh` explicitly loads that home's `.pi/ext
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
-The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or array under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
+The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or pool under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
 When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
 Batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
-`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the completion-aware profile-array selection procedure.
+`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the round-robin pool selection procedure.
 
 ```json
 {
@@ -300,7 +300,6 @@ This section is the single owner of the canonical schema and its per-field seman
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": "<true|false, optional, default true>" }
       ],
-      "split": { "<enabled harness from use>": "<positive integer weight>" },
       "why": "<optional rationale that helps firstmate choose>"
     }
   ],
@@ -312,28 +311,23 @@ This section is the single owner of the canonical schema and its per-field seman
 
 Per rule, `when` and `use` are required.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
+An array is a pool: every member holds that category's quality floor, and firstmate spreads new tasks evenly across the pool by round-robin rather than always picking the first member.
 The single-object form stays fully backward-compatible, and every profile needs `harness`.
 Profile `model` and `effort` fields and rule `why` are optional.
 An omitted model or effort means the selected harness uses its own default for that axis.
 Profile `enabled` is optional and must be `true` or `false` when present.
 An absent `enabled` key means the rung is on, so every existing configuration keeps its current behavior.
 Setting `"enabled": false` switches that rung off: firstmate drops it before quota selection, and `fm-spawn.sh` refuses a crewmate or scout spawn that names it.
-A switched-off rung is a hard lock that quota evidence may never re-enable, and a switch applies to the next dispatch only, so a worker already running finishes on its original harness.
-A rule whose rungs are all switched off, or an all-off `default`, is a configuration error rather than a silent fallback, because the floor rule forbids dropping to an unlisted lane.
-Rule `split` is optional and applies only when the matched rule represents an ordinary builder task under the class and tier judgment already described by that rule and the config's note.
-It maps at least two distinct enabled `use` harnesses to positive integer weights that total 100.
-The keys are harness names, so changing the weights or adding another enabled harness to the split needs no script change.
-High-tier builders and every non-builder class ignore `split` and keep their existing selection path.
-An absent or malformed ordinary-builder split uses codex=50 and pi=50 and emits a `BUILDER_DISPATCH` note at dispatch.
-The selection procedure and durable counter behavior are owned by `quota-array-dispatch`, while `bin/fm-builder-split.sh --help` owns the helper's command and state mechanics.
-Every profile array is an implicit quota-aware choice resolved through `quota-array-dispatch`.
-If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
+A switched-off member is a hard lock that no evidence may re-enable, and a switch applies to the next dispatch only, so a worker already running finishes on its original harness.
+A rule whose members are all switched off, or an all-off `default`, is a configuration error rather than a silent fallback, because the floor rule forbids dropping to an unlisted lane.
+Every pool of more than one member is resolved by round-robin through `quota-array-dispatch`: firstmate picks the enabled, healthy member carrying the fewest live workers from that pool in this home, breaking ties by quota headroom, then list order.
+Quota is a health filter and a tie-break there, not the selector, so members are dropped only when unhealthy or genuinely quota-tight and the rest share the work evenly.
+If no dispatch rule fits, firstmate resolves `default` through the same object-or-pool path before falling back to `config/crew-harness`.
 If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, an empty or malformed rule/default array, an unverified harness, a non-boolean `enabled`, a rule with every rung switched off, an all-off `default`, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
-Malformed `split` is the one field-level exception because its documented behavior is a noted 50/50 fallback rather than refusal of the whole dispatch file.
+Malformed JSON, an empty or malformed rule/default array, an unverified harness, a non-boolean `enabled`, a rule with every member switched off, an all-off `default`, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
@@ -592,7 +586,7 @@ An empty home returns an empty fleet, not an error.
 `bin/fm-api-task-detail.mjs` owns that JSON contract, including unavailable-source markers.
 An unknown task ID returns JSON 404.
 The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
-`GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig ladders; `bin/fm-api-server.mjs` owns those JSON contracts.
+`GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig pools; `bin/fm-api-server.mjs` owns those JSON contracts.
 A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.
 Secondmate homes marked by `.fm-secondmate-home` skip API bring-up at session start.
 `bin/fm-api.sh` owns start, stop, status, token generation, and the `state/.api.*` records.
