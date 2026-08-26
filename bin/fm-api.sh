@@ -42,7 +42,7 @@ LOG_FILE="$STATE/.api.log"
 LOCK_DIR="$STATE/.api.lock"
 
 usage() {
-  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {

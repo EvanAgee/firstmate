@@ -213,10 +213,14 @@ make_fake_ps_claude() {
   make_fake_ps_harness "$fakebin" claude
 }
 
+have_real_node() {
+  command -v node >/dev/null 2>&1 && node -e 'process.stdout.write("ok")' >/dev/null 2>&1
+}
+
 # Point fakebin/node at the real Node so a session-start API bring-up can run.
 install_real_node() {
   local fakebin=$1 real
-  real=$(command -v node) || fail "node is required for API session-start tests"
+  real=$(command -v node) || fail "install_real_node called without a usable node"
   cat > "$fakebin/node" <<SH
 #!/usr/bin/env bash
 exec $(printf '%q' "$real") "\$@"
@@ -2483,7 +2487,7 @@ test_agents_baseline_requires_sha256_and_successful_completion
 test_reemit_keeps_repair_ownership_with_the_lock_holder
 
 test_locked_session_start_brings_api_up() {
-  local rec root home fakebin out port resp code
+  local rec root home fakebin out port resp code holder
   rec=$(new_world api-up)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -2493,6 +2497,9 @@ EOF
   make_fake_ps_claude "$fakebin"
   printf '0\n' > "$home/config/api-port"
   out=$(FM_API=1 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  sleep 60 &
+  holder=$!
+  printf '%s\n' "$holder" > "$home/state/.lock"
   port=$(cat "$home/state/.api.port" 2>/dev/null || true)
   resp=$(node -e '
 const http = require("http");
@@ -2504,6 +2511,8 @@ http.get({ host: "127.0.0.1", port, path: "/health" }, (res) => {
   res.on("end", () => { process.stdout.write(res.statusCode + "\n" + body); });
 }).on("error", () => { process.stdout.write("0\n"); });
 ' "$port" 2>/dev/null || printf '0\n')
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
   FM_HOME="$home" "$ROOT/bin/fm-api.sh" stop >/dev/null 2>&1 || true
   assert_contains "$out" "api: started" "locked session start did not start the API"
   [ -n "$port" ] || fail "session start did not write an API port"
@@ -2554,8 +2563,12 @@ EOF
   pass "read-only session does not start the API"
 }
 
-test_locked_session_start_brings_api_up
-test_secondmate_session_does_not_start_api
-test_read_only_session_does_not_start_api
+if have_real_node; then
+  test_locked_session_start_brings_api_up
+  test_secondmate_session_does_not_start_api
+  test_read_only_session_does_not_start_api
+else
+  echo "skip: node is not a usable Node.js; API session-start tests skipped"
+fi
 
 echo "# fm-session-start.test.sh: all assertions passed"

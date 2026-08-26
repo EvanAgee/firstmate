@@ -41,7 +41,8 @@ fi
 # config/api-port=0. Echoes the home path.
 fm_test_api_home() {
   local prefix=${1:-fm-api} root home
-  root=$(fm_test_tmproot "$prefix")
+  root=$(fm_test_tmproot "$prefix") || fail "fm_test_api_home could not create a fixture root"
+  [ -n "$root" ] || fail "fm_test_api_home got an empty fixture root"
   home="$root/home"
   mkdir -p "$home/state" "$home/data" "$home/config"
   printf '0\n' > "$home/config/api-port"
