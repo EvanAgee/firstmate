@@ -1,0 +1,43 @@
+=== PRIMARY HOME: start ===
+home=/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home
+config/api-port=0
+api: started pid=14408 port=51541 home=/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home
+
+=== state files after start ===
+.api.pid=14408
+.api.port=51541
+.api.session-pid=
+.api.pid-identity=Tue Aug 25 20:12:16 2026     node /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0XR9Q7J4TWEP19AB3X47PGX/bin/fm-api-server.mjs --home /Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home --port 0 --state /Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home/state
+
+=== GET /health ===
+HTTP 200
+Content-Type: application/json; charset=utf-8
+{"ok":true,"version":"1","home":"/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home"}
+
+=== GET / (unknown path) ===
+HTTP 404
+{"ok":false,"error":"not found"}
+
+=== malformed GET //[ ===
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Content-Length: 37
+Date: Wed, 26 Aug 2026 01:12:17 GMT
+Connection: close
+
+{"ok":false,"error":"malformed url"}
+
+=== GET /health after malformed URL (server still up) ===
+HTTP 200
+{"ok":true,"version":"1","home":"/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home"}
+
+=== fm-api.sh status ===
+api: running pid=14408 port=51541 home=/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home
+
+=== second start attaches ===
+api: attached pid=14408 port=51541 home=/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-home
+
+=== stop ===
+api: stopped
+=== status after stop ===
+api: stopped

@@ -1,0 +1,16 @@
+=== SECONDMATE MARKER ===
+home=/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/secondmate-home
+.fm-secondmate-home=sm-fixture
+
+session-start gate (same as bin/fm-session-start.sh):
+  if [ ! -e "$FM_HOME/.fm-secondmate-home" ] && [ ! -L "$FM_HOME/.fm-secondmate-home" ]; then fm-api.sh start; fi
+
+SKIP API bring-up: secondmate home marker present
+pid file present? no
+
+=== PRIMARY (no marker) still starts API via same gate ===
+api: started pid=16576 port=51569 home=/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-gate-home
+primary pid file: 16576
+primary port: 51569
+primary health HTTP 200
+{"ok":true,"version":"1","home":"/Users/evanagee/.no-mistakes/evidence/01M0XR9Q7J4TWEP19AB3X47PGX/api-front-door-demo/primary-gate-home"}

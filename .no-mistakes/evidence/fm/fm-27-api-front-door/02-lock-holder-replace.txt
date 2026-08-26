@@ -1,0 +1,15 @@
+=== LOCK HOLDER REPLACE ===
+session A pid=30677 wrote to state/.lock
+api: started pid=30804 port=51674 home=/tmp/fm-api-lock-9JoeSc
+recorded .api.pid=30804 .api.session-pid=30677 port=51674
+session B pid=31015 rewrote state/.lock
+=== start under new lock holder ===
+api: started pid=31502 port=51677 home=/tmp/fm-api-lock-9JoeSc
+recorded .api.pid=31502 .api.session-pid=31015 port=51677
+pid changed? yes
+session pid is holder B? yes
+=== kill session A, wait 2.5s, health on NEW port must still be 200 ===
+HTTP 200
+{"ok":true,"version":"1","home":"/tmp/fm-api-lock-9JoeSc"}
+=== kill session B, wait for exit ===
+health after no live lock holder: HTTP 0 (0 means down)

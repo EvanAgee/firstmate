@@ -1,0 +1,20 @@
+bin/fm-test-run.sh tests/fm-api.test.sh
+exit=0 duration_ms=21567
+all 12 assertions passed:
+  health reports version and the served throwaway home
+  unknown paths return 404
+  server answers on 127.0.0.1 and not on a non-loopback address
+  port and home come from firstmate config, not hardcoded paths
+  each throwaway home gets its own API
+  start brings the API up and stop takes it down
+  start attaches when the API is already running
+  start replaces a server that belongs to another lock holder
+  API stays up while state/.lock names a live holder
+  malformed URL returns 400 and the server keeps serving
+  API exits when the session it was started under dies
+  FM_API_PORT overrides config/api-port
+
+filtered session-start API tests:
+  ok - locked session start brings the API up
+  ok - secondmate session start does not start the API
+  ok - read-only session does not start the API
