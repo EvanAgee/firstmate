@@ -317,7 +317,7 @@ Profile `model` and `effort` fields and rule `why` are optional.
 An omitted model or effort means the selected harness uses its own default for that axis.
 Profile `enabled` is optional and must be `true` or `false` when present.
 An absent `enabled` key means the rung is on, so every existing configuration keeps its current behavior.
-Setting `"enabled": false` switches that rung off: firstmate drops it before quota selection, and `fm-spawn.sh` refuses a crewmate or scout spawn that names it.
+Setting `"enabled": false` switches that rung off: firstmate drops it before counting live workers or selecting, and `fm-spawn.sh` refuses a crewmate or scout spawn that names it.
 A switched-off member is a hard lock that no evidence may re-enable, and a switch applies to the next dispatch only, so a worker already running finishes on its original harness.
 A rule whose members are all switched off, or an all-off `default`, is a configuration error rather than a silent fallback, because the floor rule forbids dropping to an unlisted lane.
 Every pool of more than one member is resolved by round-robin through `quota-array-dispatch`: firstmate picks the enabled, healthy member carrying the fewest live workers from that pool in this home, breaking ties by quota headroom, then list order.
@@ -339,7 +339,7 @@ Required tools come in two parts: a universal toolchain every home needs regardl
 The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.31.2 or newer, compatible gh-axi, compatible chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
 [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh), and [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh) hold their own tools' floor constants.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
-In that list, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
+In that list, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and dispatch-pool health.
 The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
 That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`: the resolved backend's own session-provider CLI (`tmux`, `herdr`, `zellij`, `orca`, or `cmux`), `jq` for the JSON-emitting experimental adapters (`herdr`, `zellij`, `cmux`) whose spawn and liveness paths parse the backend's JSON output, and the `treehouse` worktree provider for every session-provider-only backend (`tmux`, `herdr`, `zellij`, `cmux`).
 Backend tool availability uses the adapter's own executable resolver, so bootstrap and spawn agree on supported non-`PATH` locations such as cmux's bundled CLI.
@@ -358,7 +358,7 @@ Session start exports `CHROME_DEVTOOLS_AXI_MCP_PATH` to that launcher and prints
 Spawn still exports that path and sets `CHROME_DEVTOOLS_AXI_SESSION` to the task id so workers do not share the default bridge or pick up `@latest`.
 Bootstrap's chrome-devtools-axi check is the version floor plus a named-session open-and-snapshot probe owned by [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh).
 An absent or incompatible `lavish-axi` reports `MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)`.
-An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array without a compatible binary.
+An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a dispatch pool without a compatible binary.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
 The locked session-start deferred network stage runs bootstrap's best-effort project clone refresh through `fm-fleet-sync.sh`.
