@@ -1,0 +1,71 @@
+HTTP 200
+content-type: text/event-stream; charset=utf-8
+cache-control: no-cache, no-transform
+connection: keep-alive
+date: Wed, 26 Aug 2026 15:39:22 GMT
+transfer-encoding: chunked
+
+FRAME_COUNT=19
+
+----- frame 1 -----
+: connected
+
+----- frame 2 -----
+event: task-status
+data: {"type":"task-status","task":"demo","timestamp":"2026-08-26T15:39:22.569Z"}
+
+----- frame 3 -----
+: heartbeat 2026-08-26T15:39:22.668Z
+
+----- frame 4 -----
+: heartbeat 2026-08-26T15:39:22.920Z
+
+----- frame 5 -----
+event: captain-queue
+data: {"type":"captain-queue","timestamp":"2026-08-26T15:39:22.933Z"}
+
+----- frame 6 -----
+: heartbeat 2026-08-26T15:39:23.170Z
+
+----- frame 7 -----
+event: task-created
+data: {"type":"task-created","task":"new-task","timestamp":"2026-08-26T15:39:23.244Z"}
+
+----- frame 8 -----
+: heartbeat 2026-08-26T15:39:23.420Z
+
+----- frame 9 -----
+: heartbeat 2026-08-26T15:39:23.671Z
+
+----- frame 10 -----
+event: rig-config
+data: {"type":"rig-config","timestamp":"2026-08-26T15:39:23.616Z"}
+
+----- frame 11 -----
+: heartbeat 2026-08-26T15:39:23.921Z
+
+----- frame 12 -----
+event: changed
+data: {"type":"changed","timestamp":"2026-08-26T15:39:23.950Z"}
+
+----- frame 13 -----
+: heartbeat 2026-08-26T15:39:24.173Z
+
+----- frame 14 -----
+: heartbeat 2026-08-26T15:39:24.424Z
+
+----- frame 15 -----
+: heartbeat 2026-08-26T15:39:24.674Z
+
+----- frame 16 -----
+: heartbeat 2026-08-26T15:39:24.926Z
+
+----- frame 17 -----
+event: task-status
+data: {"type":"task-status","task":"demo","timestamp":"2026-08-26T15:39:25.012Z"}
+
+----- frame 18 -----
+: heartbeat 2026-08-26T15:39:25.177Z
+
+----- frame 19 -----
+: heartbeat 2026-08-26T15:39:25.428Z

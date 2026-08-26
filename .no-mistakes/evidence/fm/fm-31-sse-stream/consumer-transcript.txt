@@ -1,0 +1,18 @@
+Live GET /events against a throwaway firstmate home.
+No Authorization header. Timing: quiet 80ms, deadline 400ms, heartbeat 250ms.
+
+1. GET /health (no token) -> 200 {"ok":true,"version":"1",...}
+2. GET /events (no token) -> HTTP 200 text/event-stream
+   first frame: ": connected"
+3. Append state/demo.status -> event: task-status {"type":"task-status","task":"demo","timestamp":"...Z"}
+4. Append data/backlog.md -> event: captain-queue (no task field)
+5. Write state/new-task.meta -> event: task-created {"task":"new-task"}
+6. Write config/crew-dispatch.json -> event: rig-config
+7. Write data/learnings.md -> event: changed
+8. Write state/.hash-xyz, state/.watch.lock, data/.hidden -> no extra events
+9. Three rapid appends to state/demo.status -> one coalesced task-status
+10. Idle stream -> ": heartbeat <ISO>" comments on the 250ms interval
+11. POST /captain-notes without token -> 401 {"ok":false,"error":"unauthorized"}
+12. After client disconnect, GET /health still 200
+
+See events-raw.sse and events-frames.txt for the exact frames.

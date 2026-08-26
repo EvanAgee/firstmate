@@ -1,0 +1,51 @@
+HTTP 200
+content-type: text/event-stream; charset=utf-8
+cache-control: no-cache, no-transform
+connection: keep-alive
+date: Wed, 26 Aug 2026 15:39:22 GMT
+transfer-encoding: chunked
+
+: connected
+
+event: task-status
+data: {"type":"task-status","task":"demo","timestamp":"2026-08-26T15:39:22.569Z"}
+
+: heartbeat 2026-08-26T15:39:22.668Z
+
+: heartbeat 2026-08-26T15:39:22.920Z
+
+event: captain-queue
+data: {"type":"captain-queue","timestamp":"2026-08-26T15:39:22.933Z"}
+
+: heartbeat 2026-08-26T15:39:23.170Z
+
+event: task-created
+data: {"type":"task-created","task":"new-task","timestamp":"2026-08-26T15:39:23.244Z"}
+
+: heartbeat 2026-08-26T15:39:23.420Z
+
+: heartbeat 2026-08-26T15:39:23.671Z
+
+event: rig-config
+data: {"type":"rig-config","timestamp":"2026-08-26T15:39:23.616Z"}
+
+: heartbeat 2026-08-26T15:39:23.921Z
+
+event: changed
+data: {"type":"changed","timestamp":"2026-08-26T15:39:23.950Z"}
+
+: heartbeat 2026-08-26T15:39:24.173Z
+
+: heartbeat 2026-08-26T15:39:24.424Z
+
+: heartbeat 2026-08-26T15:39:24.674Z
+
+: heartbeat 2026-08-26T15:39:24.926Z
+
+event: task-status
+data: {"type":"task-status","task":"demo","timestamp":"2026-08-26T15:39:25.012Z"}
+
+: heartbeat 2026-08-26T15:39:25.177Z
+
+: heartbeat 2026-08-26T15:39:25.428Z
+

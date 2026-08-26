@@ -1,0 +1,2 @@
+home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-events-manual.inLWN0/home
+port=49786
