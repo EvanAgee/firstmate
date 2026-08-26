@@ -570,11 +570,12 @@ A `config/api-port` symlink is refused rather than treated as that default.
 Port `0` asks the kernel for an ephemeral port, which tests use.
 The file is per-home and is not inherited by secondmates, because two homes cannot share a port.
 `GET /health` reports API version `1` and the home this process serves.
+`GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig ladders; `bin/fm-api-server.mjs` owns those JSON contracts.
 A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.
 Secondmate homes marked by `.fm-secondmate-home` skip API bring-up at session start.
 `bin/fm-api.sh` owns start, stop, status, and the `state/.api.*` records.
 A session-bound server stays up while `state/.lock` names a live holder and exits when there is no live holder.
-[`CONTEXT.md`](../CONTEXT.md) is the glossary for the words later endpoints use.
+[`CONTEXT.md`](../CONTEXT.md) is the glossary for the words the API uses.
 
 ## Environment variables
 

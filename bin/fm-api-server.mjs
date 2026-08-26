@@ -3,12 +3,25 @@
 //
 // Bind 127.0.0.1 only. Port, home, and state directory come from argv; this
 // file has no default filesystem paths. bin/fm-api.sh owns process lifecycle.
-// GET /health reports the API version and the home this process serves.
+// bin/fm-api-reads.mjs assembles the read windows from firstmate files.
+//
+// GET /health
+//   { ok, version, home }
+// GET /captain-queue
+//   { ok, decisions: [{ task, key, summary }] }
+//   Parked decisions still open in this home. Empty home: decisions is [].
+// GET /blocked
+//   { ok, blocked: [{ task, key, summary }] }
+//   Blocked tasks still open in this home. Empty home: blocked is [].
+// GET /rigs
+//   { ok, rigs: [{ name, rungs: [{ harness, model, effort, enabled }] }] }
+//   Dispatch ladders and each rung's enabled state. Missing config: rigs is [].
 
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { blockedListBody, captainQueueBody, rigsBody } from "./fm-api-reads.mjs";
 
 export const API_VERSION = "1";
 
@@ -50,7 +63,16 @@ function json(res, status, body) {
   res.end(payload);
 }
 
-function handle(req, res, home) {
+function sendGet(req, res, body) {
+  if (req.method === "HEAD") {
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end();
+    return;
+  }
+  json(res, 200, body);
+}
+
+function handle(req, res, home, stateDir) {
   let url;
   try {
     url = new URL(req.url || "/", "http://127.0.0.1");
@@ -58,17 +80,36 @@ function handle(req, res, home) {
     json(res, 400, { ok: false, error: "malformed url" });
     return;
   }
+  const read = url.pathname === "/health"
+    || url.pathname === "/captain-queue"
+    || url.pathname === "/blocked"
+    || url.pathname === "/rigs";
+  if (read && req.method !== "GET" && req.method !== "HEAD") {
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
   if (url.pathname === "/health") {
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      json(res, 405, { ok: false, error: "method not allowed" });
-      return;
+    sendGet(req, res, { ok: true, version: API_VERSION, home });
+    return;
+  }
+  if (url.pathname === "/captain-queue") {
+    sendGet(req, res, captainQueueBody(stateDir));
+    return;
+  }
+  if (url.pathname === "/blocked") {
+    sendGet(req, res, blockedListBody(stateDir));
+    return;
+  }
+  if (url.pathname === "/rigs") {
+    try {
+      sendGet(req, res, rigsBody(home));
+    } catch (error) {
+      if (error && error.code === "INVALID_RIG_CONFIG") {
+        json(res, 500, { ok: false, error: "invalid rig config" });
+        return;
+      }
+      throw error;
     }
-    if (req.method === "HEAD") {
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end();
-      return;
-    }
-    json(res, 200, { ok: true, version: API_VERSION, home });
     return;
   }
   json(res, 404, { ok: false, error: "not found" });
@@ -112,16 +153,17 @@ function lockHolderAlive(stateDir) {
   }
 }
 
-export function createApiServer(home) {
+export function createApiServer(home, stateDir) {
+  const state = stateDir || path.join(home, "state");
   return http.createServer((req, res) => {
     try {
-      handle(req, res, home);
+      handle(req, res, home, state);
     } catch {
       if (res.headersSent) {
         res.destroy();
         return;
       }
-      json(res, 400, { ok: false, error: "malformed url" });
+      json(res, 500, { ok: false, error: "internal error" });
     }
   });
 }
@@ -145,7 +187,7 @@ function main() {
   const port = parsePort(args.port);
   const sessionPid = parseSessionPid(args.sessionPid);
   const stateDir = args.state ? path.resolve(args.state) : "";
-  const server = createApiServer(home);
+  const server = createApiServer(home, stateDir);
   let closing = false;
 
   function shutdown() {
