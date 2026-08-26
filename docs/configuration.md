@@ -291,6 +291,10 @@ Batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
 `AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the round-robin pool selection procedure.
+Optional `note`, per-rule `pin`, and top-level `defaultPin` are presentation only.
+Dispatch ignores them.
+`GET /rigs` returns those keys raw so a dashboard can show the same floor rule and pins without reading the file.
+`bin/fm-api-server.mjs` owns that JSON.
 
 ```json
 {
@@ -579,14 +583,19 @@ Reads and the event stream do not.
 `POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate on the wake queue, encoded as operational input.
 A captain note never closes a parked decision.
 `GET /health` reports API version `1` and the home this process serves.
-`GET /fleet` returns the fleet snapshot for that home as JSON.
-The body is the output of `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.
+`GET /fleet` returns that home's fleet snapshot plus a per-task enrich window for board cards.
+The snapshot is `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.
+`bin/fm-api-reads.mjs` owns the enrich fields.
 An empty home returns an empty fleet, not an error.
-`GET /tasks/<id>` returns one task's brief, status timeline, current stage, and worker activity.
+`GET /tasks/<id>` returns one task's brief, status timeline with approximate observed times, current stage, harness, model, started_at, and worker activity.
 `bin/fm-api-task-detail.mjs` owns that JSON contract, including unavailable-source markers.
 An unknown task ID returns JSON 404.
 The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
-`GET /captain-queue`, `GET /blocked`, and `GET /rigs` serve parked decisions, blocked tasks, and rig pools; `bin/fm-api-server.mjs` owns those JSON contracts.
+`GET /captain-queue` and `GET /blocked` serve parked decisions and blocked tasks.
+`GET /rigs` serves rig pools plus the dispatch note, pins, and raw crew and secondmate pin lines.
+`GET /captain-holds` serves the open captain-kind decisions from this home's backlog.
+Missing read sources stay empty or null rather than failing the request.
+`bin/fm-api-server.mjs` owns those JSON contracts.
 `GET /events` holds open a server-sent event stream of typed home changes.
 Each frame's event name and JSON `type` are one of `task-status`, `task-created`, `captain-queue`, `rig-config`, or `changed`.
 A task-scoped event includes JSON `task`.

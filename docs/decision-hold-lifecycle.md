@@ -78,6 +78,8 @@ Its secondmate-home summary classifies an actionable captain hold as `captain_de
 `bin/fm-bearings-snapshot.sh` projects actionable captain holds into `decisions_open` and leaves blocked captain holds in ordinary queued gates.
 It excludes completed kind `captain` records from Recently Landed.
 The projection remains read-only and does not inspect historical prose.
+`GET /captain-holds` is the localhost API's captain-hold query.
+`bin/fm-api-server.mjs` owns that JSON contract.
 
 ## Verification record
 
