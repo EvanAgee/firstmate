@@ -3,7 +3,7 @@
     {
       "when": "The task depends on fresh news, current events, live public facts, or recent market and product changes.",
       "use": { "harness": "grok" },
-      "why": "Grok is the preferred dispatch when current web-connected context is central to the work."
+      "why": "Grok is the preferred pool when current web-connected context is central to the work."
     },
     {
       "when": "The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering.",
@@ -15,11 +15,9 @@
       "use": [
         { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
         { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" },
-        { "harness": "claude", "model": "opus", "effort": "high" },
-        { "harness": "claude", "model": "sonnet", "effort": "high" }
+        { "harness": "claude", "model": "opus", "effort": "high" }
       ],
-      "split": { "codex": 50, "pi": 50 },
-      "why": "Keep ordinary builder assignments balanced over time between the Codex/GPT and Pi/Grok subscription lanes."
+      "why": "The ordinary builder pool. Every member is good enough for this work, so new builder tasks spread evenly across them by round-robin instead of piling onto the first one."
     },
     {
       "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
@@ -28,7 +26,7 @@
         { "harness": "codex", "model": "gpt-5.5", "effort": "high" },
         { "harness": "grok", "model": "grok-4", "effort": "high", "enabled": false }
       ],
-      "why": "Use a strong coding profile for big, ambiguous work; resolve the alternatives through quota-array-dispatch. The third rung shows an optional switched-off rung: absent enabled means on."
+      "why": "The high-tier design pool: every member holds this quality floor, and new tasks spread across them by round-robin. The third member shows the disable switch: absent enabled means on, and enabled false removes that member from the pool."
     }
   ],
   "default": [

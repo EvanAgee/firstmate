@@ -62,7 +62,7 @@
 #          silent; bin/fm-chrome-devtools-axi-lib.sh owns that probe and its floor.
 #          tasks-axi and quota-axi are required bootstrap tools (same class as
 #          lavish-axi). A compatible tasks-axi default backend is silent.
-#          quota-axi is required for the agent-owned dispatch-profile array
+#          quota-axi is required for the agent-owned dispatch-pool
 #          procedure in AGENTS.md section 4 and
 #          .agents/skills/quota-array-dispatch/SKILL.md.
 #          On a primary home, the locked mutable path materializes the visible
