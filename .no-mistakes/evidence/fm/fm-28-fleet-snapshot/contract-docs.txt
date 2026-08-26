@@ -1,0 +1,4 @@
+573:`GET /fleet` returns the fleet snapshot for that home as JSON.
+574-The body is the output of `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.
+575-An empty home returns an empty fleet, not an error.
+576-A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.

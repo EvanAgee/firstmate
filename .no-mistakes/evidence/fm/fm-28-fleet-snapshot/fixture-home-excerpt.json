@@ -1,0 +1,17 @@
+{
+  "http_status": 200,
+  "schema": "fm-fleet-snapshot.v1",
+  "task_ids": ["ship-task"],
+  "ship_task_current_state": {
+    "state": "unknown",
+    "source": "pane",
+    "detail": "harness state unavailable (unknown missing)"
+  },
+  "ship_task_last_event": {
+    "state": "working",
+    "note": "implementing the snapshot"
+  },
+  "backlog_stages": ["in_flight", "queued", "done"],
+  "backlog_ids": ["ship-task", "queued-task", "done-task"],
+  "api_matches_fm_fleet_snapshot_sh": true
+}
