@@ -1,0 +1,7 @@
+===== BEFORE (scaffold at base 2b9a631) =====
+9. Before reporting done for any PR with user-visible UI changes, use the exact upload command supplied by the project brief to upload viewport screenshots and embed them in the PR body; local paths do not count.
+
+===== AFTER (generated ship brief, mode=no-mistakes) =====
+9. Before reporting done for any PR with user-visible UI changes, upload viewport screenshots to Cloudflare and embed the returned public URLs in the PR body by running, from inside this task worktree, `node ~/Sites/agent-workflow-kit/scripts/upload-artifact.mjs --ref pr-<PR#> --pr <PR#> <screenshot-file>...` (credentials live once per machine at `~/.claude/cloudflare-r2.env`).
+   The tool uploads each file, prints ready-to-paste markdown, writes the links into the PR body, and refuses a desktop or full-screen capture, so pass only viewport screenshots from your own lane's browser.
+   Committed repo paths (for example `docs/reference/151/foo.png`) and local file paths do NOT render in a private-repo PR and do NOT count.
