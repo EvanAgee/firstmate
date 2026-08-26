@@ -347,6 +347,7 @@ Port, home, and the write token come from firstmate config; [`docs/configuration
 [`CONTEXT.md`](../CONTEXT.md) is the glossary for the words the API uses.
 The parked-decision, blocked-task, and rig-pool reads are assembled by `bin/fm-api-reads.mjs`; `bin/fm-api-server.mjs` owns those HTTP routes and JSON contracts.
 `GET /tasks/<id>` is assembled by `bin/fm-api-task-detail.mjs`.
+`GET /events` is owned by `bin/fm-api-server.mjs`; [`docs/configuration.md`](configuration.md) owns the public stream contract.
 
 ## Development notes
 

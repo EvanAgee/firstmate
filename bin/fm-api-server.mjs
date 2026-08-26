@@ -25,6 +25,10 @@
 // GET /rigs
 //   { ok, rigs: [{ name, rungs: [{ harness, model, effort, enabled }] }] }
 //   Dispatch pools and each rung's enabled state. Missing config: rigs is [].
+// GET /events
+//   Server-sent event stream of typed home changes. Event timing comes from
+//   FM_API_EVENT_QUIET_MS, FM_API_EVENT_DEADLINE_MS, and FM_API_HEARTBEAT_MS;
+//   docs/configuration.md owns the public stream contract.
 // POST /captain-notes requires Authorization: Bearer <token> and queues a
 // captain note for firstmate on the wake queue, encoded as operational input.
 // Reads need no token. A captain note never closes a parked decision.
@@ -46,6 +50,10 @@ const MAX_NOTE_TEXT = 2000;
 const NOTE_KIND = "away-supervisor";
 const TASK_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENDED_VERBS = new Set(["done", "closed", "cancelled"]);
+
+const EVENT_QUIET_MS = 100;
+const EVENT_DEADLINE_MS = 1000;
+const HEARTBEAT_MS = 15000;
 
 function parseArguments(argv) {
   const result = { home: "", port: "", state: "", sessionPid: "", tokenFile: "" };
@@ -80,6 +88,13 @@ function parsePort(value) {
 function parseSessionPid(value) {
   if (!value) return 0;
   if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`session pid must be a positive integer: ${value}`);
+  return Number(value);
+}
+
+function durationFromEnvironment(name, fallback) {
+  const value = process.env[name];
+  if (value === undefined || value === "") return fallback;
+  if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`${name} must be a positive integer`);
   return Number(value);
 }
 
@@ -385,7 +400,7 @@ function handleTaskDetail(req, res, home, stateDir, task) {
     });
 }
 
-function handle(req, res, home, options) {
+function handle(req, res, home, options, events) {
   const stateDir = options.stateDir || path.join(home, "state");
   let url;
   try {
@@ -455,7 +470,203 @@ function handle(req, res, home, options) {
     handleCaptainNote(req, res, home, options);
     return;
   }
+  if (url.pathname === "/events") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "method not allowed" });
+      return;
+    }
+    events.subscribe(req, res);
+    return;
+  }
   json(res, 404, { ok: false, error: "not found" });
+}
+
+function eventForPath(relativePath) {
+  const parts = relativePath.split("/");
+  if (parts.some((part) => part.startsWith("."))) return null;
+
+  let match = relativePath.match(/^state\/([^/]+)\.status$/);
+  if (match) return { type: "task-status", task: match[1] };
+
+  match = relativePath.match(/^state\/([^/]+)\.meta$/);
+  if (match) return { type: "task-created", task: match[1] };
+
+  if (relativePath === "data/backlog.md") return { type: "captain-queue" };
+  if (relativePath === "config/crew-dispatch.json") return { type: "rig-config" };
+  return { type: "changed" };
+}
+
+function createEventClients(heartbeatMs, onEmpty) {
+  const clients = new Set();
+  let heartbeatTimer;
+
+  function removeClient(res) {
+    if (!clients.delete(res) || clients.size > 0) return;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = undefined;
+    onEmpty();
+  }
+
+  function write(frame) {
+    for (const res of clients) {
+      if (res.destroyed || res.writableEnded) {
+        removeClient(res);
+        continue;
+      }
+      try {
+        res.write(frame);
+      } catch {
+        removeClient(res);
+      }
+    }
+  }
+
+  function subscribe(req, res) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    });
+    if (typeof res.flushHeaders === "function") res.flushHeaders();
+    res.write(": connected\n\n");
+    req.socket.setKeepAlive(true);
+    clients.add(res);
+
+    const disconnect = () => removeClient(res);
+    req.once("close", disconnect);
+    res.once("close", disconnect);
+    res.once("error", disconnect);
+
+    if (heartbeatTimer) return;
+    heartbeatTimer = setInterval(() => {
+      if (clients.size === 0) return;
+      write(`: heartbeat ${new Date().toISOString()}\n\n`);
+    }, heartbeatMs);
+    heartbeatTimer.unref();
+  }
+
+  function close() {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = undefined;
+    for (const res of clients) res.end();
+    clients.clear();
+  }
+
+  return {
+    get size() {
+      return clients.size;
+    },
+    subscribe,
+    write,
+    close,
+  };
+}
+
+function eventFrame(change) {
+  const body = {
+    type: change.type,
+    ...(change.task ? { task: change.task } : {}),
+    timestamp: change.timestamp,
+  };
+  return `event: ${change.type}\ndata: ${JSON.stringify(body)}\n\n`;
+}
+
+function createEventBatch(quietMs, deadlineMs, emit) {
+  const pending = new Map();
+  let quietTimer;
+  let deadlineTimer;
+
+  function clearTimers() {
+    if (quietTimer) clearTimeout(quietTimer);
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+    quietTimer = undefined;
+    deadlineTimer = undefined;
+  }
+
+  function clear() {
+    clearTimers();
+    pending.clear();
+  }
+
+  function flush() {
+    clearTimers();
+    const changes = [...pending.values()];
+    pending.clear();
+    for (const change of changes) emit(eventFrame(change));
+  }
+
+  function record(change) {
+    const key = `${change.type}\0${change.task || ""}`;
+    pending.set(key, { ...change, timestamp: new Date().toISOString() });
+    if (quietTimer) clearTimeout(quietTimer);
+    quietTimer = setTimeout(flush, quietMs);
+    quietTimer.unref();
+    if (!deadlineTimer) {
+      deadlineTimer = setTimeout(flush, deadlineMs);
+      deadlineTimer.unref();
+    }
+  }
+
+  return { clear, record };
+}
+
+function watchHome(home, record) {
+  const watchers = [];
+
+  function watchDirectory(name) {
+    const directory = path.join(home, name);
+    fs.mkdirSync(directory, { recursive: true });
+    const watcher = fs.watch(directory, { recursive: true, encoding: "utf8" }, (_eventType, filename) => {
+      if (!filename) return;
+      const absolute = path.resolve(directory, filename);
+      const relative = path.relative(home, absolute);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) return;
+      record(relative.split(path.sep).join("/"));
+    });
+    watcher.on("error", (error) => {
+      process.stderr.write(`event watcher ${name}: ${error.message}\n`);
+    });
+    watchers.push(watcher);
+  }
+
+  for (const name of ["state", "data", "config"]) watchDirectory(name);
+  return watchers;
+}
+
+function createEventStream(home) {
+  const quietMs = durationFromEnvironment("FM_API_EVENT_QUIET_MS", EVENT_QUIET_MS);
+  const deadlineMs = durationFromEnvironment("FM_API_EVENT_DEADLINE_MS", EVENT_DEADLINE_MS);
+  const heartbeatMs = durationFromEnvironment("FM_API_HEARTBEAT_MS", HEARTBEAT_MS);
+  if (deadlineMs < quietMs) {
+    throw new Error("FM_API_EVENT_DEADLINE_MS must be at least FM_API_EVENT_QUIET_MS");
+  }
+
+  let batch;
+  const clients = createEventClients(heartbeatMs, () => batch.clear());
+  batch = createEventBatch(quietMs, deadlineMs, (frame) => clients.write(frame));
+  let closed = false;
+  const watchers = watchHome(home, (relativePath) => {
+    if (closed || clients.size === 0) return;
+    const change = eventForPath(relativePath);
+    if (change) batch.record(change);
+  });
+
+  return {
+    subscribe(req, res) {
+      if (closed) {
+        res.destroy();
+        return;
+      }
+      clients.subscribe(req, res);
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      batch.clear();
+      for (const watcher of watchers) watcher.close();
+      clients.close();
+    },
+  };
 }
 
 function writePortFile(stateDir, port) {
@@ -499,9 +710,10 @@ function lockHolderAlive(stateDir) {
 export function createApiServer(home, options = {}) {
   const stateDir = options.stateDir || path.join(home, "state");
   const resolved = { ...options, stateDir };
-  return http.createServer((req, res) => {
+  const events = createEventStream(home);
+  const server = http.createServer((req, res) => {
     try {
-      handle(req, res, home, resolved);
+      handle(req, res, home, resolved, events);
     } catch {
       if (res.headersSent) {
         res.destroy();
@@ -510,6 +722,13 @@ export function createApiServer(home, options = {}) {
       json(res, 500, { ok: false, error: "internal error" });
     }
   });
+  const close = server.close.bind(server);
+  server.close = (callback) => {
+    events.close();
+    return close(callback);
+  };
+  server.once("close", () => events.close());
+  return server;
 }
 
 function invokedDirectly() {
