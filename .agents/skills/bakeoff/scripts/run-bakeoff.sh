@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Harness bake-off runner: hand ONE identical brief to N harness/model combos,
+# each in its own isolated git worktree, run headless to completion, time each,
+# capture its diff + RESULT.md. No pushes, no PRs, no merges. Read-only to the
+# firstmate clone's tracked files (worktrees live outside it).
+#
+# Usage: run-bakeoff.sh <clone-dir> <base-ref> <brief-file> <work-root> [agent-timeout-secs] [slug-filter]
+#   base-ref: commit/branch to branch each worktree from (use the PRE-feature commit)
+#   slug-filter: optional single slug to run just one agent (canary)
+set -uo pipefail
+
+CLONE="${1:?clone dir}"
+BASE="${2:?base branch}"
+BRIEF="${3:?brief file}"
+ROOT="${4:?work root}"
+TIMEOUT="${5:-2400}"   # 40 min per agent default
+FILTER="${6:-}"        # optional single-slug canary
+
+mkdir -p "$ROOT"
+MANIFEST="$ROOT/manifest.tsv"
+: > "$MANIFEST"
+printf 'slug\tharness\tmodel\tstatus\texit\tinstall_s\tagent_s\tfiles_changed\tinsertions\tdeletions\thas_result\n' >> "$MANIFEST"
+
+# Roster: slug | harness | model | launch-template
+# Launch template placeholders: {MODEL} and the brief arrives on stdin.
+read -r -d '' ROSTER <<'EOF'
+fable|claude|fable|claude -p --model {MODEL} --dangerously-skip-permissions
+opus5|claude|claude-opus-5|claude -p --model {MODEL} --dangerously-skip-permissions
+opus48|claude|claude-opus-4-8|claude -p --model {MODEL} --dangerously-skip-permissions
+sonnet5|claude|claude-sonnet-5|claude -p --model {MODEL} --dangerously-skip-permissions
+codex-sol|codex|gpt-5.6-sol|codex exec -m {MODEL} --dangerously-bypass-approvals-and-sandbox -
+luna|pi|openai/gpt-5.6-luna|pi --print --model {MODEL} --approve
+terra|pi|openai/gpt-5.6-terra|pi --print --model {MODEL} --approve
+grok46|pi|xai/grok-4.6|pi --print --model {MODEL} --approve
+kimik3|pi|chutes/moonshotai/Kimi-K3-TEE|pi --print --model {MODEL} --approve
+deepseekv4|pi|chutes/deepseek-ai/DeepSeek-V4-Flash-0731-TEE|pi --print --model {MODEL} --approve
+glm53|pi|z-ai/glm-5.3-flash|pi --print --model {MODEL} --approve
+EOF
+
+now() { date +%s; }
+
+# portable timeout: run_timeout <secs> <command-string> (macOS has no `timeout`)
+run_timeout() {
+  local secs="$1"; shift
+  perl -e '
+    my $t = shift @ARGV;
+    my $pid = fork();
+    if ($pid == 0) { exec("/bin/bash","-c",$ARGV[0]) or exit 127; }
+    local $SIG{ALRM} = sub { kill "TERM", $pid; sleep 3; kill "KILL", $pid; waitpid($pid,0); exit 124; };
+    alarm $t;
+    waitpid($pid,0);
+    exit($? >> 8);
+  ' "$secs" "$1"
+}
+
+launch_one() {
+  local slug="$1" harness="$2" model="$3" tmpl="$4"
+  local wt="$ROOT/$slug"
+  local log="$ROOT/$slug.agent.log"
+  local branch="bakeoff/$slug"
+
+  # skip a slug that already has a completed worktree (idempotent re-runs)
+  if [ -d "$wt/.git" ] || [ -f "$wt/.git" ]; then
+    echo "[$slug] worktree exists, skipping (already run)" >&2
+    return
+  fi
+
+  echo "[$slug] setting up worktree" >&2
+  git -C "$CLONE" worktree add --force -b "$branch" "$wt" "$BASE" >>"$ROOT/$slug.setup.log" 2>&1 || {
+    printf '%s\t%s\t%s\tsetup-failed\t-\t-\t-\t-\t-\t-\tno\n' "$slug" "$harness" "$model" >> "$MANIFEST"; return; }
+
+  # install deps (timed separately, not part of the model comparison)
+  local i0 i1 istatus
+  i0=$(now)
+  ( cd "$wt" && pnpm install --prefer-offline >>"$ROOT/$slug.install.log" 2>&1 )
+  istatus=$?
+  i1=$(now)
+  local install_s=$(( i1 - i0 ))
+  if [ "$istatus" -ne 0 ]; then
+    printf '%s\t%s\t%s\tinstall-failed\t-\t%s\t-\t-\t-\t-\tno\n' "$slug" "$harness" "$model" "$install_s" >> "$MANIFEST"; return
+  fi
+
+  # build launch command
+  local cmd="${tmpl//\{MODEL\}/$model}"
+  echo "[$slug] launching: $cmd" >&2
+
+  local a0 a1 ex
+  a0=$(now)
+  # brief on stdin; run inside the worktree; hard timeout (portable)
+  ( cd "$wt" && run_timeout "$TIMEOUT" "$cmd < '$BRIEF'" ) >>"$log" 2>&1
+  ex=$?
+  a1=$(now)
+  local agent_s=$(( a1 - a0 ))
+
+  local status="done"
+  [ "$ex" -eq 124 ] && status="timeout"
+  [ "$ex" -ne 0 ] && [ "$ex" -ne 124 ] && status="error"
+
+  # capture diff stats vs the base ref, catching BOTH committed and uncommitted work
+  local files ins del stat
+  git -C "$wt" add -A >/dev/null 2>&1   # stage any uncommitted edits so they show in the range diff via HEAD
+  # range diff: everything between the base and the working tree (committed + staged)
+  stat=$(git -C "$wt" diff --shortstat "$BASE" 2>/dev/null)
+  files=$(echo "$stat" | grep -oE '[0-9]+ file' | grep -oE '[0-9]+' | head -1)
+  ins=$(echo "$stat" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' | head -1)
+  del=$(echo "$stat" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' | head -1)
+  [ -z "$files" ] && files=0; [ -z "$ins" ] && ins=0; [ -z "$del" ] && del=0
+
+  # save the full diff vs base for review (committed + uncommitted)
+  git -C "$wt" diff "$BASE" > "$ROOT/$slug.diff" 2>/dev/null
+  local has_result=no
+  [ -f "$wt/RESULT.md" ] && { cp "$wt/RESULT.md" "$ROOT/$slug.RESULT.md"; has_result=yes; }
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$slug" "$harness" "$model" "$status" "$ex" "$install_s" "$agent_s" "$files" "$ins" "$del" "$has_result" >> "$MANIFEST"
+  echo "[$slug] DONE status=$status exit=$ex agent_s=$agent_s files=$files +$ins/-$del result=$has_result" >&2
+}
+
+# Launch all in parallel background jobs
+pids=()
+while IFS='|' read -r slug harness model tmpl; do
+  [ -z "$slug" ] && continue
+  [ -n "$FILTER" ] && [ "$slug" != "$FILTER" ] && continue
+  launch_one "$slug" "$harness" "$model" "$tmpl" &
+  pids+=("$!")
+done <<< "$ROSTER"
+
+echo "launched ${#pids[@]} agents; waiting..." >&2
+for p in "${pids[@]}"; do wait "$p"; done
+echo "ALL DONE. manifest: $MANIFEST" >&2
