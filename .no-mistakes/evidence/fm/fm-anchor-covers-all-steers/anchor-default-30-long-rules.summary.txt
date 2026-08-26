@@ -1,0 +1,6 @@
+case: default 30 longer one-line rules
+rules_present: 30/30
+omission_warning: no
+excerpt_bytes: 3681
+default_byte_budget: 16384
+headroom_bytes: 12703

@@ -1,0 +1,34 @@
+1787769678	1	heartbeat	-	no changes
+ANCHOR (durable truth re-read on this heartbeat; survives context compaction):
+standing steers (data/captain.md ## Working style):
+  - keep every heartbeat ANCHOR refresh of standing rule 1 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 2 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 3 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 4 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 5 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 6 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 7 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 8 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 9 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 10 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 11 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 12 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 13 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 14 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 15 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 16 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 17 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 18 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 19 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 20 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 21 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 22 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 23 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 24 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 25 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 26 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 27 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 28 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 29 from data/captain.md instead of silently stopping after twelve
+  - keep every heartbeat ANCHOR refresh of standing rule 30 from data/captain.md instead of silently stopping after twelve
+open decisions: 0 | in-flight tasks: 1

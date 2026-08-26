@@ -1,0 +1,6 @@
+1787769677	1	heartbeat	-	no changes
+ANCHOR (durable truth re-read on this heartbeat; survives context compaction):
+standing steers (data/captain.md ## Working style):
+  - first short rule
+  WARNING: 2 standing-steer lines omitted at explicit 25-byte budget; full file at /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-anchor-evidence.q6g2fi/byte-bound/data/captain.md
+open decisions: 0 | in-flight tasks: 1

@@ -1,0 +1,30 @@
+1787769674	1	heartbeat	-	no changes
+ANCHOR (durable truth re-read on this heartbeat; survives context compaction):
+standing steers (data/captain.md ## Working style):
+  - standing rule 1
+  - standing rule 2
+  - standing rule 3
+  - standing rule 4
+  - standing rule 5
+  - standing rule 6
+  - standing rule 7
+  - standing rule 8
+  - standing rule 9
+  - standing rule 10
+  - standing rule 11
+  - standing rule 12
+  - standing rule 13
+  - standing rule 14
+  - standing rule 15
+  - standing rule 16
+  - standing rule 17
+  - standing rule 18
+  - standing rule 19
+  - standing rule 20
+  - standing rule 21
+  - standing rule 22
+  - standing rule 23
+  - standing rule 24
+  - standing rule 25
+  - standing rule 26
+open decisions: 0 | in-flight tasks: 1

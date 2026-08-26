@@ -1,0 +1,6 @@
+case: default 26-rule heartbeat ANCHOR
+rules_present: 26/26
+omission_warning: no
+excerpt_bytes: 537
+default_byte_budget: 16384
+headroom_bytes: 15847
