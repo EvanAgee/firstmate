@@ -1,0 +1,2 @@
+api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:39){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq .data.repository.pullRequest.reviewThreads.totalCount
+api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:39){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq [.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length

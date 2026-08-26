@@ -1,0 +1,11 @@
+case	exit	merge_invoked	user_visible_line
+unresolved-13	1	no	error: PR has 13 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+resolved-13	0	yes	(none)
+unresolved-2	1	no	error: PR has 2 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+query-fail	1	no	error: could not read the PR's review threads; refusing to merge
+query-garbled	1	no	error: could not read the PR's review threads; refusing to merge
+null-pr	1	no	error: could not read the PR's review threads; refusing to merge
+allow-flag	0	yes	note: --allow-unresolved-threads set; skipping the review-thread gate for https://github.com/example/repo/pull/45
+allow-after-sep	1	no	error: PR has 13 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+over-100	1	no	error: PR has 101 review threads, more than the 100 this check reads; refusing to merge
+allow-extra	0	yes	note: --allow-unresolved-threads set; skipping the review-thread gate for https://github.com/example/repo/pull/48

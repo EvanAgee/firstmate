@@ -1,0 +1,136 @@
+fm-pr-merge.sh review-thread gate — end-user CLI evidence
+Script: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/bin/fm-pr-merge.sh
+Mock: gh-axi applies the script's --jq expressions to GitHub GraphQL-shaped JSON.
+Merge calls are logged; GraphQL calls are logged separately.
+
+=== 1. PR #39 with 13 unresolved threads (the reported gap) ===
+exit: 1
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  error: PR has 13 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+stdout:
+  armed: state/task-x1.check.sh
+gh-axi log (merge must be absent):
+  GRAPHQL api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:39){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq .data.repository.pullRequest.reviewThreads.totalCount
+  GRAPHQL api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:39){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq [.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length
+
+=== 2. Same 13 threads, all resolved — merge proceeds ===
+exit: 0
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+gh-axi log:
+  GRAPHQL api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:40){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq .data.repository.pullRequest.reviewThreads.totalCount
+  GRAPHQL api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:40){ reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq [.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length
+  pr merge 40 --repo example/repo --squash
+
+=== 3. Mixed: 13 threads, 2 unresolved — refuse with count 2 ===
+exit: 1
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  error: PR has 2 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+merge invoked? 0
+
+=== 4. GraphQL query fails — fail closed, no merge ===
+exit: 1
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  error: graphql request failed
+  error: could not read the PR's review threads; refusing to merge
+merge invoked? 0
+
+=== 5. Garbled/enveloped GraphQL output — fail closed ===
+exit: 1
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  error: could not read the PR's review threads; refusing to merge
+merge invoked? 0
+
+=== 6. Missing PR (null pullRequest) — fail closed ===
+exit: 1
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  error: could not read the PR's review threads; refusing to merge
+merge invoked? 0
+
+=== 7. --allow-unresolved-threads bypasses ONLY the gate and logs it ===
+exit: 0
+stdout:
+  armed: state/task-x1.check.sh
+  note: --allow-unresolved-threads set; skipping the review-thread gate for https://github.com/example/repo/pull/45
+gh-axi log (graphql must be absent; merge present):
+  pr merge 45 --repo example/repo --squash
+
+=== 8. --allow-unresolved-threads after -- does not bypass ===
+exit: 1
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  error: PR has 13 unresolved review thread(s); resolve them or pass --allow-unresolved-threads
+merge invoked? 0
+
+=== 9. totalCount 101 (>100 page cap) — refuse even if unresolved=0 ===
+exit: 1
+stderr:
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0Z6YXPZEH9K6GNX0ZR1WSFV/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  error: PR has 101 review threads, more than the 100 this check reads; refusing to merge
+merge invoked? 0
+
+=== 10. Override still forwards extra merge args after -- ===
+exit: 0
+stdout:
+  armed: state/task-x1.check.sh
+  note: --allow-unresolved-threads set; skipping the review-thread gate for https://github.com/example/repo/pull/48
+gh-axi log:
+  pr merge 48 --repo example/repo --merge --delete-branch
+
+=== GraphQL query the gate actually sent (from case 1) ===
+api POST /graphql --field query={ repository(owner:"example",name:"repo"){ pullRequest(number:39){ 
+reviewThreads(first:100){ totalCount nodes{ isResolved } } } } } --jq 
+.data.repository.pullRequest.reviewThreads.totalCount

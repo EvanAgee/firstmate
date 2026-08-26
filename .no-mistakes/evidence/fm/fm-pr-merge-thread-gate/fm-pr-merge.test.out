@@ -1,0 +1,19 @@
+ok - fm-pr-merge records pr= and pr_head= before invoking gh-axi pr merge
+ok - fm-pr-merge propagates a real merge failure without silently succeeding
+ok - fm-pr-merge forwards extra flags to gh-axi pr merge after the -- separator
+ok - fm-pr-merge refuses before merging when task meta is missing
+ok - fm-pr-merge refuses malformed PR URLs before calling gh-axi
+ok - fm-pr-merge refuses unsafe PR URL segments before recording state
+ok - fm-pr-merge refuses repo override args before recording state
+ok - fm-pr-merge does not add default --squash when the caller passes an explicit merge method
+ok - fm-pr-merge respects --method=<value> as an explicit merge method
+ok - fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments
+ok - fm-pr-merge refuses to merge a PR with unresolved review threads
+ok - fm-pr-merge merges normally when every review thread is resolved
+ok - fm-pr-merge fails closed when the review-thread query is unreadable
+ok - fm-pr-merge fails closed when the review-thread query itself errors
+ok - fm-pr-merge bypasses the review-thread gate under --allow-unresolved-threads and logs it
+ok - fm-pr-merge keeps forwarding extra flags when --allow-unresolved-threads precedes the -- separator
+ok - fm-pr-merge refuses to merge when reviewThreads.totalCount exceeds 100
+ok - fm-pr-merge does not treat --allow-unresolved-threads after -- as a gate bypass
+suite_exit=0
