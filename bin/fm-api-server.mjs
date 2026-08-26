@@ -42,6 +42,10 @@
 // POST /captain-notes requires Authorization: Bearer <token> and queues a
 // captain note for firstmate on the wake queue, encoded as operational input.
 // Reads need no token. A captain note never closes a parked decision.
+// POST /workers/relay requires the token; body { task, text }. Queues a steer
+//   for firstmate to pass to the worker word for word on its next turn. Use it
+//   for a worker that is not parked on a decision; a keyed answer that closes a
+//   decision uses /decisions/answer. Unknown task: 404. Bad body: 400.
 // POST /decisions/answer requires the token; body { task, key, text }. Queues
 //   an answer for firstmate on the same relay, which runs
 //   bin/fm-send.sh <task> --resolve-key <key> '<text>' on its next turn to
@@ -268,7 +272,9 @@ function noteState(verb) {
   return "running";
 }
 
-function parseCaptainNote(raw) {
+// Parse a { task, text } write body: a valid task slug and one line of text
+// within the length cap. Shared by the captain-note and worker-relay writes.
+function parseTaskText(raw) {
   let body;
   try {
     body = JSON.parse(raw);
@@ -390,13 +396,59 @@ function handleCaptainNote(req, res, home, options) {
   }
   readBody(req, MAX_BODY_BYTES)
     .then((raw) => {
-      const note = parseCaptainNote(raw);
+      const note = parseTaskText(raw);
       if (!taskExists(home, note.task)) {
         const error = new Error("not found");
         error.status = 404;
         throw error;
       }
       return queueCaptainNote(home, options.stateDir, note);
+    })
+    .then(() => {
+      json(res, 200, { ok: true });
+    })
+    .catch((error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      const status = error && error.status ? error.status : 500;
+      const message = status === 500 ? "failed" : error.message;
+      json(res, status, { ok: false, error: message });
+    });
+}
+
+// A worker relay rides the same relay as a captain note, but its body tells
+// firstmate to pass the text through to the worker word for word, rather than
+// read it as a note to itself. This is the plain steer for a worker that is
+// not parked on a decision; a keyed answer uses POST /decisions/answer.
+async function queueWorkerRelay(home, stateDir, relay) {
+  const body = `captain-relay to worker ${relay.task}: ${relay.text}`;
+  const encoded = await encodeOperationalInput(body);
+  const key = `worker-relay:${relay.task}:${crypto.randomBytes(8).toString("hex")}`;
+  await enqueueCheckWake(home, stateDir, key, `check: worker-relay: ${encoded}`);
+}
+
+function handleWorkerRelay(req, res, home, options) {
+  if (req.method !== "POST") {
+    req.resume();
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
+  if (!writeAuthorized(req, options.tokenFile)) {
+    req.resume();
+    json(res, 401, { ok: false, error: "unauthorized" });
+    return;
+  }
+  readBody(req, MAX_BODY_BYTES)
+    .then((raw) => {
+      const relay = parseTaskText(raw);
+      if (!taskExists(home, relay.task)) {
+        const error = new Error("not found");
+        error.status = 404;
+        throw error;
+      }
+      return queueWorkerRelay(home, options.stateDir, relay);
     })
     .then(() => {
       json(res, 200, { ok: true });
@@ -776,6 +828,10 @@ function handle(req, res, home, options, events) {
   }
   if (url.pathname === "/captain-notes") {
     handleCaptainNote(req, res, home, options);
+    return;
+  }
+  if (url.pathname === "/workers/relay") {
+    handleWorkerRelay(req, res, home, options);
     return;
   }
   if (url.pathname === "/decisions/answer") {

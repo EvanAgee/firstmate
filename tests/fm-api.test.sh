@@ -617,6 +617,59 @@ write_rung_fixture() {  # <home>
 EOF
 }
 
+test_worker_relay_without_token_is_unauthorized() {
+  local home port resp queue
+  home=$(fm_test_api_home api-relay-no-token)
+  printf 'working: implementing\n' > "$home/state/sample-task.status"
+  port=$(fm_test_api_start "$home")
+  HTTP_BODY='{"task":"sample-task","text":"try the smaller batch first"}' \
+    resp=$(fm_test_api_http "$port" /workers/relay POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -z "$queue" ] || fail "unauthorized relay still reached the wake queue: $queue"
+  fm_test_api_stop "$home"
+  pass "relaying to a worker without the token is refused with 401"
+}
+
+test_worker_relay_with_token_lands_in_wake_queue() {
+  local home port token resp expected queue
+  home=$(fm_test_api_home api-relay-ok)
+  printf 'working: implementing\n' > "$home/state/sample-task.status"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  expected=$(printf '%s' 'captain-relay to worker sample-task: try the smaller batch first' \
+    | "$ROOT/bin/fm-operational-input.sh" encode away-supervisor) \
+    || fail "could not encode the expected relay"
+  HTTP_BODY='{"task":"sample-task","text":"try the smaller batch first"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /workers/relay POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "authorized relay status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -n "$queue" ] || fail "authorized relay did not reach the wake queue"
+  printf '%s\n' "$queue" | grep -F "$expected" >/dev/null \
+    || fail "wake queue missing the encoded relay: $queue"
+  printf '%s\n' "$queue" | grep -F 'check: worker-relay:' >/dev/null \
+    || fail "wake queue missing the worker-relay check payload: $queue"
+  fm_test_api_stop "$home"
+  pass "relaying to a worker with the token lands the steer on the wake queue for firstmate"
+}
+
+test_worker_relay_unknown_task_is_not_found() {
+  local home port token resp
+  home=$(fm_test_api_home api-relay-unknown)
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"task":"ghost-task","text":"try the smaller batch first"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /workers/relay POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 404 ] || fail "unknown-task relay status $HTTP_CODE, wanted 404: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "relaying to an unknown task is 404"
+}
+
 test_decision_answer_without_token_is_unauthorized() {
   local home port resp queue
   home=$(fm_test_api_home api-answer-no-token)
@@ -765,6 +818,9 @@ test_captain_note_without_token_is_unauthorized
 test_captain_note_with_token_lands_in_wake_queue
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
+test_worker_relay_without_token_is_unauthorized
+test_worker_relay_with_token_lands_in_wake_queue
+test_worker_relay_unknown_task_is_not_found
 test_decision_answer_without_token_is_unauthorized
 test_decision_answer_with_token_lands_in_wake_queue
 test_decision_answer_unknown_task_is_not_found
