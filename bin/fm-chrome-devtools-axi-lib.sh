@@ -11,11 +11,14 @@
 #     launcher. It pins chrome-devtools-mcp and adds --no-page-id-routing.
 #   - Compatible means the installed chrome-devtools-axi meets that floor,
 #     the launcher prints the expected pin and flag, and (unless the live
-#     probe is skipped) `chrome-devtools-axi open` against a named session
-#     returns a snapshot instead of the pageId schema error.
+#     probe is skipped) `chrome-devtools-axi open` against a process-unique
+#     session returns a snapshot instead of the pageId schema error.
+#     The probe drops attach, profile, and port vars and stops that session
+#     after open and on EXIT so it cannot join the user's Chrome or a sibling
+#     probe.
 # bin/fm-bootstrap.sh turns a failing check into the operator-facing MISSING
 # diagnostic. bin/fm-session-start.sh exports CHROME_DEVTOOLS_AXI_MCP_PATH and
-# prints that export in the digest so the captain inherits the pin.
+# prints that export in the digest so the captain can run it and inherit the pin.
 # bin/fm-spawn.sh still exports the launcher path and a per-task session name
 # so workers do not inherit @latest or the default bridge.
 #

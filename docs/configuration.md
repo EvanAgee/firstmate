@@ -360,7 +360,8 @@ An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm instal
 An absent or incompatible `chrome-devtools-axi` reports `MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)`.
 Published `chrome-devtools-axi` 0.1.29 and 0.1.30 launch `chrome-devtools-mcp@latest` and omit `pageId` on page-scoped calls, while Chrome DevTools MCP 1.8.0 requires `pageId` by default.
 Firstmate therefore points the CLI at [`bin/fm-chrome-devtools-mcp.js`](../bin/fm-chrome-devtools-mcp.js), which pins `chrome-devtools-mcp@1.8.0` and adds `--no-page-id-routing` until axi itself routes by page id.
-Session start exports `CHROME_DEVTOOLS_AXI_MCP_PATH` to that launcher and prints the same export in the digest so the captain and any later `chrome-devtools-axi` open in this session inherit the pin. Spawn still exports that path and sets `CHROME_DEVTOOLS_AXI_SESSION` to the task id so workers do not share the default bridge or pick up `@latest`.
+Session start exports `CHROME_DEVTOOLS_AXI_MCP_PATH` to that launcher and prints the same export in the digest so the captain can run it before any later `chrome-devtools-axi` open in this session.
+Spawn still exports that path and sets `CHROME_DEVTOOLS_AXI_SESSION` to the task id so workers do not share the default bridge or pick up `@latest`.
 Bootstrap's chrome-devtools-axi check is the version floor plus a named-session open-and-snapshot probe owned by [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh).
 An absent or incompatible `lavish-axi` reports `MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)`.
 An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array without a compatible binary.

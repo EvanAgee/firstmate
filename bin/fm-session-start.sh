@@ -33,10 +33,11 @@
 #                       marked by .fm-secondmate-home.
 #   2. bootstrap      - home-local stale Herdr projection cleanup runs only
 #                       when this session actually holds the lock. Detect-only
-#                       diagnostics always run. After that detect output this
-#                       script exports CHROME_DEVTOOLS_AXI_MCP_PATH and prints
-#                       the same export so later chrome-devtools-axi opens in
-#                       this session inherit bin/fm-chrome-devtools-mcp.js.
+#                       diagnostics always run. This script exports
+#                       CHROME_DEVTOOLS_AXI_MCP_PATH before that detect so
+#                       bootstrap inherits the pin, then prints the same export
+#                       after detect output so later chrome-devtools-axi opens
+#                       in this session inherit bin/fm-chrome-devtools-mcp.js.
 #                       Bootstrap's six MUTATING sweeps (legacy PR-check
 #                       migration, secondmate convergence, secondmate liveness,
 #                       pending remote handoff retry, X-mode artifact writes,
