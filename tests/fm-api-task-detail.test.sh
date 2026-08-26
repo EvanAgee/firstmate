@@ -297,9 +297,51 @@ SH
   pass "mixed status-line pipeline steps stay independent"
 }
 
+test_pr_url_repo_named_test_is_not_test_step_evidence() {
+  local home port resp
+  home=$(fm_test_api_home api-task-url-test)
+  mkdir -p "$home/data/url-task" "$home/fakebin"
+  printf 'A repo named test is not a test step.\n' > "$home/data/url-task/brief.md"
+  cat > "$home/state/url-task.meta" <<'EOF'
+window=fixture:fm-url-task
+project=widget
+harness=codex
+kind=ship
+mode=no-mistakes
+EOF
+  cat > "$home/state/url-task.status" <<'EOF'
+done: PR https://github.com/acme/test/pull/77 checks green
+EOF
+  cat > "$home/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  cat > "$home/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$home/fakebin/no-mistakes" "$home/fakebin/gh-axi"
+
+  port=$(PATH="$home/fakebin:$PATH" fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /tasks/url-task GET 12000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "url-test status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.test.status')" = unknown ] || \
+    fail "PR repo named test created test-step evidence: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.test.source')" = none ] || \
+    fail "test source: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.ci.status')" = passed ] || \
+    fail "checks-green CI step: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.task.activity.pipeline.steps.ci.source')" = status-timeline ] || \
+    fail "ci source: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "a PR URL repo named test does not create test-step evidence"
+}
+
 test_task_detail_returns_full_worker_activity
 test_unknown_task_returns_json_404
 test_skipped_github_check_is_kept_without_failing_ci
 test_mixed_status_line_keeps_pipeline_steps_independent
+test_pr_url_repo_named_test_is_not_test_step_evidence
 
 echo "# fm-api-task-detail.test.sh: all assertions passed"

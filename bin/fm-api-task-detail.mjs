@@ -273,7 +273,8 @@ function timelineStepEvidence(timeline) {
   const evidence = {};
   for (const event of timeline) {
     const text = `${event.verb} ${event.note}`.toLowerCase();
-    for (const clause of text.split(";")) {
+    for (const rawClause of text.split(";")) {
+      const clause = rawClause.replace(/https?:\/\/\S+/g, " ");
       for (const step of PIPELINE_STEPS) {
         const namesStep = new RegExp(`\\b${step}\\b`).test(clause);
         if (!namesStep && !(step === "ci" && clause.includes("checks green"))) continue;
