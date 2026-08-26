@@ -1,0 +1,5 @@
+launched 1 agents; waiting...
+[grok46] setting up worktree
+[grok46] launching: pi --print --model xai/grok-4.6 --approve
+[grok46] DONE status=done exit=0 agent_s=0 files=1 +1/-0 result=no
+ALL DONE. manifest: /tmp/bakeoff-e2e-rerun/relwork/manifest.tsv

@@ -1,0 +1,10 @@
+slug	harness	model	status	exit	install_s	agent_s	files_changed	insertions	deletions	has_result
+grok46	pi	xai/grok-4.6	setup-failed	-	-	-	-	-	-	no
+opus5	claude	claude-opus-5	setup-failed	-	-	-	-	-	-	no
+fable	claude	fable	setup-failed	-	-	-	-	-	-	no
+opus48	claude	claude-opus-4-8	setup-failed	-	-	-	-	-	-	no
+sonnet5	claude	claude-sonnet-5	setup-failed	-	-	-	-	-	-	no
+codex-sol	codex	gpt-5.6-sol	setup-failed	-	-	-	-	-	-	no
+glm53	pi	z-ai/glm-5.3-flash	setup-failed	-	-	-	-	-	-	no
+kimik3	pi	chutes/moonshotai/Kimi-K3-TEE	setup-failed	-	-	-	-	-	-	no
+deepseekv4	pi	chutes/deepseek-ai/DeepSeek-V4-Flash-0731-TEE	setup-failed	-	-	-	-	-	-	no

@@ -1,0 +1,228 @@
+=== 1. missing brief exits 1 ===
+brief not found: /tmp/bakeoff-e2e-final/caller/nope.md
+rc=1
+PASS missing-brief-rc
+PASS missing-brief-msg
+=== 2. five-arg canary grok46 launches 1, not 9 ===
+launched 1 agents; waiting...
+[grok46] setting up worktree
+[grok46] launching: pi --print --model xai/grok-4.6 --approve
+[grok46] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+ALL DONE. manifest: /tmp/bakeoff-e2e-final/w2/manifest.tsv
+manifest:
+slug	harness	model	status	exit	install_s	agent_s	files_changed	insertions	deletions	has_result
+grok46	pi	xai/grok-4.6	done	0	0	0	0	0	0	no
+PASS canary-rc
+PASS canary-launched-1
+PASS canary-only-grok46
+PASS canary-slug-grok46
+PASS canary-not-luna
+PASS canary-got-brief
+PASS canary-pi-in-worktree
+PASS canary-git-diff-captured
+PASS canary-perl-timeout-not-alarm0
+=== 3. relative brief from caller cwd is canonicalized ===
+launched 1 agents; waiting...
+[grok46] setting up worktree
+ALL DONE. manifest: /tmp/bakeoff-e2e-final/w3/manifest.tsv
+PASS relbrief-rc
+FAIL relbrief-token :: grep -q UNIQUE_BRIEF_TOKEN "/tmp/bakeoff-e2e-final/w3/grok46.agent.log"
+PASS relbrief-no-missing
+=== 4. canary then full keeps grok46 and skips it; default roster 9 no luna/terra ===
+canary launched: launched 1 agents; waiting...
+full launched: launched 9 agents; waiting...
+skip line: 
+manifest slugs:
+grok46 setup-failed
+opus5 setup-failed
+fable setup-failed
+opus48 setup-failed
+sonnet5 setup-failed
+codex-sol setup-failed
+glm53 setup-failed
+kimik3 setup-failed
+deepseekv4 setup-failed
+sorted slugs: codex-sol deepseekv4 fable glm53 grok46 kimik3 opus48 opus5 sonnet5 
+PASS full-launched-9
+FAIL full-skipped-grok46 :: grep -q '\[grok46\] worktree exists, skipping' "/tmp/bakeoff-e2e-final/logs/full2.err"
+PASS full-has-grok46
+PASS full-nine-rows
+PASS full-no-luna
+PASS full-no-terra
+FAIL full-grok46-done :: awk -F '\t' '$1=="grok46"{exit !($4=="done")}' "/tmp/bakeoff-e2e-final/w4/manifest.tsv"
+=== 5. BAKEOFF_EXTRAS=1 adds luna and terra ===
+launched 11 agents; waiting...
+codex-sol
+deepseekv4
+fable
+glm53
+grok46
+kimik3
+luna
+opus48
+opus5
+sonnet5
+terra
+PASS extras-launched-11
+PASS extras-luna
+PASS extras-terra
+=== 6. luna filter opts in a single extra ===
+[luna] setting up worktree
+launched 1 agents; waiting...
+[luna] launching: pi --print --model openai/gpt-5.6-luna --approve
+[luna] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+ALL DONE. manifest: /tmp/bakeoff-e2e-final/w6/manifest.tsv
+PASS luna-launched-1
+PASS luna-slug
+=== 7. numeric 5th arg is timeout, 6th is filter ===
+launched 1 agents; waiting...
+[grok46] setting up worktree
+[grok46] launching: pi --print --model xai/grok-4.6 --approve
+[grok46] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+ALL DONE. manifest: /tmp/bakeoff-e2e-final/w7/manifest.tsv
+PASS tmo-launched-1
+PASS tmo-grok46
+=== 8. skip existing worktree records manifest row if missing ===
+[grok46] worktree exists, skipping (already run)
+launched 1 agents; waiting...
+ALL DONE. manifest: /tmp/bakeoff-e2e-final/w8/manifest.tsv
+slug	harness	model	status	exit	install_s	agent_s	files_changed	insertions	deletions	has_result
+grok46	pi	xai/grok-4.6	skipped	-	-	-	-	-	-	no
+PASS skip-recorded
+=== 9. review missing brief/ref exits nonzero ===
+missing brief: rc=1 brief not found: /tmp/bakeoff-e2e-final/caller/nope.md
+PASS rev-missing-brief
+PASS rev-missing-brief-msg
+missing ref: rc=1 reference diff not found: /tmp/bakeoff-e2e-final/caller/nope.diff
+PASS rev-missing-ref
+PASS rev-missing-ref-msg
+=== 10. score requires trap field ===
+score no trap: rc=1 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M10184YZG48EZ69NAZAYMN72/.agents/skills/bakeoff/scripts/score-bakeoff.sh: line 9: 2: trap field name
+PASS score-requires-trap
+=== 11. review relative root + isolated judge + trap field in prompt ===
+[grok46] reviewing with claude-opus-4-8...
+[grok46] verdict written
+ALL REVIEWS DONE
+verdict: {"slug":"stub","buildable":true,"meets_spec":true,"avoided_custom_trap":true,"has_tests":true,"in_scope":true,"scores":{"correctness":8,"spec_fit":7,"code_quality":6,"test_quality":5,"safety":9},"one_line":"stub verdict","notable_flaws":["none"]}
+claude cwd: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/bakeoff-judge.wxleUV
+claude argv: -p --safe-mode --no-session-persistence --tools  --model claude-opus-4-8
+PASS rev-rel-rc
+PASS rev-verdict-under-canonical-root
+PASS rev-err-under-canonical-root
+PASS rev-judge-outside-clone
+PASS rev-no-dangerously
+PASS rev-safe-mode
+PASS rev-no-session
+PASS rev-tools-empty
+PASS rev-prompt-trap
+PASS rev-prompt-trap-criteria
+PASS rev-prompt-scope
+PASS rev-prompt-brief
+PASS rev-prompt-ref
+PASS rev-not-hardcoded-old-trap
+=== 12. prose judge becomes DNF verdict ===
+[grok46] reviewing with claude-opus-4-8...
+<anonymous_script>:1
+
+
+SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at [eval]:1:14
+    at runScriptInThisContext (node:internal/vm:209:10)
+    at node:internal/process/execution:446:12
+    at [eval]-wrapper:6:24
+    at runScriptInContext (node:internal/process/execution:444:60)
+    at evalFunction (node:internal/process/execution:279:30)
+    at evalTypeScript (node:internal/process/execution:291:3)
+    at node:internal/main/eval_string:74:3
+
+Node.js v22.22.0
+[grok46] no JSON parsed; wrote DNF and saved raw
+ALL REVIEWS DONE
+dnf verdict: {"slug":"grok46","buildable":false,"meets_spec":false,"avoided_custom_trap":false,"has_tests":false,"in_scope":false,"scores":{},"one_line":"DNF: judge returned no JSON","notable_flaws":["DNF: judge returned no JSON"]}
+PASS dnf-rc
+PASS dnf-note
+PASS dnf-valid-json
+PASS dnf-raw
+=== 13. empty diff writes DNF without calling judge ===
+[grok46] verdict exists, skip
+[empty] no diff, recorded DNF verdict
+ALL REVIEWS DONE
+PASS empty-dnf
+=== 14. unreadable verdict replaced with DNF and not skipped forever ===
+[grok46] verdict exists, skip
+<anonymous_script>:1
+NOT JSON
+^
+
+SyntaxError: Unexpected token 'N', "NOT JSON
+" is not valid JSON
+    at JSON.parse (<anonymous>)
+    at [eval]:1:14
+    at runScriptInThisContext (node:internal/vm:209:10)
+    at node:internal/process/execution:446:12
+    at [eval]-wrapper:6:24
+    at runScriptInContext (node:internal/process/execution:444:60)
+    at evalFunction (node:internal/process/execution:279:30)
+    at evalTypeScript (node:internal/process/execution:291:3)
+    at node:internal/main/eval_string:74:3
+
+Node.js v22.22.0
+[empty] replaced unreadable verdict with DNF
+ALL REVIEWS DONE
+PASS badjson-replaced
+=== 15. score uses trap field; manifest-only failures become DNF ===
+rank  slug                total
+1     winner               35/50
+2     failed               DNF
+
+wrote /tmp/bakeoff-e2e-final/score-root/doc-data.json
+doc-data:
+[
+ {
+  "slug": "winner",
+  "total": 35,
+  "correctness": 8,
+  "spec_fit": 7,
+  "code_quality": 6,
+  "test_quality": 5,
+  "safety": 9,
+  "buildable": true,
+  "meets_spec": true,
+  "avoided_trap": true,
+  "has_tests": true,
+  "in_scope": true,
+  "one_line": "ok",
+  "flaws": []
+ },
+ {
+  "slug": "failed",
+  "total": null,
+  "correctness": null,
+  "spec_fit": null,
+  "code_quality": null,
+  "test_quality": null,
+  "safety": null,
+  "buildable": false,
+  "meets_spec": false,
+  "avoided_trap": false,
+  "has_tests": false,
+  "in_scope": false,
+  "one_line": "DNF: install-failed",
+  "flaws": [
+   "DNF: install-failed"
+  ]
+ }
+]
+PASS score-rc
+PASS score-trap-true
+PASS score-total
+PASS score-failed-dnf
+=== 16. score with wrong/missing field name does not silently default ===
+missing trap rc=1 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M10184YZG48EZ69NAZAYMN72/.agents/skills/bakeoff/scripts/score-bakeoff.sh: line 9: 2: trap field name
+PASS score-missing-nonzero
+=== 17. invalid trap field rejected ===
+invalid trap rc=1 trap field must be a JSON identifier: not a field
+PASS invalid-trap
+
+RESULTS pass=57 fail=3

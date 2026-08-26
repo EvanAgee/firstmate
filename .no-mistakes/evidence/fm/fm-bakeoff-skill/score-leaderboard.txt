@@ -1,0 +1,5 @@
+rank  slug                total
+1     winner               35/50
+2     failed               DNF
+
+wrote /tmp/bakeoff-e2e-final/score-root/doc-data.json

@@ -1,0 +1,36 @@
+[
+ {
+  "slug": "winner",
+  "total": 35,
+  "correctness": 8,
+  "spec_fit": 7,
+  "code_quality": 6,
+  "test_quality": 5,
+  "safety": 9,
+  "buildable": true,
+  "meets_spec": true,
+  "avoided_trap": true,
+  "has_tests": true,
+  "in_scope": true,
+  "one_line": "ok",
+  "flaws": []
+ },
+ {
+  "slug": "failed",
+  "total": null,
+  "correctness": null,
+  "spec_fit": null,
+  "code_quality": null,
+  "test_quality": null,
+  "safety": null,
+  "buildable": false,
+  "meets_spec": false,
+  "avoided_trap": false,
+  "has_tests": false,
+  "in_scope": false,
+  "one_line": "DNF: install-failed",
+  "flaws": [
+   "DNF: install-failed"
+  ]
+ }
+]

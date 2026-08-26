@@ -1,0 +1,5 @@
+PI_STUB argv=--print --model xai/grok-4.6 --approve
+PI_STUB cwd=/tmp/bakeoff-e2e-final/w2/grok46
+PI_STUB stdin_begin
+UNIQUE_BRIEF_TOKEN acceptance: do the thing
+PI_STUB stdin_end

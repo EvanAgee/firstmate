@@ -1,0 +1,76 @@
+=== relative brief from caller cwd ===
+launched 1 agents; waiting...
+[grok46] setting up worktree
+[grok46] launching: pi --print --model xai/grok-4.6 --approve
+[grok46] DONE status=done exit=0 agent_s=0 files=1 +1/-0 result=no
+ALL DONE. manifest: /tmp/bakeoff-e2e-rerun/relwork/manifest.tsv
+agent log:
+PI_STUB argv=--print --model xai/grok-4.6 --approve
+PI_STUB cwd=/tmp/bakeoff-e2e-rerun/relwork/grok46
+PI_STUB stdin_begin
+UNIQUE_BRIEF_TOKEN acceptance: do the thing
+PI_STUB stdin_end
+diff:
+diff --git a/README b/README
+index df967b9..b3cc68e 100644
+--- a/README
++++ b/README
+@@ -1 +1,2 @@
+ base
++edited by stub
+manifest: slug	harness	model	status	exit	install_s	agent_s	files_changed	insertions	deletions	has_result
+grok46	pi	xai/grok-4.6	done	0	0	0	1	1	0	no
+PASS rel-token
+PASS rel-diff-has-edit
+PASS rel-files-changed
+=== canary then full: keep grok46 done row, skip existing, 9 default, no luna/terra ===
+after canary:
+slug	harness	model	status	exit	install_s	agent_s	files_changed	insertions	deletions	has_result
+grok46	pi	xai/grok-4.6	done	0	0	0	1	1	0	no
+after full stderr:
+[fable] setting up worktree
+[opus5] setting up worktree
+[opus48] setting up worktree
+[sonnet5] setting up worktree
+[codex-sol] setting up worktree
+[grok46] worktree exists, skipping (already run)
+[glm53] setting up worktree
+[kimik3] setting up worktree
+[deepseekv4] setting up worktree
+launched 9 agents; waiting...
+[opus48] launching: claude -p --model claude-opus-4-8 --dangerously-skip-permissions
+[fable] launching: claude -p --model fable --dangerously-skip-permissions
+[sonnet5] launching: claude -p --model claude-sonnet-5 --dangerously-skip-permissions
+[codex-sol] launching: codex exec -m gpt-5.6-sol --dangerously-bypass-approvals-and-sandbox -
+[opus5] launching: claude -p --model claude-opus-5 --dangerously-skip-permissions
+[glm53] launching: pi --print --model z-ai/glm-5.3-flash --approve
+[kimik3] launching: pi --print --model chutes/moonshotai/Kimi-K3-TEE --approve
+[deepseekv4] launching: pi --print --model chutes/deepseek-ai/DeepSeek-V4-Flash-0731-TEE --approve
+[glm53] DONE status=done exit=0 agent_s=0 files=1 +1/-0 result=no
+[kimik3] DONE status=done exit=0 agent_s=0 files=1 +1/-0 result=no
+[deepseekv4] DONE status=done exit=0 agent_s=0 files=1 +1/-0 result=no
+[codex-sol] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+[sonnet5] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+[opus48] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+[opus5] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+[fable] DONE status=done exit=0 agent_s=0 files=0 +0/-0 result=no
+ALL DONE. manifest: /tmp/bakeoff-e2e-rerun/fullwork/manifest.tsv
+after full manifest:
+slug	harness	model	status	exit	install_s	agent_s	files_changed	insertions	deletions	has_result
+grok46	pi	xai/grok-4.6	done	0	0	0	1	1	0	no
+glm53	pi	z-ai/glm-5.3-flash	done	0	0	0	1	1	0	no
+kimik3	pi	chutes/moonshotai/Kimi-K3-TEE	done	0	0	0	1	1	0	no
+deepseekv4	pi	chutes/deepseek-ai/DeepSeek-V4-Flash-0731-TEE	done	0	0	0	1	1	0	no
+codex-sol	codex	gpt-5.6-sol	done	0	0	0	0	0	0	no
+sonnet5	claude	claude-sonnet-5	done	0	0	0	0	0	0	no
+opus48	claude	claude-opus-4-8	done	0	0	0	0	0	0	no
+opus5	claude	claude-opus-5	done	0	0	0	0	0	0	no
+fable	claude	fable	done	0	0	0	0	0	0	no
+PASS keep-grok46-done
+PASS skip-line
+PASS launched-9
+PASS nine-rows
+PASS no-luna
+PASS no-terra
+PASS grok46-diff-kept
+RESULTS pass=10 fail=0
