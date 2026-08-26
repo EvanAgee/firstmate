@@ -13,6 +13,12 @@ TRAP_FIELD="${4:?trap field name}"
 TRAP_CRITERIA="${5:?trap criteria}"
 SCOPE_CRITERIA="${6:?scope criteria}"
 
+if [ ! -d "$ROOT" ]; then
+  echo "work root not found: $ROOT" >&2
+  exit 1
+fi
+ROOT="$(cd "$ROOT" && pwd)"
+
 if ! [[ "$TRAP_FIELD" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
   echo "trap field must be a JSON identifier: $TRAP_FIELD" >&2
   exit 1

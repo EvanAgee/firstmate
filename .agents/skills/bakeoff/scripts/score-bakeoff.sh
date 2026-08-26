@@ -2,11 +2,11 @@
 # Aggregate the per-agent verdict JSONs + the manifest into one scored table.
 # Prints a ranked leaderboard and writes <work-root>/doc-data.json for the doc.
 #
-# Usage: score-bakeoff.sh <work-root> [trap-field]
+# Usage: score-bakeoff.sh <work-root> <trap-field>
 # Reads: <root>/<slug>.verdict.json (from review-bakeoff.sh), <root>/manifest*.tsv
 set -uo pipefail
 ROOT="${1:?work root}"
-TRAP_FIELD="${2:-avoided_trap}"
+TRAP_FIELD="${2:?trap field name}"
 
 if ! [[ "$TRAP_FIELD" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
   echo "trap field must be a JSON identifier: $TRAP_FIELD" >&2
