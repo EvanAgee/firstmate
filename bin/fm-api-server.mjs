@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Localhost HTTP server for one firstmate home.
 //
-// Bind 127.0.0.1 only. Port, home, and state directory come from argv; this
-// file has no default home filesystem paths. bin/fm-api.sh owns process lifecycle.
+// Bind 127.0.0.1 only. Port, home, state directory, and write-token file come
+// from argv; this file has no default filesystem paths. bin/fm-api.sh owns
+// process lifecycle and writes config/api-token on first start when absent.
 // bin/fm-api-reads.mjs assembles the read windows from firstmate files.
 // GET /fleet runs bin/fm-fleet-snapshot.sh --json from this file's directory.
 //
@@ -20,25 +21,41 @@
 // GET /rigs
 //   { ok, rigs: [{ name, rungs: [{ harness, model, effort, enabled }] }] }
 //   Dispatch ladders and each rung's enabled state. Missing config: rigs is [].
+// POST /captain-notes requires Authorization: Bearer <token> and queues a
+// captain note for firstmate through the operational-input relay and the wake
+// queue. Reads need no token. A captain note never closes a parked decision.
 
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import crypto from "node:crypto";
+import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { blockedListBody, captainQueueBody, rigsBody } from "./fm-api-reads.mjs";
 
 export const API_VERSION = "1";
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SNAPSHOT_SCRIPT = path.join(SCRIPT_DIR, "fm-fleet-snapshot.sh");
+const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SNAPSHOT_SCRIPT = path.join(BIN_DIR, "fm-fleet-snapshot.sh");
+const MAX_BODY_BYTES = 16384;
+const MAX_NOTE_TEXT = 2000;
+const NOTE_KIND = "away-supervisor";
+const TASK_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const ENDED_VERBS = new Set(["done", "closed", "cancelled"]);
 
 function parseArguments(argv) {
-  const result = { home: "", port: "", state: "", sessionPid: "" };
+  const result = { home: "", port: "", state: "", sessionPid: "", tokenFile: "" };
   for (let i = 0; i < argv.length; i += 1) {
     const name = argv[i];
-    if (name === "--home" || name === "--port" || name === "--state" || name === "--session-pid") {
+    if (
+      name === "--home" ||
+      name === "--port" ||
+      name === "--state" ||
+      name === "--session-pid" ||
+      name === "--token-file"
+    ) {
       if (i + 1 >= argv.length) throw new Error(`${name} requires a value`);
-      const key = name === "--session-pid" ? "sessionPid" : name.slice(2);
+      const key =
+        name === "--session-pid" ? "sessionPid" : name === "--token-file" ? "tokenFile" : name.slice(2);
       result[key] = argv[i + 1];
       i += 1;
       continue;
@@ -119,7 +136,234 @@ function sendFleetSnapshot(req, res, home) {
   );
 }
 
-function handle(req, res, home, stateDir) {
+function readWriteToken(tokenFile) {
+  if (!tokenFile) return "";
+  try {
+    if (fs.lstatSync(tokenFile).isSymbolicLink()) return "";
+    const text = fs.readFileSync(tokenFile, "utf8");
+    return (
+      text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line && !line.startsWith("#")) || ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function bearerToken(req) {
+  const header = req.headers.authorization;
+  if (typeof header !== "string") return "";
+  const match = header.match(/^Bearer[ \t]+(\S+)\s*$/i);
+  return match ? match[1] : "";
+}
+
+function tokensEqual(left, right) {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  if (a.length === 0 || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function writeAuthorized(req, tokenFile) {
+  const expected = readWriteToken(tokenFile);
+  const provided = bearerToken(req);
+  return expected.length > 0 && tokensEqual(expected, provided);
+}
+
+function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        req.destroy();
+        const error = new Error("body too large");
+        error.status = 400;
+        reject(error);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+function taskExists(home, task) {
+  const status = path.join(home, "state", `${task}.status`);
+  const meta = path.join(home, "state", `${task}.meta`);
+  const brief = path.join(home, "data", task, "brief.md");
+  return fs.existsSync(status) || fs.existsSync(meta) || fs.existsSync(brief);
+}
+
+function latestStatusVerb(home, task) {
+  const dest = path.join(home, "state", `${task}.status`);
+  let text;
+  try {
+    text = fs.readFileSync(dest, "utf8");
+  } catch {
+    return "";
+  }
+  const lines = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  return lines[lines.length - 1].split(":")[0].trim();
+}
+
+function noteState(verb) {
+  if (verb === "failed") return "failed";
+  if (ENDED_VERBS.has(verb)) return "finished";
+  return "running";
+}
+
+function parseCaptainNote(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  const task = body.task;
+  const text = body.text;
+  if (typeof task !== "string" || !TASK_SLUG.test(task)) {
+    const error = new Error("invalid task");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof text !== "string" || !text.trim()) {
+    const error = new Error("missing text");
+    error.status = 400;
+    throw error;
+  }
+  if (/[\r\n\u2028\u2029]/.test(text)) {
+    const error = new Error("text must be one line");
+    error.status = 400;
+    throw error;
+  }
+  if (text.length > MAX_NOTE_TEXT) {
+    const error = new Error("text too long");
+    error.status = 400;
+    throw error;
+  }
+  return { task, text };
+}
+
+function runCommand(command, args, options = {}) {
+  const { stdin, env, timeoutMs = 10000 } = options;
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: env ? { ...process.env, ...env } : process.env,
+    });
+    const out = [];
+    const err = [];
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => out.push(chunk));
+    child.stderr.on("data", (chunk) => err.push(chunk));
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        code: code ?? 1,
+        stdout: Buffer.concat(out).toString("utf8"),
+        stderr: Buffer.concat(err).toString("utf8"),
+      });
+    });
+    if (stdin == null) child.stdin.end();
+    else child.stdin.end(stdin);
+  });
+}
+
+async function encodeOperationalInput(body) {
+  const result = await runCommand(path.join(BIN_DIR, "fm-operational-input.sh"), ["encode", NOTE_KIND], {
+    stdin: body,
+  });
+  const encoded = result.stdout.replace(/\n+$/, "");
+  if (result.code !== 0 || !encoded) {
+    throw new Error("encode failed");
+  }
+  return encoded;
+}
+
+async function enqueueCheckWake(home, stateDir, key, payload) {
+  const state = stateDir || path.join(home, "state");
+  const script = 'set -eu\n. "$1"\nfm_wake_append check "$WAKE_KEY" "$WAKE_PAYLOAD"\n';
+  const result = await runCommand("bash", ["-c", script, "wake-append", path.join(BIN_DIR, "fm-wake-lib.sh")], {
+    env: {
+      FM_HOME: home,
+      FM_STATE_OVERRIDE: state,
+      FM_WAKE_QUEUE: path.join(state, ".wake-queue"),
+      FM_WAKE_QUEUE_LOCK: path.join(state, ".wake-queue.lock"),
+      WAKE_KEY: key,
+      WAKE_PAYLOAD: payload,
+    },
+  });
+  if (result.code !== 0) throw new Error("wake append failed");
+}
+
+async function queueCaptainNote(home, stateDir, note) {
+  const state = noteState(latestStatusVerb(home, note.task));
+  const body = `captain-note on ${state} task ${note.task}: ${note.text}`;
+  const encoded = await encodeOperationalInput(body);
+  const key = `captain-note:${note.task}:${crypto.randomBytes(8).toString("hex")}`;
+  await enqueueCheckWake(home, stateDir, key, `check: captain-note: ${encoded}`);
+}
+
+function handleCaptainNote(req, res, home, options) {
+  if (req.method !== "POST") {
+    req.resume();
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
+  if (!writeAuthorized(req, options.tokenFile)) {
+    req.resume();
+    json(res, 401, { ok: false, error: "unauthorized" });
+    return;
+  }
+  readBody(req, MAX_BODY_BYTES)
+    .then((raw) => {
+      const note = parseCaptainNote(raw);
+      if (!taskExists(home, note.task)) {
+        const error = new Error("not found");
+        error.status = 404;
+        throw error;
+      }
+      return queueCaptainNote(home, options.stateDir, note);
+    })
+    .then(() => {
+      json(res, 200, { ok: true });
+    })
+    .catch((error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      const status = error && error.status ? error.status : 500;
+      const message = status === 500 ? "failed" : error.message;
+      json(res, status, { ok: false, error: message });
+    });
+}
+
+function handle(req, res, home, options) {
+  const stateDir = options.stateDir || path.join(home, "state");
   let url;
   try {
     url = new URL(req.url || "/", "http://127.0.0.1");
@@ -165,6 +409,10 @@ function handle(req, res, home, stateDir) {
     sendFleetSnapshot(req, res, home);
     return;
   }
+  if (url.pathname === "/captain-notes") {
+    handleCaptainNote(req, res, home, options);
+    return;
+  }
   json(res, 404, { ok: false, error: "not found" });
 }
 
@@ -206,11 +454,12 @@ function lockHolderAlive(stateDir) {
   }
 }
 
-export function createApiServer(home, stateDir) {
-  const state = stateDir || path.join(home, "state");
+export function createApiServer(home, options = {}) {
+  const stateDir = options.stateDir || path.join(home, "state");
+  const resolved = { ...options, stateDir };
   return http.createServer((req, res) => {
     try {
-      handle(req, res, home, state);
+      handle(req, res, home, resolved);
     } catch {
       if (res.headersSent) {
         res.destroy();
@@ -240,7 +489,8 @@ function main() {
   const port = parsePort(args.port);
   const sessionPid = parseSessionPid(args.sessionPid);
   const stateDir = args.state ? path.resolve(args.state) : "";
-  const server = createApiServer(home, stateDir);
+  const tokenFile = args.tokenFile ? path.resolve(args.tokenFile) : "";
+  const server = createApiServer(home, { tokenFile, stateDir });
   let closing = false;
 
   function shutdown() {

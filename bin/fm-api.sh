@@ -11,6 +11,8 @@
 # non-empty non-comment line of config/api-port, else 18787. A config/api-port
 # symlink is refused. Port 0 asks the kernel for an ephemeral port. The served
 # home is the resolved FM_HOME; there are no hardcoded filesystem paths.
+# On first start, a random write token is written to config/api-token if that
+# file is absent. Later starts keep it. A config/api-token symlink is refused.
 # bin/fm-api-server.mjs is the Node process. This wrapper owns pid identity, attach, and stop.
 #
 # start attaches only when the recorded session pid is the current live lock
@@ -42,7 +44,7 @@ LOG_FILE="$STATE/.api.log"
 LOCK_DIR="$STATE/.api.lock"
 
 usage() {
-  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -76,6 +78,47 @@ resolve_port() {
     die "port out of range: $port"
   fi
   printf '%s\n' "$port"
+}
+
+read_token_config() {
+  local line
+  [ -f "$CONFIG/api-token" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|\#*) continue ;;
+    esac
+    printf '%s\n' "$line"
+    return 0
+  done < "$CONFIG/api-token"
+  return 1
+}
+
+ensure_write_token() {
+  local dest token old_umask
+  dest="$CONFIG/api-token"
+  [ -L "$dest" ] && die "config/api-token must not be a symlink"
+  if [ -e "$dest" ] && [ ! -f "$dest" ]; then
+    die "config/api-token must be a regular file"
+  fi
+  if [ -f "$dest" ]; then
+    token=$(read_token_config) || token=
+    [ -n "$token" ] || die "config/api-token is empty"
+    return 0
+  fi
+  token=$(node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))') \
+    || die "could not generate a write token"
+  case "$token" in
+    ''|*[!0-9a-fA-F]*) die "generated write token was not hex" ;;
+  esac
+  [ "${#token}" -eq 64 ] || die "generated write token was the wrong length"
+  old_umask=$(umask)
+  umask 077
+  if ! printf '%s\n' "$token" > "$dest"; then
+    umask "$old_umask"
+    die "could not write config/api-token"
+  fi
+  chmod 600 "$dest" 2>/dev/null || true
+  umask "$old_umask"
 }
 
 node_ok() {
@@ -239,6 +282,7 @@ cmd_start() {
   home=$(cd "$FM_HOME" && pwd) || die "cannot resolve FM_HOME"
   FM_HOME=$home
   port=$(resolve_port)
+  ensure_write_token
 
   pid=$(recorded_pid) || pid=
   if [ -n "$pid" ] && api_is_attachable "$pid"; then
@@ -275,10 +319,12 @@ cmd_start() {
   session_pid=$(session_lock_pid) || session_pid=
   : >>"$LOG_FILE"
   if [ -n "$session_pid" ]; then
-    node "$SERVER" --home "$home" --port "$port" --state "$STATE" --session-pid "$session_pid" \
+    node "$SERVER" --home "$home" --port "$port" --state "$STATE" \
+      --token-file "$CONFIG/api-token" --session-pid "$session_pid" \
       >>"$LOG_FILE" 2>&1 < /dev/null &
   else
     node "$SERVER" --home "$home" --port "$port" --state "$STATE" \
+      --token-file "$CONFIG/api-token" \
       >>"$LOG_FILE" 2>&1 < /dev/null &
   fi
   child=$!
