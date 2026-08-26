@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/fm-api.test.sh - localhost API front door: health, bind, config, lifecycle,
-# the fleet snapshot read, write token, and captain notes.
+# the fleet snapshot read, write token, captain notes, decision answers, and rung toggles.
 #
 # Speaks real HTTP against a throwaway firstmate home. Does not read the live
 # home and does not inspect server source.
@@ -593,6 +593,158 @@ EOF
   pass "a clarifying question-back stays a captain note and does not close a hold"
 }
 
+# A crew-dispatch config with one class rig (two rungs, both on) and a default
+# ladder (two rungs). Used by the rung-toggle tests below.
+write_rung_fixture() {  # <home>
+  local home=$1
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
+        { "harness": "claude", "model": "opus", "effort": "high" }
+      ]
+    }
+  ],
+  "default": [
+    { "harness": "codex", "model": "gpt-5.5", "effort": "medium" },
+    { "harness": "pi", "model": "anthropic/claude-sonnet-5", "effort": "medium" }
+  ]
+}
+EOF
+}
+
+test_decision_answer_without_token_is_unauthorized() {
+  local home port resp queue
+  home=$(fm_test_api_home api-answer-no-token)
+  printf 'needs-decision: which target? [key=deploy-target]\n' > "$home/state/sample-task.status"
+  port=$(fm_test_api_start "$home")
+  HTTP_BODY='{"task":"sample-task","key":"deploy-target","text":"ship to prod"}' \
+    resp=$(fm_test_api_http "$port" /decisions/answer POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
+  HTTP_BODY='{"task":"sample-task","key":"deploy-target","text":"ship to prod"}' \
+    HTTP_AUTHORIZATION='Bearer definitely-not-the-token' \
+    resp=$(fm_test_api_http "$port" /decisions/answer POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 401 ] || fail "wrong token status $HTTP_CODE, wanted 401: $HTTP_BODY"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -z "$queue" ] || fail "unauthorized answer still reached the wake queue: $queue"
+  fm_test_api_stop "$home"
+  pass "answering a decision without the token is refused with 401"
+}
+
+test_decision_answer_with_token_lands_in_wake_queue() {
+  local home port token resp expected queue
+  home=$(fm_test_api_home api-answer-ok)
+  printf 'needs-decision: which target? [key=deploy-target]\n' > "$home/state/sample-task.status"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  expected=$(printf '%s' 'answer decision [key=deploy-target] on task sample-task with: ship to prod' \
+    | "$ROOT/bin/fm-operational-input.sh" encode away-supervisor) \
+    || fail "could not encode the expected answer"
+  HTTP_BODY='{"task":"sample-task","key":"deploy-target","text":"ship to prod"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /decisions/answer POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "authorized answer status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -n "$queue" ] || fail "authorized answer did not reach the wake queue"
+  printf '%s\n' "$queue" | grep -F "$expected" >/dev/null \
+    || fail "wake queue missing the encoded answer: $queue"
+  printf '%s\n' "$queue" | grep -F 'check: decision-answer:' >/dev/null \
+    || fail "wake queue missing the decision-answer check payload: $queue"
+  printf '%s\n' "$queue" | awk -F '\t' '$3=="check" { found=1 } END { exit found?0:1 }' \
+    || fail "wake queue did not record a check wake: $queue"
+  fm_test_api_stop "$home"
+  pass "answering a decision with the token lands the answer on the wake queue for firstmate"
+}
+
+test_decision_answer_unknown_task_is_not_found() {
+  local home port token resp
+  home=$(fm_test_api_home api-answer-unknown)
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"task":"ghost-task","key":"deploy-target","text":"ship to prod"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /decisions/answer POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 404 ] || fail "unknown-task answer status $HTTP_CODE, wanted 404: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "answering a decision on an unknown task is 404"
+}
+
+test_rung_toggle_without_token_is_unauthorized() {
+  local home port resp before after
+  home=$(fm_test_api_home api-rung-no-token)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "unauthorized rung toggle rewrote the config"
+  fm_test_api_stop "$home"
+  pass "toggling a rung without the token is refused with 401"
+}
+
+test_rung_toggle_with_token_flips_enabled() {
+  local home port token resp
+  home=$(fm_test_api_home api-rung-ok)
+  write_rung_fixture "$home"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "authorized rung off status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String(c.rules[0].use[1].enabled))' \
+      "$home/config/crew-dispatch.json")" = false ] \
+    || fail "rung 1 was not turned off in the config"
+  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":true}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "authorized rung on status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String("enabled" in c.rules[0].use[1]))' \
+      "$home/config/crew-dispatch.json")" = false ] \
+    || fail "turning a rung back on did not drop its enabled key"
+  fm_test_api_stop "$home"
+  pass "toggling a rung with the token flips its enabled state in the config"
+}
+
+test_rung_toggle_refuses_last_enabled_rung() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-rung-last)
+  write_rung_fixture "$home"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  # Turn off rung 0 first so rung 1 is the last one on.
+  HTTP_BODY='{"rig":"builder class: ordinary","rung":0,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "turning off rung 0 status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  before=$(cat "$home/config/crew-dispatch.json")
+  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "last-rung-off status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'last enabled rung' >/dev/null \
+    || fail "last-rung-off error is not clear: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "refused last-rung toggle still rewrote the config"
+  fm_test_api_stop "$home"
+  pass "a toggle that would turn off a ladder's last rung is refused with a clear error"
+}
+
 test_health_reports_version_and_home
 test_unknown_path_is_not_found
 test_binds_localhost_only
@@ -613,6 +765,12 @@ test_captain_note_without_token_is_unauthorized
 test_captain_note_with_token_lands_in_wake_queue
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
+test_decision_answer_without_token_is_unauthorized
+test_decision_answer_with_token_lands_in_wake_queue
+test_decision_answer_unknown_task_is_not_found
+test_rung_toggle_without_token_is_unauthorized
+test_rung_toggle_with_token_flips_enabled
+test_rung_toggle_refuses_last_enabled_rung
 
 test_fleet_tasks_carry_enrich() {
   local home port resp
