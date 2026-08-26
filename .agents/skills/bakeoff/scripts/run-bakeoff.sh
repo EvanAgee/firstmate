@@ -7,6 +7,8 @@
 # Usage: run-bakeoff.sh <clone-dir> <base-ref> <brief-file> <work-root> [agent-timeout-secs] [slug-filter]
 #   base-ref: commit/branch to branch each worktree from (use the PRE-feature commit)
 #   slug-filter: optional single slug to run just one agent (canary)
+#   A non-numeric 5th argument is the slug filter and keeps the default timeout,
+#   so `<work-root> grok46` runs only that canary.
 # Luna/Terra stay off the default roster. BAKEOFF_EXTRAS=1 includes them, or
 # pass luna/terra as the slug filter. Both need paid OpenAI credits.
 set -uo pipefail
