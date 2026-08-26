@@ -1,0 +1,3 @@
+FACT=claude|reasoning=required|headroom=1|runway_seconds=10800
+FACT=codex|reasoning=weaker|headroom=80|runway_seconds=28800
+SELECTED=claude

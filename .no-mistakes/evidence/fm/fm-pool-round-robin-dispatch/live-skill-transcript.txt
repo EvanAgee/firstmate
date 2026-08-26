@@ -1,0 +1,49 @@
+=== CASE fewest-live-beats-headroom ===
+expected: SELECTED=claude
+live_counts: claude=0,codex=3
+exit: 0
+quota-axi calls:
+--json
+--- agent output ---
+FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1
+FACT=codex|live=3|headroom=55|runway_seconds=14400|reserve=-40
+SELECTED=claude
+--- end ---
+PASS fewest-live-beats-headroom
+=== CASE equal-live-tie-headroom ===
+expected: SELECTED=codex
+live_counts: claude=0,codex=0
+exit: 0
+quota-axi calls:
+--json
+--- agent output ---
+FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1
+FACT=codex|live=0|headroom=55|runway_seconds=14400|reserve=-40
+SELECTED=codex
+--- end ---
+PASS equal-live-tie-headroom
+=== CASE unmeasurable-runway-headroom-tie ===
+expected: DECISION=CLAUDE
+live_counts: claude=0,codex=0
+exit: 0
+quota-axi calls:
+--json
+--- agent output ---
+FACT=claude|eligible=yes|live=0|headroom=55|runway=unknown|unmeasurable=weekly
+FACT=codex|eligible=yes|live=0|headroom=45|runway_seconds=14400|supports_horizon=yes
+DECISION=CLAUDE
+--- end ---
+PASS unmeasurable-runway-headroom-tie
+=== CASE strongest-reasoning-class ===
+expected: SELECTED=claude
+live_counts: (none)
+exit: 0
+quota-axi calls:
+--json
+--- agent output ---
+FACT=claude|reasoning=required|headroom=1|runway_seconds=10800
+FACT=codex|reasoning=weaker|headroom=80|runway_seconds=28800
+SELECTED=claude
+--- end ---
+PASS strongest-reasoning-class
+ALL LIVE SKILL CASES PASSED

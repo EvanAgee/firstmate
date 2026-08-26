@@ -1,0 +1,3 @@
+FACT=claude|eligible=yes|live=0|headroom=55|runway=unknown|unmeasurable=weekly
+FACT=codex|eligible=yes|live=0|headroom=45|runway_seconds=14400|supports_horizon=yes
+DECISION=CLAUDE

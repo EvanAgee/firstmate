@@ -1,0 +1,8 @@
+ok - empty home captain queue is an empty list
+ok - captain queue returns the fixture parked decision and ignores a later working line
+ok - a resolved parked decision does not appear in the captain queue
+ok - empty home blocked list is an empty list
+ok - blocked list returns the fixture blocked task and not the parked decision
+ok - empty home rigs is an empty list
+ok - rigs returns pools, rungs, and each rung's enabled state
+# fm-api-reads.test.sh: all assertions passed

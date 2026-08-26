@@ -1,0 +1,3 @@
+FACT=claude|live=0|headroom=1|runway_seconds=10800|reserve=-1
+FACT=codex|live=0|headroom=55|runway_seconds=14400|reserve=-40
+SELECTED=codex

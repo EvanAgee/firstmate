@@ -1,0 +1,33 @@
+{
+    "ok": true,
+    "rigs": [
+        {
+            "name": "The task is a builder assignment.",
+            "rungs": [
+                {
+                    "harness": "codex",
+                    "model": "gpt-5.6-sol",
+                    "effort": "high",
+                    "enabled": true
+                },
+                {
+                    "harness": "grok",
+                    "model": "grok-4",
+                    "effort": "high",
+                    "enabled": false
+                }
+            ]
+        },
+        {
+            "name": "default",
+            "rungs": [
+                {
+                    "harness": "pi",
+                    "model": "xai/grok-4.6",
+                    "effort": "medium",
+                    "enabled": true
+                }
+            ]
+        }
+    ]
+}
