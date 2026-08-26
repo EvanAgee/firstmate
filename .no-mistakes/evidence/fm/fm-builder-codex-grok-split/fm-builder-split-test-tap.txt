@@ -1,0 +1,11 @@
+# tests/fm-builder-split.test.sh
+# generated 2026-08-26T02:11:01Z
+
+ok - ordinary builders alternate evenly with the default split
+ok - an unhealthy preferred rung degrades to the other tool and advances
+ok - two unhealthy split rungs hand control to the lower ladder
+ok - high-tier builders bypass the split
+ok - the selector reads non-default weights from the matched config rule
+ok - malformed weights use the documented 50/50 fallback with a note
+ok - absent weights use the documented 50/50 fallback with a note
+ok - a missing counter resets the schedule cleanly

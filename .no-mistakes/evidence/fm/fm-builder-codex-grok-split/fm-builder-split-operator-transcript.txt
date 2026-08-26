@@ -1,0 +1,81 @@
+# fm-builder-split.sh operator transcript
+# generated 2026-08-26T02:10:53Z
+
+## --help
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M0XW3K0YPY4Y3JXK4RTCWG6N/bin/fm-builder-split.sh --help
+fm-builder-split.sh - choose an ordinary builder's weighted split harness
+
+Usage:
+  fm-builder-split.sh --rule-index <zero-based-index> [--config <path>]
+    [--healthy <harness>]... [--high-tier]
+
+The caller supplies each split harness that current quota and authentication
+evidence found healthy. The script prints a harness name, `fallback` when none
+of the split harnesses is healthy, or `bypass` for a high-tier builder.
+
+Ordinary calls advance FM_HOME/state/.builder-dispatch-counter. High-tier calls
+do not read or change it. Missing or malformed split weights use the built-in
+codex=50 and pi=50 split and print a note on stderr.
+
+## 50/50 alternation from an absent split field (default weights)
+config: {"rules":[{"when":"ordinary builder","use":[{"harness":"codex"},{"harness":"pi"},{"harness":"claude"}]}]}
+assignments 1-10:
+  assignment 1 -> codex  counter=1
+  assignment 2 -> pi  counter=2
+  assignment 3 -> codex  counter=3
+  assignment 4 -> pi  counter=4
+  assignment 5 -> codex  counter=5
+  assignment 6 -> pi  counter=6
+  assignment 7 -> codex  counter=7
+  assignment 8 -> pi  counter=8
+  assignment 9 -> codex  counter=9
+  assignment 10 -> pi  counter=10
+counts over 100 assignments:
+  codex=50 pi=50 counter=100
+
+## degraded health: planned codex is down, pi is healthy
+first call with only --healthy pi (codex planned slot 0):
+  selected=pi counter=1
+second call with both healthy (counter now 1, planned pi):
+  selected=pi counter=2
+
+## both split rungs down -> fallback, counter still advances
+  selected=fallback counter=1
+
+## high-tier bypass leaves a pre-existing counter untouched
+  counter before: 7
+  selected=bypass
+  counter after:  7
+
+## missing counter starts at first slot
+  counter file exists before? no
+  selected=codex counter=1
+
+## absent split field prints a BUILDER_DISPATCH note
+  stderr+stdout:
+    BUILDER_DISPATCH: split absent for rule 0; using codex=50, pi=50
+    codex
+
+## malformed split field prints a BUILDER_DISPATCH note and still 50/50
+  stderr+stdout:
+    BUILDER_DISPATCH: split malformed for rule 0; using codex=50, pi=50
+    codex
+
+## configured 70/30 split over 100 assignments
+  first 10:
+    assignment 1 -> codex
+    assignment 2 -> pi
+    assignment 3 -> codex
+    assignment 4 -> codex
+    assignment 5 -> codex
+    assignment 6 -> pi
+    assignment 7 -> codex
+    assignment 8 -> codex
+    assignment 9 -> pi
+    assignment 10 -> codex
+  totals: codex=70 pi=30
+
+## example crew-dispatch.json ordinary-builder rule
+  rule[2].when = The task is an ordinary builder assignment that implements code and was not flagged high tier during intake.
+  rule[2].use harnesses = ['codex', 'pi', 'claude', 'claude']
+  rule[2].split = {'codex': 50, 'pi': 50}
