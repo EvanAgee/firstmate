@@ -33,6 +33,11 @@ FM_TEST_LIB_SOURCED=1
 # the boundary against the real hazard is unaffected. tests/fm-gate-refuse.test.sh
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
+# Locked primary session start brings up the localhost API. Unrelated tests
+# leave this off so they cannot bind a port or leak a node process. Tests that
+# need that bring-up set FM_API=1; tests that talk HTTP call bin/fm-api.sh
+# start themselves.
+export FM_API="${FM_API:-0}"
 
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.

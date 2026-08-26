@@ -12,9 +12,9 @@
 # belong in a script, not in N agent turns.
 #
 # COMPOSITION, NOT DUPLICATION: this script calls fm-lock.sh, fm-bootstrap.sh,
-# fm-wake-drain.sh, and fm-startup-network.sh as real subprocesses and prints
-# their real output. It never re-implements their logic; all
-# sequencing/formatting logic added here stays local to this file. Those four
+# fm-wake-drain.sh, fm-startup-network.sh, and (when locked) fm-api.sh as real
+# subprocesses and prints their real output. It never re-implements their logic; all
+# sequencing/formatting logic added here stays local to this file. Those
 # scripts remain fully working
 # standalone with unchanged default behavior - other flows (fm-bootstrap.sh
 # install <tools> after consent, /updatefirstmate, the afk daemon, existing
@@ -27,7 +27,10 @@
 # was bootstrap-then-lock):
 #
 #   1. lock          - acquire the per-home session lock FIRST, before any
-#                       mutating step runs.
+#                       mutating step runs. A held lock also starts or attaches
+#                       the localhost API via bin/fm-api.sh unless FM_API is
+#                       0/off/false/no or this home is a secondmate home
+#                       marked by .fm-secondmate-home.
 #   2. bootstrap      - home-local stale Herdr projection cleanup runs only
 #                       when this session actually holds the lock. Detect-only
 #                       diagnostics always run. Bootstrap's six MUTATING sweeps
@@ -632,7 +635,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '●  %s\n' "$LOCK_OUT"
     printf '●  Skipping every mutating step: PR-check migration, stale Herdr child cleanup,\n'
     printf '●  secondmate convergence, secondmate liveness, pending remote handoff retry,\n'
-    printf '●  X-mode artifacts, fleet sync, and wake-queue drain. Detect-only bootstrap\n'
+    printf '●  X-mode artifacts, fleet sync, API server, and wake-queue drain. Detect-only bootstrap\n'
     printf '●  diagnostics and the rest of this read-only-safe digest still ran below.\n'
     printf '●  Operate read-only until this resolves - do not spawn, steer, merge, or\n'
     printf '●  otherwise mutate fleet state from this session.\n'
@@ -659,6 +662,15 @@ if [ "$READ_ONLY" -eq 0 ]; then
   [ "$REEMIT" -eq 0 ] || NETWORK_STAGE_LOCKED=0
   "$SCRIPT_DIR/fm-startup-network.sh" start \
     --locked "$NETWORK_STAGE_LOCKED" --harvest-pid $$ >/dev/null 2>&1 || true
+  case "${FM_API:-}" in
+    0|off|false|no) ;;
+    *)
+      if [ ! -e "$FM_HOME/.fm-secondmate-home" ] && [ ! -L "$FM_HOME/.fm-secondmate-home" ]; then
+        API_OUT=$("$SCRIPT_DIR/fm-api.sh" start 2>&1) || true
+        [ -n "$API_OUT" ] && printf '%s\n' "$API_OUT"
+      fi
+      ;;
+  esac
 fi
 
 # --- 2. bootstrap --------------------------------------------------------
