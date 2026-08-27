@@ -145,6 +145,8 @@ usage: fm-fleet-snapshot.sh --json
 
 Print a read-only structured snapshot of the firstmate fleet.
 JSON is the stable machine-readable output contract.
+Task rows are built concurrently, bounded by FM_SNAPSHOT_JOBS (default 8),
+then sorted by id. If no temp dir can be made, rows are built one at a time.
 
 --secondmate-home-summary emits the bounded structured summary used after a
 validated registered-home handoff. It is local-only, skips nested secondmate
