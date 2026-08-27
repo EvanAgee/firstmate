@@ -581,6 +581,8 @@ Write endpoints require `Authorization: Bearer <token>`.
 A missing or wrong token is refused with 401.
 Reads and the event stream do not.
 `POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate on the wake queue, encoded as operational input.
+The task may be a live task or a record in `data/backlog.md`.
+A task that is neither live nor in the backlog returns 404.
 A captain note never closes a parked decision.
 `POST /workers/relay` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues `captain-relay to worker <task>: <text>` for firstmate on the same wake queue, encoded as operational input.
 An unknown task returns 404.
