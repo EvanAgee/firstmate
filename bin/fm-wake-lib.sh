@@ -1064,11 +1064,11 @@ fm_wake_print_deduped() {
 # historical-annotation staleness check, and by this home's own bookkeeping
 # writers.
 
-fm_wake_signal_sig() {  # <file> -> "inode:size:mtime"
+fm_wake_signal_sig() {  # <file> -> "size:mtime"
   if [ "$_FM_UNAME" = Darwin ]; then
-    stat -f '%i:%z:%Fm' "$1" 2>/dev/null
+    stat -f '%z:%Fm' "$1" 2>/dev/null
   else
-    stat -c '%i:%s:%.9Y' "$1" 2>/dev/null
+    stat -c '%s:%Y' "$1" 2>/dev/null
   fi
 }
 

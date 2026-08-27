@@ -1059,9 +1059,9 @@ if [ "$RELAUNCH" -eq 0 ]; then
     echo "error: backend=cmux does not support --secondmate spawns yet" >&2
     exit 1
   fi
-  if [ "$BACKEND" = orca ]; then
-    fm_backend_orca_runtime_check || exit 1
-  fi
+  # The orca runtime check runs later (after harness resolution, alongside the
+  # OMP-backend allowlist) so an OMP-on-orca spawn names the OMP allowlist rather
+  # than a missing-orca runtime error.
 fi
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
 if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then

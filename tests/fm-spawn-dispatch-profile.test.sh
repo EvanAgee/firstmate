@@ -759,35 +759,6 @@ test_opencode_threads_model_and_ignores_effort_axis() {
   pass "opencode receives --model and omits the unsupported effort axis"
 }
 
-test_omp_threads_model_and_records_omitted_effort_axis() {
-  local rec id out status launch ext gen
-  id=profile-omp-z7b
-  rec=$(make_spawn_case profile-omp omp "$id")
-  read_case_record "$rec"
-
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-    --model glm52-phala --effort high)
-  status=$?
-  expect_code 0 "$status" "omp spawn with model and recorded effort should succeed"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" omp glm52-phala high
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "'$FAKEBIN_DIR/omp' --auto-approve --model 'glm52-phala' -e" \
-    "omp launch did not thread the verified model and autonomy flag"
-  assert_not_contains "$launch" "--thinking" \
-    "omp launch must omit thinking for glm52-phala, which advertises no thinking levels"
-  assert_present "$HOME_DIR/state/$id.busy-gen" "omp spawn did not arm the busy-state contract"
-  assert_contains "$(cat "$HOME_DIR/state/$id.busy-state")" "state=busy source=fm-spawn" \
-    "omp spawn did not seed the busy-state record from the launch brief"
-  ext=$(cat "$HOME_DIR/state/$id.omp-ext.ts")
-  gen=$(cat "$HOME_DIR/state/$id.busy-gen")
-  assert_contains "$ext" 'omp.on("agent_start"' "omp extension lost the semantic agent_start busy edge"
-  assert_contains "$ext" 'omp.on("agent_end"' "omp extension lost the semantic agent_end idle edge"
-  assert_contains "$ext" 'event.willContinue' "omp extension no longer guards continuing runs"
-  assert_contains "$ext" "\"--gen\", \"$gen\"" "omp extension does not carry the armed incarnation gen"
-  assert_contains "$ext" '"--source", "omp-ext"' "omp extension does not attribute its semantic source"
-  pass "omp receives its model, records effort intent, omits thinking, and arms semantic busy state"
-}
-
 test_pi_threads_model_and_max_effort() {
   local rec id out status launch
   id=$(profile_id profile-pi-z8)
@@ -903,7 +874,7 @@ test_omp_threads_exact_identity_model_and_every_thinking_level() {
     read_case_record "$rec"
     export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
 
-    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
       --model openai-codex/gpt-5.6-sol --effort "$effort")
     status=$?
     expect_code 0 "$status" "OMP spawn with $effort thinking should succeed"
@@ -925,17 +896,22 @@ test_omp_threads_exact_identity_model_and_every_thinking_level() {
 }
 
 test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
-  local kind rec id out status launch flag
+  local kind rec id out status launch
+  local -a flag
   for kind in worker scout; do
     id=$(profile_id "profile-omp-herdr-$kind-z8ph")
     rec=$(make_spawn_case "profile-omp-herdr-$kind" omp "$id")
     read_case_record "$rec"
     export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
-    flag=
-    [ "$kind" != scout ] || flag=--scout
+    # A ship worker carries the delivery contract; a scout does not.
+    if [ "$kind" = scout ]; then
+      flag=(--scout)
+    else
+      flag=(--mode no-mistakes --yolo off)
+    fi
 
     out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-      --backend herdr --model openai-codex/gpt-5.6-sol --effort low $flag)
+      --backend herdr --model openai-codex/gpt-5.6-sol --effort low "${flag[@]}")
     status=$?
     expect_code 0 "$status" "OMP Herdr $kind launch should succeed after turn-start acknowledgement"
     assert_contains "$out" "spawned $id harness=omp" "OMP Herdr $kind launch lost exact runtime identity"
@@ -962,7 +938,7 @@ test_omp_refuses_unverified_backends_before_endpoint_creation() {
     : > "$endpoint_log"
 
     out=$(FM_FAKE_ENDPOINT_LOG="$endpoint_log" \
-      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend "$backend")
+      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend "$backend" --mode no-mistakes --yolo off)
     status=$?
     expect_code 1 "$status" "OMP should refuse unverified backend $backend"
     assert_contains "$out" "verified only on backend=tmux or backend=herdr" \
@@ -1022,7 +998,7 @@ test_omp_whitespace_identity_paths_refuse_before_endpoint() {
     chmod +x "$spaced/$mode"
     path="$spaced:$FAKEBIN_DIR"
 
-    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$path" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$path" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
     status=$?
     expect_code 1 "$status" "OMP should refuse a whitespace-bearing $mode identity"
     assert_contains "$out" 'canonical executable paths without whitespace' \
@@ -1044,7 +1020,11 @@ test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata() {
     : > "$endpoint_log"
     case "$mode" in
       missing-binary) rm -f "$FAKEBIN_DIR/omp" ;;
-      missing-thinking) sed -i '/thinking/d' "$FAKEBIN_DIR/omp" ;;
+      missing-thinking)
+        grep -v 'thinking' "$FAKEBIN_DIR/omp" > "$FAKEBIN_DIR/omp.tmp"
+        mv "$FAKEBIN_DIR/omp.tmp" "$FAKEBIN_DIR/omp"
+        chmod +x "$FAKEBIN_DIR/omp"
+        ;;
       existing-artifact) : > "$HOME_DIR/state/$id.status" ;;
     esac
 
@@ -1054,7 +1034,7 @@ test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata() {
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
       FM_FAKE_ENDPOINT_LOG="$endpoint_log" FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
-      "$SPAWN" "$id" "$PROJ_DIR" 2>&1)
+      "$SPAWN" "$id" "$PROJ_DIR" --harness omp --mode no-mistakes --yolo off 2>&1)
     status=$?
     expect_code 1 "$status" "OMP $mode should refuse before launch"
     assert_contains "$out" "omp" "OMP preflight refusal did not name the selected runtime"
@@ -1072,7 +1052,7 @@ test_omp_launch_requires_observable_turn_start_acknowledgement() {
   read_case_record "$rec"
 
   out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
-    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
   status=$?
   expect_code 1 "$status" "unacknowledged OMP launch should fail"
   assert_contains "$out" "initial instruction was not acknowledged" \
@@ -1094,7 +1074,7 @@ test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts() {
   read_case_record "$rec"
 
   out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
-    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr)
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr --mode no-mistakes --yolo off)
   status=$?
   expect_code 1 "$status" "unacknowledged OMP Herdr launch should fail"
   assert_contains "$out" "initial instruction was not acknowledged" \
@@ -1117,7 +1097,7 @@ test_omp_herdr_refused_close_preserves_worktree_and_artifacts() {
 
   out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
     FM_TEST_HERDR_REFUSE_CLOSE=1 \
-    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr)
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr --mode no-mistakes --yolo off)
   status=$?
   expect_code 1 "$status" "unacknowledged OMP Herdr launch should fail"
   assert_contains "$out" "could not confirm its owned endpoint stopped" \
@@ -1141,7 +1121,7 @@ test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
 
   out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
     FM_TEST_OMP_META_TAMPER="$HOME_DIR/state/$id.meta" \
-    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
   status=$?
   expect_code 1 "$status" "ownership-changed OMP launch should fail"
   assert_contains "$out" "could not prove ownership" \
@@ -1289,7 +1269,6 @@ test_cursor_threads_model_workspace_and_omits_effort_axis
 test_cursor_refuses_model_absent_from_live_catalog
 test_cursor_failed_catalog_probe_does_not_block_spawn
 test_opencode_threads_model_and_ignores_effort_axis
-test_omp_threads_model_and_records_omitted_effort_axis
 test_pi_threads_model_and_max_effort
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity

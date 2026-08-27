@@ -492,7 +492,7 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 }
 
 # Layer 2 + 3 signal scan: status files and turn-end markers. Each file is
-# compared against a persisted inode:size:mtime signature (.seen-*) rather than
+# compared against a persisted size:mtime signature (.seen-*) rather than
 # mtime-vs-a-startup-touch, so signals that land while no watcher is running
 # are caught by the next one, and same-second writes cannot slip through a
 # strict -nt comparison. Pure read: prints one "<seen-file>\t<sig>\t<file>"

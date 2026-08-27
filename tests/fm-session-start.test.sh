@@ -767,7 +767,10 @@ install_pi_watch_extension_fixture() {
 
 write_pi_watch_loaded_marker() {
   local home=$1 root=$2 pid=$3 version
-  version=$(fm_primary_watch_version "$root/.pi/extensions/fm-primary-pi-watch.ts" "$root")
+  # The fork's Pi watcher is self-contained (no shared-core import), so its
+  # marker version is the single-file adapter hash that fm_pi_extension_version
+  # computes in bin/fm-wake-lib.sh, identical to hash_file_for_test here.
+  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
   printf '%s\n%s\n' "$version" "$pid" > "$home/state/.pi-watch-extension-loaded"
 }
 
@@ -2454,16 +2457,14 @@ EOF
 
   assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp" \
     "session start did not render the omp supervision block"
-  assert_contains "$out" "Mode: omp extension background wake." \
-    "omp primary did not use its extension-owned supervision protocol"
-  assert_contains "$out" "OMP_WATCH_EXTENSION: not loaded" \
-    "omp primary skipped explicit extension validation"
-  assert_contains "$out" "-e $root/.pi/extensions/fm-primary-omp-turnend-guard.ts -e $root/.pi/extensions/fm-primary-omp-watch.ts" \
-    "omp extension diagnostic lost the exact restart paths"
-  assert_contains "$out" "bin/fm-omp.sh" \
-    "omp extension diagnostic lost the canonical relaunch wrapper"
+  assert_contains "$out" "Mode: OMP native extension background wake." \
+    "omp primary did not use its native extension-owned supervision protocol"
+  assert_contains "$out" "OMP_PRIMARY_EXTENSION: not loaded or stale" \
+    "omp primary skipped native extension validation"
+  assert_contains "$out" "omp -e $root/.omp/extensions/fm-primary-omp.ts" \
+    "omp extension diagnostic lost the exact native restart path"
 
-  pass "session start reports missing omp primary extensions"
+  pass "session start reports a missing omp primary extension"
 }
 
 test_pi_diagnostic_rejects_stale_loaded_marker() {
@@ -2557,7 +2558,7 @@ EOF
   install_pi_turnend_extension_fixture "$root"
   install_pi_watch_extension_fixture "$root"
   marker="$home/state/.pi-watch-extension-loaded"
-  version=$(fm_primary_watch_version "$root/.pi/extensions/fm-primary-pi-watch.ts" "$root")
+  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
   printf '%s\n999999\n' "$version" > "$marker"
   write_pi_turnend_loaded_marker "$home" "$root" "$holder_pid"
 
