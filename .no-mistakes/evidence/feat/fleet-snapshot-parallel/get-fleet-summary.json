@@ -1,0 +1,16 @@
+{
+  "http": "GET /fleet 200",
+  "schema": "fm-fleet-snapshot.v1",
+  "task_count": 8,
+  "task_ids": [
+    "ship-task-1",
+    "ship-task-2",
+    "ship-task-3",
+    "ship-task-4",
+    "ship-task-5",
+    "ship-task-6",
+    "ship-task-7",
+    "ship-task-8"
+  ],
+  "sorted": true
+}

@@ -1,0 +1,30 @@
+=== fixture ===
+home=/tmp/fm-snapshot-evidence.eaNK3k
+tasks=8
+FM_SNAPSHOT_JOBS default in script is 8
+
+=== sequential FM_SNAPSHOT_JOBS=1 ===
+real 8.237 seconds
+
+=== parallel FM_SNAPSHOT_JOBS=8 ===
+real 1.586 seconds
+
+=== schema / task ids (parallel) ===
+{
+  "schema": "fm-fleet-snapshot.v1",
+  "generated": "2026-08-27T13:45:25Z",
+  "task_count": 8,
+  "task_ids": [
+    "ship-task-1",
+    "ship-task-2",
+    "ship-task-3",
+    "ship-task-4",
+    "ship-task-5",
+    "ship-task-6",
+    "ship-task-7",
+    "ship-task-8"
+  ]
+}
+
+=== identity after nulling wall-clock fields ===
+PASS: parallel output is identical to sequential after stripping observed_at, generated, age_seconds

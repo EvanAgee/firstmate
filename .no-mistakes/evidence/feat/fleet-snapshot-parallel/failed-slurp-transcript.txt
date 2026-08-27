@@ -1,0 +1,6 @@
+command: PATH=fakejq:... FM_SNAPSHOT_JOBS=8 fm-fleet-snapshot.sh --json
+exit_code=1
+stderr:
+jq: parse error
+fm-fleet-snapshot: task snapshot failed
+PASS: failed combine slurp fails the snapshot (not swallowed by rm)

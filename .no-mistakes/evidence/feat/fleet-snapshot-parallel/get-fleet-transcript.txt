@@ -1,0 +1,26 @@
+=== fm-api.sh start ===
+rc=0
+api: started pid=67298 port=52480 home=/tmp/fm-snapshot-apihome.SeTyqg
+
+=== GET /fleet (FM_SNAPSHOT_JOBS=8) ===
+port=52480
+http_status: HTTP/1.1 200 OK
+real 1.120 seconds
+
+=== GET /fleet body summary ===
+{
+  "schema": "fm-fleet-snapshot.v1",
+  "fm_home": "/tmp/fm-snapshot-apihome.SeTyqg",
+  "task_count": 8,
+  "task_ids": [
+    "ship-task-1",
+    "ship-task-2",
+    "ship-task-3",
+    "ship-task-4",
+    "ship-task-5",
+    "ship-task-6",
+    "ship-task-7",
+    "ship-task-8"
+  ],
+  "first_task_kind": "ship"
+}

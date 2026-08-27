@@ -1,0 +1,1189 @@
+{
+  "schema": "fm-fleet-snapshot.v1",
+  "generated": "2026-08-27T13:45:25Z",
+  "fm_home": "/tmp/fm-snapshot-evidence.eaNK3k",
+  "roots": {
+    "fm_root": "/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M11PH69G473JG78EAPFDEK8A",
+    "state": "/tmp/fm-snapshot-evidence.eaNK3k/state",
+    "data": "/tmp/fm-snapshot-evidence.eaNK3k/data",
+    "config": "/tmp/fm-snapshot-evidence.eaNK3k/config",
+    "projects": "/tmp/fm-snapshot-evidence.eaNK3k/projects"
+  },
+  "backlog": {
+    "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/backlog.md",
+    "present": true,
+    "records": [
+      {
+        "order": 1,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-1",
+        "checked": false,
+        "title": "Ship 1",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-1 - Ship 1 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 2,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-2",
+        "checked": false,
+        "title": "Ship 2",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-2 - Ship 2 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 3,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-3",
+        "checked": false,
+        "title": "Ship 3",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-3 - Ship 3 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 4,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-4",
+        "checked": false,
+        "title": "Ship 4",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-4 - Ship 4 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 5,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-5",
+        "checked": false,
+        "title": "Ship 5",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-5 - Ship 5 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 6,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-6",
+        "checked": false,
+        "title": "Ship 6",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-6 - Ship 6 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 7,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-7",
+        "checked": false,
+        "title": "Ship 7",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-7 - Ship 7 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 8,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-8",
+        "checked": false,
+        "title": "Ship 8",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-8 - Ship 8 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "ship-task-1",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-1.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-1.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-1",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-1/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-1",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-1",
+        "steer": "bin/fm-send.sh fm-ship-task-1 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 1,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-1",
+        "checked": false,
+        "title": "Ship 1",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-1 - Ship 1 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "ship-task-2",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-2.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-2.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-2",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-2/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-2",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-2",
+        "steer": "bin/fm-send.sh fm-ship-task-2 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 2,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-2",
+        "checked": false,
+        "title": "Ship 2",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-2 - Ship 2 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "ship-task-3",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-3.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-3.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-3",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-3/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-3",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-3",
+        "steer": "bin/fm-send.sh fm-ship-task-3 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 3,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-3",
+        "checked": false,
+        "title": "Ship 3",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-3 - Ship 3 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "ship-task-4",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-4.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-4.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-4",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-4/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-4",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-4",
+        "steer": "bin/fm-send.sh fm-ship-task-4 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 4,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-4",
+        "checked": false,
+        "title": "Ship 4",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-4 - Ship 4 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "ship-task-5",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-5.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-5.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-5",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-5/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-5",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-5",
+        "steer": "bin/fm-send.sh fm-ship-task-5 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 5,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-5",
+        "checked": false,
+        "title": "Ship 5",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-5 - Ship 5 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "ship-task-6",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-6.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-6.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-6",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-6/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-6",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-6",
+        "steer": "bin/fm-send.sh fm-ship-task-6 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 6,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-6",
+        "checked": false,
+        "title": "Ship 6",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-6 - Ship 6 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "ship-task-7",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-7.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-7.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-7",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-7/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-7",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-7",
+        "steer": "bin/fm-send.sh fm-ship-task-7 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 7,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-7",
+        "checked": false,
+        "title": "Ship 7",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-7 - Ship 7 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "ship-task-8",
+      "kind": "ship",
+      "harness": "claude",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-8.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/state/ship-task-8.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "working",
+            "note": "implementing",
+            "raw": "working: implementing"
+          }
+        },
+        "worktree": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/projects/ship-task-8",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/ship-task-8/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown missing)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown missing)",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-ship-task-8",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-08-27T13:45:25Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "working: implementing"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-ship-task-8",
+        "steer": "bin/fm-send.sh fm-ship-task-8 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 8,
+        "state": "in_flight",
+        "structured": true,
+        "id": "ship-task-8",
+        "checked": false,
+        "title": "Ship 8",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] ship-task-8 - Ship 8 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    }
+  ],
+  "main_inventory": {
+    "valid": true,
+    "reason": null,
+    "orphan_in_flight": [],
+    "unstructured_current_count": 0
+  },
+  "scout_reports": [],
+  "secondmate_current": {
+    "registry": {
+      "present": false,
+      "available": true,
+      "complete": true,
+      "reason": null,
+      "provenance": "registered-table",
+      "path": "/tmp/fm-snapshot-evidence.eaNK3k/data/secondmates.md",
+      "freshness": {
+        "status": "fresh",
+        "observed_at": "2026-08-27T13:45:25Z"
+      },
+      "records": [],
+      "input_truncated": false,
+      "records_truncated": false,
+      "reasons": [],
+      "lines_in_window": 0,
+      "records_in_window": 0
+    },
+    "records": [],
+    "total_registered": 0,
+    "total": 0,
+    "shown": 0,
+    "truncated": 0
+  },
+  "secondmate_landed": {
+    "records": [],
+    "truncated": [],
+    "unreadable": [],
+    "partial": []
+  },
+  "secondmate_guidance": {
+    "note": "For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
+  }
+}
