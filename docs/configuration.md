@@ -69,6 +69,7 @@ A cmux spawn additionally version-gates against the installed `cmux` binary's ve
 A backend spawn refusal from a missing dependency, version gate, or unauthenticated socket is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
 Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
+An OMP task additionally records canonical `omp_bin=` and `omp_bun=` launch identities; [the tmux backend guide](tmux-backend.md#current-behavior-and-safety) owns their recovery and supported-path contract.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
 An Orca task additionally records `orca_worktree_id=` and `terminal=`, with `window=fm-<id>` kept as the shared firstmate alias.
@@ -242,6 +243,7 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 ## Harness support
 
 claude, codex, opencode, omp, pi, pi-signed, grok, kimi, and cursor are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
+OMP is verified as a primary, crewmate, scout, and secondmate runtime only on tmux and Herdr; Zellij, Orca, and cmux reject OMP before endpoint creation and carry no live OMP claim.
 A cursor secondmate or primary runs the tracked project-scope `.cursor/hooks.json` in its own home and must be launched with `--trust`, or no project hook loads; [`docs/supervision-protocols/cursor.md`](supervision-protocols/cursor.md) owns its supervision protocol.
 Cursor delivery confirmation is verified on tmux and Herdr only.
 On Zellij, cmux, and Orca a Cursor steer lands, but `fm-send` reports delivery unconfirmed and exits non-zero because their shared submit core does not consult the busy footer; [runtime backend verification](verification/runtime-backends.md#cursor-agent-cli) owns the evidence and transcript-state boundary.
@@ -255,11 +257,14 @@ Pi-family launches adapt the regular-TUI safeguard to the installed CLI's capabi
 Enabled primary-session turn-end guard integrations are tracked as repo-level hook files and documented in [`docs/turnend-guard.md`](turnend-guard.md).
 Kimi remains outside the primary turn-end guard integrations; [`docs/turnend-guard.md`](turnend-guard.md#compatibility-limits) owns its separate captain-approved crew wake hook.
 Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/).
-Claude's two Stop hooks own tokenless continuity, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked primary extensions, and OpenCode uses its TUI plugin.
-[`bin/fm-omp.sh`](../bin/fm-omp.sh) is the canonical primary omp launch command; its header owns the extension-loading rationale, paths, and exact argv.
+Claude's two Stop hooks own tokenless continuity, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked Pi extensions, OMP uses its tracked native `.omp` extension, and OpenCode uses its TUI plugin.
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
 When pi-signed is selected, Firstmate preserves `FM_PI_HARNESS=pi-signed` and refuses the launch if the selected executable is unavailable rather than falling back to pi; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns executable resolution and launch mechanics.
 Plain Pi launches set `FM_PI_HARNESS=pi`, so a signed primary's environment cannot relabel a plain Pi worker.
+OMP remains a separate `harness=omp` identity, must resolve to a Bun-backed `omp` entrypoint with every required launch and resume capability, and never falls back to Pi or another executable.
+Its primary loaded marker contains adapter hash, owning PID, canonical Bun realpath, and canonical OMP entrypoint realpath; legacy two-line OMP markers cannot authorize recovery.
+OMP worker launches set `FM_OMP_HARNESS=omp` at the launch boundary, but that marker is inherited by everything the worker starts, so detection accepts it only when the innermost harness ancestor is itself an OMP process launched that way; a foreign agent started from an OMP worker's bash tool keeps its own identity.
+The shared primary-scope predicate in [`turnend-guard.md`](turnend-guard.md#shared-predicate) requires an existing ordinary state directory, so only OMP's native primary adapter admits a first plain launch in a fresh checkout: it accepts an entirely absent canonical `<root>/state` path and creates it during startup, while state overrides and symlinked paths remain strict.
 When it is absent or contains `default`, crewmates mirror the firstmate's own harness.
 `config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
@@ -280,7 +285,7 @@ Kimi continues to use the captain's normal Kimi home, including the existing con
 The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config.toml`, `python3` with `tomllib`, and `jq`; it validates but never serializes the captain's TOML and refuses before writing when the config is missing, malformed, or surprising or when either tool requirement is unavailable.
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
-For omp secondmate launches, `fm-spawn.sh` explicitly loads that home's `.pi/extensions/fm-primary-omp-watch.ts` and `.pi/extensions/fm-primary-omp-turnend-guard.ts` because omp does not auto-discover project extensions.
+For OMP secondmate launches, it explicitly loads that home's `.omp/extensions/fm-primary-omp.ts`, keeps exact resume state under `state/omp-sessions`, and publishes `state/.omp-session` only after the adapter binds the selected conversation.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
@@ -656,6 +661,9 @@ FM_TRACE_CONTEXT=       # optional trace-context override; see "Trace context pr
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
 FM_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across each Enter attempt's budget when confirming a submit (docs/herdr-backend.md "Current transport behavior")
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
+FM_BACKEND_HERDR_OMP_EVENT_CONFIRM_SLEEP=6  # herdr+omp only: per-Enter budget for the native session-event proof of a busy OMP steer (docs/herdr-backend.md "Current transport behavior")
+FM_BACKEND_HERDR_OMP_SNAPSHOT_POLLS=20  # herdr+omp only: polls waiting for a partial trailing session record before the pre-send offset snapshot refuses
+FM_BACKEND_HERDR_OMP_SNAPSHOT_INTERVAL=0.05  # herdr+omp only: seconds between those polls
 FM_ZELLIJ_SESSION=firstmate  # zellij-only: named session for normal backend ops and test isolation (docs/zellij-backend.md)
 CMUX_SOCKET_PASSWORD=   # cmux-only: socket password fallback when config/cmux-socket-password is absent (docs/cmux-backend.md)
 FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest; each line is capped by bin/fm-line-cap-lib.sh

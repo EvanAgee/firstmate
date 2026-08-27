@@ -227,21 +227,27 @@ fm_pi_extension_owns_supervision() {
 }
 
 # fm_omp_extension_owns_supervision <state> <root>
-# omp has the same extension-owned continuity contract as Pi, but its explicit
-# -e extensions and their load markers are distinct so one adapter can never
-# satisfy the other's ownership proof.
+# Native OMP publishes one four-line `.omp-primary-extension-loaded` marker from
+# its `.omp/extensions/fm-primary-omp.ts` adapter (bound to the shared watcher
+# core). Ownership holds when that marker's version matches the current
+# adapter+core hash, its recorded pid owns the session lock, and that pid is
+# alive. The marker reader and version hasher live in sibling libs that are
+# sourced lazily here so fm-wake-lib's broad sourcing surface stays unchanged.
 fm_omp_extension_owns_supervision() {
-  local state=$1 root=$2 lock session_pid pair source marker version
+  local state=$1 root=$2 lock session_pid marker version extension
   lock="$state/.lock"
-  for pair in \
-    "fm-primary-omp-watch.ts:.omp-watch-extension-loaded" \
-    "fm-primary-omp-turnend-guard.ts:.omp-turnend-extension-loaded"; do
-    source=${pair%%:*}
-    marker=${pair#*:}
-    version=$(fm_pi_extension_version "$root/.pi/extensions/$source") || return 1
-    fm_pi_extension_loaded "$state/$marker" "$version" "$lock" || return 1
-  done
+  marker="$state/.omp-primary-extension-loaded"
+  extension="$root/.omp/extensions/fm-primary-omp.ts"
+  # shellcheck source=bin/fm-omp-process-lib.sh
+  . "$FM_WAKE_LIB_DIR/fm-omp-process-lib.sh"
+  # shellcheck source=bin/fm-primary-watch-version-lib.sh
+  . "$FM_WAKE_LIB_DIR/fm-primary-watch-version-lib.sh"
+  version=$(fm_primary_watch_version "$extension" "$root") || return 1
+  [ -n "$version" ] || return 1
+  fm_omp_primary_marker_read "$marker" || return 1
+  [ "$FM_OMP_MARKER_VERSION" = "$version" ] || return 1
   session_pid=$(sed -n '1p' "$lock" 2>/dev/null)
+  [ "$FM_OMP_MARKER_PID" = "$session_pid" ] || return 1
   fm_pid_alive "$session_pid"
 }
 
@@ -1058,11 +1064,11 @@ fm_wake_print_deduped() {
 # historical-annotation staleness check, and by this home's own bookkeeping
 # writers.
 
-fm_wake_signal_sig() {  # <file> -> "size:mtime"
+fm_wake_signal_sig() {  # <file> -> "inode:size:mtime"
   if [ "$_FM_UNAME" = Darwin ]; then
-    stat -f '%z:%Fm' "$1" 2>/dev/null
+    stat -f '%i:%z:%Fm' "$1" 2>/dev/null
   else
-    stat -c '%s:%Y' "$1" 2>/dev/null
+    stat -c '%i:%s:%.9Y' "$1" 2>/dev/null
   fi
 }
 

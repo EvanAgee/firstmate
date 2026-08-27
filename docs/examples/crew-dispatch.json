@@ -22,7 +22,7 @@
     {
       "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
       "use": [
-        { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
+        { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
         { "harness": "codex", "model": "gpt-5.5", "effort": "high" },
         { "harness": "grok", "model": "grok-4", "effort": "high", "enabled": false }
       ],
@@ -31,6 +31,6 @@
   ],
   "default": [
     { "harness": "codex", "model": "gpt-5.5", "effort": "medium" },
-    { "harness": "pi", "model": "anthropic/claude-sonnet-5", "effort": "medium" }
+    { "harness": "pi", "model": "anthropic/claude-opus-4-8", "effort": "medium" }
   ]
 }

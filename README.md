@@ -24,6 +24,9 @@
   <img alt="firstmate - talk to one agent, ship with a crew" src="assets/banner.png" width="100%" />
 </p>
 
+> **Fork note:** this is `dnth/firstmate`, a fork of [kunchenguid/firstmate](https://github.com/kunchenguid/firstmate).
+> It adds native OMP support, so you can run firstmate with OMP as your primary harness and crew runtime.
+
 ## What it is
 
 You can run one coding agent easily.
@@ -74,6 +77,8 @@ Launch a primary omp session with [`bin/fm-omp.sh`](bin/fm-omp.sh); [harness con
 All three have verified turn-end guard paths when launched with their documented setup.
 Pick whichever one matches your subscription and workflow.
 
+OMP is also verified and supported as a distinct primary harness, worker, scout, and second-mate runtime on tmux and Herdr.
+It shares an explicitly allowlisted Pi-compatible core without being recorded or recovered as Pi, discovers its tracked primary extension from `.omp/extensions/`, and refuses when its required capabilities are missing.
 Codex and OpenCode are also verified and supported as primary harnesses; Codex uses bounded foreground checkpoints, and OpenCode uses a TUI plugin, so both carry more harness-specific supervision tradeoffs than the three co-primaries.
 Cursor Agent CLI is verified as a primary too, using a tracked project-scope `.cursor/hooks.json` whose `stop` hook parks on the watcher between turns.
 Launch it with `--trust`, or none of its project hooks load; it also has no turn-end hook in headless `cursor-agent -p`, so run the primary session interactively.
@@ -82,7 +87,7 @@ Launch it with `--trust`, or none of its project hooks load; it also has no turn
 
 ```sh
 gh auth login
-git clone https://github.com/kunchenguid/firstmate
+git clone https://github.com/dnth/firstmate
 cd firstmate
 ```
 
@@ -106,6 +111,12 @@ grok --trust
 pi
 # or, when the signed wrapper is installed
 FM_PI_HARNESS=pi-signed pi-signed
+```
+
+**OMP**
+
+```sh
+omp
 ```
 
 For Grok, `--trust` is needed once per clone so project hooks and the turn-end guard load; `/hooks-trust` inside Grok works too.
@@ -169,7 +180,7 @@ Full architecture - the supervision engine, worktree isolation, secondmates, dis
 ## Built-in skills
 
 Firstmate ships these user-invocable built-in skills.
-Claude and grok use the slash form shown here; codex uses the same names with `$`, such as `$afk`.
+Claude and Grok use the slash form shown here, Codex uses the same names with `$`, such as `$afk`, and OMP uses `/skill:<name>`, such as `/skill:afk`.
 
 | Skill              | What it does                                                                                                                                  |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |

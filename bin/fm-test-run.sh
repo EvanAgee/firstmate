@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: fm-test-run.sh (--all | --family <name> | --changed | --lane <name> | --proven-isolated | tests/<name>.test.sh...)
 # fm-test-run.sh - single owner of Firstmate's behavior-test runner, lane
 # composition for portable CI shards, local --jobs for the proven-isolated set,
 # timing markers, and the complete-regression coverage guard.
@@ -142,7 +143,8 @@ family_for_basename() {
     fm-crew-state.test.sh|fm-decision-hold-lifecycle.test.sh|\
     fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
     fm-kimi-harness.test.sh|fm-muse-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
-    fm-omp.test.sh|fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
+    fm-omp-harness.test.sh|fm-omp-detection.test.sh|fm-operational-input.test.sh|\
+    fm-pi-compatible-family.test.sh|fm-pi-primary-types.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
@@ -151,7 +153,7 @@ family_for_basename() {
     fm-test-run.test.sh|fm-test-isolation-proof.test.sh|fm-skills-lock.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
-    fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
+    fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-omp-primary.test.sh|fm-omp-primary-live-e2e.test.sh|fm-pi-watch-extension.test.sh|\
     fm-session-lock-ancestry.test.sh|fm-cursor-primary.test.sh|\
     fm-supervision-events.test.sh|fm-turnend-guard.test.sh|fm-wake-daemon-lifecycle-e2e.test.sh|\
     fm-wake-drain-unread-status.test.sh|\
@@ -168,7 +170,7 @@ family_for_basename() {
     fm-control-herdr-smoke.test.sh)
       printf '%s\n' real-herdr-gated
       ;;
-    fm-backlog-handoff.test.sh|fm-on.test.sh|fm-remote-backlog-handoff.test.sh|\
+    fm-backlog-handoff.test.sh|fm-omp-secondmate.test.sh|fm-on.test.sh|fm-remote-backlog-handoff.test.sh|\
     fm-remote-doctor.test.sh|fm-remote-job.test.sh|fm-remote-job-orphan-reap.test.sh|\
     fm-remote-reply.test.sh|fm-remote-secondmate-lifecycle-e2e.test.sh|\
     fm-remote-secondmate-trace-context.test.sh|\
@@ -191,6 +193,8 @@ family_for_basename() {
     fm-grok-stop-live-e2e.test.sh|fm-harness-liveness-drift-live-e2e.test.sh|\
     fm-muse-signals-live-e2e.test.sh|\
     fm-herdr-version-floor-live-e2e.test.sh|\
+    fm-omp-herdr-exit-live-e2e.test.sh|fm-omp-herdr-live-e2e.test.sh|\
+    fm-omp-secondmate-live-e2e.test.sh|fm-omp-worker-tmux-live-e2e.test.sh|\
     fm-opencode-primary-live-e2e.test.sh|fm-pi-primary-live-e2e.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
     fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
@@ -429,7 +433,7 @@ tests/fm-merge-local.test.sh 444
 tests/fm-muse-harness.test.sh 28824
 tests/fm-muse-signals-live-e2e.test.sh 22
 tests/fm-omp-harness.test.sh 237
-tests/fm-omp.test.sh 103
+tests/fm-omp-detection.test.sh 103
 tests/fm-on.test.sh 8172
 tests/fm-opencode-primary-live-e2e.test.sh 19
 tests/fm-operational-input.test.sh 224
@@ -670,8 +674,8 @@ run_coverage_guard() {
     return 1
   fi
   cat "$tmp/s1" "$tmp/s2" | LC_ALL=C sort -u >"$tmp/shards_union"
-  missing=$(comm -23 "$tmp/proven" "$tmp/shards_union" || true)
-  extra=$(comm -13 "$tmp/proven" "$tmp/shards_union" || true)
+  missing=$(LC_ALL=C comm -23 "$tmp/proven" "$tmp/shards_union" || true)
+  extra=$(LC_ALL=C comm -13 "$tmp/proven" "$tmp/shards_union" || true)
   if [ -n "$missing" ] || [ -n "$extra" ]; then
     log "coverage guard: portable shards must equal the proven-isolated set"
     [ -z "$missing" ] || { log "missing from shards:"; printf '%s\n' "$missing" >&2; }
@@ -728,7 +732,7 @@ run_coverage_guard() {
   for pair in "shards_union:serial" "shards_union:herdr" "serial:herdr"; do
     a=${pair%%:*}
     b=${pair#*:}
-    comm -12 "$tmp/$a" "$tmp/$b" >"$tmp/overlap"
+    LC_ALL=C comm -12 "$tmp/$a" "$tmp/$b" >"$tmp/overlap"
     if [ -s "$tmp/overlap" ]; then
       log "coverage guard: overlap between $a and $b:"
       cat "$tmp/overlap" >&2
@@ -746,8 +750,8 @@ run_coverage_guard() {
     return 1
   fi
   LC_ALL=C sort -u "$tmp/union_raw" >"$tmp/union"
-  missing=$(comm -23 "$tmp/all" "$tmp/union" || true)
-  extra=$(comm -13 "$tmp/all" "$tmp/union" || true)
+  missing=$(LC_ALL=C comm -23 "$tmp/all" "$tmp/union" || true)
+  extra=$(LC_ALL=C comm -13 "$tmp/all" "$tmp/union" || true)
   if [ -n "$missing" ] || [ -n "$extra" ]; then
     log "coverage guard: union of portable shards + portable serial + Herdr must equal tests/*.test.sh"
     [ -z "$missing" ] || { log "missing from union:"; printf '%s\n' "$missing" >&2; }
@@ -760,7 +764,7 @@ run_coverage_guard() {
     "$ROOT/bin/fm-test-isolation-proof.sh" --list | LC_ALL=C sort -u >"$tmp/proof_list"
     if ! cmp -s "$tmp/proven" "$tmp/proof_list"; then
       log "coverage guard: embedded proven-isolated set diverges from bin/fm-test-isolation-proof.sh --list"
-      comm -3 "$tmp/proven" "$tmp/proof_list" >&2 || true
+      LC_ALL=C comm -3 "$tmp/proven" "$tmp/proof_list" >&2 || true
       rm -rf "$tmp"
       return 1
     fi
@@ -953,10 +957,37 @@ families_for_changed_path() {
     bin/backends/orca*|bin/backends/tmux.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' orca
+      printf '%s\n' secondmate
       ;;
     bin/fm-backend.sh|bin/fm-backend-hometag-lib.sh)
       printf '%s\n' backend-dispatch
       printf '%s\n' real-herdr-gated
+      ;;
+    .omp/extensions/fm-primary-omp.ts)
+      printf '%s\n' watcher-wake-lock
+      printf '%s\n' secondmate
+      printf '%s\n' live-harness-optin
+      ;;
+    bin/fm-omp-process-lib.sh|bin/fm-session-lock-lib.sh)
+      printf '%s\n' watcher-wake-lock
+      printf '%s\n' backend-dispatch
+      printf '%s\n' session-bootstrap
+      printf '%s\n' secondmate
+      ;;
+    bin/fm-omp-capabilities.sh)
+      printf '%s\n' backend-dispatch
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' secondmate
+      printf '%s\n' live-harness-optin
+      ;;
+    bin/fm-pi-compatible-lib.sh|bin/fm-pi-compatible-runtimes)
+      printf '%s\n' pure-contract-unit
+      ;;
+    bin/fm-primary-watch-core.ts|bin/fm-primary-watch-version-lib.sh)
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' watcher-wake-lock
+      printf '%s\n' session-bootstrap
+      printf '%s\n' secondmate
       ;;
     bin/fm-watch*|bin/fm-wake*|bin/fm-inactive-reconcile.sh|\
     bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)
@@ -990,6 +1021,7 @@ families_for_changed_path() {
     bin/fm-sessionstart-nudge.sh|bin/fm-startup-network.sh|bin/fm-tangle*|bin/fm-update.sh|\
     bin/fm-gate-refuse*|bin/fm-lock*|bin/fm-quota-axi-lib.sh|bin/fm-api.sh|bin/fm-api-server.mjs|bin/fm-api-reads.mjs|bin/fm-api-task-detail.mjs)
       printf '%s\n' session-bootstrap
+      [ "$path" != bin/fm-bootstrap.sh ] || printf '%s\n' secondmate
       ;;
     bin/fm-sessionstart-run.sh|.claude/settings.json|.codex/hooks.json|\
     .pi/extensions/fm-primary-turnend-guard.ts)
@@ -1026,10 +1058,19 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
       ;;
-    bin/fm-spawn.sh|bin/fm-send.sh|bin/fm-harness.sh|\
-    bin/fm-peek.sh|bin/fm-composer*)
+    bin/fm-harness.sh)
+      printf '%s\n' watcher-wake-lock
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
+      printf '%s\n' secondmate
+      ;;
+    bin/fm-spawn.sh|bin/fm-send.sh|bin/fm-peek.sh|bin/fm-composer*)
+      printf '%s\n' backend-dispatch
+      printf '%s\n' pure-contract-unit
+      if [ "$path" = bin/fm-spawn.sh ]; then
+        printf '%s\n' secondmate
+        printf '%s\n' live-harness-optin
+      fi
       ;;
     bin/fm-bearings-snapshot.sh|bin/fm-fleet-snapshot.sh|bin/fm-fleet-view.sh)
       printf '%s\n' snapshot-bearings
@@ -1046,7 +1087,7 @@ families_for_changed_path() {
     bin/fm-tmux-lib.sh|bin/fm-marker-lib.sh|bin/fm-operational-input.sh|bin/fm-tasks-axi-lib.sh|\
     bin/fm-vendor-auth-probe.sh|\
     bin/fm-primary-scope-lib.sh|bin/fm-project-mode.sh|bin/fm-promote.sh|\
-    bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*|bin/fm-omp.sh)
+    bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*)
       printf '%s\n' pure-contract-unit
       ;;
     .agents/skills/quota-array-dispatch/*)

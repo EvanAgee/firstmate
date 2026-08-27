@@ -24,7 +24,7 @@ It tokenizes the bytes and classifies lexical execution positions only.
 
 - Stdin JSON at `.tool_input.command` for Claude and Codex.
 - Stdin JSON at `.toolInput.command` for Grok.
-- `--command <exact string>` for OpenCode, Pi, and pi-signed.
+- `--command <exact string>` for OpenCode, Pi, pi-signed, and OMP.
 - `--background` as a compatibility-only field that never changes the decision.
 - `--claude` to preserve Claude's stderr-only deny requirement.
 
@@ -151,7 +151,7 @@ Prose may improve without changing adapter behavior.
 - `--claude` suppresses stdout completely because Claude ignores a PreToolUse deny when stdout is nonempty.
 - Codex blocks on exit 2 and displays stderr.
 - OpenCode throws only when the checker exits 2.
-- Pi and pi-signed return `{block: true}` only when the checker exits 2.
+- Pi, pi-signed, and OMP return `{ block: true }` only when the checker exits 2.
 
 ## Harness wiring
 
@@ -162,6 +162,7 @@ Prose may improve without changing adapter behavior.
 | Grok | `.toolInput.command` | `.grok/hooks/fm-primary-pretool-check.json` forwards stdin and Grok consumes the stdout `decision=deny` object. |
 | OpenCode | `output.args.command` | `.opencode/plugins/fm-primary-pretool-check.js` passes one `--command` argument and throws only for exit 2. |
 | Pi / pi-signed | `event.input.command` | `.pi/extensions/fm-primary-turnend-guard.ts` passes one `--command` argument and returns `{block: true}` only for exit 2. |
+| OMP | `event.input.command` | `.omp/extensions/fm-primary-omp.ts` passes one `--command` argument and returns `{block: true}` only for exit 2. |
 | Cursor | `.tool_input.command` | `.cursor/hooks.json` matches `tool_name` `Shell` and forwards stdin with `--cursor`. Cursor reads the RETURNED object rather than the exit status, so `--cursor` prints `{"permission":"deny","user_message":"[code] reason"}` on stdout and exits 0; only that rendering is verified to block the command and surface the reason. |
 
 Cursor also loads `<project>/.claude/settings.json`, so the tracked Claude entry receives the same event. Without `--cursor` a Cursor-delivered payload is that duplicate and allows without re-classifying, decided from the payload's own `cursor_version` by `bin/fm-hook-host-lib.sh`; [`turnend-guard.md`](turnend-guard.md#harness-integrations) owns why that predicate reads the payload rather than the environment.
@@ -235,6 +236,7 @@ Every native-path automatic marker was present and every deny sentinel remained 
 `tests/fm-arm-pretool-check.test.sh` owns the adversarial acceptance matrix.
 Every row runs through Codex-shaped stdin, Claude-shaped stdin, Grok-shaped stdin, OpenCode-shaped CLI, and Pi-shaped CLI entry forms.
 The suite also verifies real newline bytes, direct classifier reason codes, comments, heredoc data, malformed and unsupported protected syntax, constructed dynamic payloads, malformed transport fail-open behavior, missing runtime fail-open behavior, output shapes, and exact adapter field forwarding plus exit-2 mapping.
+`tests/fm-omp-primary.test.sh` verifies OMP's native field forwarding and exit-2 mapping through the public adapter.
 
 Run:
 
