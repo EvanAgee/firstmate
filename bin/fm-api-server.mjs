@@ -54,6 +54,13 @@
 //   rung's enabled state in config/crew-dispatch.json, where rig is the rule's
 //   `when` line or "default" and rung is its index. A change that would turn
 //   off a ladder's last enabled rung is refused 400. Unknown rig/rung: 404.
+// GET /rigs/config returns the exact dispatch config file as { ok, config }, so
+//   the routing editor edits the whole file and loses no field GET /rigs drops
+//   (like each rule's `why`). Missing or symlinked file: config is null. No token.
+// POST /rigs/config requires the token; body is a whole dispatch config object.
+//   Writes it to config/crew-dispatch.json (creating the file if absent), after
+//   checking every ladder keeps at least one enabled rung. Bad body or a broken
+//   ladder is refused 400. This is the routing editor's save door.
 
 import http from "node:http";
 import fs from "node:fs";
@@ -74,6 +81,8 @@ export const API_VERSION = "1";
 const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SNAPSHOT_SCRIPT = path.join(BIN_DIR, "fm-fleet-snapshot.sh");
 const MAX_BODY_BYTES = 16384;
+// A whole dispatch config can be larger than a one-line write body.
+const MAX_CONFIG_BYTES = 65536;
 const MAX_NOTE_TEXT = 2000;
 const NOTE_KIND = "away-supervisor";
 const TASK_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -731,6 +740,145 @@ function handleRungToggle(req, res, home, options) {
     });
 }
 
+// Every ladder in a dispatch config (each rule's `use` and the `default`
+// fallback) must keep at least one enabled rung, and must name at least one.
+// This mirrors the invariant the single-rung toggle enforces, applied to a
+// whole config the dashboard's routing editor sends at once.
+function validateDispatchConfig(config) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return { error: "config must be a json object" };
+  }
+  const ladders = [];
+  if (Array.isArray(config.rules)) {
+    for (const rule of config.rules) {
+      if (!rule || typeof rule !== "object") return { error: "a routing rule is not an object" };
+      if (typeof rule.when !== "string" || !rule.when.trim()) {
+        return { error: "a routing rule is missing its when line" };
+      }
+      ladders.push({ label: rule.when, list: asList(rule.use) });
+    }
+  }
+  ladders.push({ label: "default", list: asList(config.default) });
+  for (const ladder of ladders) {
+    if (ladder.list.length === 0) return { error: `${ladder.label} needs at least one rung` };
+    if (!ladder.list.some(rungEnabled)) {
+      return { error: `${ladder.label} needs at least one enabled rung` };
+    }
+  }
+  return { ok: true };
+}
+
+function asList(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+
+function parseDispatchConfig(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  const check = validateDispatchConfig(body);
+  if ("error" in check) {
+    const error = new Error(check.error);
+    error.status = 400;
+    throw error;
+  }
+  return body;
+}
+
+// Refuse a symlinked dispatch file the same way readDispatchConfig does, but
+// allow a missing file: saving a whole config may create it.
+function dispatchFileForWrite(home) {
+  const file = path.join(home, "config", "crew-dispatch.json");
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) {
+      const error = new Error("dispatch file is a symlink");
+      error.status = 400;
+      throw error;
+    }
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+  return file;
+}
+
+// The exact dispatch config, so the routing editor can read the whole file
+// (every field, including each rule's `why`), edit it, and save it back through
+// POST /rigs/config without losing keys that GET /rigs does not carry. Missing
+// or symlinked file answers { ok: true, config: null }, the same refusal
+// posture as the reads. Needs no token; the read is open like GET /rigs.
+function rawDispatchBody(home) {
+  const file = path.join(home, "config", "crew-dispatch.json");
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return { ok: true, config: null };
+  } catch (error) {
+    if (error && error.code === "ENOENT") return { ok: true, config: null };
+    throw error;
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return { ok: true, config: null };
+    throw error;
+  }
+  try {
+    return { ok: true, config: JSON.parse(raw) };
+  } catch {
+    const error = new Error("invalid rig config");
+    error.code = "INVALID_RIG_CONFIG";
+    throw error;
+  }
+}
+
+function handleRigConfig(req, res, home, options) {
+  if (req.method === "GET" || req.method === "HEAD") {
+    try {
+      sendGet(req, res, rawDispatchBody(home));
+    } catch (error) {
+      if (error && error.code === "INVALID_RIG_CONFIG") {
+        json(res, 500, { ok: false, error: "invalid rig config" });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+  if (req.method !== "POST") {
+    req.resume();
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
+  if (!writeAuthorized(req, options.tokenFile)) {
+    req.resume();
+    json(res, 401, { ok: false, error: "unauthorized" });
+    return;
+  }
+  readBody(req, MAX_CONFIG_BYTES)
+    .then((raw) => {
+      const config = parseDispatchConfig(raw);
+      const file = dispatchFileForWrite(home);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      writeDispatchConfig(file, config);
+      json(res, 200, { ok: true });
+    })
+    .catch((error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      const status = error && error.status ? error.status : 500;
+      const message = status === 500 ? "failed" : error.message;
+      json(res, status, { ok: false, error: message });
+    });
+}
+
 function handleTaskDetail(req, res, home, stateDir, task) {
   taskDetailBody(home, task, { stateDir })
     .then((body) => {
@@ -840,6 +988,10 @@ function handle(req, res, home, options, events) {
   }
   if (url.pathname === "/rigs/rung") {
     handleRungToggle(req, res, home, options);
+    return;
+  }
+  if (url.pathname === "/rigs/config") {
+    handleRigConfig(req, res, home, options);
     return;
   }
   if (url.pathname === "/events") {

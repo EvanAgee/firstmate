@@ -591,6 +591,11 @@ Firstmate closes the parked decision with `bin/fm-send.sh --resolve-key` on its 
 `rig` is the rule's `when` line, or `default` for the fallback ladder, the same name `GET /rigs` already serves.
 `rung` is that ladder's index, because harness and model can repeat.
 A change that would turn off a ladder's last enabled rung is refused with 400.
+`GET /rigs/config` returns the exact `config/crew-dispatch.json` as `{"ok":true,"config":<object>}`, so an editor can read the whole file (every field `GET /rigs` drops, such as each rule's `why`), change it, and save it back.
+A missing or symlinked file answers `config: null`, and needs no token like the other reads.
+`POST /rigs/config` accepts a whole dispatch config object and writes it to `config/crew-dispatch.json`, creating the file if absent.
+It checks that every ladder keeps at least one enabled rung before writing; a broken ladder or a non-object body is refused with 400.
+This is the routing editor's save door, the counterpart to the single-rung `POST /rigs/rung`.
 `GET /health` reports API version `1` and the home this process serves.
 `GET /fleet` returns that home's fleet snapshot plus a per-task enrich window for board cards.
 The snapshot is `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.

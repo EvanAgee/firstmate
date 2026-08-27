@@ -798,6 +798,101 @@ test_rung_toggle_refuses_last_enabled_rung() {
   pass "a toggle that would turn off a ladder's last rung is refused with a clear error"
 }
 
+test_rig_config_without_token_is_unauthorized() {
+  local home port resp before after
+  home=$(fm_test_api_home api-config-no-token)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":[{"harness":"codex"}]}' \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "unauthorized config save rewrote the config"
+  fm_test_api_stop "$home"
+  pass "saving a whole dispatch config without the token is refused with 401"
+}
+
+test_rig_config_with_token_writes_config() {
+  local home port token resp
+  home=$(fm_test_api_home api-config-ok)
+  write_rung_fixture "$home"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"note":"n","rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}]}],"default":[{"harness":"codex","model":"gpt-5.5"}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "authorized config save status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String(c.rules[0].use[0].model))' \
+      "$home/config/crew-dispatch.json")" = opus ] \
+    || fail "config save did not write the new rules"
+  [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String(c.note))' \
+      "$home/config/crew-dispatch.json")" = n ] \
+    || fail "config save dropped the note"
+  fm_test_api_stop "$home"
+  pass "saving a whole dispatch config with the token writes it"
+}
+
+test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-broken)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude","enabled":false}]}],"default":[{"harness":"codex"}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "all-off ladder status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'enabled rung' >/dev/null \
+    || fail "all-off ladder error is not clear: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "refused config save still rewrote the config"
+  fm_test_api_stop "$home"
+  pass "saving a config with a ladder that has no enabled rung is refused"
+}
+
+test_rig_config_get_returns_the_whole_file() {
+  local home port resp
+  home=$(fm_test_api_home api-config-get)
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{
+  "note": "the note",
+  "rules": [
+    { "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
+  ],
+  "default": [{ "harness": "codex", "model": "gpt-5.5" }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /rigs/config GET)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "GET /rigs/config status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" 'd.config.rules[0].why')" = "keep this reason" ] \
+    || fail "GET /rigs/config dropped the rule's why field: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" 'd.config.note')" = "the note" ] \
+    || fail "GET /rigs/config dropped the note: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "GET /rigs/config returns the whole dispatch file, keeping fields /rigs drops"
+}
+
+test_rig_config_get_missing_file_is_null() {
+  local home port resp
+  home=$(fm_test_api_home api-config-get-missing)
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /rigs/config GET)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "GET missing config status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(json_query "$HTTP_BODY" 'd.config === null')" = true ] \
+    || fail "GET missing config should answer config null: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "GET /rigs/config on a missing file answers config null"
+}
+
 test_health_reports_version_and_home
 test_unknown_path_is_not_found
 test_binds_localhost_only
@@ -827,6 +922,11 @@ test_decision_answer_unknown_task_is_not_found
 test_rung_toggle_without_token_is_unauthorized
 test_rung_toggle_with_token_flips_enabled
 test_rung_toggle_refuses_last_enabled_rung
+test_rig_config_without_token_is_unauthorized
+test_rig_config_with_token_writes_config
+test_rig_config_refuses_a_ladder_with_no_enabled_rung
+test_rig_config_get_returns_the_whole_file
+test_rig_config_get_missing_file_is_null
 
 test_fleet_tasks_carry_enrich() {
   local home port resp
