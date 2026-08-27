@@ -1,0 +1,5 @@
+unauthorized: {"ok":false,"error":"unauthorized"}
+authorized:   {"ok":true}
+unknown-task: {"ok":false,"error":"not found"}
+decoded body: captain-relay to worker sample-task: try the smaller batch first
+wake queue empty before token: yes
