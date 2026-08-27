@@ -1,168 +1,63 @@
-# Routing-editor door: GET/POST /rigs/config against a throwaway firstmate home
-# home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-rig-config-e2e-shedi2zj/home
+HOME=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-config-demo.GtA6R2/home
+PORT=52671
 
-# server started on 127.0.0.1:57391
+=== 1. GET /rigs/config keeps why (no token) ===
 
-GET /rigs/config
--> 200
-{
-  "ok": true,
-  "config": null
-}
+### GET /rigs/config
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 224
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
 
-POST /rigs/config
-Authorization: Bearer <token>
-Body:
-{
-  "rules": [
-    {
-      "when": "builder class: ordinary",
-      "use": [
-        {
-          "harness": "claude",
-          "model": "opus"
-        }
-      ],
-      "why": "keep this reason"
-    }
-  ]
-}
--> 200
-{
-  "ok": true
-}
+BODY:
+{"ok":true,"config":{"note":"dashboard editor round-trip","rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}],"why":"keep this reason"}],"default":[{"harness":"codex","model":"gpt-5.5"}]}}
 
-GET /rigs/config
--> 200
-{
-  "ok": true,
-  "config": {
-    "rules": [
-      {
-        "when": "builder class: ordinary",
-        "use": [
-          {
-            "harness": "claude",
-            "model": "opus"
-          }
-        ],
-        "why": "keep this reason"
-      }
-    ]
-  }
-}
+=== 2. GET /rigs drops why ===
 
-POST /rigs/config
-Authorization: Bearer <token>
-Body:
-{
-  "rules": [
-    {
-      "when": "builder class: ordinary",
-      "use": [
-        {
-          "harness": "claude",
-          "model": "opus"
-        }
-      ],
-      "why": "keep this reason"
-    }
-  ]
-}
--> 200
-{
-  "ok": true
-}
+### GET /rigs
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 326
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
 
-# persisted config/crew-dispatch.json after GET-then-POST round-trip:
-{
-  "rules": [
-    {
-      "when": "builder class: ordinary",
-      "use": [
-        {
-          "harness": "claude",
-          "model": "opus"
-        }
-      ],
-      "why": "keep this reason"
-    }
-  ]
-}
+BODY:
+{"ok":true,"note":"dashboard editor round-trip","rigs":[{"name":"builder class: ordinary","rungs":[{"harness":"claude","model":"opus","effort":"","enabled":true}],"pin":null},{"name":"default","rungs":[{"harness":"codex","model":"gpt-5.5","effort":"","enabled":true}],"pin":null}],"defaultPin":null,"crew":"","secondmate":""}
 
-GET /rigs
--> 200
-{
-  "ok": true,
-  "note": "",
-  "rigs": [
-    {
-      "name": "builder class: ordinary",
-      "rungs": [
-        {
-          "harness": "claude",
-          "model": "opus",
-          "effort": "",
-          "enabled": true
-        }
-      ],
-      "pin": null
-    }
-  ],
-  "defaultPin": null,
-  "crew": "",
-  "secondmate": ""
-}
+=== 3. POST /rigs/config without token is 401 and does not rewrite ===
 
-# GET /rigs includes rule.why? False
+### POST /rigs/config body={"note":"stolen","rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":[{"harness":"codex"}]}
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json; charset=utf-8
+Content-Length: 36
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
 
-POST /rigs/config
-Body:
-{
-  "rules": [
-    {
-      "when": "x",
-      "use": [
-        {
-          "harness": "claude"
-        }
-      ]
-    }
-  ]
-}
--> 401
-{
-  "ok": false,
-  "error": "unauthorized"
-}
+BODY:
+{"ok":false,"error":"unauthorized"}
 
-POST /rigs/config
-Authorization: Bearer <token>
-Body:
-{
-  "rules": [
-    {
-      "when": "x",
-      "use": [
-        {
-          "harness": "claude",
-          "enabled": false
-        }
-      ]
-    }
-  ]
-}
--> 400
-{
-  "ok": false,
-  "error": "x needs at least one enabled rung"
-}
+FILE UNCHANGED after unauthorized POST
 
-POST /rigs/config
-Authorization: Bearer <token>
-Body:
+=== 4. POST /rigs/config with token writes the whole object ===
+
+### POST /rigs/config (token) body={"note":"saved by editor","rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}],"why":"keep this reason"}],"default":[{"harness":"codex","model":"gpt-5.5"}]}
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 12
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":true}
+
+FILE AFTER SAVE:
 {
-  "note": "the note",
+  "note": "saved by editor",
   "rules": [
     {
       "when": "builder class: ordinary",
@@ -182,35 +77,164 @@ Body:
     }
   ]
 }
--> 200
-{
-  "ok": true
-}
 
-GET /rigs/config
--> 200
-{
-  "ok": true,
-  "config": {
-    "note": "the note",
-    "rules": [
-      {
-        "when": "builder class: ordinary",
-        "use": [
-          {
-            "harness": "claude",
-            "model": "opus"
-          }
-        ],
-        "why": "keep this reason"
-      }
-    ],
-    "default": [
-      {
-        "harness": "codex",
-        "model": "gpt-5.5"
-      }
-    ]
-  }
-}
+=== 5. GET then POST of rules-only (no default) succeeds ===
 
+### POST /rigs/config (token) body={"rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}],"why":"keep this reason"}]}
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 12
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":true}
+
+FILE AFTER NO-DEFAULT SAVE:
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus"
+        }
+      ],
+      "why": "keep this reason"
+    }
+  ]
+}
+GET after no-default save:
+
+### GET /rigs/config
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 137
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":true,"config":{"rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}],"why":"keep this reason"}]}}
+
+=== 6. POST object-typed rules is 400 ===
+
+### POST /rigs/config (token) body={"rules":{"when":"x","use":[{"harness":"claude"}]}}
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Content-Length: 46
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":false,"error":"rules must be an array"}
+
+=== 7. POST primitive default is 400 ===
+
+### POST /rigs/config (token) body={"rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":"nope"}
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Content-Length: 58
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":false,"error":"default must be an array or object"}
+
+=== 8. POST all-off ladder is 400 ===
+
+### POST /rigs/config (token) body={"rules":[{"when":"x","use":[{"harness":"claude","enabled":false}]}],"default":[{"harness":"codex"}]}
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Content-Length: 57
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":false,"error":"x needs at least one enabled rung"}
+
+=== 9. POST non-object body is 400 ===
+
+### POST /rigs/config (token) body=[]
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Content-Length: 52
+Date: Thu, 27 Aug 2026 13:00:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":false,"error":"config must be a json object"}
+
+=== 10. GET missing file is config null ===
+
+### GET /rigs/config
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 26
+Date: Thu, 27 Aug 2026 13:00:25 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":true,"config":null}
+
+=== 11. POST creates the file when absent ===
+FILE ABSENT before create-on-save
+
+### POST /rigs/config (token) body={"rules":[{"when":"x","use":[{"harness":"claude"}]}]}
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 12
+Date: Thu, 27 Aug 2026 13:00:25 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":true}
+
+FILE AFTER CREATE-ON-SAVE:
+{
+  "rules": [
+    {
+      "when": "x",
+      "use": [
+        {
+          "harness": "claude"
+        }
+      ]
+    }
+  ]
+}
+=== 12. GET symlink answers config null; POST symlink is refused ===
+
+### GET /rigs/config
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 26
+Date: Thu, 27 Aug 2026 13:00:26 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":true,"config":null}
+
+
+### POST /rigs/config (token) body={"rules":[{"when":"y","use":[{"harness":"pi"}]}]}
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Content-Length: 50
+Date: Thu, 27 Aug 2026 13:00:26 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+BODY:
+{"ok":false,"error":"dispatch file is a symlink"}
+
+SYMLINK TARGET AFTER REFUSED POST:
+{"rules":[{"when":"x","use":[{"harness":"claude"}]}]}

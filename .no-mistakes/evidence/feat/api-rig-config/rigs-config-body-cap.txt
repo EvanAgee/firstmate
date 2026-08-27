@@ -1,0 +1,7 @@
+POST /rigs/config body-cap check against a live throwaway firstmate API.
+
+over_64kb: body_bytes=70063
+result: socket hang up (server destroys the request once the body exceeds MAX_CONFIG_BYTES=65536)
+
+small_ok: body_bytes=163
+status=200 body={"ok":true}
