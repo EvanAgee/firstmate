@@ -400,15 +400,18 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
   ' < "$backlog"
 }
 
-task_json_lines() {
-  local meta id kind harness mode yolo project worktree home projects backend target status_log report_path
+# One task's JSON object for the snapshot, built from its meta file. Reads only
+# this task's files and the shared globals; it holds no cross-task state, so the
+# tasks can be built concurrently (see task_json_lines). Prints one JSON object.
+emit_one_task_json() {  # <meta>
+  local meta=$1
+  local id kind harness mode yolo project worktree home projects backend target status_log report_path
   local remote_host remote_root remote_state remote_rc remote_home_present
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
   local open_decisions_tsv open_decisions_json
 
-  for meta in "$STATE"/*.meta; do
-    [ -e "$meta" ] || continue
+    [ -e "$meta" ] || return 0
     id=$(basename "$meta" .meta)
     kind=$(meta_value "$meta" kind)
     [ -n "$kind" ] || kind=ship
@@ -600,7 +603,44 @@ task_json_lines() {
              return_channel_note:null}
           end)
       }'
-  done | jq -s 'sort_by(.id)'
+}
+
+# How many tasks to build at once. Each task's stage lookup shells out to
+# no-mistakes several times and takes about a second, so building them in
+# sequence is the whole cost of the snapshot. A bounded pool keeps a busy home
+# from spawning one process per task at once. Override with FM_SNAPSHOT_JOBS.
+FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-8}
+
+# Every task's JSON object, built concurrently, then sorted by id so the output
+# is identical to building them one at a time. Each task writes its object to
+# its own temp file; a bounded number run at once. jq -s slurps and sorts, so
+# completion order does not matter.
+task_json_lines() {
+  local jobs=$FM_SNAPSHOT_JOBS
+  case "$jobs" in ''|*[!0-9]*) jobs=8 ;; esac
+  [ "$jobs" -ge 1 ] || jobs=1
+  local outdir meta running=0
+  outdir=$(mktemp -d "${TMPDIR:-/tmp}/fm-snapshot.XXXXXX") || {
+    # No temp dir: fall back to sequential so the snapshot still answers.
+    for meta in "$STATE"/*.meta; do
+      [ -e "$meta" ] || continue
+      emit_one_task_json "$meta"
+    done | jq -s 'sort_by(.id)'
+    return
+  }
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    emit_one_task_json "$meta" > "$outdir/$(basename "$meta" .meta).json" &
+    running=$((running + 1))
+    if [ "$running" -ge "$jobs" ]; then
+      wait -n 2>/dev/null || wait
+      running=$((running - 1))
+    fi
+  done
+  wait
+  # Combine every task's object. cat over the temp files, then slurp and sort.
+  find "$outdir" -name '*.json' -exec cat {} + 2>/dev/null | jq -s 'sort_by(.id)'
+  rm -rf "$outdir"
 }
 
 # Main-home current-inventory validity: same orphan / unstructured-current checks

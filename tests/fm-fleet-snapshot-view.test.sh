@@ -779,8 +779,25 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+test_parallel_snapshot_matches_sequential() {
+  local home seq par
+  home=$(make_home parallel-equals-sequential)
+  write_fixture "$home"
+  # observed_at, generated, and age_seconds are computed from the wall clock, so
+  # they differ between any two runs a second apart. Null them so this compares
+  # the task data, not the clock.
+  local strip='walk(if type=="object" then (.observed_at=null|.generated=null|.age_seconds=null) else . end)'
+  seq=$(FM_HOME="$home" FM_SNAPSHOT_JOBS=1 "$SNAPSHOT" --json | jq -S "$strip") \
+    || fail "sequential snapshot failed"
+  par=$(FM_HOME="$home" FM_SNAPSHOT_JOBS=8 "$SNAPSHOT" --json | jq -S "$strip") \
+    || fail "parallel snapshot failed"
+  [ "$seq" = "$par" ] || fail "parallel snapshot differs from sequential: $(diff <(echo "$seq") <(echo "$par") | head)"
+  pass "building tasks in parallel gives the same snapshot as one at a time"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
+test_parallel_snapshot_matches_sequential
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state
