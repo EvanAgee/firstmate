@@ -153,8 +153,8 @@
 #   each ref is checked against (1) this home's own task set - a live task
 #   recording the same ref refuses the spawn naming that task id - and (2)
 #   that repo's open pull requests via gh-axi (bin/fm-issue-guard-lib.sh owns
-#   the mechanics) - an open PR referencing the issue number refuses the spawn
-#   naming the PR URL. Either claim is a hard stop: no worktree is created and
+#   the matching) - an open PR that claims the same normalized issue ref
+#   refuses the spawn naming the PR URL. Either claim is a hard stop: no worktree is created and
 #   nothing is launched, exit non-zero. If GitHub cannot be reached for the
 #   open-PR check, the spawn is refused only on a local fleet match and a loud
 #   notice reports the PR check was skipped; GitHub unreachability never

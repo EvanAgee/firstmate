@@ -4,8 +4,8 @@
 # not duplicate a claim that already exists:
 #   - in this home: a live task's state/<id>.meta already records the same
 #     normalized issue ref, or
-#   - in the repo: an open pull request (via gh-axi) references the issue
-#     number in its title or body.
+#   - in the repo: an open pull request (via gh-axi) claims the same
+#     normalized issue ref in its title or body.
 # Either claim is a hard stop for the spawn: the caller refuses before any
 # worktree or endpoint is created. Refusals print one plain-English error line
 # naming the exact claiming task id or PR URL.
@@ -214,7 +214,7 @@ EOF
 }
 
 # fm_issue_guard_open_pr_claim <owner/repo> <issue-number> -> the PR URL of an
-# open PR in the repo that references the issue. Exit 0 with the URL on stdout
+# open PR in the repo that claims this repo's issue. Exit 0 with the URL on stdout
 # for a claim, 1 for no claim, 2 when gh-axi cannot answer (check skipped, not
 # a claim). Callers must not rely on FM_ISSUE_GUARD_GH_SKIPPED from inside a
 # command substitution; return 2 is the subshell-safe skip signal.
