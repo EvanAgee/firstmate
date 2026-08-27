@@ -1,0 +1,74 @@
+firstmate localhost API: GET/POST /rigs/config
+throwaway home, real HTTP, same path the agee.dev routing editor uses
+date: 2026-08-27T11:09:45Z
+home: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-config-evidence.zYr0Oe/home
+port: 57252
+
+== GET /rigs/config when crew-dispatch.json is missing (no token) ==
+HTTP 200
+{"ok":true,"config":null}
+
+== POST /rigs/config without a token ==
+HTTP 401
+{"ok":false,"error":"unauthorized"}
+
+== POST /rigs/config creates config/crew-dispatch.json (rules only, no default) ==
+HTTP 200
+{"ok":true}
+persisted file:
+{
+  "rules": [
+    {
+      "when": "builder class: ordinary",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus"
+        }
+      ],
+      "why": "keep this reason"
+    }
+  ],
+  "note": "editor note"
+}
+
+
+== GET /rigs/config returns the whole file (why + note) ==
+HTTP 200
+{"ok":true,"config":{"rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}],"why":"keep this reason"}],"note":"editor note"}}
+
+== GET /rigs (assembleRigs) does not carry the rule why field ==
+HTTP 200
+{"ok":true,"note":"editor note","rigs":[{"name":"builder class: ordinary","rungs":[{"harness":"claude","model":"opus","effort":"","enabled":true}],"pin":null}],"defaultPin":null,"crew":"","secondmate":""}
+why field present in GET /rigs body: no
+
+== GET then POST of the same rules-only object (dashboard read-edit-save) ==
+GET config object: {"rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}],"why":"keep this reason"}],"note":"editor note"}
+POST of that same object -> HTTP 200
+{"ok":true}
+
+== POST a ladder with every rung off is 400 and does not write ==
+HTTP 400
+{"ok":false,"error":"x needs at least one enabled rung"}
+
+== POST a non-object body is 400 ==
+HTTP 400
+{"ok":false,"error":"config must be a json object"}
+
+== POST with default present and all rungs off is 400 ==
+HTTP 400
+{"ok":false,"error":"default needs at least one enabled rung"}
+
+== POST with default present and one enabled rung is 200 ==
+HTTP 200
+{"ok":true}
+
+== GET /rigs/config when the file is a symlink answers config null ==
+HTTP 200
+{"ok":true,"config":null}
+
+== POST /rigs/config refuses a symlinked dispatch file ==
+HTTP 400
+{"ok":false,"error":"dispatch file is a symlink"}
+
+all editor-path checks passed
