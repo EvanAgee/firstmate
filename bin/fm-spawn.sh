@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--issue <ref>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -142,6 +142,27 @@
 #   secondmate receives the primary's read-only shared captain-preference file
 #   (fm-config-inherit-lib.sh). A successful launch clears pending inherited
 #   config reread generations because the new agent reads the converged files.
+#   --issue <ref> records the GitHub issue this ship dispatch covers and arms
+#   the duplicate-issue spawn guardrail. Repeatable; a value may also carry
+#   several comma-separated refs. A <ref> is a GitHub issue identity:
+#   owner/repo#123, or a bare #123 / 123 resolved against the task's project
+#   repo (the github.com owner/repository of the project checkout's origin
+#   remote). The normalized refs are recorded comma-separated in state/<id>.meta
+#   as issues=owner/repo#123,owner/repo#124; with no --issue the field is
+#   absent and the spawn path is unchanged. Before a ship spawn completes,
+#   each ref is checked against (1) this home's own task set - a live task
+#   recording the same ref refuses the spawn naming that task id - and (2)
+#   that repo's open pull requests via gh-axi (bin/fm-issue-guard-lib.sh owns
+#   the mechanics) - an open PR referencing the issue number refuses the spawn
+#   naming the PR URL. Either claim is a hard stop: no worktree is created and
+#   nothing is launched, exit non-zero. If GitHub cannot be reached for the
+#   open-PR check, the spawn is refused only on a local fleet match and a loud
+#   notice reports the PR check was skipped; GitHub unreachability never
+#   hard-fails the spawn by itself, but it is never silently treated as clear.
+#   A torn-down task's meta is removed by fm-teardown, so it cannot linger as
+#   a false claim. --issue is refused on --scout, --secondmate, and --relaunch
+#   spawns: the guard targets ship dispatch. A relaunch keeps its task's
+#   recorded issues= through meta preservation.
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
@@ -156,8 +177,9 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
-#   applies to every pair. A ship batch therefore carries one delivery contract, and each
+#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo/--issue
+#   applies to every pair (each pair resolves bare #n refs against its own project repo).
+#   A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
 #   and scout batches. The loop lives here, in bash, so callers never hand-write a
@@ -283,6 +305,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-issue-guard-lib.sh
+. "$SCRIPT_DIR/fm-issue-guard-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -307,6 +331,8 @@ YOLO_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 POS=()
+ISSUES_ARGS=()
+ISSUES=
 want_value=
 for a in "$@"; do
   if [ -n "$want_value" ]; then
@@ -321,6 +347,7 @@ for a in "$@"; do
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
+      issue) ISSUES_ARGS+=("$a") ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -344,6 +371,8 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    --issue) want_value=issue ;;
+    --issue=*) ISSUES_ARGS+=("${a#--issue=}") ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -356,6 +385,24 @@ done
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
+# --issue carries raw issue refs; one value may list several comma-separated
+# refs, so split those now and refuse empty entries before anything else runs.
+if [ "${#ISSUES_ARGS[@]}" -gt 0 ]; then
+  raw_issues=("${ISSUES_ARGS[@]}")
+  ISSUES_ARGS=()
+  for raw in "${raw_issues[@]}"; do
+    IFS=',' read -r -a split_issues <<< "$raw"
+    for split in "${split_issues[@]}"; do
+      [ -n "$split" ] || { echo "error: --issue contains an empty ref (use owner/repo#123, #123, or 123)" >&2; exit 1; }
+      ISSUES_ARGS+=("$split")
+    done
+  done
+  unset raw_issues split_issues
+  [ "$KIND" = ship ] || {
+    echo "error: --issue applies only to ship spawns; a scout delivers a report and a secondmate has no project PR surface" >&2
+    exit 1
+  }
+fi
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -383,6 +430,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
+  [ "${#ISSUES_ARGS[@]}" -eq 0 ] || { echo "error: --relaunch keeps the task's recorded issues; --issue cannot add a new claim" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -892,6 +940,9 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  for raw_issue in "${ISSUES_ARGS[@]+${ISSUES_ARGS[@]}}"; do
+    shared_args+=(--issue "$raw_issue")
+  done
   for pair in "${POS[@]}"; do
     case "$pair" in
       *=*) : ;;
@@ -1810,6 +1861,18 @@ if [ "$KIND" = ship ]; then
      && [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
     echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
   fi
+fi
+
+# Duplicate-issue guardrail (bin/fm-issue-guard-lib.sh owns the mechanics).
+# A ship spawn that names covered GitHub issues must not duplicate a live
+# claim: an issue already recorded on a live task in this home, or already
+# referenced by an open PR in the repo, hard-stops the spawn before any
+# worktree or endpoint is created. Normalization failures refuse too.
+if [ "$KIND" = ship ] && [ "${#ISSUES_ARGS[@]}" -gt 0 ]; then
+  if ! fm_issue_guard_preflight "$STATE" "$PROJ_ABS" "$ID" "${ISSUES_ARGS[@]}"; then
+    exit 1
+  fi
+  ISSUES=$FM_ISSUE_GUARD_NORMALIZED
 fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
@@ -2862,6 +2925,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_META_PATH=$SPAWN_META_TMP
 fi
 preserve_relaunch_meta() {
+  # issues= is intentionally unowned: --relaunch refuses --issue, so the prior
+  # claim copies through here instead of vanishing from an empty ISSUES write.
   awk -F= '
     BEGIN {
       split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
@@ -2882,6 +2947,9 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  # Recorded only when the spawn passed --issue: absent issues= means no
+  # claim, keeping the no-flag meta byte-identical to the pre-guard path.
+  [ -z "$ISSUES" ] || echo "issues=$ISSUES"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
