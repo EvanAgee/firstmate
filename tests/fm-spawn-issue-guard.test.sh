@@ -279,6 +279,35 @@ test_unrelated_pr_number_does_not_claim() {
   pass "issue-number matching is exact, not a prefix match"
 }
 
+test_cross_repo_hash_does_not_claim() {
+  local fake_gh new_id out status
+  new_id=issue-pr-xrepo-a12
+  make_case_and_env issue-pr-xrepo "$new_id"
+  printf '%s\n' "$(printf '4\tblocked on infra\tDepends on acme/infra#7')" > "$CASE_DIR/prs.txt"
+  fake_gh=$(make_fake_gh "$CASE_DIR" ok "$CASE_DIR/prs.txt")
+
+  out=$(run_guard_spawn "$fake_gh" "$new_id" "$PROJ_DIR" --mode no-mistakes --yolo off --issue '#7')
+  status=$?
+  expect_code 0 "$status" "other/repo#7 in an open PR body must not claim this repo's issue 7"
+  [ -e "$HOME_DIR/state/$new_id.meta" ] || fail "spawn should proceed when the only #7 is a different repo's issue"
+  pass "a different repo's owner/repo#n does not claim this repo's issue"
+}
+
+test_same_repo_slug_hash_claims() {
+  local fake_gh new_id out status
+  new_id=issue-pr-slug-a13
+  make_case_and_env issue-pr-slug "$new_id"
+  printf '%s\n' "$(printf '4\tadd exporter\tCloses acme/widget#7 without a bare hash')" > "$CASE_DIR/prs.txt"
+  fake_gh=$(make_fake_gh "$CASE_DIR" ok "$CASE_DIR/prs.txt")
+
+  out=$(run_guard_spawn "$fake_gh" "$new_id" "$PROJ_DIR" --mode no-mistakes --yolo off --issue '#7')
+  status=$?
+  expect_code 1 "$status" "same-repo owner/repo#7 in an open PR body must claim issue 7"
+  assert_contains "$out" "https://github.com/acme/widget/pull/4" "refusal must name the claiming PR URL"
+  [ ! -e "$HOME_DIR/state/$new_id.meta" ] || fail "refused spawn must not create the task meta"
+  pass "same-repo owner/repo#n in an open PR body still claims the issue"
+}
+
 test_github_down_refuses_on_local_match_and_reports_skip() {
   local fake_gh new_id out status
   new_id=issue-down-a7
@@ -362,6 +391,8 @@ test_local_fleet_claim_refuses
 test_dead_worker_does_not_claim
 test_open_pr_claim_refuses
 test_unrelated_pr_number_does_not_claim
+test_cross_repo_hash_does_not_claim
+test_same_repo_slug_hash_claims
 test_github_down_refuses_on_local_match_and_reports_skip
 test_github_down_proceeds_without_local_match_and_reports_skip
 test_issue_refused_on_scout_and_relaunch

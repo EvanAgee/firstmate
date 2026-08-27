@@ -25,7 +25,8 @@
 # which is where the task would ship its PR. The owner/repo slug is lowercased
 # so case-insensitive GitHub identities compare equal. A ref that cannot be
 # normalized is a spawn refusal, not a silent pass. Matching is by the full
-# normalized ref, so #123 and #124 never collide. A closed or merged PR claims
+# normalized ref, so #123 and #124 never collide, and an owner/repo#n for a
+# different repo does not claim this repo's #n. A closed or merged PR claims
 # nothing: only open PRs are consulted (the list call asks for --state open).
 # A torn-down task cannot linger as a claim because fm-teardown removes
 # state/<id>.meta.
@@ -190,6 +191,28 @@ fm_issue_guard_local_fleet_claim() {
   return 1
 }
 
+# fm_issue_guard_text_claims_issue <text> <owner/repo> <issue-number>
+# True when text references this repo's issue: a bare #n, or this slug#n.
+# An owner/repo#n for any other slug is a different issue and does not match.
+fm_issue_guard_text_claims_issue() {
+  local haystack=$1 slug=$2 number=$3 lowered exploded piece
+  lowered=$(printf '%s' "$haystack" | tr '[:upper:]' '[:lower:]')
+  exploded=$(printf '%s' "$lowered" | sed -E 's|[[:alnum:]._-]+/[[:alnum:]._-]+#[0-9]+|\n&\n|g')
+  while IFS= read -r piece; do
+    [ -n "$piece" ] || continue
+    case "$piece" in
+      "$slug#$number") return 0 ;;
+    esac
+    case "$piece" in
+      *[[:alnum:]._-]/*[[:alnum:]._-]#[0-9]*) continue ;;
+    esac
+    printf '%s\n' "$piece" | grep -Eq "#$number([^0-9]|$)" && return 0
+  done <<EOF
+$exploded
+EOF
+  return 1
+}
+
 # fm_issue_guard_open_pr_claim <owner/repo> <issue-number> -> the PR URL of an
 # open PR in the repo that references the issue. Exit 0 with the URL on stdout
 # for a claim, 1 for no claim, 2 when gh-axi cannot answer (check skipped, not
@@ -212,7 +235,7 @@ fm_issue_guard_open_pr_claim() {
     case "$pr_num" in
       ''|*[!0-9]*) continue ;;
     esac
-    if printf '%s\n' "$line" | grep -Eq "#$number([^0-9]|$)"; then
+    if fm_issue_guard_text_claims_issue "$line" "$slug" "$number"; then
       printf 'https://github.com/%s/pull/%s\n' "$slug" "$pr_num"
       return 0
     fi
