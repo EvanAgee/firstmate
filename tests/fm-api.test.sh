@@ -548,6 +548,39 @@ test_captain_note_with_token_lands_in_wake_queue() {
   pass "a captain note with the token lands in the wake queue encoded for firstmate"
 }
 
+test_captain_note_accepts_a_backlog_only_hold() {
+  local home port token resp queue
+  home=$(fm_test_api_home api-note-backlog)
+  # A parked captain hold: a backlog record with no state/meta/brief files.
+  mkdir -p "$home/data"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] parked-captain-task - Reconcile something (repo: x) (kind: task) (hold: needs a choice) (hold-kind: captain)
+
+## Done
+EOF
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"task":"parked-captain-task","text":"go with option A"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-notes POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "backlog-hold note status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  printf '%s\n' "$queue" | grep -F 'go with option A' >/dev/null \
+    || fail "backlog-hold note did not reach the wake queue: $queue"
+  # A task that is neither live nor in the backlog is still 404.
+  HTTP_BODY='{"task":"ghost-task","text":"hello"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-notes POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 404 ] || fail "unknown-task note status $HTTP_CODE, wanted 404: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "a captain note about a backlog-only captain hold is accepted, unknown is 404"
+}
+
 test_reads_need_no_token() {
   local home port token resp
   home=$(fm_test_api_home api-read-no-token)
@@ -971,6 +1004,7 @@ test_preexisting_token_is_kept
 test_symlinked_api_token_refuses_start
 test_captain_note_without_token_is_unauthorized
 test_captain_note_with_token_lands_in_wake_queue
+test_captain_note_accepts_a_backlog_only_hold
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
 test_worker_relay_without_token_is_unauthorized
