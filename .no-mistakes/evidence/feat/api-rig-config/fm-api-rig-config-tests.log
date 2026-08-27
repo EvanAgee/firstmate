@@ -1,0 +1,7 @@
+ok - saving a whole dispatch config without the token is refused with 401
+ok - saving a whole dispatch config with the token writes it
+ok - saving a config with a ladder that has no enabled rung is refused
+ok - saving a config with rules and no default is accepted
+ok - GET /rigs/config returns the whole dispatch file, keeping fields /rigs drops
+ok - GET /rigs/config on a missing file answers config null
+# fm-api.test.sh: all assertions passed
