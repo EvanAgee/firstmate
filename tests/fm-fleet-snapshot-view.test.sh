@@ -795,9 +795,41 @@ test_parallel_snapshot_matches_sequential() {
   pass "building tasks in parallel gives the same snapshot as one at a time"
 }
 
+# A failed combine slurp (corrupt/partial worker JSON) must fail the snapshot
+# itself, not get swallowed by the temp-dir cleanup.
+test_failed_task_slurp_fails_snapshot() {
+  local home fakebin real_jq rc=0 err
+  home=$(make_home failed-slurp)
+  mkdir -p "$home/projects/alpha-worktree"
+  fm_write_meta "$home/state/ship-task.meta" \
+    "window=firstmate:fm-ship-task" \
+    "worktree=$home/projects/alpha-worktree" \
+    "project=alpha" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=ship"
+  printf 'working: x\n' > "$home/state/ship-task.status"
+  fakebin=$(make_fakebin "$home")
+  real_jq=$(command -v jq)
+  cat > "$fakebin/jq" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = "-s" ] && [ "\${2:-}" = "sort_by(.id)" ]; then
+  echo "jq: parse error" >&2
+  exit 1
+fi
+exec "$real_jq" "\$@"
+SH
+  chmod +x "$fakebin/jq"
+  err=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_JOBS=8 "$SNAPSHOT" --json 2>&1 >/dev/null) || rc=$?
+  [ "$rc" -ne 0 ] || fail "failed task slurp must fail the snapshot, got rc=0 err=$err"
+  assert_contains "$err" "task snapshot failed" "failed combine must report task snapshot failed"
+  pass "failed task json slurp fails the snapshot"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_parallel_snapshot_matches_sequential
+test_failed_task_slurp_fails_snapshot
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

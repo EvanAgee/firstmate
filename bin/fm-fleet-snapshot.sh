@@ -619,7 +619,7 @@ task_json_lines() {
   local jobs=$FM_SNAPSHOT_JOBS
   case "$jobs" in ''|*[!0-9]*) jobs=8 ;; esac
   [ "$jobs" -ge 1 ] || jobs=1
-  local outdir meta running=0
+  local outdir meta running=0 status
   outdir=$(mktemp -d "${TMPDIR:-/tmp}/fm-snapshot.XXXXXX") || {
     # No temp dir: fall back to sequential so the snapshot still answers.
     for meta in "$STATE"/*.meta; do
@@ -640,7 +640,9 @@ task_json_lines() {
   wait
   # Combine every task's object. cat over the temp files, then slurp and sort.
   find "$outdir" -name '*.json' -exec cat {} + 2>/dev/null | jq -s 'sort_by(.id)'
+  status=$?
   rm -rf "$outdir"
+  return "$status"
 }
 
 # Main-home current-inventory validity: same orphan / unstructured-current checks
