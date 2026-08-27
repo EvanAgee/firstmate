@@ -81,7 +81,7 @@ function asItem(row) {
 // may follow last. Generic "A" / "B" / "Option C" labels are refused.
 
 const GENERIC_LETTER = /^(option\s+)?[A-Z]$/i;
-const GENERIC_LETTER_PREFIX = /^[A-Z]\s*[-.:)]\s*/;
+const GENERIC_LETTER_PREFIX = /^(option\s+)?[A-Z]\s*[-.:)]\s*/i;
 const JARGON = /\[key=|\bbin\/|\bneeds-decision\b|\.status\b|\.sh\b|\.mjs\b/i;
 const SOMETHING_ELSE = /^something else$/i;
 const RECOMMENDED_MARK = /\(\s*recommended\s*\)/i;
@@ -127,8 +127,9 @@ export function captainCardOptionsError(options) {
   if (named.length === 0) return "card options need a real named choice";
   if (SOMETHING_ELSE.test(labels[0])) return "Something else cannot be the recommended option";
   const marked = labels.filter((label) => RECOMMENDED_MARK.test(label));
+  if (marked.length === 0) return "one option must be marked recommended";
   if (marked.length > 1) return "only one option can be marked recommended";
-  if (marked.length === 1 && !RECOMMENDED_MARK.test(labels[0])) {
+  if (!RECOMMENDED_MARK.test(labels[0])) {
     return "the recommended option must come first";
   }
   const elseAt = labels.findIndex((label) => SOMETHING_ELSE.test(label));
@@ -148,6 +149,8 @@ function asCaptainCard(raw, resolvedIds) {
   if (status !== "open") return null;
   const options = normalizeCaptainCardOptions(raw.options);
   if (captainCardOptionsError(options)) return null;
+  const recommended = options.find((label) => RECOMMENDED_MARK.test(label));
+  if (!recommended) return null;
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
   const askedAt = textField(raw.asked_at) || textField(raw.askedAt);
   const commands = Array.isArray(raw.commands)
@@ -162,7 +165,7 @@ function asCaptainCard(raw, resolvedIds) {
     context: typeof raw.context === "string" ? raw.context : "",
     commands,
     options,
-    recommended: options[0],
+    recommended,
     askedAt,
     status: "open",
     project: textField(raw.project),

@@ -136,6 +136,24 @@ test_captain_queue_rejects_bad_options() {
       "status": "open"
     },
     {
+      "id": "option-letter-prefix",
+      "question": "Keep the current memory plan?",
+      "options": ["Option A - stay with trim (recommended)", "Option B - adopt a vault"],
+      "status": "open"
+    },
+    {
+      "id": "lowercase-letter-prefix",
+      "question": "Keep the current memory plan?",
+      "options": ["a - stay with trim (recommended)", "b - adopt a vault"],
+      "status": "open"
+    },
+    {
+      "id": "unmarked",
+      "question": "Keep the current memory plan?",
+      "options": ["Adopt a vault", "Stay with trim", "Something else"],
+      "status": "open"
+    },
+    {
       "id": "jargon",
       "question": "Retry the wedge?",
       "options": ["[key=nm-custody-wedge] retry", "keep going"],
@@ -166,7 +184,7 @@ EOF
   [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].id')" = good-card ] || \
     fail "the surviving card should be the named one: $HTTP_BODY"
   fm_test_api_stop "$home"
-  pass "cards with empty, generic-letter, or jargon options are rejected"
+  pass "cards with empty, generic-letter, unmarked, or jargon options are rejected"
 }
 
 test_captain_queue_moves_recommended_first() {
