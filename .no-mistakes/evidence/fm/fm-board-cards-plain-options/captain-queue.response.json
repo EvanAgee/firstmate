@@ -1,0 +1,22 @@
+{
+  "ok": true,
+  "updatedAt": "2026-08-27T16:00:00Z",
+  "items": [
+    {
+      "id": "fm-memory-path",
+      "num": 3,
+      "question": "Keep trimming memory, or adopt a vault?",
+      "context": "The research recommends staying with trim.",
+      "commands": [],
+      "options": [
+        "Stay with trim (recommended)",
+        "Adopt a vault",
+        "Something else"
+      ],
+      "recommended": "Stay with trim (recommended)",
+      "askedAt": "2026-08-26T20:45:00Z",
+      "status": "open",
+      "project": "firstmate"
+    }
+  ]
+}

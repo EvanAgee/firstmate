@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "holds": [
+    {
+      "id": "ready-decision-key-a",
+      "title": "Pick the memory path",
+      "reason": "Captain must choose",
+      "repo": "firstmate",
+      "createdAt": "2026-08-20",
+      "blockedBy": [],
+      "actionable": true,
+      "done": false,
+      "answerable": true
+    },
+    {
+      "id": "blocked-hold",
+      "title": "Waits on another task",
+      "reason": "Blocked",
+      "repo": "aos",
+      "createdAt": "2026-08-19",
+      "blockedBy": [
+        "other-task"
+      ],
+      "actionable": false,
+      "done": false,
+      "answerable": false
+    }
+  ]
+}
