@@ -1,0 +1,17 @@
+Only parkedXholdXv1 is in the backlog.
+POST parked.hold.v1 must 404 if the id is escaped; an unescaped '.' would match X.
+
+backlog.md:
+## Queued
+- [ ] parkedXholdXv1 - Nearby id that an unescaped dot would also match (repo: x) (kind: task) (hold-kind: captain)
+
+=== POST /captain-notes task=parked.hold.v1 (expected 404) ===
+404
+{"ok":false,"error":"not found"}
+
+=== POST /captain-notes task=parkedXholdXv1 (expected 200) ===
+200
+{"ok":true}
+
+=== wake queue (only the real record) ===
+1787840719	1	check	captain-note:parkedXholdXv1:77cb1a3d2dd611ba	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task parkedXholdXv1: real record

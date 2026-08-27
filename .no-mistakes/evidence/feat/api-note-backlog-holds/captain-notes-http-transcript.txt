@@ -1,0 +1,71 @@
+home=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//api-note-evidence.wBSmZZ/home
+port=62691
+live task files in state/ (should have no parked-hold status/meta/brief):
+
+backlog.md:
+## In flight
+
+## Queued
+- [ ] disq-local-reconcile - Reconcile local DISQ state (repo: disq) (kind: task) (hold: needs a choice) (hold-kind: captain)
+- [ ] sdi-develop-protection-disabled - Restore develop branch protection (repo: sdi) (kind: task) (hold: needs a choice) (hold-kind: captain)
+- [ ] fm-1password-env-migration - Migrate env secrets to 1Password (repo: firstmate) (kind: task) (hold: needs a choice) (hold-kind: captain)
+- [x] done-hold-task - Already finished (repo: x) (kind: task) (hold-kind: captain)
+
+## Done
+
+=== note to parked hold disq-local-reconcile (expected 200) ===
+POST /captain-notes
+body: {"task":"disq-local-reconcile","text":"go with the local reconcile"}
+response:
+200
+{"ok":true}
+
+=== note to parked hold sdi-develop-protection-disabled (expected 200) ===
+POST /captain-notes
+body: {"task":"sdi-develop-protection-disabled","text":"re-enable protection on develop"}
+response:
+200
+{"ok":true}
+
+=== note to parked hold fm-1password-env-migration (expected 200) ===
+POST /captain-notes
+body: {"task":"fm-1password-env-migration","text":"use the shared vault"}
+response:
+200
+{"ok":true}
+
+=== note to checked-off backlog record (expected 200) ===
+POST /captain-notes
+body: {"task":"done-hold-task","text":"checked-off holds should still take a note"}
+response:
+200
+{"ok":true}
+
+=== note to unknown task (expected 404) ===
+POST /captain-notes
+body: {"task":"ghost-task","text":"this task does not exist"}
+response:
+404
+{"ok":false,"error":"not found"}
+
+=== worker-relay to backlog-only hold (expected 404, stays strict) ===
+POST /workers/relay
+body: {"task":"disq-local-reconcile","text":"steer the worker"}
+response:
+404
+{"ok":false,"error":"not found"}
+
+=== decision-answer to backlog-only hold (expected 404, stays strict) ===
+POST /decisions/answer
+body: {"task":"disq-local-reconcile","key":"choice","text":"option A"}
+response:
+404
+{"ok":false,"error":"not found"}
+
+=== wake queue after notes ===
+1787840681	1	check	captain-note:disq-local-reconcile:5e134899f6ed27c2	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task disq-local-reconcile: go with the local reconcile
+1787840682	2	check	captain-note:sdi-develop-protection-disabled:af258fbc226a2af5	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task sdi-develop-protection-disabled: re-enable protection on develop
+1787840682	3	check	captain-note:fm-1password-env-migration:d9ded39f0b89c78c	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task fm-1password-env-migration: use the shared vault
+1787840682	4	check	captain-note:done-hold-task:7fdf2b7d5163f2c8	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task done-hold-task: checked-off holds should still take a note
+
+=== live files after notes (still no status/meta/brief for parked holds) ===

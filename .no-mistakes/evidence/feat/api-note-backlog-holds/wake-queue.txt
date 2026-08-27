@@ -1,0 +1,4 @@
+1787840681	1	check	captain-note:disq-local-reconcile:5e134899f6ed27c2	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task disq-local-reconcile: go with the local reconcile
+1787840682	2	check	captain-note:sdi-develop-protection-disabled:af258fbc226a2af5	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task sdi-develop-protection-disabled: re-enable protection on develop
+1787840682	3	check	captain-note:fm-1password-env-migration:d9ded39f0b89c78c	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task fm-1password-env-migration: use the shared vault
+1787840682	4	check	captain-note:done-hold-task:7fdf2b7d5163f2c8	check: captain-note: ⁣FIRSTMATE_OP: v1 away-supervisor: captain-note on running task done-hold-task: checked-off holds should still take a note
