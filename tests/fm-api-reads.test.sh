@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/fm-api-reads.test.sh - captain queue, blocked list, and rig read windows.
+# tests/fm-api-reads.test.sh - captain queue cards, blocked list, and rig read windows.
 #
 # Speaks real HTTP against a throwaway firstmate home. Does not read the live
 # home and does not inspect server source.
@@ -25,6 +25,11 @@ write_status() {
   printf '%s\n' "$@" > "$home/state/${id}.status"
 }
 
+write_queue() {
+  local home=$1
+  cat > "$home/data/captain-queue.json"
+}
+
 test_empty_home_queue_is_empty() {
   local home port resp
   home=$(fm_test_api_home api-queue-empty)
@@ -33,50 +38,180 @@ test_empty_home_queue_is_empty() {
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 200 ] || fail "empty queue status $HTTP_CODE, wanted 200: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.ok')" = true ] || fail "empty queue missing ok: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.decisions.length')" = 0 ] || \
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 0 ] || \
     fail "empty home queue was not empty: $HTTP_BODY"
   fm_test_api_stop "$home"
   pass "empty home captain queue is an empty list"
 }
 
-test_captain_queue_returns_parked_decisions() {
-  local home port resp summary
-  home=$(fm_test_api_home api-queue)
+test_captain_queue_ignores_worker_needs_decision() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-worker)
   write_status "$home" ask-me \
-    'needs-decision [key=api-shape]: which JSON shape should the queue use?' \
+    'needs-decision [key=nm-custody-wedge]: retry the pipeline?' \
     'working: still drafting the other ticket'
   write_status "$home" other \
-    'working: no decision here'
+    'needs-decision [key=real-money-live-run]: approve the live run?'
   port=$(fm_test_api_start "$home")
   resp=$(fm_test_api_http "$port" /captain-queue)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 200 ] || fail "queue status $HTTP_CODE, wanted 200: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.decisions.length')" = 1 ] || \
-    fail "wanted 1 parked decision: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.decisions[0].task')" = ask-me ] || \
-    fail "queue task: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.decisions[0].key')" = api-shape ] || \
-    fail "queue key: $HTTP_BODY"
-  summary=$(fm_test_json "$HTTP_BODY" 'd.decisions[0].summary')
-  assert_contains "$summary" "which JSON shape should the queue use" "queue summary: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 0 ] || \
+    fail "worker needs-decision leaked onto the captain queue: $HTTP_BODY"
   fm_test_api_stop "$home"
-  pass "captain queue returns the fixture parked decision and ignores a later working line"
+  pass "an ordinary worker needs-decision does not appear on the captain queue"
 }
 
-test_resolved_decision_leaves_the_queue() {
+test_captain_queue_serves_open_named_cards() {
   local home port resp
-  home=$(fm_test_api_home api-queue-resolved)
+  home=$(fm_test_api_home api-queue-card)
   write_status "$home" ask-me \
-    'needs-decision [key=api-shape]: which JSON shape?' \
-    'resolved [key=api-shape]: use the glossary words'
+    'needs-decision [key=nm-custody-wedge]: retry the pipeline?'
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-27T16:00:00Z",
+  "items": [
+    {
+      "id": "fm-memory-path",
+      "num": 3,
+      "question": "Keep trimming memory, or adopt a vault?",
+      "context": "The research recommends staying with trim.",
+      "commands": [],
+      "options": [
+        "Stay with trim (recommended)",
+        "Adopt a vault",
+        "Something else"
+      ],
+      "asked_at": "2026-08-26T20:45:00Z",
+      "status": "open",
+      "project": "firstmate"
+    },
+    {
+      "id": "already-done",
+      "num": 1,
+      "question": "Already answered",
+      "options": ["Yes, ship it (recommended)", "Hold"],
+      "status": "resolved",
+      "project": "firstmate"
+    }
+  ]
+}
+EOF
   port=$(fm_test_api_start "$home")
   resp=$(fm_test_api_http "$port" /captain-queue)
   split_http <<<"$resp"
-  [ "$HTTP_CODE" = 200 ] || fail "resolved queue status $HTTP_CODE: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.decisions.length')" = 0 ] || \
-    fail "resolved decision stayed in the queue: $HTTP_BODY"
+  [ "$HTTP_CODE" = 200 ] || fail "queue status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] || \
+    fail "wanted 1 open card and no worker leak: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].id')" = fm-memory-path ] || \
+    fail "queue id: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options.length')" = 3 ] || \
+    fail "queue options: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options[0]')" = "Stay with trim (recommended)" ] || \
+    fail "recommended option was not first: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].recommended')" = "Stay with trim (recommended)" ] || \
+    fail "recommended field: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.updatedAt')" = "2026-08-27T16:00:00Z" ] || \
+    fail "updatedAt: $HTTP_BODY"
   fm_test_api_stop "$home"
-  pass "a resolved parked decision does not appear in the captain queue"
+  pass "captain queue serves an open named card and hides a resolved one"
+}
+
+test_captain_queue_rejects_bad_options() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-bad-options)
+  write_queue "$home" <<'EOF'
+{
+  "items": [
+    {
+      "id": "generic-letters",
+      "question": "Pick a path",
+      "options": ["A", "B", "C"],
+      "status": "open"
+    },
+    {
+      "id": "letter-prefix",
+      "question": "Approve the live run?",
+      "options": ["A - approve the real run", "B - use the fake proof"],
+      "status": "open"
+    },
+    {
+      "id": "option-letter-prefix",
+      "question": "Keep the current memory plan?",
+      "options": ["Option A - stay with trim (recommended)", "Option B - adopt a vault"],
+      "status": "open"
+    },
+    {
+      "id": "lowercase-letter-prefix",
+      "question": "Keep the current memory plan?",
+      "options": ["a - stay with trim (recommended)", "b - adopt a vault"],
+      "status": "open"
+    },
+    {
+      "id": "unmarked",
+      "question": "Keep the current memory plan?",
+      "options": ["Adopt a vault", "Stay with trim", "Something else"],
+      "status": "open"
+    },
+    {
+      "id": "jargon",
+      "question": "Retry the wedge?",
+      "options": ["[key=nm-custody-wedge] retry", "keep going"],
+      "status": "open"
+    },
+    {
+      "id": "empty-options",
+      "question": "No choices",
+      "options": [],
+      "status": "open"
+    },
+    {
+      "id": "good-card",
+      "question": "Push the dashboard live?",
+      "options": ["Push it live (recommended)", "Let me look first", "Something else"],
+      "status": "open",
+      "project": "agee-dev-dashboard"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "bad-options status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] || \
+    fail "bad option cards should be dropped, one good card kept: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].id')" = good-card ] || \
+    fail "the surviving card should be the named one: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "cards with empty, generic-letter, unmarked, or jargon options are rejected"
+}
+
+test_captain_queue_moves_recommended_first() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-recommended)
+  write_queue "$home" <<'EOF'
+{
+  "items": [
+    {
+      "id": "reorder-me",
+      "question": "Keep the current memory plan?",
+      "options": ["Adopt a vault", "Stay with trim (recommended)", "Something else"],
+      "status": "open"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "reorder status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options[0]')" = "Stay with trim (recommended)" ] || \
+    fail "recommended option should be moved first: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options[2]')" = "Something else" ] || \
+    fail "Something else should stay last: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "the recommended option is marked and comes first"
 }
 
 test_empty_home_blocked_is_empty() {
@@ -114,12 +249,10 @@ test_blocked_list_returns_blocked_tasks() {
   assert_contains "$summary" "jq is not installed" "blocked summary: $HTTP_BODY"
   resp=$(fm_test_api_http "$port" /captain-queue)
   split_http <<<"$resp"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.decisions.length')" = 1 ] || \
-    fail "parked decision missing from queue while blocked was listed: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.decisions[0].task')" = ask-me ] || \
-    fail "queue mixed in the blocked task: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 0 ] || \
+    fail "a worker needs-decision leaked onto the captain queue: $HTTP_BODY"
   fm_test_api_stop "$home"
-  pass "blocked list returns the fixture blocked task and not the parked decision"
+  pass "blocked list returns the fixture blocked task and not a worker decision"
 }
 
 test_empty_home_rigs_is_empty() {
@@ -409,9 +542,49 @@ test_captain_holds_empty_without_tasks_axi() {
   pass "captain holds is empty, not an error, when tasks-axi is absent"
 }
 
+test_captain_attention_hold_present_worker_absent() {
+  local home port resp fakebin
+  home=$(fm_test_api_home api-attention-split)
+  fakebin="$home/fakebin"
+  : > "$home/data/backlog.md"
+  make_fake_tasks_axi "$fakebin" "$(cd "$home" && pwd)/data/backlog.md"
+  write_status "$home" internal-wedge \
+    'needs-decision [key=nm-custody-wedge]: retry bin/fm-captain-queue.sh?'
+  write_queue "$home" <<'EOF'
+{
+  "items": [
+    {
+      "id": "fm-memory-path",
+      "question": "Keep trimming memory, or adopt a vault?",
+      "options": ["Stay with trim (recommended)", "Adopt a vault"],
+      "status": "open"
+    }
+  ]
+}
+EOF
+  port=$(TASKS_AXI_FILE="$home/other-backlog.md" PATH="$fakebin:$PATH" fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] || \
+    fail "wanted the escalated card only: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].id')" = fm-memory-path ] || \
+    fail "queue served the worker instead of the card: $HTTP_BODY"
+  resp=$(fm_test_api_http "$port" /captain-holds GET 8000)
+  split_http <<<"$resp"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds.length')" = 2 ] || \
+    fail "captain hold missing from /captain-holds: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[0].id')" = ready-decision-key-a ] || \
+    fail "actionable hold should still sort first: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "a captain hold and card are shown; a worker needs-decision is not"
+}
+
 test_empty_home_queue_is_empty
-test_captain_queue_returns_parked_decisions
-test_resolved_decision_leaves_the_queue
+test_captain_queue_ignores_worker_needs_decision
+test_captain_queue_serves_open_named_cards
+test_captain_queue_rejects_bad_options
+test_captain_queue_moves_recommended_first
+test_captain_attention_hold_present_worker_absent
 test_empty_home_blocked_is_empty
 test_blocked_list_returns_blocked_tasks
 test_empty_home_rigs_is_empty
