@@ -167,7 +167,7 @@ pass "operator PATH resolves the authorized Nix profile bin link"
 # longer, so stop_worker_tree must still see the worker name in the leader command.
 LONG_CMD_DIR="$TMP_ROOT/$(printf 'p%.0s' {1..120})"
 mkdir -p "$LONG_CMD_DIR"
-printf '#!/bin/bash\nexec sleep 60\n' > "$LONG_CMD_DIR/fm-remote-job-worker.sh"
+printf '#!/bin/bash\nsleep 60\n' > "$LONG_CMD_DIR/fm-remote-job-worker.sh"
 chmod +x "$LONG_CMD_DIR/fm-remote-job-worker.sh"
 "$LONG_CMD_DIR/fm-remote-job-worker.sh" &
 LONG_CMD_PID=$!
