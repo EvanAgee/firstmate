@@ -59,7 +59,8 @@
 //   (like each rule's `why`). Missing or symlinked file: config is null. No token.
 // POST /rigs/config requires the token; body is a whole dispatch config object.
 //   Writes it to config/crew-dispatch.json (creating the file if absent), after
-//   checking every ladder keeps at least one enabled rung. Bad body or a broken
+//   checking every present ladder keeps at least one enabled rung. Default is
+//   optional; when the key is absent it is not required. Bad body or a broken
 //   ladder is refused 400. This is the routing editor's save door.
 
 import http from "node:http";
@@ -740,8 +741,9 @@ function handleRungToggle(req, res, home, options) {
     });
 }
 
-// Every ladder in a dispatch config (each rule's `use` and the `default`
-// fallback) must keep at least one enabled rung, and must name at least one.
+// Every present ladder in a dispatch config (each rule's `use`, and `default`
+// when that key is an array or object) must keep at least one enabled rung,
+// and must name at least one. A config with only rules and no default is legal.
 // This mirrors the invariant the single-rung toggle enforces, applied to a
 // whole config the dashboard's routing editor sends at once.
 function validateDispatchConfig(config) {
@@ -758,7 +760,9 @@ function validateDispatchConfig(config) {
       ladders.push({ label: rule.when, list: asList(rule.use) });
     }
   }
-  ladders.push({ label: "default", list: asList(config.default) });
+  if (Array.isArray(config.default) || (config.default && typeof config.default === "object")) {
+    ladders.push({ label: "default", list: asList(config.default) });
+  }
   for (const ladder of ladders) {
     if (ladder.list.length === 0) return { error: `${ladder.label} needs at least one rung` };
     if (!ladder.list.some(rungEnabled)) {

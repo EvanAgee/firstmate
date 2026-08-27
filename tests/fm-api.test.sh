@@ -855,6 +855,37 @@ test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
   pass "saving a config with a ladder that has no enabled rung is refused"
 }
 
+test_rig_config_without_default_is_accepted() {
+  local home port token resp
+  home=$(fm_test_api_home api-config-no-default)
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [
+    { "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  resp=$(fm_test_api_http "$port" /rigs/config GET)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "GET config without default status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  HTTP_BODY=$(json_query "$HTTP_BODY" 'JSON.stringify(d.config)') \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "POST config without default status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String("default" in c))' \
+      "$home/config/crew-dispatch.json")" = false ] \
+    || fail "round-trip invented a default ladder"
+  [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String(c.rules[0].why))' \
+      "$home/config/crew-dispatch.json")" = "keep this reason" ] \
+    || fail "round-trip dropped the why"
+  fm_test_api_stop "$home"
+  pass "saving a config with rules and no default is accepted"
+}
+
 test_rig_config_get_returns_the_whole_file() {
   local home port resp
   home=$(fm_test_api_home api-config-get)
@@ -925,6 +956,7 @@ test_rung_toggle_refuses_last_enabled_rung
 test_rig_config_without_token_is_unauthorized
 test_rig_config_with_token_writes_config
 test_rig_config_refuses_a_ladder_with_no_enabled_rung
+test_rig_config_without_default_is_accepted
 test_rig_config_get_returns_the_whole_file
 test_rig_config_get_missing_file_is_null
 
