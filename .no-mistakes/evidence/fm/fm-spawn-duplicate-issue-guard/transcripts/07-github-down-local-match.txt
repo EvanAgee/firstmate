@@ -1,0 +1,21 @@
+=== 07-github-down-local-match ===
+command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M12NBH8H1CBZ578P9NHCS4NW/bin/fm-spawn.sh issue-down-a7 <project> --mode no-mistakes --yolo off --issue 7
+exit: 1
+--- output ---
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down/home/data/issue-down-a7/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: spawn refused: issue acme/widget#7 is already claimed by live task issue-live-a7 in this home; resolve or tear down that task before dispatching another worker on it
+notice: open-PR duplicate check could not reach GitHub and was skipped; the spawn is clear only against this home's local fleet, not against open PRs in acme/widget
+--- meta ---
+# issue-live-a7.meta
+window=mysession:fm-issue-live-a7
+endpoint_task_id=issue-live-a7
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+issues=acme/widget#7
+
+--- window.log ---
+

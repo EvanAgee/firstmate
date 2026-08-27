@@ -1,0 +1,21 @@
+Captain-visible spawn-guard messages from real fm-spawn.sh
+
+Local fleet overlap (exit 1, no worktree/window):
+  error: spawn refused: issue acme/widget#7 is already claimed by live task issue-live-a3 in this home; resolve or tear down that task before dispatching another worker on it
+
+Open PR claim, including same-repo slug#n (exit 1, no worktree/window):
+  error: spawn refused: issue acme/widget#7 is already referenced by open PR https://github.com/acme/widget/pull/4; dispatch only after that PR merges or closes
+
+Cross-repo owner/repo#n does not claim (exit 0; body was "Depends on acme/infra#7"):
+  spawned issue-pr-xrepo-a12 ... issues=acme/widget#7
+
+GitHub unreachable + local match (exit 1):
+  error: spawn refused: issue acme/widget#7 is already claimed by live task issue-live-a7 in this home; resolve or tear down that task before dispatching another worker on it
+  notice: open-PR duplicate check could not reach GitHub and was skipped; the spawn is clear only against this home's local fleet, not against open PRs in acme/widget
+
+GitHub unreachable, no local match (exit 0, claim recorded):
+  notice: open-PR duplicate check could not reach GitHub and was skipped; the spawn is clear only against this home's local fleet, not against open PRs in acme/widget
+  spawned issue-down-ok-a8 ... issues=acme/widget#7
+
+Normalized record from --issue acme/other#99 --issue '#7' --issue 8:
+  issues=acme/other#99,acme/widget#7,acme/widget#8

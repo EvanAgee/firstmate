@@ -1,0 +1,13 @@
+window=firstmate:fm-issue-none-a2
+endpoint_task_id=issue-none-a2
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-none/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-none/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-none-a2
+model=default
+effort=default
+busy_gen=g1787870877.78012.8398
+spawn_gen=s1787870877.71623.19190

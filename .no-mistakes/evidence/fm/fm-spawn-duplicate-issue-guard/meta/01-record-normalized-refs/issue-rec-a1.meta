@@ -1,0 +1,14 @@
+window=firstmate:fm-issue-rec-a1
+endpoint_task_id=issue-rec-a1
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-rec/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-rec/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-rec-a1
+model=default
+effort=default
+issues=acme/other#99,acme/widget#7,acme/widget#8
+busy_gen=g1787870873.70253.16886
+spawn_gen=s1787870873.68569.10796

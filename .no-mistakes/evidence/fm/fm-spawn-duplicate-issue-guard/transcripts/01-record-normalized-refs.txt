@@ -1,0 +1,26 @@
+=== 01-record-normalized-refs ===
+command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M12NBH8H1CBZ578P9NHCS4NW/bin/fm-spawn.sh issue-rec-a1 <project> --mode no-mistakes --yolo off --issue acme/other#99 --issue '#7' --issue 8
+exit: 0
+--- output ---
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-rec/home/data/issue-rec-a1/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned issue-rec-a1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-issue-rec-a1 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-rec/wt
+--- meta ---
+# issue-rec-a1.meta
+window=firstmate:fm-issue-rec-a1
+endpoint_task_id=issue-rec-a1
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-rec/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-rec/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-rec-a1
+model=default
+effort=default
+issues=acme/other#99,acme/widget#7,acme/widget#8
+busy_gen=g1787870873.70253.16886
+spawn_gen=s1787870873.68569.10796
+
+--- window.log ---
+new-window
+

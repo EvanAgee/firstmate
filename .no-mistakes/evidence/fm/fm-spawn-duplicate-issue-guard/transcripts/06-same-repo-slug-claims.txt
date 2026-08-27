@@ -1,0 +1,9 @@
+=== 06-same-repo-slug-claims ===
+command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M12NBH8H1CBZ578P9NHCS4NW/bin/fm-spawn.sh issue-pr-slug-a13 <project> --mode no-mistakes --yolo off --issue '#7'
+exit: 1
+--- output ---
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-pr-slug/home/data/issue-pr-slug-a13/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: spawn refused: issue acme/widget#7 is already referenced by open PR https://github.com/acme/widget/pull/4; dispatch only after that PR merges or closes
+--- meta ---
+--- window.log ---
+

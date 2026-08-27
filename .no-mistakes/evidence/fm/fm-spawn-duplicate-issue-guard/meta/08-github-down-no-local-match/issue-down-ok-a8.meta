@@ -1,0 +1,14 @@
+window=firstmate:fm-issue-down-ok-a8
+endpoint_task_id=issue-down-ok-a8
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down-ok/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-down-ok/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-down-ok-a8
+model=default
+effort=default
+issues=acme/widget#7
+busy_gen=g1787870886.1138.10890
+spawn_gen=s1787870886.98141.24271

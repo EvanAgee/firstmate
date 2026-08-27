@@ -1,0 +1,25 @@
+=== 02-no-issue-flag ===
+command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M12NBH8H1CBZ578P9NHCS4NW/bin/fm-spawn.sh issue-none-a2 <project> --mode no-mistakes --yolo off
+exit: 0
+--- output ---
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-none/home/data/issue-none-a2/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned issue-none-a2 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-issue-none-a2 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-none/wt
+--- meta ---
+# issue-none-a2.meta
+window=firstmate:fm-issue-none-a2
+endpoint_task_id=issue-none-a2
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-none/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-none/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-none-a2
+model=default
+effort=default
+busy_gen=g1787870877.78012.8398
+spawn_gen=s1787870877.71623.19190
+
+--- window.log ---
+new-window
+

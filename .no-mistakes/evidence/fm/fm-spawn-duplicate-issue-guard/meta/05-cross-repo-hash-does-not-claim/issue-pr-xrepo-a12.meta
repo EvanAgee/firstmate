@@ -1,0 +1,14 @@
+window=firstmate:fm-issue-pr-xrepo-a12
+endpoint_task_id=issue-pr-xrepo-a12
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-pr-xrepo/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-pr-xrepo/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-pr-xrepo-a12
+model=default
+effort=default
+issues=acme/widget#7
+busy_gen=g1787870881.90711.23398
+spawn_gen=s1787870881.87134.29205

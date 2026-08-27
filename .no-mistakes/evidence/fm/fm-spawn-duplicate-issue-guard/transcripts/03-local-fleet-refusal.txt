@@ -1,0 +1,20 @@
+=== 03-local-fleet-refusal ===
+command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M12NBH8H1CBZ578P9NHCS4NW/bin/fm-spawn.sh issue-dup-a3 <project> --mode no-mistakes --yolo off --issue 7
+exit: 1
+--- output ---
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-dup/home/data/issue-dup-a3/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: spawn refused: issue acme/widget#7 is already claimed by live task issue-live-a3 in this home; resolve or tear down that task before dispatching another worker on it
+--- meta ---
+# issue-live-a3.meta
+window=mysession:fm-issue-live-a3
+endpoint_task_id=issue-live-a3
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-dup/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-dup/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+issues=acme/widget#7
+
+--- window.log ---
+

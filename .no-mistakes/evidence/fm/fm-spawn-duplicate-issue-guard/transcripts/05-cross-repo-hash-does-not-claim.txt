@@ -1,0 +1,26 @@
+=== 05-cross-repo-hash-does-not-claim ===
+command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M12NBH8H1CBZ578P9NHCS4NW/bin/fm-spawn.sh issue-pr-xrepo-a12 <project> --mode no-mistakes --yolo off --issue '#7'
+exit: 0
+--- output ---
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-pr-xrepo/home/data/issue-pr-xrepo-a12/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned issue-pr-xrepo-a12 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-issue-pr-xrepo-a12 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-pr-xrepo/wt
+--- meta ---
+# issue-pr-xrepo-a12.meta
+window=firstmate:fm-issue-pr-xrepo-a12
+endpoint_task_id=issue-pr-xrepo-a12
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-pr-xrepo/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-pr-xrepo/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-pr-xrepo-a12
+model=default
+effort=default
+issues=acme/widget#7
+busy_gen=g1787870881.90711.23398
+spawn_gen=s1787870881.87134.29205
+
+--- window.log ---
+new-window
+

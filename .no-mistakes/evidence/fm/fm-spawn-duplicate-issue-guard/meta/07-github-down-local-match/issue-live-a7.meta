@@ -1,0 +1,9 @@
+window=mysession:fm-issue-live-a7
+endpoint_task_id=issue-live-a7
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+issues=acme/widget#7

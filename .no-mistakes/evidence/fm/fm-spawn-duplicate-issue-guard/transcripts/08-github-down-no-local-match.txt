@@ -1,0 +1,27 @@
+=== 08-github-down-no-local-match ===
+command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M12NBH8H1CBZ578P9NHCS4NW/bin/fm-spawn.sh issue-down-ok-a8 <project> --mode no-mistakes --yolo off --issue 7
+exit: 0
+--- output ---
+warning: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down-ok/home/data/issue-down-ok-a8/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+notice: open-PR duplicate check could not reach GitHub and was skipped; the spawn is clear only against this home's local fleet, not against open PRs in acme/widget
+spawned issue-down-ok-a8 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-issue-down-ok-a8 worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down-ok/wt
+--- meta ---
+# issue-down-ok-a8.meta
+window=firstmate:fm-issue-down-ok-a8
+endpoint_task_id=issue-down-ok-a8
+worktree=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-spawn-issue-guard-evidence.dullcb/issue-down-ok/wt
+project=/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T/fm-spawn-issue-guard-evidence.dullcb/issue-down-ok/project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-issue-down-ok-a8
+model=default
+effort=default
+issues=acme/widget#7
+busy_gen=g1787870886.1138.10890
+spawn_gen=s1787870886.98141.24271
+
+--- window.log ---
+new-window
+
