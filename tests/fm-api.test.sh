@@ -886,6 +886,35 @@ EOF
   pass "saving a config with rules and no default is accepted"
 }
 
+test_rig_config_refuses_malformed_present_fields() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-malformed)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  # rules present but an object, not an array.
+  HTTP_BODY='{"rules":{"when":"x","use":[{"harness":"claude"}]}}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "object rules status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'rules must be an array' >/dev/null \
+    || fail "object rules error is not clear: $HTTP_BODY"
+  # default present but a primitive.
+  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":"nope"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "primitive default status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'default must be' >/dev/null \
+    || fail "primitive default error is not clear: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "a refused config still rewrote the file"
+  fm_test_api_stop "$home"
+  pass "a config with a present but wrong-typed rules or default is refused"
+}
+
 test_rig_config_get_returns_the_whole_file() {
   local home port resp
   home=$(fm_test_api_home api-config-get)
@@ -957,6 +986,7 @@ test_rig_config_without_token_is_unauthorized
 test_rig_config_with_token_writes_config
 test_rig_config_refuses_a_ladder_with_no_enabled_rung
 test_rig_config_without_default_is_accepted
+test_rig_config_refuses_malformed_present_fields
 test_rig_config_get_returns_the_whole_file
 test_rig_config_get_missing_file_is_null
 

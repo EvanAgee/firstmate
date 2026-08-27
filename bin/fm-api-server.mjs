@@ -750,6 +750,18 @@ function validateDispatchConfig(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     return { error: "config must be a json object" };
   }
+  // A present but wrong-typed rules or default would be silently skipped below
+  // and then written, so reject it rather than persist a config off-schema.
+  if ("rules" in config && !Array.isArray(config.rules)) {
+    return { error: "rules must be an array" };
+  }
+  if (
+    "default" in config &&
+    !Array.isArray(config.default) &&
+    !(config.default && typeof config.default === "object")
+  ) {
+    return { error: "default must be an array or object" };
+  }
   const ladders = [];
   if (Array.isArray(config.rules)) {
     for (const rule of config.rules) {
