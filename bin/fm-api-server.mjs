@@ -19,8 +19,11 @@
 //   Unknown id: JSON 404 { ok: false, error: "task not found" }.
 //   bin/fm-api-task-detail.mjs owns the exact success JSON contract.
 // GET /captain-queue
-//   { ok, decisions: [{ task, key, summary }] }
-//   Parked decisions still open in this home. Empty home: decisions is [].
+//   { ok, updatedAt, items: [{ id, num, question, context, commands,
+//   options, recommended, askedAt, status, project }] }
+//   Captain-queue.json cards firstmate escalated to the captain, open only,
+//   with named options already validated. A worker needs-decision is not a
+//   source. Empty home or missing file: items is [].
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   actionable, done, answerable }] }
@@ -969,7 +972,7 @@ function handle(req, res, home, options, events) {
     return;
   }
   if (url.pathname === "/captain-queue") {
-    sendGet(req, res, captainQueueBody(stateDir));
+    sendGet(req, res, captainQueueBody(home));
     return;
   }
   if (url.pathname === "/captain-holds") {
@@ -1051,7 +1054,9 @@ function eventForPath(relativePath) {
   match = relativePath.match(/^state\/([^/]+)\.meta$/);
   if (match) return { type: "task-created", task: match[1] };
 
-  if (relativePath === "data/backlog.md") return { type: "captain-queue" };
+  if (relativePath === "data/backlog.md" || relativePath === "data/captain-queue.json") {
+    return { type: "captain-queue" };
+  }
   if (relativePath === "config/crew-dispatch.json") return { type: "rig-config" };
   return { type: "changed" };
 }

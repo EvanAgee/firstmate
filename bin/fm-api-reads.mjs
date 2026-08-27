@@ -2,8 +2,13 @@
 //
 // bin/fm-api-server.mjs owns the HTTP routes and JSON contracts.
 // This module reads one home and returns the bodies those routes send.
-// Parked decisions and blocked tasks come from fm-classify-lib.sh's
-// scan_open_decisions fold so the API cannot disagree with firstmate.
+// GET /captain-queue reads data/captain-queue.json cards firstmate wrote for
+// the captain. It does not scan worker status files. An ordinary
+// needs-decision is firstmate's to handle and never appears here.
+// This file is also the one owner of captain-card option rules: every card
+// that ships must offer real named plain-English choices, recommended first.
+// Blocked tasks come from fm-classify-lib.sh's scan_open_decisions fold so
+// the API cannot disagree with firstmate.
 // Rigs come from config/crew-dispatch.json, plus the dispatch note, per-rig
 // and default pins, and the crew and secondmate pin lines from
 // config/crew-harness and config/secondmate-harness. Consumers parse
@@ -66,11 +71,144 @@ function asItem(row) {
   return { task: row.task, key: row.key, summary: row.summary };
 }
 
-export function captainQueueBody(stateDir) {
-  const decisions = scanOpenDecisions(stateDir)
-    .filter((row) => row.verb === "needs-decision")
-    .map(asItem);
-  return { ok: true, decisions };
+// --- captain-card options ---------------------------------------------------
+//
+// One owner of the board-card options contract. A writer of
+// data/captain-queue.json and GET /captain-queue both use these helpers so a
+// card cannot ship with empty, generic-letter, or jargon options.
+// Each option is a short plain-English label naming the real choice.
+// The recommended option is marked and comes first. A plain "Something else"
+// may follow last. Generic "A" / "B" / "Option C" labels are refused.
+
+const GENERIC_LETTER = /^(option\s+)?[A-Z]$/i;
+const GENERIC_LETTER_PREFIX = /^[A-Z]\s*[-.:)]\s*/;
+const JARGON = /\[key=|\bbin\/|\bneeds-decision\b|\.status\b|\.sh\b|\.mjs\b/i;
+const SOMETHING_ELSE = /^something else$/i;
+const RECOMMENDED_MARK = /\(\s*recommended\s*\)/i;
+
+function textField(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function normalizeCaptainCardOptions(options) {
+  const labels = (Array.isArray(options) ? options : [])
+    .filter((raw) => typeof raw === "string")
+    .map((raw) => raw.trim())
+    .filter(Boolean);
+  const markedAt = labels.findIndex((label) => RECOMMENDED_MARK.test(label));
+  if (markedAt > 0) {
+    const [marked] = labels.splice(markedAt, 1);
+    labels.unshift(marked);
+  }
+  const elseAt = labels.findIndex((label) => SOMETHING_ELSE.test(label));
+  if (elseAt >= 0 && elseAt !== labels.length - 1) {
+    const [escape] = labels.splice(elseAt, 1);
+    labels.push(escape);
+  }
+  return labels;
+}
+
+export function captainCardOptionsError(options) {
+  if (!Array.isArray(options) || options.length < 2) {
+    return "card options must be at least two named choices";
+  }
+  const labels = [];
+  for (const raw of options) {
+    if (typeof raw !== "string") return "card options must be plain-English strings";
+    const label = raw.trim();
+    if (!label) return "card options cannot be empty";
+    if (GENERIC_LETTER.test(label) || GENERIC_LETTER_PREFIX.test(label)) {
+      return "card options cannot be generic letters";
+    }
+    if (JARGON.test(label)) return "card options cannot contain worker jargon";
+    labels.push(label);
+  }
+  const named = labels.filter((label) => !SOMETHING_ELSE.test(label));
+  if (named.length === 0) return "card options need a real named choice";
+  if (SOMETHING_ELSE.test(labels[0])) return "Something else cannot be the recommended option";
+  const marked = labels.filter((label) => RECOMMENDED_MARK.test(label));
+  if (marked.length > 1) return "only one option can be marked recommended";
+  if (marked.length === 1 && !RECOMMENDED_MARK.test(labels[0])) {
+    return "the recommended option must come first";
+  }
+  const elseAt = labels.findIndex((label) => SOMETHING_ELSE.test(label));
+  if (elseAt >= 0 && elseAt !== labels.length - 1) {
+    return "Something else must be last";
+  }
+  return null;
+}
+
+function asCaptainCard(raw, resolvedIds) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = textField(raw.id);
+  const question = textField(raw.question);
+  if (!id || !question) return null;
+  if (resolvedIds.has(id)) return null;
+  const status = textField(raw.status).toLowerCase() || "open";
+  if (status !== "open") return null;
+  const options = normalizeCaptainCardOptions(raw.options);
+  if (captainCardOptionsError(options)) return null;
+  const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
+  const askedAt = textField(raw.asked_at) || textField(raw.askedAt);
+  const commands = Array.isArray(raw.commands)
+    ? raw.commands
+        .filter((command) => typeof command === "string" && command.trim())
+        .map((command) => command.trim())
+    : [];
+  return {
+    id,
+    num,
+    question,
+    context: typeof raw.context === "string" ? raw.context : "",
+    commands,
+    options,
+    recommended: options[0],
+    askedAt,
+    status: "open",
+    project: textField(raw.project),
+  };
+}
+
+function emptyCaptainQueue() {
+  return { ok: true, updatedAt: "", items: [] };
+}
+
+export function captainQueueBody(home) {
+  const file = path.join(home, "data", "captain-queue.json");
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return emptyCaptainQueue();
+  } catch (error) {
+    if (error && error.code === "ENOENT") return emptyCaptainQueue();
+    throw error;
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return emptyCaptainQueue();
+    throw error;
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return emptyCaptainQueue();
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return emptyCaptainQueue();
+  const resolvedIds = new Set(
+    (Array.isArray(data.resolved) ? data.resolved : [])
+      .map((row) => (row && typeof row.id === "string" ? row.id.trim() : ""))
+      .filter(Boolean),
+  );
+  const items = (Array.isArray(data.items) ? data.items : [])
+    .map((row) => asCaptainCard(row, resolvedIds))
+    .filter((card) => card !== null)
+    .sort((a, b) => a.num - b.num || a.id.localeCompare(b.id));
+  return {
+    ok: true,
+    updatedAt: textField(data.updated_at) || textField(data.updatedAt),
+    items,
+  };
 }
 
 export function blockedListBody(stateDir) {

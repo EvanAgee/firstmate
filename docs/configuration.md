@@ -609,7 +609,8 @@ An empty home returns an empty fleet, not an error.
 `bin/fm-api-task-detail.mjs` owns that JSON contract, including unavailable-source markers.
 An unknown task ID returns JSON 404.
 The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
-`GET /captain-queue` and `GET /blocked` serve parked decisions and blocked tasks.
+`GET /captain-queue` serves the `data/captain-queue.json` cards firstmate escalated to the captain, not worker `needs-decision` lines.
+`GET /blocked` serves blocked tasks.
 `GET /rigs` serves rig pools plus the dispatch note, pins, and raw crew and secondmate pin lines.
 `GET /captain-holds` serves the open captain-kind decisions from this home's backlog.
 Missing read sources stay empty or null rather than failing the request.
@@ -618,7 +619,7 @@ Missing read sources stay empty or null rather than failing the request.
 Each frame's event name and JSON `type` are one of `task-status`, `task-created`, `captain-queue`, `rig-config`, or `changed`.
 A task-scoped event includes JSON `task`.
 Every event includes an ISO-8601 `timestamp`.
-`state/<id>.status` maps to `task-status`, `state/<id>.meta` to `task-created`, `data/backlog.md` to `captain-queue`, and `config/crew-dispatch.json` to `rig-config`.
+`state/<id>.status` maps to `task-status`, `state/<id>.meta` to `task-created`, `data/backlog.md` and `data/captain-queue.json` to `captain-queue`, and `config/crew-dispatch.json` to `rig-config`.
 Any other path under `state/`, `data/`, or `config/` maps to `changed`.
 Hidden bookkeeping files emit nothing.
 A hidden file is any watched path with a segment that starts with `.`.

@@ -242,8 +242,29 @@ test_heartbeat_and_disconnect_leaks_nothing() {
   pass "heartbeats arrive on an interval and disconnecting leaks nothing"
 }
 
+test_captain_queue_file_emits_captain_queue() {
+  local home port out sse_pid line type
+  export FM_API_EVENT_QUIET_MS=80 FM_API_EVENT_DEADLINE_MS=400 FM_API_HEARTBEAT_MS=30000
+  start_stream_home api-events-queue-file
+  out="$home/../events.ndjson"
+  open_events "$port" "$out"
+  printf '%s\n' '{"items":[]}' > "$home/data/captain-queue.json"
+  line=$(fm_test_api_sse_wait "$out" event captain-queue 5) \
+    || fail "captain-queue.json write produced no captain-queue event: $(cat "$out")"
+  type=$(event_field "$line" type) || fail "captain-queue missing type: $line"
+  [ "$type" = captain-queue ] || fail "type $type, wanted captain-queue"
+  if event_field "$line" task >/dev/null 2>&1; then
+    fail "captain-queue should not name a task: $line"
+  fi
+  iso_timestamp "$(event_field "$line" timestamp)"
+  fm_test_api_sse_stop "$sse_pid"
+  fm_test_api_stop "$home"
+  pass "writing data/captain-queue.json emits captain-queue"
+}
+
 test_status_append_emits_task_status
 test_backlog_edit_emits_captain_queue
+test_captain_queue_file_emits_captain_queue
 test_burst_coalesces_to_one_event
 test_continuous_burst_flushes_at_deadline
 test_hidden_bookkeeping_emits_nothing
