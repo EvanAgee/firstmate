@@ -1,0 +1,13 @@
+FM_TEST_BEGIN 2026-08-27T18:49:21Z tests/fm-captain-queue.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - add writes a card under the supplied hold identity
+ok - a matched reply removes the card, keeps the answer, and advances the cursor one line
+ok - an unmatched reply is surfaced, leaves the cursor put, and is not dropped
+ok - an orphan stops reconcile before any later matching reply
+ok - a replay of an already-resolved answer advances the cursor without dropping it
+ok - a last reply without a trailing newline is handled
+ok - parallel adds keep both cards
+# fm-captain-queue.test.sh: all assertions passed
+FM_TEST_END 2026-08-27T18:49:25Z tests/fm-captain-queue.test.sh exit=0 duration_ms=3885 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=3978
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=3885 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-captain-queue.test.sh duration_ms=3885

@@ -1,0 +1,96 @@
+=== Fleet board card clear: end-to-end (firstmate helper) ===
+Home: /tmp/fm-captain-queue-e2e.O8gATO
+Card id (decision-hold identity): sample-origin-decision-prod-gate
+
+--- 1. Write a new card with the same id the dashboard will echo ---
+added: sample-origin-decision-prod-gate
+
+--- 2. Active board (data/captain-queue.json items) BEFORE answer ---
+{
+  "updated_at": "2026-08-27T18:50:00Z",
+  "active_ids": [
+    "sample-origin-decision-prod-gate"
+  ],
+  "items": [
+    {
+      "id": "sample-origin-decision-prod-gate",
+      "num": 1,
+      "question": "Ship on merge?",
+      "context": "",
+      "commands": [],
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "asked_at": "2026-08-27T18:50:00Z",
+      "status": "open",
+      "project": "sample"
+    }
+  ],
+  "resolved": []
+}
+
+--- 3. Dashboard posts an answer keyed by the card's own item.id ---
+state/captain-replies.jsonl:
+{"id":"sample-origin-decision-prod-gate","answer":"option 1","at":"2026-08-27T18:50:00Z"}
+
+cursor before reconcile: 0
+
+--- 4. Captain-reply wake runs reconcile (no hand-edit) ---
+handled: [id=sample-origin-decision-prod-gate] option 1
+
+--- 5. Active board AFTER reconcile (card must be gone; answer preserved) ---
+{
+  "updated_at": "2026-08-27T18:50:00Z",
+  "active_ids": [],
+  "items": [],
+  "resolved": [
+    {
+      "id": "sample-origin-decision-prod-gate",
+      "num": 1,
+      "question": "Ship on merge?",
+      "context": "",
+      "commands": [],
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "asked_at": "2026-08-27T18:50:00Z",
+      "status": "resolved",
+      "project": "sample",
+      "answer": "option 1",
+      "resolved_at": "2026-08-27T18:50:00Z"
+    }
+  ]
+}
+
+cursor after reconcile: 1
+
+--- 6. Orphan reply: unmatched id must not advance cursor or drop the log ---
+replies log now:
+     1	{"id":"sample-origin-decision-prod-gate","answer":"option 1","at":"2026-08-27T18:50:00Z"}
+     2	{"id":"some-old-scheme-id","answer":"option 2","at":"2026-08-27T18:50:00Z"}
+reconcile stdout/stderr:
+orphan: [id=some-old-scheme-id] option 2
+exit: 1
+cursor after orphan: 1
+reply log still present:
+{"id":"sample-origin-decision-prod-gate","answer":"option 1","at":"2026-08-27T18:50:00Z"}
+{"id":"some-old-scheme-id","answer":"option 2","at":"2026-08-27T18:50:00Z"}
+
+--- 7. Partial last line without trailing newline still clears the card ---
+replies file (no trailing newline, wc -l=       0):
+00000000: 7b22 6964 223a 2268 6f6c 642d 3122 2c22  {"id":"hold-1","
+00000010: 616e 7377 6572 223a 2279 6573 222c 2261  answer":"yes","a
+00000020: 7422 3a22 3230 3236 2d30 382d 3237 5431  t":"2026-08-27T1
+00000030: 383a 3530 3a30 305a 227d                 8:50:00Z"}
+reconcile:
+handled: [id=hold-1] yes
+active ids after: 
+resolved answer: yes
+cursor: 1
+
+--- 8. Decision-hold identity matches add --id (same slug the dashboard echoes) ---
+fm-decision-hold.sh id sample-origin prod-gate => sample-origin-decision-prod-gate
+expected card/reply id used above: sample-origin-decision-prod-gate
+MATCH: card writer can key by the decision-hold identity
