@@ -84,6 +84,7 @@ config/api-port  localhost API bind port; LOCAL, gitignored, not inherited; FM_A
 config/api-token  localhost API write token; LOCAL, gitignored, not inherited; generated on first API start if absent; later starts keep it; writes require it as a bearer header; reads and the event stream do not; see docs/configuration.md "Local API"
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
+  captain-queue.json fleet-board captain cards; written only by bin/fm-captain-queue.sh
   captain.md         this home's domain-local captain preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
   captain-shared.md  main-authoritative shared captain preferences propagated read-only to secondmate homes; LOCAL, gitignored, owned by secondmate-provisioning
   learnings.md       fleet-local operational facts and gotchas; LOCAL, gitignored; dated, evidence-backed, curated, and updated with inspect-then-update - rewrite and prune rather than append forever, the same contract as captain.md; created lazily, absent until this home has a learning to store
@@ -111,6 +112,7 @@ state/               runtime records and signals; gitignored
   .pr-check-migration.log  private per-task outcomes distinguishing rebuilt or canonically registered replacement polls, quarantined unarmed polls, and incomplete migrations
   .pr-check-migration-scan-v1  private marker proving the non-executing scan disabled every unsafe legacy check; .pr-check-migration-v1 separately records completed private repairs
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
+  captain-replies.jsonl captain-replies.cursor .captain-queue.lock  dashboard answers to fleet-board cards, reconcile cursor, and add/reconcile lock; bin/fm-captain-queue.sh
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation); fm-pending-reply-lib.sh
   procevent/         registered process-to-event sources, one private record per canonical source id; written only by bin/fm-procevent.sh, and their presence alone keeps supervision required (section 13)
   procevent-inbox/   private captured results and their durable handled-acknowledgement markers; source output lives here and never in an event line
