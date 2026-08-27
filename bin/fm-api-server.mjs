@@ -41,7 +41,8 @@
 //   docs/configuration.md owns the public stream contract.
 // POST /captain-notes requires Authorization: Bearer <token> and queues a
 // captain note for firstmate on the wake queue, encoded as operational input.
-// Reads need no token. A captain note never closes a parked decision.
+// The task may be a live task or a parked captain hold that lives only in the
+// backlog. Reads need no token. A captain note never closes a parked decision.
 // POST /workers/relay requires the token; body { task, text }. Queues a steer
 //   for firstmate to pass to the worker word for word on its next turn. Use it
 //   for a worker that is not parked on a decision; a keyed answer that closes a
@@ -263,6 +264,22 @@ function taskExists(home, task) {
   return fs.existsSync(status) || fs.existsSync(meta) || fs.existsSync(brief);
 }
 
+// Whether the task is a record in the captain backlog, even if it has no live
+// state/meta/brief files. A parked captain task (a hold with no running worker)
+// lives only as a backlog line, so a captain note about it must still be
+// accepted. Matches a "- [ ] <id> - " or "- [x] <id> - " record line.
+function taskInBacklog(home, task) {
+  const backlog = path.join(home, "data", "backlog.md");
+  let text;
+  try {
+    text = fs.readFileSync(backlog, "utf8");
+  } catch {
+    return false;
+  }
+  const escaped = task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^- \\[[ xX]\\] ${escaped} - `, "m").test(text);
+}
+
 function latestStatusVerb(home, task) {
   const dest = path.join(home, "state", `${task}.status`);
   let text;
@@ -407,7 +424,10 @@ function handleCaptainNote(req, res, home, options) {
   readBody(req, MAX_BODY_BYTES)
     .then((raw) => {
       const note = parseTaskText(raw);
-      if (!taskExists(home, note.task)) {
+      // A note may be about a live task or a parked captain hold that lives only
+      // in the backlog, so accept either. The relay and answer writes stay
+      // strict: they need a live task or an open decision.
+      if (!taskExists(home, note.task) && !taskInBacklog(home, note.task)) {
         const error = new Error("not found");
         error.status = 404;
         throw error;
