@@ -163,6 +163,23 @@ case ":$FM_REMOTE_JOB_OPERATOR_PATH:" in
 esac
 pass "operator PATH resolves the authorized Nix profile bin link"
 
+# Default ps width is 80 columns. A CI temp root plus fm-remote-job-worker.sh is
+# longer, so stop_worker_tree must still see the worker name in the leader command.
+LONG_CMD_DIR="$TMP_ROOT/$(printf 'p%.0s' {1..120})"
+mkdir -p "$LONG_CMD_DIR"
+printf '#!/bin/bash\nexec sleep 60\n' > "$LONG_CMD_DIR/fm-remote-job-worker.sh"
+chmod +x "$LONG_CMD_DIR/fm-remote-job-worker.sh"
+"$LONG_CMD_DIR/fm-remote-job-worker.sh" &
+LONG_CMD_PID=$!
+LONG_CMD=$(COLUMNS=80 fm_remote_job_process_command "$LONG_CMD_PID") || LONG_CMD=
+kill "$LONG_CMD_PID" 2>/dev/null || true
+wait "$LONG_CMD_PID" 2>/dev/null || true
+case "$LONG_CMD" in
+  *fm-remote-job-worker.sh*) ;;
+  *) fail "process_command truncated the worker path under COLUMNS=80" ;;
+esac
+pass "process_command keeps the worker name beyond the default ps width"
+
 # Match the Linux start path: job control puts the restart supervisor in its
 # own process group so later ensure stops can signal the whole tree. Without
 # that, worker.pid is a serving child in this test's group, stop_worker_tree

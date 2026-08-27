@@ -697,8 +697,17 @@ fm_remote_job_process_start() {
 
 fm_remote_job_process_command() {
   local pid=$1 ps_bin value
-  if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
-  value=$("$ps_bin" -p "$pid" -o command= 2>/dev/null) || return 1
+  # Default ps width is often 80 columns. A worker path under a CI temp root
+  # is longer than that, so an un-widened command= drops fm-remote-job-worker.sh
+  # and stop_worker_tree refuses the group, leaving the Linux supervisor to
+  # respawn the worker that was just replaced.
+  if [ -r "/proc/$pid/cmdline" ]; then
+    value=$(tr '\0' ' ' < "/proc/$pid/cmdline") || return 1
+    value=${value%" "}
+  else
+    if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
+    value=$(COLUMNS=10000 LC_ALL=C "$ps_bin" -ww -p "$pid" -o command= 2>/dev/null) || return 1
+  fi
   [ -n "$value" ] || return 1
   case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
   printf '%s\n' "$value"
@@ -804,7 +813,7 @@ fm_remote_job_lock_owner_matches_process() {
 }
 
 fm_remote_job_worker_owned_alive() {
-  local root=$1 account_home=$2 lock pid pid_file identity_file command ps_bin
+  local root=$1 account_home=$2 lock pid pid_file identity_file command
   [ "${FM_REMOTE_JOB_ACTIVE:-}" != 1 ] || return 0
   fm_remote_job_prepare_state "$account_home" || return 1
   lock=$(fm_remote_job_worker_lock_path)
@@ -823,8 +832,7 @@ fm_remote_job_worker_owned_alive() {
   [ ! -e "$lock/pid" ] && [ ! -L "$lock/pid" ] &&
     [ ! -e "$lock/start" ] && [ ! -L "$lock/start" ] &&
     [ ! -e "$lock/command" ] && [ ! -L "$lock/command" ] || return 1
-  if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
-  command=$("$ps_bin" -p "$pid" -o command= 2>/dev/null) || return 1
+  command=$(fm_remote_job_process_command "$pid") || return 1
   case "$command" in *"$root/bin/fm-remote-job-worker.sh"*) FM_REMOTE_JOB_OWNER_PID=$pid; return 0 ;; esac
   return 1
 }
