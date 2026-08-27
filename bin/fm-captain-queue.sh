@@ -17,6 +17,8 @@
 # answer firstmate still has to act on. An `orphan:` line matches no card; the
 # cursor stays before it so the answer cannot be skipped. Reconcile never
 # advances past an answer that was neither matched nor surfaced.
+# add and reconcile take one home-scoped lock at state/.captain-queue.lock for
+# the whole queue-and-cursor read-modify-write, then release it.
 #
 # Usage:
 #   fm-captain-queue.sh add --id <id> --question <text> \
@@ -43,9 +45,16 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 QUEUE="$DATA/captain-queue.json"
 REPLIES="$STATE/captain-replies.jsonl"
 CURSOR_FILE="$STATE/captain-replies.cursor"
+QUEUE_LOCK="$STATE/.captain-queue.lock"
+QUEUE_LOCK_HELD=0
+LOCK_LIB_LOADED=0
 
 usage() {
-  sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$0"
 }
 
 die() {
@@ -58,6 +67,31 @@ die() {
 need_jq() {
   command -v jq >/dev/null 2>&1 || die 2 "jq is required"
 }
+
+load_lock_lib() {
+  if [ "$LOCK_LIB_LOADED" = 0 ]; then
+    # shellcheck source=bin/fm-wake-lib.sh
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/fm-wake-lib.sh"
+    LOCK_LIB_LOADED=1
+  fi
+}
+
+acquire_queue_lock() {
+  load_lock_lib
+  mkdir -p "$STATE"
+  fm_lock_acquire_wait "$QUEUE_LOCK" || die 1 "cannot lock captain queue"
+  QUEUE_LOCK_HELD=1
+}
+
+release_queue_lock() {
+  if [ "$QUEUE_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$QUEUE_LOCK" || true
+    QUEUE_LOCK_HELD=0
+  fi
+}
+
+trap release_queue_lock EXIT
 
 now_stamp() {
   if [ -n "${FM_CAPTAIN_QUEUE_NOW:-}" ]; then
@@ -181,6 +215,7 @@ cmd_add() {
   [ -n "$asked_at" ] || asked_at=$(now_stamp)
 
   local queue options_json commands_json next_num item
+  acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
   if [ "${#options[@]}" -gt 0 ]; then
     options_json=$(json_array "${options[@]}")
@@ -224,6 +259,7 @@ cmd_add() {
     end
   ')
   printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+  release_queue_lock
   printf 'added: %s\n' "$id"
 }
 
@@ -254,14 +290,17 @@ apply_handled() {  # <queue-json> <id> <answer> <stamp> -> new queue on stdout
 
 cmd_reconcile() {
   local cursor total queue line n id answer stamp
+  acquire_queue_lock
   cursor=$(read_cursor)
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
   if [ ! -f "$REPLIES" ]; then
+    release_queue_lock
     exit 0
   fi
   total=$(wc -l < "$REPLIES" | tr -d ' ')
   [ -n "$total" ] || total=0
   if [ "$total" -le "$cursor" ]; then
+    release_queue_lock
     exit 0
   fi
 
@@ -298,6 +337,7 @@ cmd_reconcile() {
       exit 1
     fi
   done < "$REPLIES"
+  release_queue_lock
 }
 
 main() {

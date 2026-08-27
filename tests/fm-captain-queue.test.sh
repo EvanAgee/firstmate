@@ -147,10 +147,39 @@ test_repeat_answer_after_crash_advances_cursor() {
   pass "a replay of an already-resolved answer advances the cursor without dropping it"
 }
 
+test_parallel_adds_keep_both_cards() {
+  local home round ids pid_a pid_b rc_a rc_b
+  home=$(make_home parallel-add)
+  for round in 1 2 3 4 5; do
+    rm -f "$home/data/captain-queue.json"
+    run_q "$home" add --id "card-a-$round" --question "A$round?" >/dev/null &
+    pid_a=$!
+    run_q "$home" add --id "card-b-$round" --question "B$round?" >/dev/null &
+    pid_b=$!
+    rc_a=0
+    rc_b=0
+    wait "$pid_a" || rc_a=$?
+    wait "$pid_b" || rc_b=$?
+    [ "$rc_a" -eq 0 ] || fail "parallel add round $round card-a exited $rc_a"
+    [ "$rc_b" -eq 0 ] || fail "parallel add round $round card-b exited $rc_b"
+    ids=$(active_ids "$home")
+    case "$ids" in
+      *"card-a-$round"*) : ;;
+      *) fail "parallel add round $round lost card-a-$round: $ids" ;;
+    esac
+    case "$ids" in
+      *"card-b-$round"*) : ;;
+      *) fail "parallel add round $round lost card-b-$round: $ids" ;;
+    esac
+  done
+  pass "parallel adds keep both cards"
+}
+
 test_add_uses_the_supplied_id
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
 test_repeat_answer_after_crash_advances_cursor
+test_parallel_adds_keep_both_cards
 
 echo "# fm-captain-queue.test.sh: all assertions passed"
