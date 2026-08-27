@@ -1,0 +1,79 @@
+=== 1. Decision-hold identity (the id the dashboard must echo back) ===
+fm-decision-hold.sh id sample-origin prod-gate
+=> sample-origin-decision-prod-gate
+
+=== 2. Write the card with that same id (source of truth, no second scheme) ===
+$ bin/fm-captain-queue.sh add --id $HOLD_ID --question 'Ship on merge?' --option Yes --option No --project sample
+added: sample-origin-decision-prod-gate
+
+--- data/captain-queue.json after add (active board) ---
+{
+  "updated_at": "2026-08-27T18:05:00Z",
+  "items": [
+    {
+      "id": "sample-origin-decision-prod-gate",
+      "num": 1,
+      "question": "Ship on merge?",
+      "context": "",
+      "commands": [],
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "asked_at": "2026-08-27T18:05:00Z",
+      "status": "open",
+      "project": "sample"
+    }
+  ],
+  "resolved": []
+}
+
+=== 3. Dashboard-shaped reply: same item.id, appended to state/captain-replies.jsonl ===
+{"id":"sample-origin-decision-prod-gate","answer":"option 1: Yes, ship it","at":"2026-08-27T18:05:00Z"}
+
+cursor before reconcile:
+(absent, treated as 0)
+
+=== 4. Captain-reply wake: bin/fm-captain-queue.sh reconcile ===
+handled: [id=sample-origin-decision-prod-gate] option 1: Yes, ship it
+
+--- data/captain-queue.json after reconcile ---
+{
+  "updated_at": "2026-08-27T18:05:00Z",
+  "items": [],
+  "resolved": [
+    {
+      "id": "sample-origin-decision-prod-gate",
+      "num": 1,
+      "question": "Ship on merge?",
+      "context": "",
+      "commands": [],
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "asked_at": "2026-08-27T18:05:00Z",
+      "status": "resolved",
+      "project": "sample",
+      "answer": "option 1: Yes, ship it",
+      "resolved_at": "2026-08-27T18:05:00Z"
+    }
+  ]
+}
+
+cursor after reconcile:
+1
+
+reply log still present (answer not swallowed):
+{"id":"sample-origin-decision-prod-gate","answer":"option 1: Yes, ship it","at":"2026-08-27T18:05:00Z"}
+
+=== 5. Orphan reply (old-scheme id) does not advance past it ===
+appended orphan line; cursor before orphan reconcile:
+1
+orphan: [id=some-old-scheme-id] option 2
+reconcile exit: 1 (expect 1)
+cursor after orphan (must stay 1, not 2):
+1
+reply log still has the orphan line:
+{"id":"sample-origin-decision-prod-gate","answer":"option 1: Yes, ship it","at":"2026-08-27T18:05:00Z"}
+{"id":"some-old-scheme-id","answer":"option 2","at":"2026-08-27T18:05:00Z"}

@@ -1,0 +1,22 @@
+{
+  "updated_at": "2026-08-27T18:05:00Z",
+  "items": [],
+  "resolved": [
+    {
+      "id": "sample-origin-decision-prod-gate",
+      "num": 1,
+      "question": "Ship on merge?",
+      "context": "",
+      "commands": [],
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "asked_at": "2026-08-27T18:05:00Z",
+      "status": "resolved",
+      "project": "sample",
+      "answer": "option 1: Yes, ship it",
+      "resolved_at": "2026-08-27T18:05:00Z"
+    }
+  ]
+}
