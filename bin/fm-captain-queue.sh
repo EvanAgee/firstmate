@@ -289,17 +289,11 @@ apply_handled() {  # <queue-json> <id> <answer> <stamp> -> new queue on stdout
 }
 
 cmd_reconcile() {
-  local cursor total queue line n id answer stamp
+  local cursor queue line n id answer stamp
   acquire_queue_lock
   cursor=$(read_cursor)
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
   if [ ! -f "$REPLIES" ]; then
-    release_queue_lock
-    exit 0
-  fi
-  total=$(wc -l < "$REPLIES" | tr -d ' ')
-  [ -n "$total" ] || total=0
-  if [ "$total" -le "$cursor" ]; then
     release_queue_lock
     exit 0
   fi

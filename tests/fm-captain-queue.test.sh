@@ -147,6 +147,23 @@ test_repeat_answer_after_crash_advances_cursor() {
   pass "a replay of an already-resolved answer advances the cursor without dropping it"
 }
 
+test_partial_last_line_without_newline_is_handled() {
+  local home out json
+  home=$(make_home partial-last)
+  run_q "$home" add --id hold-1 --question "A?" >/dev/null
+  json=$(jq -nc --arg id hold-1 --arg answer yes --arg at "$NOW" \
+    '{id: $id, answer: $answer, at: $at}')
+  printf '%s' "$json" > "$home/state/captain-replies.jsonl"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=hold-1] yes" \
+    "a last reply without a trailing newline should still be handled"
+  [ -z "$(active_ids "$home")" ] || fail "partial last line left the card on the board"
+  [ "$(resolved_answer "$home" hold-1)" = yes ] \
+    || fail "partial last line lost the answer"
+  [ "$(cursor_value "$home")" = 1 ] || fail "cursor should advance past the partial last line, got $(cursor_value "$home")"
+  pass "a last reply without a trailing newline is handled"
+}
+
 test_parallel_adds_keep_both_cards() {
   local home round ids pid_a pid_b rc_a rc_b
   home=$(make_home parallel-add)
@@ -180,6 +197,7 @@ test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
 test_repeat_answer_after_crash_advances_cursor
+test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
 
 echo "# fm-captain-queue.test.sh: all assertions passed"
