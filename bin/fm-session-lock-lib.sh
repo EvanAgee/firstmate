@@ -19,7 +19,10 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
 
 # Known harness command names; extend when a new adapter is verified.
-FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$'
+# OMP is deliberately absent: a bare `omp`/`bun` command name is never enough,
+# because an OMP worker must be proven against its exact launch-bound Bun and
+# OMP entry through fm_omp_process_matches before the name can be trusted.
+FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$'
 FM_SESSION_LOCK_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$FM_SESSION_LOCK_LIB_DIR/fm-omp-process-lib.sh"
@@ -27,8 +30,10 @@ FM_SESSION_LOCK_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # The same generic harnesses as exact executable names. Keep in sync with
 # FM_HARNESS_RE. Used only for the stricter path evidence below, where the
 # loose regex would also match ordinary firstmate paths such as
-# bin/fm-claude-watch-notifier.sh.
-FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp)
+# bin/fm-claude-watch-notifier.sh. omp is absent for the same reason it is
+# absent from FM_HARNESS_RE: it is proven only through its launch-bound
+# identity, never by an `omp` path component.
+FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi)
 
 # Print the exact harness name carried by executable path $1 - its own basename
 # or any directory component - or return 1.
@@ -83,18 +88,12 @@ fm_harness_process_matches() {  # <comm> <args> [pid]
     return 0
   fi
   # Bare interpreter (e.g. node): match the harness name in its script path.
+  # bun is deliberately excluded: an OMP worker runs as bun and is accepted only
+  # through the launch-bound identity probe above, never by a script-path name.
   case "$comm" in
-    *node*|*python*|*bun*)
+    *node*|*python*)
       if printf '%s' "$args" | grep -qE "$FM_HARNESS_RE"; then
         case "$args" in *claude*) FM_HARNESS_IS_CLAUDE=1 ;; esac
-        return 0
-      fi
-      # omp runs as: bun /path/to/omp -e ... The anchored regex misses it
-      # because the args line starts with "bun". Extract the script path
-      # (first word after the interpreter) and check it as a path component.
-      local script_path=${args#* }
-      script_path=${script_path%% *}
-      if name=$(fm_harness_path_name "$script_path"); then
         return 0
       fi
       ;;
