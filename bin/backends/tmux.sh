@@ -246,6 +246,41 @@ fm_backend_tmux_foreground_argv0s() {  # <target>
       done
 }
 
+# fm_backend_tmux_bun_agent_state: attribute an OMP worker's generic Bun
+# process to the task's exact metadata-bound Bun and OMP entry. It reads the
+# pane's foreground process directly and matches it through the shared OMP
+# process-identity probe (bin/fm-omp-process-lib.sh), so PATH drift or a
+# same-named stranger never earns an `alive`. `alive` on an exact match,
+# `ambiguous` on any mismatch, `unreadable` when the pane read fails.
+fm_backend_tmux_bun_agent_state() {  # <target> <bun-realpath> <omp-realpath> -> alive|ambiguous|unreadable
+  local target=$1 expected_bun=${2:-} expected_omp=${3:-} pane_pid foreground_pid comm args
+  pane_pid=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null) || {
+    printf 'unreadable'
+    return 0
+  }
+  case "$pane_pid" in ''|*[!0-9]*) printf 'unreadable'; return 0 ;; esac
+  foreground_pid=$(ps -o tpgid= -p "$pane_pid" 2>/dev/null | tr -d '[:space:]') || {
+    printf 'unreadable'
+    return 0
+  }
+  case "$foreground_pid" in ''|*[!0-9]*|0|1) printf 'unreadable'; return 0 ;; esac
+  comm=$(ps -o comm= -p "$foreground_pid" 2>/dev/null | tr -d '[:space:]') || {
+    printf 'unreadable'
+    return 0
+  }
+  args=$(ps -o args= -p "$foreground_pid" 2>/dev/null) || {
+    printf 'unreadable'
+    return 0
+  }
+  if [ -n "$expected_bun" ] && [ -n "$expected_omp" ] \
+     && FM_OMP_PROCESS_EXPECTED_BUN="$expected_bun" FM_OMP_PROCESS_EXPECTED_BIN="$expected_omp" \
+       fm_omp_process_matches "$comm" "$args" "$foreground_pid"; then
+    printf 'alive'
+  else
+    printf 'ambiguous'
+  fi
+}
+
 # fm_backend_tmux_agent_state: recovery-grade harness-agent state for one
 # recorded target. See bin/fm-backend.sh's fm_backend_agent_state for the
 # shared state vocabulary and docs/tmux-backend.md "Agent liveness probe" for
@@ -262,8 +297,9 @@ fm_backend_tmux_foreground_argv0s() {  # <target>
 # live worktree, while the foreground process group - when it is readable - is
 # authoritative for the negative verdicts, since it is the only source that can
 # distinguish a truly idle pane from a rewritten process title.
-fm_backend_tmux_agent_state() {  # <target>
-  local target=$1 comm session window windows inventory_status
+fm_backend_tmux_agent_state() {  # <target> [bun-realpath] [omp-realpath]
+  local target=$1 expected_bun=${2:-} expected_omp=${3:-}
+  local comm session window windows inventory_status
   local foreground argv0s name fg_seen=0 fg_shell=0 fg_other=0
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
@@ -291,6 +327,24 @@ fm_backend_tmux_agent_state() {  # <target>
   if ! printf '%s\n' "$windows" | grep -Fqx "$window"; then
     printf 'missing'
     return 0
+  fi
+
+  # An OMP worker runs as a generic `bun` (or `omp`) process, which the
+  # name-only classifier below cannot attribute on its own. When an OMP-bound
+  # caller passes the task's exact Bun and OMP entry paths, read the pane's
+  # foreground command and, if it is that generic runtime, delegate to the
+  # process-identity probe before the generic classifier can guess.
+  if [ -n "$expected_bun" ] && [ -n "$expected_omp" ]; then
+    comm=$(fm_backend_tmux_current_command "$target") || {
+      printf 'unreadable'
+      return 0
+    }
+    case "${comm##*/}" in
+      bun|omp|cli.js)
+        fm_backend_tmux_bun_agent_state "$target" "$expected_bun" "$expected_omp"
+        return 0
+        ;;
+    esac
   fi
 
   foreground=$(fm_backend_tmux_foreground_comms "$target")
