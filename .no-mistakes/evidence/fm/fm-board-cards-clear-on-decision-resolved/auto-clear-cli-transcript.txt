@@ -1,0 +1,138 @@
+# End-user path: Waiting-on-you cards leave the board when the backlog item is done
+# Tool: bin/fm-captain-queue.sh reconcile (same command heartbeat uses)
+# Home: /tmp/fm-board-clear-demo.qCpd6I
+
+== 1. Seed backlog and add a Waiting-on-you card ==
+ok: added card-c (captain, repo sample) -> Queued
+task:
+  id: card-c
+  title: Ship on merge?
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: captain
+  repo: sample
+  priority: "-"
+  created: 2026-08-28
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start card-c --file=/tmp/fm-board-clear-demo.qCpd6I/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block card-c --by <other> --file=/tmp/fm-board-clear-demo.qCpd6I/data/backlog.md` to record a dependency
+
+$ fm-captain-queue.sh add --id card-c --question 'Ship on merge?'
+added: card-c
+
+board (active items should include card-c):
+{"items":[{"id":"card-c","status":"open","question":"Ship on merge?"}],"resolved":[]}
+
+tasks-axi show card-c (open):
+task:
+  id: card-c
+  title: Ship on merge?
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: captain
+  repo: sample
+  priority: "-"
+  created: 2026-08-28
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+
+== 2. Heartbeat/reconcile while the item is still open (card must linger) ==
+$ fm-captain-queue.sh reconcile
+(silent)
+board:
+{"items":[{"id":"card-c","status":"open","question":"Ship on merge?"}],"resolved":[]}
+
+== 3. Captain resolves the decision off-dashboard (mark backlog done) ==
+$ tasks-axi done card-c
+ok: done card-c -> Done
+help[1]:
+  - Run `tasks-axi ready --file=/tmp/fm-board-clear-demo.qCpd6I/data/backlog.md` to dispatch work unblocked by this
+
+tasks-axi show card-c (done):
+task:
+  id: card-c
+  title: Ship on merge?
+  state: done
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: captain
+  repo: sample
+  priority: "-"
+  created: "-"
+  closed: 2026-08-28
+  deps: none
+  links: none
+  body: ""
+
+== 4. Next heartbeat/reconcile auto-clears the lingering card ==
+$ fm-captain-queue.sh reconcile
+cleared: [id=card-c] backlog-done
+board (card-c must be in resolved with answer backlog-done, not in items):
+{"items":[],"resolved":[{"id":"card-c","status":"resolved","answer":"backlog-done"}]}
+
+== 5. Late dashboard click after auto-clear (different answer) must not brick later replies ==
+appended dashboard reply: {id:card-c, answer:"Done - command ran"}
+$ fm-captain-queue.sh add --id card-d --question 'Later?'
+added: card-d
+appended dashboard reply: {id:card-d, answer:"yes d"}
+$ fm-captain-queue.sh reconcile
+handled: [id=card-c] Done - command ran
+handled: [id=card-d] yes d
+exit=0 (must be 0)
+cursor=2
+board (card-c answer must stay backlog-done; card-d handled off the board):
+{"items":[],"resolved":[{"id":"card-c","status":"resolved","answer":"backlog-done"},{"id":"card-d","status":"resolved","answer":"yes d"}]}
+
+== persisted captain-queue.json (product state the dashboard reads) ==
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [],
+  "resolved": [
+    {
+      "id": "card-c",
+      "num": 1,
+      "question": "Ship on merge?",
+      "context": "",
+      "commands": [],
+      "options": [],
+      "asked_at": "2026-08-27T18:00:00Z",
+      "status": "resolved",
+      "project": "",
+      "answer": "backlog-done",
+      "resolved_at": "2026-08-27T18:00:00Z"
+    },
+    {
+      "id": "card-d",
+      "num": 1,
+      "question": "Later?",
+      "context": "",
+      "commands": [],
+      "options": [],
+      "asked_at": "2026-08-27T18:00:00Z",
+      "status": "resolved",
+      "project": "",
+      "answer": "yes d",
+      "resolved_at": "2026-08-27T18:00:00Z"
+    }
+  ]
+}

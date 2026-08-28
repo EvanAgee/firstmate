@@ -1,0 +1,32 @@
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [],
+  "resolved": [
+    {
+      "id": "card-c",
+      "num": 1,
+      "question": "Ship on merge?",
+      "context": "",
+      "commands": [],
+      "options": [],
+      "asked_at": "2026-08-27T18:00:00Z",
+      "status": "resolved",
+      "project": "",
+      "answer": "backlog-done",
+      "resolved_at": "2026-08-27T18:00:00Z"
+    },
+    {
+      "id": "card-d",
+      "num": 1,
+      "question": "Later?",
+      "context": "",
+      "commands": [],
+      "options": [],
+      "asked_at": "2026-08-27T18:00:00Z",
+      "status": "resolved",
+      "project": "",
+      "answer": "yes d",
+      "resolved_at": "2026-08-27T18:00:00Z"
+    }
+  ]
+}
