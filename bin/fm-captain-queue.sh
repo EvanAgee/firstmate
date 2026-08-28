@@ -10,13 +10,24 @@
 # captain-hold id otherwise. Do not invent a shorter second id.
 #
 # `add` upserts one active card under that id.
-# `reconcile` is the captain-reply wake action. It reads every new reply line
-# past the cursor, matches by id, moves a matched card out of the active `items`
-# set into `resolved` (answer preserved), and advances the cursor past that
-# line. Removing the card is not doing the work: each `handled:` line is the
-# answer firstmate still has to act on. An `orphan:` line matches no card; the
-# cursor stays before it so the answer cannot be skipped. Reconcile never
-# advances past an answer that was neither matched nor surfaced.
+# `reconcile` is the captain-reply wake action and the heartbeat board sweep.
+# It reads every new reply line past the cursor, matches by id, moves a matched
+# card out of the active `items` set into `resolved` (answer preserved), and
+# advances the cursor past that line. Removing the card is not doing the work:
+# each `handled:` line is the answer firstmate still has to act on. An
+# `orphan:` line matches no card; the cursor stays before it so the answer
+# cannot be skipped. Reconcile never advances past an answer that was neither
+# matched nor surfaced. Dashboard-reply clearing is unchanged: a matched reply
+# still prints `handled:` so firstmate can verify a "Done - command ran"
+# answer against reality before treating that work as done.
+# After applying new replies, or when there are none, reconcile also retires
+# each remaining active card whose backing backlog item is done. The card id is
+# the backlog captain-hold id or the decision-hold identity, so a done item and
+# a closed decision-hold are the same check: `tasks-axi show <id>` against this
+# home's backlog reports state done. Cards whose item is still open, absent, or
+# unreadable stay. Auto-clear prints `cleared:` lines, not `handled:`; those
+# are not dashboard answers to act on. A missing backlog file or tasks-axi
+# skips the sweep rather than guessing.
 # add and reconcile take one home-scoped lock at state/.captain-queue.lock for
 # the whole queue-and-cursor read-modify-write, then release it.
 #
@@ -288,49 +299,92 @@ apply_handled() {  # <queue-json> <id> <answer> <stamp> -> new queue on stdout
     '
 }
 
+# True when this home's backlog records <id> as done. Absent, unreadable, or
+# still-open items return false so a card cannot clear on a guess.
+backlog_item_done() {  # <id>
+  local id=$1 show state
+  [ -n "$id" ] || return 1
+  [ -f "$DATA/backlog.md" ] || return 1
+  command -v tasks-axi >/dev/null 2>&1 || return 1
+  show=$(tasks-axi show "$id" --file "$DATA/backlog.md" 2>/dev/null) || return 1
+  state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p' | head -1)
+  [ "$state" = "done" ]
+}
+
+# Retire remaining active cards whose backing backlog item is done.
+# Mutates the caller's `queue`. Prints `cleared:` lines, never `handled:`.
+clear_closed_cards() {
+  local id stamp ids
+  ids=$(printf '%s\n' "$queue" | jq -r '.items[]?.id // empty') || return 0
+  [ -n "$ids" ] || return 0
+  [ -f "$DATA/backlog.md" ] || return 0
+  command -v tasks-axi >/dev/null 2>&1 || return 0
+  while IFS= read -r id || [ -n "$id" ]; do
+    [ -n "$id" ] || continue
+    backlog_item_done "$id" || continue
+    stamp=$(now_stamp)
+    queue=$(apply_handled "$queue" "$id" "backlog-done" "$stamp") || die 1 "failed to auto-clear $id"
+    printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+    printf 'cleared: [id=%s] backlog-done\n' "$id"
+  done <<EOF
+$ids
+EOF
+}
+
 cmd_reconcile() {
   local cursor queue line n id answer stamp
+  local orphan=0 orphan_id="" orphan_answer=""
   acquire_queue_lock
   cursor=$(read_cursor)
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
-  if [ ! -f "$REPLIES" ]; then
-    release_queue_lock
-    exit 0
+
+  if [ -f "$REPLIES" ]; then
+    n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      [ "$n" -gt "$cursor" ] || continue
+      if [ -z "$line" ]; then
+        orphan=1
+        orphan_id=
+        orphan_answer="malformed reply line $n"
+        break
+      fi
+      if ! printf '%s\n' "$line" | jq -e 'type == "object" and (.id | type == "string") and (.id | length > 0) and (.answer | type == "string")' >/dev/null 2>&1; then
+        orphan=1
+        orphan_id=
+        orphan_answer="malformed reply line $n"
+        break
+      fi
+      id=$(printf '%s\n' "$line" | jq -r '.id')
+      answer=$(printf '%s\n' "$line" | jq -r '.answer')
+      if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.items[]; .id == $id)' >/dev/null; then
+        stamp=$(now_stamp)
+        queue=$(apply_handled "$queue" "$id" "$answer" "$stamp") || die 1 "failed to resolve $id"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+        write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
+        cursor=$n
+        printf 'handled: [id=%s] %s\n' "$id" "$answer"
+      elif printf '%s\n' "$queue" | jq -e --arg id "$id" --arg answer "$answer" \
+          'any(.resolved[]; .id == $id and .answer == $answer)' >/dev/null; then
+        # Crash window: the card already moved, the cursor did not. Same answer
+        # means this line was applied; advance without dropping a new answer.
+        write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
+        cursor=$n
+        printf 'handled: [id=%s] %s\n' "$id" "$answer"
+      else
+        orphan=1
+        orphan_id=$id
+        orphan_answer=$answer
+        break
+      fi
+    done < "$REPLIES"
   fi
 
-  n=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    n=$((n + 1))
-    [ "$n" -gt "$cursor" ] || continue
-    if [ -z "$line" ]; then
-      printf 'orphan: [id=] malformed reply line %s\n' "$n"
-      exit 1
-    fi
-    if ! printf '%s\n' "$line" | jq -e 'type == "object" and (.id | type == "string") and (.id | length > 0) and (.answer | type == "string")' >/dev/null 2>&1; then
-      printf 'orphan: [id=] malformed reply line %s\n' "$n"
-      exit 1
-    fi
-    id=$(printf '%s\n' "$line" | jq -r '.id')
-    answer=$(printf '%s\n' "$line" | jq -r '.answer')
-    if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.items[]; .id == $id)' >/dev/null; then
-      stamp=$(now_stamp)
-      queue=$(apply_handled "$queue" "$id" "$answer" "$stamp") || die 1 "failed to resolve $id"
-      printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
-      write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
-      cursor=$n
-      printf 'handled: [id=%s] %s\n' "$id" "$answer"
-    elif printf '%s\n' "$queue" | jq -e --arg id "$id" --arg answer "$answer" \
-        'any(.resolved[]; .id == $id and .answer == $answer)' >/dev/null; then
-      # Crash window: the card already moved, the cursor did not. Same answer
-      # means this line was applied; advance without dropping a new answer.
-      write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
-      cursor=$n
-      printf 'handled: [id=%s] %s\n' "$id" "$answer"
-    else
-      printf 'orphan: [id=%s] %s\n' "$id" "$answer"
-      exit 1
-    fi
-  done < "$REPLIES"
+  clear_closed_cards
+  if [ "$orphan" -eq 1 ]; then
+    printf 'orphan: [id=%s] %s\n' "$orphan_id" "$orphan_answer"
+    exit 1
+  fi
   release_queue_lock
 }
 

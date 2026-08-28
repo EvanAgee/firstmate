@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-captain-queue.test.sh - board cards share the reply id, reconcile
-# removes a matched card, and an unmatched reply neither advances the cursor
-# nor disappears.
+# removes a matched card, an unmatched reply neither advances the cursor
+# nor disappears, and a card whose backlog item is done leaves without a reply.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -192,6 +192,107 @@ test_parallel_adds_keep_both_cards() {
   pass "parallel adds keep both cards"
 }
 
+have_tasks_axi() {
+  command -v tasks-axi >/dev/null 2>&1
+}
+
+seed_backlog() {  # <home>
+  cat > "$1/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+
+## Done
+EOF
+}
+
+backlog_add() {  # <home> <id> <title>
+  tasks-axi add "$2" "$3" --kind captain --repo sample --file "$1/data/backlog.md" >/dev/null
+}
+
+backlog_done() {  # <home> <id>
+  tasks-axi "done" "$2" --file "$1/data/backlog.md" >/dev/null
+}
+
+test_done_backlog_item_clears_card_without_a_reply() {
+  local home out
+  if ! have_tasks_axi; then
+    echo "skip: tasks-axi not found (done-item auto-clear)"
+    return 0
+  fi
+  home=$(make_home done-item)
+  seed_backlog "$home"
+  backlog_add "$home" sample-origin-decision-prod-gate "Ship on merge?"
+  run_q "$home" add \
+    --id sample-origin-decision-prod-gate \
+    --question "Ship on merge?" >/dev/null
+  out=$(run_q "$home" reconcile)
+  [ "$(active_ids "$home")" = sample-origin-decision-prod-gate ] \
+    || fail "open backlog item should leave the card on the board: $(active_ids "$home")"
+  [ -z "$out" ] || fail "reconcile with an open item and no replies should be silent, got: $out"
+  backlog_done "$home" sample-origin-decision-prod-gate
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "cleared: [id=sample-origin-decision-prod-gate] backlog-done" \
+    "reconcile should print cleared for a done backlog item"
+  [ -z "$(active_ids "$home")" ] || fail "done backlog item left the card on the board: $(active_ids "$home")"
+  [ "$(resolved_answer "$home" sample-origin-decision-prod-gate)" = backlog-done ] \
+    || fail "auto-cleared card lost the cleared marker"
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "caught-up auto-clear should be silent, got: $out"
+  pass "a card auto-clears when its backlog item is marked done"
+}
+
+test_only_done_cards_auto_clear() {
+  local home out ids
+  if ! have_tasks_axi; then
+    echo "skip: tasks-axi not found (mixed done/open auto-clear)"
+    return 0
+  fi
+  home=$(make_home mixed-done)
+  seed_backlog "$home"
+  backlog_add "$home" card-open "Still open?"
+  backlog_add "$home" card-done "Already decided?"
+  run_q "$home" add --id card-open --question "Still open?" >/dev/null
+  run_q "$home" add --id card-done --question "Already decided?" >/dev/null
+  backlog_done "$home" card-done
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "cleared: [id=card-done] backlog-done" \
+    "the done card should auto-clear"
+  assert_not_contains "$out" "card-open" "an open card must not be mentioned"
+  ids=$(active_ids "$home")
+  case "$ids" in
+    *card-open*) : ;;
+    *) fail "open card was removed: $ids" ;;
+  esac
+  case "$ids" in
+    *card-done*) fail "done card stayed on the board: $ids" ;;
+  esac
+  [ "$(resolved_answer "$home" card-done)" = backlog-done ] \
+    || fail "done card was not moved to resolved"
+  pass "only cards whose backlog item is done auto-clear"
+}
+
+test_dashboard_reply_still_clears_when_backlog_item_is_open() {
+  local home out
+  if ! have_tasks_axi; then
+    echo "skip: tasks-axi not found (dashboard reply with open item)"
+    return 0
+  fi
+  home=$(make_home reply-open)
+  seed_backlog "$home"
+  backlog_add "$home" card-a "Ship on merge?"
+  run_q "$home" add --id card-a --question "Ship on merge?" >/dev/null
+  append_reply "$home" card-a "option 1"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=card-a] option 1" \
+    "an open backlog item must still accept a dashboard reply"
+  assert_not_contains "$out" "cleared:" "a dashboard answer is not an auto-clear"
+  [ -z "$(active_ids "$home")" ] || fail "dashboard reply left the card on the board"
+  [ "$(resolved_answer "$home" card-a)" = "option 1" ] \
+    || fail "dashboard answer was replaced by auto-clear"
+  pass "a dashboard reply still clears an open-item card and keeps the answer"
+}
+
 test_add_uses_the_supplied_id
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
@@ -199,5 +300,8 @@ test_orphan_stops_before_a_later_match
 test_repeat_answer_after_crash_advances_cursor
 test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
+test_done_backlog_item_clears_card_without_a_reply
+test_only_done_cards_auto_clear
+test_dashboard_reply_still_clears_when_backlog_item_is_open
 
 echo "# fm-captain-queue.test.sh: all assertions passed"
