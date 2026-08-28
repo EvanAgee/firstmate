@@ -198,6 +198,13 @@ function createGeneration(): SessionGeneration {
 }
 
 function activateGeneration(generation: SessionGeneration): void {
+  // A fresh factory bind (a second default() call) activates a brand-new
+  // generation while an earlier bind's generation still owns a live arm child.
+  // Stop that outgoing generation so its child is retired rather than orphaned;
+  // re-activating the same generation (an ordinary session_start) is a no-op.
+  if (activeGeneration && activeGeneration !== generation) {
+    stopGeneration(activeGeneration);
+  }
   activeGeneration = generation;
 }
 
@@ -480,6 +487,11 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on?.("session_start", () => {
+    // A later factory bind supersedes this binding by activating its own
+    // generation. Once that has happened, activeGeneration is a different
+    // object, so a stale session_start on this superseded binding must not
+    // resurrect a new live generation; it stays retired.
+    if (activeGeneration && activeGeneration !== generation) return;
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     markLoaded();
