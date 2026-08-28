@@ -61,6 +61,10 @@ pass() {
   printf 'ok - %s\n' "$1"
 }
 
+fm_test_realpath() {  # <path>
+  node -e 'const {realpathSync}=require("node:fs");process.stdout.write(realpathSync(process.argv[1]))' "$1"
+}
+
 # --- self-cleaning temp root ------------------------------------------------
 #
 # fm_test_tmproot <prefix> echoes a fresh temp dir and registers it for removal

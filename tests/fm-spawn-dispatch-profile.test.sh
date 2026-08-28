@@ -12,6 +12,23 @@ set -u
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-dispatch-profile)
+PROFILE_RUN_TOKEN="t$$-${RANDOM:-0}"
+profile_id() { printf '%s-%s' "$1" "$PROFILE_RUN_TOKEN"; }
+cleanup() {
+  local data_dir id home meta tasktmp
+  while IFS= read -r data_dir; do
+    id=$(basename "$data_dir")
+    home=$(dirname "$(dirname "$data_dir")")
+    meta="$home/state/$id.meta"
+    tasktmp=$(sed -n 's/^tasktmp=//p' "$meta" 2>/dev/null)
+    [ -n "$tasktmp" ] || tasktmp=$(sed -n 's/^tasktmp=//p' "$meta.test-owner" 2>/dev/null)
+    case "$id:$tasktmp" in
+      profile-*:/tmp/fm-"$id") rm -rf "$tasktmp" ;;
+    esac
+  done < <(find "$TMP_ROOT" -type d -path '*/home/data/profile-*' 2>/dev/null)
+  rm -rf "$TMP_ROOT"
+}
+trap cleanup EXIT
 
 make_spawn_pi_probe() {
   local fakebin=$1 tool=$2
@@ -42,7 +59,13 @@ esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  has-session|new-session) exit 0 ;;
+  kill-window)
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'kill-window %s\n' "$*" >> "$FM_FAKE_ENDPOINT_LOG"
+    exit 0 ;;
+  new-window)
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'new-window\n' >> "$FM_FAKE_ENDPOINT_LOG"
+    exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -52,6 +75,17 @@ case "${1:-}" in
         fi
         prev=$a
       done
+      case "$*" in
+        *Enter*)
+          if grep -Fq 'FM_OMP_HARNESS=omp' "$FM_FAKE_LAUNCH_LOG" 2>/dev/null; then
+            [ -z "${FM_FAKE_OMP_ACK:-}" ] || : > "$FM_FAKE_OMP_ACK"
+            if [ -n "${FM_FAKE_OMP_META_TAMPER:-}" ]; then
+              cp "$FM_FAKE_OMP_META_TAMPER" "$FM_FAKE_OMP_META_TAMPER.test-owner"
+              printf 'window=unrelated:retry\n' > "$FM_FAKE_OMP_META_TAMPER"
+            fi
+          fi
+          ;;
+      esac
     fi
     exit 0
     ;;
@@ -59,7 +93,6 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
 shift
@@ -76,7 +109,92 @@ SH
   chmod +x "$fakebin/timeout" "$fakebin/cursor-agent"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
-  fm_fake_exit0 "$fakebin" omp
+  cat > "$fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+cmd=${1:-}
+sub=${2:-}
+case "$cmd $sub" in
+  "status --json")
+    printf '%s\n' '{"client":{"version":"0.7.5","protocol":17},"server":{"running":true}}'
+    ;;
+  "session list")
+    printf '%s\n' '{"sessions":[{"name":"default","running":true,"socket_path":"/tmp/fm-profile-herdr.sock"}]}'
+    ;;
+  "workspace list")
+    printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"}]}}'
+    ;;
+  "tab list")
+    printf '%s\n' '{"result":{"tabs":[]}}'
+    ;;
+  "tab create")
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'tab create\n' >> "$FM_FAKE_ENDPOINT_LOG"
+    printf '%s\n' '{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2"}}}'
+    ;;
+  "pane get")
+    if [ -n "${FM_FAKE_HERDR_PANE_FLAG:-}" ] && [ ! -f "$FM_FAKE_HERDR_PANE_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"pane_not_found"}}' >&2
+      exit 1
+    fi
+    printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s"}}}\n' "${3:-w1:p2}" "${FM_FAKE_PANE_PATH:-}"
+    ;;
+  "pane run")
+    exit 0
+    ;;
+  "pane send-text")
+    [ -z "${FM_FAKE_LAUNCH_LOG:-}" ] || printf '%s\n' "${4:-}" >> "$FM_FAKE_LAUNCH_LOG"
+    ;;
+  "pane send-keys")
+    case "${4:-}" in
+      enter)
+        if grep -Fq 'FM_OMP_HARNESS=omp' "${FM_FAKE_LAUNCH_LOG:-/dev/null}" 2>/dev/null; then
+          [ -z "${FM_FAKE_OMP_ACK:-}" ] || : > "$FM_FAKE_OMP_ACK"
+        fi
+        ;;
+    esac
+    ;;
+  "pane close")
+    [ -z "${FM_FAKE_ENDPOINT_LOG:-}" ] || printf 'pane close %s\n' "${3:-}" >> "$FM_FAKE_ENDPOINT_LOG"
+    if [ "${FM_FAKE_HERDR_REFUSE_CLOSE:-0}" = 1 ]; then
+      exit 0
+    fi
+    [ -z "${FM_FAKE_HERDR_PANE_FLAG:-}" ] || rm -f "$FM_FAKE_HERDR_PANE_FLAG"
+    ;;
+  "agent get")
+    if [ -n "${FM_FAKE_HERDR_PANE_FLAG:-}" ] && [ ! -f "$FM_FAKE_HERDR_PANE_FLAG" ]; then
+      printf '%s\n' '{"error":{"code":"agent_not_found"}}' >&2
+      exit 1
+    fi
+    printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}'
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/herdr"
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+[ -z "${FM_FAKE_TREEHOUSE_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_TREEHOUSE_LOG"
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
+  cat > "$fakebin/omp" <<'SH'
+#!/usr/bin/env bun
+case "${1:-}" in
+  --help)
+    printf '%s\n' '--model=<value>' '--thinking=<value>' '--auto-approve' '--session-dir=<value>' '-e, --extension=<value>' '-r, --resume=<value>'
+    ;;
+  --version) printf 'omp/17.1.8\n' ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/omp"
+  cat > "$fakebin/bun" <<'SH'
+#!/usr/bin/env bash
+script=$1
+shift
+exec bash "$script" "$@"
+SH
+  chmod +x "$fakebin/bun"
   printf '%s\n' "$fakebin"
 }
 
@@ -94,6 +212,8 @@ make_spawn_case() {
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   for id in "$@"; do
+    [ ! -e "/tmp/fm-$id" ] && [ ! -L "/tmp/fm-$id" ] \
+      || fail "refusing fixture task-id collision at /tmp/fm-$id"
     mkdir -p "$home/data/$id"
     printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
   done
@@ -122,9 +242,15 @@ make_seeded_secondmate_home() {
 }
 
 run_spawn() {
-  local home=$1 wt=$2 fakebin=$3 launchlog=$4
+  local home=$1 wt=$2 fakebin=$3 launchlog=$4 endpointlog treehouselog herdrpaneflag rc meta tasktmp
   shift 4
+  endpointlog="${launchlog%/*}/endpoint.log"
+  treehouselog="${launchlog%/*}/treehouse.log"
+  herdrpaneflag="${launchlog%/*}/herdr-pane"
   : > "$launchlog"
+  : > "$endpointlog"
+  : > "$treehouselog"
+  : > "$herdrpaneflag"
   # CLAUDE_CONFIG_DIR is forwarded onto claude launches by fm-spawn, so pin it
   # explicitly (empty by default) instead of leaking the invoking shell's value,
   # which would make launch assertions depend on the developer's environment.
@@ -137,8 +263,22 @@ run_spawn() {
     FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_PI_VERSION="${FM_TEST_PI_VERSION:-0.84.0}" \
     FM_FAKE_CURSOR_MODELS="${FM_TEST_CURSOR_MODELS:-}" \
     FM_FAKE_CURSOR_LIST_STATUS="${FM_TEST_CURSOR_LIST_STATUS:-0}" \
+    FM_FAKE_ENDPOINT_LOG="$endpointlog" \
+    FM_FAKE_TREEHOUSE_LOG="$treehouselog" FM_FAKE_OMP_ACK="${FM_TEST_OMP_ACK:-}" \
+    FM_FAKE_HERDR_PANE_FLAG="$herdrpaneflag" \
+    FM_FAKE_HERDR_REFUSE_CLOSE="${FM_TEST_HERDR_REFUSE_CLOSE:-0}" \
+    FM_FAKE_OMP_META_TAMPER="${FM_TEST_OMP_META_TAMPER:-}" \
     GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    for meta in "$home/state"/*.meta; do
+      [ -f "$meta" ] || continue
+      tasktmp=$(sed -n 's/^tasktmp=//p' "$meta")
+      case "$tasktmp" in /tmp/fm-profile-*) rm -rf "$tasktmp" ;; esac
+    done
+  fi
+  return "$rc"
 }
 
 # Ship spawns carry an explicit delivery contract (AGENTS.md section 7); these
@@ -162,7 +302,7 @@ assert_meta_profile() {
 
 test_no_profile_keeps_claude_profile_defaults() {
   local rec id out status expected launch
-  id=profile-off-z1
+  id=$(profile_id profile-off-z1)
   rec=$(make_spawn_case profile-off claude "$id")
   read_case_record "$rec"
 
@@ -196,7 +336,7 @@ test_non_cursor_launch_clears_inherited_cursor_markers() {
 
 test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
   local rec id out status launch home_real
-  id=profile-relative-paths-z1b
+  id=$(profile_id profile-relative-paths-z1b)
   rec=$(make_spawn_case profile-relative-paths pi "$id")
   read_case_record "$rec"
   home_real=$(cd "$HOME_DIR" && pwd -P)
@@ -225,8 +365,8 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
 
 test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
   local rec relative_id absolute_id out status launch home_real linked_home
-  relative_id=profile-relative-home-defaults-z1c
-  absolute_id=profile-absolute-home-defaults-z1d
+  relative_id=$(profile_id profile-relative-home-defaults-z1c)
+  absolute_id=$(profile_id profile-absolute-home-defaults-z1d)
   rec=$(make_spawn_case profile-home-defaults pi "$relative_id" "$absolute_id")
   read_case_record "$rec"
   home_real=$(cd "$HOME_DIR" && pwd -P)
@@ -274,7 +414,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
 
 test_absolute_override_spelling_is_preserved_in_launch_paths() {
   local rec id out status launch linked_home
-  id=profile-absolute-paths-z1c
+  id=$(profile_id profile-absolute-paths-z1c)
   rec=$(make_spawn_case profile-absolute-paths pi "$id")
   read_case_record "$rec"
   linked_home="$CASE_DIR/home-link"
@@ -302,7 +442,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
 
 test_unresolvable_relative_overrides_fail_loudly() {
   local rec id out status
-  id=profile-unresolvable-paths-z1d
+  id=$(profile_id profile-unresolvable-paths-z1d)
   rec=$(make_spawn_case profile-unresolvable-paths pi "$id")
   read_case_record "$rec"
 
@@ -343,7 +483,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
 
 test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   local rec id out status
-  id=profile-required-ship-z11
+  id=$(profile_id profile-required-ship-z11)
   rec=$(make_spawn_case profile-required-ship claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -359,7 +499,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
 
 test_active_dispatch_profile_requires_explicit_harness_for_scout() {
   local rec id out status
-  id=profile-required-scout-z12
+  id=$(profile_id profile-required-scout-z12)
   rec=$(make_spawn_case profile-required-scout claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -375,7 +515,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_scout() {
 
 test_active_dispatch_profile_allows_explicit_harness() {
   local rec id out status launch
-  id=profile-explicit-z13
+  id=$(profile_id profile-explicit-z13)
   rec=$(make_spawn_case profile-explicit claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -394,7 +534,7 @@ test_active_dispatch_profile_allows_explicit_harness() {
 
 test_active_dispatch_profile_allows_positional_harness() {
   local rec id out status
-  id=profile-positional-z14
+  id=$(profile_id profile-positional-z14)
   rec=$(make_spawn_case profile-positional claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -410,7 +550,7 @@ test_active_dispatch_profile_allows_positional_harness() {
 
 test_active_dispatch_profile_allows_raw_launch_command() {
   local rec id out status launch
-  id=profile-raw-z15
+  id=$(profile_id profile-raw-z15)
   rec=$(make_spawn_case profile-raw claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -428,7 +568,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
 
 test_claude_threads_model_and_effort() {
   local rec id out status launch
-  id=profile-claude-z2
+  id=$(profile_id profile-claude-z2)
   rec=$(make_spawn_case profile-claude claude "$id")
   read_case_record "$rec"
 
@@ -445,7 +585,7 @@ test_claude_threads_model_and_effort() {
 
 test_codex_threads_model_and_effort() {
   local rec id out status launch
-  id=profile-codex-z3
+  id=$(profile_id profile-codex-z3)
   rec=$(make_spawn_case profile-codex codex "$id")
   read_case_record "$rec"
 
@@ -461,7 +601,7 @@ test_codex_threads_model_and_effort() {
 
 test_codex_omits_invalid_max_effort() {
   local rec id out status launch
-  id=profile-codex-max-z4
+  id=$(profile_id profile-codex-max-z4)
   rec=$(make_spawn_case profile-codex-max codex "$id")
   read_case_record "$rec"
 
@@ -478,7 +618,7 @@ test_codex_omits_invalid_max_effort() {
 
 test_grok_threads_model_and_reasoning_effort() {
   local rec id out status launch
-  id=profile-grok-z5
+  id=$(profile_id profile-grok-z5)
   rec=$(make_spawn_case profile-grok grok "$id")
   read_case_record "$rec"
 
@@ -495,7 +635,7 @@ test_grok_threads_model_and_reasoning_effort() {
 
 test_grok_omits_invalid_max_reasoning_effort() {
   local rec id out status launch
-  id=profile-grok-max-z6
+  id=$(profile_id profile-grok-max-z6)
   rec=$(make_spawn_case profile-grok-max grok "$id")
   read_case_record "$rec"
 
@@ -513,7 +653,7 @@ test_grok_omits_invalid_max_reasoning_effort() {
 
 test_grok_omits_invalid_xhigh_reasoning_effort() {
   local rec id out status launch
-  id=profile-grok-xhigh-z6b
+  id=$(profile_id profile-grok-xhigh-z6b)
   rec=$(make_spawn_case profile-grok-xhigh grok "$id")
   read_case_record "$rec"
 
@@ -602,7 +742,7 @@ test_cursor_failed_catalog_probe_does_not_block_spawn() {
 
 test_opencode_threads_model_and_ignores_effort_axis() {
   local rec id out status launch
-  id=profile-opencode-z7
+  id=$(profile_id profile-opencode-z7)
   rec=$(make_spawn_case profile-opencode opencode "$id")
   read_case_record "$rec"
 
@@ -619,38 +759,9 @@ test_opencode_threads_model_and_ignores_effort_axis() {
   pass "opencode receives --model and omits the unsupported effort axis"
 }
 
-test_omp_threads_model_and_records_omitted_effort_axis() {
-  local rec id out status launch ext gen
-  id=profile-omp-z7b
-  rec=$(make_spawn_case profile-omp omp "$id")
-  read_case_record "$rec"
-
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-    --model glm52-phala --effort high)
-  status=$?
-  expect_code 0 "$status" "omp spawn with model and recorded effort should succeed"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" omp glm52-phala high
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "'$FAKEBIN_DIR/omp' --auto-approve --model 'glm52-phala' -e" \
-    "omp launch did not thread the verified model and autonomy flag"
-  assert_not_contains "$launch" "--thinking" \
-    "omp launch must omit thinking for glm52-phala, which advertises no thinking levels"
-  assert_present "$HOME_DIR/state/$id.busy-gen" "omp spawn did not arm the busy-state contract"
-  assert_contains "$(cat "$HOME_DIR/state/$id.busy-state")" "state=busy source=fm-spawn" \
-    "omp spawn did not seed the busy-state record from the launch brief"
-  ext=$(cat "$HOME_DIR/state/$id.omp-ext.ts")
-  gen=$(cat "$HOME_DIR/state/$id.busy-gen")
-  assert_contains "$ext" 'omp.on("agent_start"' "omp extension lost the semantic agent_start busy edge"
-  assert_contains "$ext" 'omp.on("agent_end"' "omp extension lost the semantic agent_end idle edge"
-  assert_contains "$ext" 'event.willContinue' "omp extension no longer guards continuing runs"
-  assert_contains "$ext" "\"--gen\", \"$gen\"" "omp extension does not carry the armed incarnation gen"
-  assert_contains "$ext" '"--source", "omp-ext"' "omp extension does not attribute its semantic source"
-  pass "omp receives its model, records effort intent, omits thinking, and arms semantic busy state"
-}
-
 test_pi_threads_model_and_max_effort() {
   local rec id out status launch
-  id=profile-pi-z8
+  id=$(profile_id profile-pi-z8)
   rec=$(make_spawn_case profile-pi pi "$id")
   read_case_record "$rec"
 
@@ -671,7 +782,7 @@ test_pi_threads_model_and_max_effort() {
 
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   local rec id out status launch
-  id=profile-pi-signed-z8b
+  id=$(profile_id profile-pi-signed-z8b)
   rec=$(make_spawn_case profile-pi-signed pi-signed "$id")
   read_case_record "$rec"
 
@@ -734,7 +845,7 @@ test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
 
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
   local rec id out status
-  id=profile-pi-signed-missing-z8c
+  id=$(profile_id profile-pi-signed-missing-z8c)
   rec=$(make_spawn_case profile-pi-signed-missing pi-signed "$id")
   read_case_record "$rec"
   rm -f "$FAKEBIN_DIR/pi-signed"
@@ -755,9 +866,283 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
   pass "pi-signed refuses safely and actionably when the selected executable is unavailable"
 }
 
+test_omp_threads_exact_identity_model_and_every_thinking_level() {
+  local effort rec id out status launch expected_bin expected_bun
+  for effort in low medium high xhigh max; do
+    id=$(profile_id "profile-omp-${effort}-z8o")
+    rec=$(make_spawn_case "profile-omp-$effort" omp "$id")
+    read_case_record "$rec"
+    export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
+
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --model openai-codex/gpt-5.6-sol --effort "$effort")
+    status=$?
+    expect_code 0 "$status" "OMP spawn with $effort thinking should succeed"
+    assert_contains "$out" "spawned $id harness=omp kind=ship" "OMP spawn did not preserve exact identity"
+    assert_meta_profile "$HOME_DIR/state/$id.meta" omp openai-codex/gpt-5.6-sol "$effort"
+    launch=$(cat "$LAUNCH_LOG")
+    expected_bin=$(cd "$FAKEBIN_DIR" && pwd -P)/omp
+    expected_bun=$(cd "$FAKEBIN_DIR" && pwd -P)/bun
+    assert_contains "$launch" "FM_OMP_HARNESS=omp '$expected_bun' '$expected_bin' --session-dir '/tmp/fm-$id/omp-sessions' --auto-approve --model 'openai-codex/gpt-5.6-sol' --thinking '$effort' -e '$HOME_DIR/state/$id.omp-ext.ts'" \
+      "OMP launch did not execute the canonical Bun/OMP pair with unattended mode, model, thinking, and extension"
+    assert_grep "omp_bun=$expected_bun" "$HOME_DIR/state/$id.meta" \
+      "OMP launch metadata did not bind the same Bun executable used by the literal pane command"
+    [ "$(grep -Fo "encode launch-brief" "$LAUNCH_LOG" | wc -l | tr -d ' ')" = 1 ] \
+      || fail "OMP launch did not deliver exactly one positional launch brief"
+    assert_present "$HOME_DIR/state/$id.omp-ext.ts" "OMP launch did not create the external turn extension"
+    unset FM_TEST_OMP_ACK
+  done
+  pass "OMP launches through its metadata-bound canonical Bun/OMP pair and forwards every supported thinking level"
+}
+
+test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack() {
+  local kind rec id out status launch
+  local -a flag
+  for kind in worker scout; do
+    id=$(profile_id "profile-omp-herdr-$kind-z8ph")
+    rec=$(make_spawn_case "profile-omp-herdr-$kind" omp "$id")
+    read_case_record "$rec"
+    export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
+    # A ship worker carries the delivery contract; a scout does not.
+    if [ "$kind" = scout ]; then
+      flag=(--scout)
+    else
+      flag=(--mode no-mistakes --yolo off)
+    fi
+
+    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --backend herdr --model openai-codex/gpt-5.6-sol --effort low "${flag[@]}")
+    status=$?
+    expect_code 0 "$status" "OMP Herdr $kind launch should succeed after turn-start acknowledgement"
+    assert_contains "$out" "spawned $id harness=omp" "OMP Herdr $kind launch lost exact runtime identity"
+    assert_grep 'backend=herdr' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its backend"
+    assert_grep 'herdr_session=default' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its named session"
+    assert_grep 'herdr_pane_id=w1:p2' "$HOME_DIR/state/$id.meta" "OMP Herdr $kind metadata lost its exact pane"
+    launch=$(cat "$LAUNCH_LOG")
+    assert_contains "$launch" "FM_OMP_HARNESS=omp '$(cd "$FAKEBIN_DIR" && pwd -P)/bun' '$(cd "$FAKEBIN_DIR" && pwd -P)/omp'" \
+      "OMP Herdr $kind launch omitted its canonical Bun/OMP execution boundary"
+    assert_contains "$launch" "--session-dir '/tmp/fm-$id/omp-sessions'" "OMP Herdr $kind launch omitted its nonempty isolated session directory"
+    assert_contains "$launch" "-e '$HOME_DIR/state/$id.omp-ext.ts'" "OMP Herdr $kind launch omitted its acknowledgement extension"
+    unset FM_TEST_OMP_ACK
+  done
+  pass "OMP Herdr workers and scouts preserve exact identity, isolated sessions, metadata, and launch acknowledgement"
+}
+
+test_omp_refuses_unverified_backends_before_endpoint_creation() {
+  local backend rec id out status endpoint_log
+  for backend in zellij orca cmux; do
+    id=$(profile_id "profile-omp-unverified-$backend-z8pu")
+    rec=$(make_spawn_case "profile-omp-unverified-$backend" omp "$id")
+    read_case_record "$rec"
+    endpoint_log="$CASE_DIR/endpoint.log"
+    : > "$endpoint_log"
+
+    out=$(FM_FAKE_ENDPOINT_LOG="$endpoint_log" \
+      run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend "$backend" --mode no-mistakes --yolo off)
+    status=$?
+    expect_code 1 "$status" "OMP should refuse unverified backend $backend"
+    assert_contains "$out" "verified only on backend=tmux or backend=herdr" \
+      "OMP $backend refusal did not name the supported backend allowlist"
+    assert_absent "$HOME_DIR/state/$id.meta" "OMP $backend refusal wrote task metadata"
+    [ ! -s "$endpoint_log" ] || fail "OMP $backend refusal created an endpoint"
+    [ ! -s "$LAUNCH_LOG" ] || fail "OMP $backend refusal typed a launch command"
+  done
+  pass "OMP refuses every backend outside the verified tmux/herdr allowlist before endpoint creation"
+}
+
+test_omp_scout_uses_external_turn_extension() {
+  local rec id out status
+  id=$(profile_id profile-omp-scout-z8p)
+  rec=$(make_spawn_case profile-omp-scout omp "$id")
+  read_case_record "$rec"
+  export FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
+  status=$?
+  expect_code 0 "$status" "OMP scout spawn should succeed"
+  assert_contains "$out" "spawned $id harness=omp kind=scout" "OMP scout did not preserve exact identity"
+  assert_grep 'kind=scout' "$HOME_DIR/state/$id.meta" "OMP scout metadata lost delivery semantics"
+  assert_present "$HOME_DIR/state/$id.omp-ext.ts" "OMP scout did not receive the external turn extension"
+  rm -f "$HOME_DIR/state/$id.omp-ready" "$HOME_DIR/state/$id.omp-started" "$HOME_DIR/state/$id.turn-ended"
+  PLUGIN="$HOME_DIR/state/$id.omp-ext.ts" READY="$HOME_DIR/state/$id.omp-ready" \
+    STARTED="$HOME_DIR/state/$id.omp-started" TURNENDED="$HOME_DIR/state/$id.turn-ended" \
+    node --input-type=module <<'JS'
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const extension = await import(pathToFileURL(process.env.PLUGIN).href);
+extension.default({ on(name, handler) { handlers.set(name, handler); } });
+await handlers.get("session_start")?.();
+await handlers.get("turn_start")?.();
+await handlers.get("turn_end")?.();
+for (let i = 0; i < 50 && (!existsSync(process.env.READY) || !existsSync(process.env.STARTED) || !existsSync(process.env.TURNENDED)); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (!existsSync(process.env.READY)) throw new Error("OMP session_start did not report readiness");
+if (!existsSync(process.env.STARTED)) throw new Error("OMP turn_start did not acknowledge launch");
+if (!existsSync(process.env.TURNENDED)) throw new Error("OMP turn_end did not publish completion");
+JS
+  unset FM_TEST_OMP_ACK
+  pass "OMP scouts retain scout semantics and external per-turn notification"
+}
+
+test_omp_whitespace_identity_paths_refuse_before_endpoint() {
+  local mode rec id out status spaced path
+  for mode in omp bun; do
+    id=$(profile_id "omp-space-$mode")
+    rec=$(make_spawn_case "omp-space-$mode" omp "$id")
+    read_case_record "$rec"
+    spaced="$CASE_DIR/$mode identity"
+    mkdir -p "$spaced"
+    cp "$FAKEBIN_DIR/$mode" "$spaced/$mode"
+    chmod +x "$spaced/$mode"
+    path="$spaced:$FAKEBIN_DIR"
+
+    out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$path" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+    status=$?
+    expect_code 1 "$status" "OMP should refuse a whitespace-bearing $mode identity"
+    assert_contains "$out" 'canonical executable paths without whitespace' \
+      "OMP whitespace-bearing $mode refusal was not actionable"
+    [ ! -s "$CASE_DIR/endpoint.log" ] || fail "OMP whitespace-bearing $mode identity created an endpoint"
+    [ ! -s "$LAUNCH_LOG" ] || fail "OMP whitespace-bearing $mode identity typed a launch command"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "OMP whitespace-bearing $mode identity published metadata"
+  done
+  pass "OMP and Bun whitespace-bearing identity paths refuse before endpoint creation"
+}
+
+test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata() {
+  local mode rec id out status endpoint_log
+  for mode in missing-binary missing-thinking existing-artifact; do
+    id=$(profile_id "profile-omp-$mode-z8q")
+    rec=$(make_spawn_case "profile-omp-$mode" omp "$id")
+    read_case_record "$rec"
+    endpoint_log="$CASE_DIR/endpoint.log"
+    : > "$endpoint_log"
+    case "$mode" in
+      missing-binary) rm -f "$FAKEBIN_DIR/omp" ;;
+      missing-thinking)
+        grep -v 'thinking' "$FAKEBIN_DIR/omp" > "$FAKEBIN_DIR/omp.tmp"
+        mv "$FAKEBIN_DIR/omp.tmp" "$FAKEBIN_DIR/omp"
+        chmod +x "$FAKEBIN_DIR/omp"
+        ;;
+      existing-artifact) : > "$HOME_DIR/state/$id.status" ;;
+    esac
+
+    out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+      FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+      FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_FAKE_ENDPOINT_LOG="$endpoint_log" FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
+      PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+      "$SPAWN" "$id" "$PROJ_DIR" --harness omp --mode no-mistakes --yolo off 2>&1)
+    status=$?
+    expect_code 1 "$status" "OMP $mode should refuse before launch"
+    assert_contains "$out" "omp" "OMP preflight refusal did not name the selected runtime"
+    assert_absent "$HOME_DIR/state/$id.meta" "OMP $mode refusal wrote task metadata"
+    [ ! -s "$endpoint_log" ] || fail "OMP $mode refusal created a backend endpoint"
+    [ ! -s "$LAUNCH_LOG" ] || fail "OMP $mode refusal typed a launch command"
+  done
+  pass "OMP missing binary and capability failures occur before endpoint or metadata publication"
+}
+
+test_omp_launch_requires_observable_turn_start_acknowledgement() {
+  local rec id out status endpointlog treehouselog
+  id=$(profile_id profile-omp-unacked-z8r)
+  rec=$(make_spawn_case profile-omp-unacked omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 1 "$status" "unacknowledged OMP launch should fail"
+  assert_contains "$out" "initial instruction was not acknowledged" \
+    "OMP unacknowledged launch did not report its concrete postcondition"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_grep 'kill-window' "$endpointlog" "OMP unacknowledged launch left its owned endpoint alive"
+  assert_grep "return --force $WT_DIR" "$treehouselog" "OMP unacknowledged launch did not return its unchanged worktree"
+  assert_absent "$HOME_DIR/state/$id.meta" "OMP unacknowledged launch left owned metadata"
+  assert_absent "$HOME_DIR/state/$id.omp-ext.ts" "OMP unacknowledged launch left its extension"
+  assert_absent "/tmp/fm-$id" "OMP unacknowledged launch left its task temp root"
+  pass "OMP spawn requires the initial turn-start acknowledgement and cleans its unchanged launch"
+}
+
+test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts() {
+  local rec id out status endpointlog treehouselog
+  id=$(profile_id profile-omp-herdr-unacked-z8rh)
+  rec=$(make_spawn_case profile-omp-herdr-unacked omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 1 "$status" "unacknowledged OMP Herdr launch should fail"
+  assert_contains "$out" "initial instruction was not acknowledged" \
+    "OMP Herdr unacknowledged launch did not reach the observable acknowledgement gate"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_grep 'pane close w1:p2' "$endpointlog" "OMP Herdr unacknowledged launch left its owned endpoint alive"
+  assert_grep "return --force $WT_DIR" "$treehouselog" "OMP Herdr unacknowledged launch did not return its unchanged worktree"
+  assert_absent "$HOME_DIR/state/$id.meta" "OMP Herdr unacknowledged launch left owned metadata"
+  assert_absent "$HOME_DIR/state/$id.omp-ext.ts" "OMP Herdr unacknowledged launch left its extension"
+  assert_absent "/tmp/fm-$id" "OMP Herdr unacknowledged launch left its task temp root"
+  pass "OMP Herdr spawn failure cleans its proven endpoint, unchanged worktree, and task artifacts"
+}
+
+test_omp_herdr_refused_close_preserves_worktree_and_artifacts() {
+  local rec id out status endpointlog treehouselog
+  id=$(profile_id profile-omp-herdr-refused-z8rr)
+  rec=$(make_spawn_case profile-omp-herdr-refused omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    FM_TEST_HERDR_REFUSE_CLOSE=1 \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend herdr --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 1 "$status" "unacknowledged OMP Herdr launch should fail"
+  assert_contains "$out" "could not confirm its owned endpoint stopped" \
+    "OMP Herdr cleanup trusted a refused pane close as a stopped endpoint"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_grep 'pane close w1:p2' "$endpointlog" "OMP Herdr cleanup never attempted its owned close"
+  assert_no_grep 'return --force' "$treehouselog" \
+    "OMP Herdr cleanup returned the worktree without a confirmed endpoint stop"
+  assert_present "$HOME_DIR/state/$id.meta" "OMP Herdr cleanup deleted metadata for a still-live endpoint"
+  assert_present "$HOME_DIR/state/$id.omp-ext.ts" "OMP Herdr cleanup deleted the extension for a still-live endpoint"
+  assert_present "/tmp/fm-$id" "OMP Herdr cleanup deleted the task temp root for a still-live endpoint"
+  pass "OMP Herdr cleanup preserves the worktree and task artifacts when its close is refused"
+}
+
+test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes() {
+  local rec id out status endpointlog treehouselog
+  id=$(profile_id profile-omp-unacked-owner-z8s)
+  rec=$(make_spawn_case profile-omp-unacked-owner omp "$id")
+  read_case_record "$rec"
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0.01 \
+    FM_TEST_OMP_META_TAMPER="$HOME_DIR/state/$id.meta" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 1 "$status" "ownership-changed OMP launch should fail"
+  assert_contains "$out" "could not prove ownership" \
+    "OMP ownership-changed abort did not explain why cleanup was refused"
+  endpointlog="$CASE_DIR/endpoint.log"
+  treehouselog="$CASE_DIR/treehouse.log"
+  assert_no_grep 'kill-window' "$endpointlog" "OMP abort killed an endpoint after metadata ownership changed"
+  assert_no_grep 'return --force' "$treehouselog" "OMP abort returned a worktree after metadata ownership changed"
+  [ -f "$HOME_DIR/state/$id.meta" ] || fail "OMP abort removed metadata after ownership changed"
+  [ "$(cat "$HOME_DIR/state/$id.meta")" = 'window=unrelated:retry' ] \
+    || fail "OMP abort did not preserve the intentionally tampered metadata"
+  [ -d "/tmp/fm-$id" ] || fail "OMP abort removed task temp after ownership changed"
+  [ "$(sed -n 's/^tasktmp=//p' "$HOME_DIR/state/$id.meta.test-owner")" = "/tmp/fm-$id" ] \
+    || fail "the pre-tamper metadata did not prove test ownership of /tmp/fm-$id"
+  rm -rf "/tmp/fm-$id"
+  pass "OMP spawn abort preserves endpoint, worktree, and artifacts unless ownership is proven"
+}
+
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   local rec id sm out status launch
-  id=profile-pi-signed-secondmate-z8d
+  id=$(profile_id profile-pi-signed-secondmate-z8d)
   rec=$(make_spawn_case profile-pi-signed-secondmate codex "$id")
   read_case_record "$rec"
   printf '%s\n' pi-signed > "$HOME_DIR/config/secondmate-harness"
@@ -798,7 +1183,7 @@ test_batch_forwards_shared_profile_flags() {
 
 test_claude_forwards_firstmate_config_dir_when_set() {
   local rec id out status launch
-  id=profile-claude-cfgdir-z17
+  id=$(profile_id profile-claude-cfgdir-z17)
   rec=$(make_spawn_case profile-claude-cfgdir claude "$id")
   read_case_record "$rec"
 
@@ -814,7 +1199,7 @@ test_claude_forwards_firstmate_config_dir_when_set() {
 
 test_claude_omits_config_dir_prefix_when_unset() {
   local rec id out status launch
-  id=profile-claude-nocfgdir-z18
+  id=$(profile_id profile-claude-nocfgdir-z18)
   rec=$(make_spawn_case profile-claude-nocfgdir claude "$id")
   read_case_record "$rec"
 
@@ -831,7 +1216,7 @@ test_claude_omits_config_dir_prefix_when_unset() {
 
 test_non_claude_harness_ignores_config_dir() {
   local rec id out status launch
-  id=profile-codex-nocfgdir-z19
+  id=$(profile_id profile-codex-nocfgdir-z19)
   rec=$(make_spawn_case profile-codex-nocfgdir codex "$id")
   read_case_record "$rec"
 
@@ -847,7 +1232,7 @@ test_non_claude_harness_ignores_config_dir() {
 
 test_active_dispatch_profile_does_not_block_secondmate_launch() {
   local rec id sm out status
-  id=profile-secondmate-z16
+  id=$(profile_id profile-secondmate-z16)
   rec=$(make_spawn_case profile-secondmate codex "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
@@ -884,11 +1269,20 @@ test_cursor_threads_model_workspace_and_omits_effort_axis
 test_cursor_refuses_model_absent_from_live_catalog
 test_cursor_failed_catalog_probe_does_not_block_spawn
 test_opencode_threads_model_and_ignores_effort_axis
-test_omp_threads_model_and_records_omitted_effort_axis
 test_pi_threads_model_and_max_effort
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
+test_omp_threads_exact_identity_model_and_every_thinking_level
+test_omp_herdr_worker_and_scout_launch_with_exact_identity_and_ack
+test_omp_refuses_unverified_backends_before_endpoint_creation
+test_omp_scout_uses_external_turn_extension
+test_omp_whitespace_identity_paths_refuse_before_endpoint
+test_omp_missing_binary_or_capability_refuses_before_endpoint_and_metadata
+test_omp_launch_requires_observable_turn_start_acknowledgement
+test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts
+test_omp_herdr_refused_close_preserves_worktree_and_artifacts
+test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags
 test_claude_forwards_firstmate_config_dir_when_set

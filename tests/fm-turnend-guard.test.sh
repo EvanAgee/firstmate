@@ -1188,6 +1188,7 @@ install_integrated_autoarm() {
   cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
   cp "$ROOT/bin/fm-cursor-lib.sh" "$dir/bin/fm-cursor-lib.sh"
   cp "$ROOT/bin/fm-watch.sh" "$dir/bin/fm-watch.sh"
+  cp "$ROOT/bin/fm-omp-process-lib.sh" "$dir/bin/fm-omp-process-lib.sh"
   cp "$ROOT/bin/fm-lock.sh" "$dir/bin/fm-lock.sh"
   chmod +x "$dir/bin/fm-claude-watch-notifier.sh" "$dir/bin/fm-lock.sh" "$dir/bin/fm-watch.sh"
   ln -s /bin/bash "$dir/fake-claude"

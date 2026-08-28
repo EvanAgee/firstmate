@@ -95,11 +95,7 @@ write_remote_delta() {  # <result-path> <status-line>
 }
 
 status_signature() {  # <status-path>
-  if [ "$(uname)" = Darwin ]; then
-    stat -f '%z:%Fm' "$1"
-  else
-    stat -c '%s:%Y' "$1"
-  fi
+  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_signal_sig "$2"' _ "$ROOT" "$1"
 }
 
 wait_for_file_text() {  # <file> <fixed-text>

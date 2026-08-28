@@ -341,6 +341,21 @@ if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
 fi
 
+TARGET_OMP_BUN=
+if [ "$TARGET_HARNESS" = omp ]; then
+  if [ -z "$TARGET_META" ] \
+     || ! fm_backend_agent_record_identity "$TARGET_BACKEND" "$T" "$TARGET_META"; then
+    echo "error: OMP target '$RAW_TARGET' lacks a valid task-bound Bun/OMP identity; refusing composer inspection and delivery" >&2
+    exit 1
+  fi
+  TARGET_OMP_STATE=$(fm_backend_agent_state "$TARGET_BACKEND" "$T" "$TARGET_META" 2>/dev/null)
+  if [ "$TARGET_OMP_STATE" != alive ]; then
+    echo "error: OMP target '$RAW_TARGET' does not match a live task-bound Bun/OMP process (state=${TARGET_OMP_STATE:-unreadable}); refusing delivery" >&2
+    exit 1
+  fi
+  TARGET_OMP_BUN=$FM_BACKEND_AGENT_OMP_BUN
+fi
+
 # Classify a from-firstmate -> secondmate request. Only a task selector resolved
 # through this home's meta whose authoritative kind is secondmate is marked: the
 # secondmate then routes its reply via the status path (see fm-marker-lib.sh).
@@ -544,7 +559,7 @@ else
       send_rc=$?
       verdict=send-failed
     fi
-  elif verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
+  elif verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL" "$TARGET_HARNESS" "$TARGET_OMP_BUN"); then
     :
   else
     send_rc=$?
@@ -560,6 +575,11 @@ else
     fi
     echo "error: text not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
     exit 1
+  fi
+  if [ "$verdict" != empty ] && [ "$TARGET_HARNESS" = omp ] && [ "$MESSAGE" = /exit ] \
+     && [ -n "$TARGET_META" ] \
+     && [ "$(fm_backend_agent_state "$TARGET_BACKEND" "$T" "$TARGET_META" 2>/dev/null)" = dead ]; then
+    verdict=empty
   fi
   case "$verdict" in
     empty)

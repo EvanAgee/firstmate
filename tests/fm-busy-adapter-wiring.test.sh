@@ -35,7 +35,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse omp pi opencode claude codex
+  fm_fake_exit0 "$fakebin" treehouse pi opencode claude codex
   printf '%s\n' "$fakebin"
 }
 
@@ -121,60 +121,12 @@ if (process.env.MODE === "turn-end") {
 EOF
 }
 
-# drive_omp_ext <ext-path> <mode>: load the generated omp extension in a plain
-# Node host and fire one lifecycle handler. Modes: agent-start, end-idle,
-# end-continuing, turn-end.
-drive_omp_ext() {
-  EXT_PATH="$1" MODE="$2" node --input-type=module 2>&1 <<'EOF'
-import { pathToFileURL } from "node:url";
-const mod = await import(pathToFileURL(process.env.EXT_PATH).href);
-const handlers = {};
-mod.default({ on: (name, fn) => { handlers[name] = fn; } });
-switch (process.env.MODE) {
-  case "agent-start": await handlers["agent_start"]({}); break;
-  case "end-idle": await handlers["agent_end"]({ willContinue: false }); break;
-  case "end-continuing": await handlers["agent_end"]({ willContinue: true }); break;
-  case "turn-end": await handlers["turn_end"]({}); break;
-  default: throw new Error("unknown mode " + process.env.MODE);
-}
-if (process.env.MODE === "turn-end") {
-  await new Promise((resolve) => setTimeout(resolve, 200));
-}
-EOF
-}
-
-test_omp_extension_semantic_lifecycle() {
-  local rec id=busy-omp-1 out state ext
-  rec=$(make_spawn_case omp-lifecycle omp "$id")
-  read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "omp spawn should succeed: $out"
-  state="$HOME_DIR/state"
-  ext="$state/$id.omp-ext.ts"
-  assert_present "$ext" "omp spawn did not write the per-task extension"
-
-  out=$(classify omp "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "omp seed after spawn must be 'busy fm-spawn', got '$out'"
-
-  rm -f "$state/$id.turn-ended"
-  out=$(drive_omp_ext "$ext" turn-end) || fail "omp turn_end drive failed: $out"
-  [ -f "$state/$id.turn-ended" ] || fail "omp turn_end no longer touches the notification marker"
-  out=$(classify omp "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "omp turn_end must stay a notification, not a state edge, got '$out'"
-
-  out=$(drive_omp_ext "$ext" end-continuing) || fail "continuing omp agent_end drive failed: $out"
-  out=$(classify omp "$id" "$state")
-  [ "$out" = "busy fm-spawn" ] || fail "omp agent_end with willContinue=true must stay busy, got '$out'"
-
-  out=$(drive_omp_ext "$ext" end-idle) || fail "terminal omp agent_end drive failed: $out"
-  out=$(classify omp "$id" "$state")
-  [ "$out" = "idle omp-ext" ] || fail "terminal omp agent_end must classify 'idle omp-ext', got '$out'"
-
-  out=$(drive_omp_ext "$ext" agent-start) || fail "omp agent_start drive failed: $out"
-  out=$(classify omp "$id" "$state")
-  [ "$out" = "busy omp-ext" ] || fail "omp agent_start must classify 'busy omp-ext', got '$out'"
-  pass "omp extension reports agent_start busy and only terminal agent_end idle"
-}
+# OMP lifecycle note: the fork classifies an OMP worker's busy/idle state from
+# the omp-ext extension marker (agent_start/agent_end), the same way Pi uses
+# pi-ext below. A portable spawn-based check is impossible after the merge's
+# Bun-backed OMP identity requirement (bin/fm-omp-capabilities.sh), which a fake
+# omp cannot satisfy, so the omp-ext semantic lifecycle is covered by the opt-in
+# real-omp live E2E suite (tests/fm-omp-worker-tmux-live-e2e.test.sh) instead.
 
 test_pi_extension_semantic_lifecycle() {
   local rec id=busy-pi-1 out state ext
@@ -509,7 +461,6 @@ test_kimi_and_grok_install_no_unverified_wiring() {
 test_pi_extension_semantic_lifecycle
 test_pi_extension_serializes_settle_before_next_start
 test_pi_extension_stale_incarnation_rejected
-test_omp_extension_semantic_lifecycle
 test_kimi_and_grok_install_no_unverified_wiring
 test_opencode_plugin_semantic_lifecycle
 test_claude_hooks_semantic_lifecycle

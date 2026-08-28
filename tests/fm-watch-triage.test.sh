@@ -95,14 +95,15 @@ set_mtime() {  # <epoch> <file>
   fi
 }
 
-# Signature a primed .seen-* marker must hold so the per-poll signal scan does not
-# fire on a pre-existing status (mirrors fm-watch.sh's stat_sig exactly).
+# Signature a primed .seen-* marker must hold so the per-poll signal scan does
+# not fire on a pre-existing status. Delegates to the one owner in
+# bin/fm-wake-lib.sh so it can never drift from the format the watcher computes.
 seen_sig() {
-  if [ "$(uname)" = Darwin ]; then stat -f '%z:%Fm' "$1" 2>/dev/null; else stat -c '%s:%Y' "$1" 2>/dev/null; fi
+  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_signal_sig "$2"' _ "$ROOT" "$1"
 }
 
 # Prime <file>'s .seen-* suppressor to its CURRENT signature, so the per-poll
-# no-verb signal scan (which watches every *.turn-ended for a size:mtime change)
+# no-verb signal scan (which watches every *.turn-ended for an inode:size:mtime change)
 # treats a just-created or just-backdated turn-ended marker as already seen.
 # Busy-turn-age fixtures create/backdate turn-ended directly (there is no real
 # harness touching it), so without this the marker's own first sighting would
@@ -434,6 +435,40 @@ test_turn_ended_not_working_surfaced() {
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the surfaced turn-end failed"
   grep "$(printf '\tsignal\t')" "$drain_out" | grep -F "$state/task.turn-ended" >/dev/null || fail "surfaced turn-end was not queued"
   pass "a bare turn-end whose crew is not provably working is surfaced (the swallowed-finish fix)"
+}
+
+# A crew reports every finished turn through the SAME 0-byte marker path: the
+# harness removes and recreates state/<id>.turn-ended per turn. Two such turns can
+# land inside one epoch second, so the scan's signature must separate them. Under
+# the former size:whole-second signature both markers read "0:<same second>", the
+# already-advanced .seen-* swallowed the second turn-end, and the crew's real
+# finish was never notified.
+test_turn_ended_recreated_same_second_surfaced() {
+  local dir state fakebin out drain_out marker before after pid
+  dir=$(make_case turn-ended-same-second); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  marker="$state/task.turn-ended"
+  # First turn-end, already seen and absorbed by an earlier cycle; then the next
+  # turn's marker recreated inside the same epoch second (retry across a second
+  # boundary so the same-second condition under test always holds).
+  while :; do
+    : > "$marker"
+    prime_turnend_seen "$marker"
+    before=$(file_mtime "$marker")
+    rm -f "$marker"
+    : > "$marker"
+    after=$(file_mtime "$marker")
+    [ "$before" = "$after" ] && break
+  done
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 80 || fail "watcher did not surface a turn-end recreated within the same epoch second"
+  grep -F "signal: $marker" "$out" >/dev/null || fail "watcher did not print the same-second turn-end signal"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the same-second turn-end failed"
+  grep "$(printf '\tsignal\t')" "$drain_out" | grep -F "$marker" >/dev/null \
+    || fail "same-second turn-end was not queued"
+  pass "a turn-end marker recreated within the same epoch second is surfaced, not swallowed by .seen-*"
 }
 
 test_working_note_not_working_surfaced() {
@@ -2006,6 +2041,7 @@ test_secondmate_status_signal_never_absorbed_classifier
 test_provably_working_signal_absorbed
 test_turn_ended_provably_working_absorbed
 test_turn_ended_not_working_surfaced
+test_turn_ended_recreated_same_second_surfaced
 test_working_note_not_working_surfaced
 test_secondmate_status_note_surfaced_despite_busy_agent
 test_self_announced_close_does_not_rewake_but_next_note_does

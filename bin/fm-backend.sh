@@ -49,6 +49,8 @@
 FM_BACKEND_SCRIPT=${BASH_SOURCE[0]:-$0}
 FM_BACKEND_LIB_DIR="$(cd "$(dirname "$FM_BACKEND_SCRIPT")" && pwd)"
 unset FM_BACKEND_SCRIPT
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$FM_BACKEND_LIB_DIR/fm-omp-process-lib.sh"
 FM_BACKEND_DEFAULT_ROOT="$(cd "$FM_BACKEND_LIB_DIR/.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_DEFAULT_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
@@ -870,6 +872,37 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   esac
 }
 
+# fm_backend_agent_record_identity: validate one OMP caller's durable endpoint
+# binding and export its Bun/OMP identity before an exact process verdict may
+# use it. On success it sets FM_BACKEND_AGENT_OMP_BUN and FM_BACKEND_AGENT_OMP_BIN
+# from the metadata; a missing, unbound, symlinked, or malformed record returns
+# nonzero and leaves them cleared, so callers refuse composer inspection and
+# delivery rather than typing at an unverified target.
+fm_backend_agent_record_identity() {  # <backend> <target> <meta>
+  local backend=$1 target=$2 meta=$3 harness key value expected_id
+  [ -n "$meta" ] && [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  case "$(basename "$meta")" in *.meta) expected_id=$(basename "$meta" .meta) ;; *) return 1 ;; esac
+  fm_backend_validate_task_endpoint "$meta" "$expected_id" >/dev/null 2>&1 || return 1
+  [ "$(grep -c '^endpoint_task_id=' "$meta" 2>/dev/null)" -eq 1 ] \
+    && [ "$(fm_meta_get "$meta" endpoint_task_id)" = "$expected_id" ] || return 1
+  [ "$FM_BACKEND_VALIDATED_BACKEND" = "$backend" ] \
+    && [ "$FM_BACKEND_VALIDATED_TARGET" = "$target" ] || return 1
+  [ "$(grep -c '^harness=' "$meta" 2>/dev/null)" -eq 1 ] || return 1
+  harness=$(fm_meta_get "$meta" harness)
+  FM_BACKEND_AGENT_OMP_BIN=
+  FM_BACKEND_AGENT_OMP_BUN=
+  if [ "$harness" = omp ]; then
+    for key in omp_bin omp_bun; do
+      [ "$(grep -c "^$key=" "$meta" 2>/dev/null)" -eq 1 ] || return 1
+      value=$(fm_meta_get "$meta" "$key")
+      fm_omp_process_identity_path_valid "$value" || return 1
+    done
+    FM_BACKEND_AGENT_OMP_BIN=$(fm_meta_get "$meta" omp_bin)
+    FM_BACKEND_AGENT_OMP_BUN=$(fm_meta_get "$meta" omp_bun)
+  fi
+  return 0
+}
+
 # fm_backend_agent_state: the single recovery-grade agent/endpoint state
 # contract. It is deliberately richer than fm_backend_target_exists's cheap
 # pane-presence read and prints exactly one of:
@@ -885,11 +918,29 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # classifier. Zellij remains unverified because its secondmate ghost-tab and
 # agent-process recovery path has not been empirically validated. Orca and cmux
 # do not support secondmate spawns.
-fm_backend_agent_state() {  # <backend> <target>
-  local backend=$1 target=$2
+# The optional task-meta binds an OMP endpoint's Bun/OMP identity before the
+# verdict: an omp record whose identity cannot be validated is `unreadable`,
+# not a live-agent guess. Callers that need FM_BACKEND_AGENT_OMP_BUN pass it.
+fm_backend_agent_state() {  # <backend> <target> [task-meta]
+  local backend=$1 target=$2 meta=${3:-} record_harness=''
   fm_backend_source "$backend" || { printf 'unverified'; return 0; }
+  FM_BACKEND_AGENT_OMP_BIN=
+  FM_BACKEND_AGENT_OMP_BUN=
+  if [ -n "$meta" ]; then
+    [ -f "$meta" ] && [ ! -L "$meta" ] \
+      && [ "$(grep -c '^harness=' "$meta" 2>/dev/null)" -eq 1 ] || {
+        printf 'unreadable'
+        return 0
+      }
+    record_harness=$(fm_meta_get "$meta" harness)
+    if [ "$record_harness" = omp ] \
+       && ! fm_backend_agent_record_identity "$backend" "$target" "$meta"; then
+      printf 'unreadable'
+      return 0
+    fi
+  fi
   case "$backend" in
-    tmux) fm_backend_tmux_agent_state "$target" ;;
+    tmux) fm_backend_tmux_agent_state "$target" "$FM_BACKEND_AGENT_OMP_BUN" "$FM_BACKEND_AGENT_OMP_BIN" ;;
     herdr) fm_backend_herdr_agent_state "$target" ;;
     *) printf 'unverified' ;;
   esac
@@ -898,8 +949,8 @@ fm_backend_agent_state() {  # <backend> <target>
 # Backward-compatible three-state view for existing callers. An
 # authoritatively missing endpoint is confidently not a live agent, while every
 # ambiguous, unreadable, or unverified result stays unknown.
-fm_backend_agent_alive() {  # <backend> <target>
-  case "$(fm_backend_agent_state "$1" "$2")" in
+fm_backend_agent_alive() {  # <backend> <target> [validated-meta]
+  case "$(fm_backend_agent_state "$1" "$2" "${3:-}")" in
     alive) printf 'alive' ;;
     dead|missing) printf 'dead' ;;
     *) printf 'unknown' ;;

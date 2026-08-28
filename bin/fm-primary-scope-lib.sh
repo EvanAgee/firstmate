@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: source bin/fm-primary-scope-lib.sh; fm_primary_scope_matches <root> <state>
 # Shared marker-or-plain-checkout predicate for tracked hooks that must act only
 # in a genuine firstmate primary home.
 # This file is sourced by hook entrypoints and has no side effects on source.
@@ -29,5 +30,5 @@ fm_primary_scope_matches() {
   fi
   [ -f "$root/AGENTS.md" ] || return 1
   [ -d "$root/bin" ] || return 1
-  [ -d "$state" ] || return 1
+  [ -d "$state" ] && [ ! -L "$state" ]
 }

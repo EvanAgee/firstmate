@@ -70,10 +70,8 @@ test_repair_lines() {
   assert_not_contains "$out" "extension command /fm-watch-arm-pi" "pi repair line still directs the model to the human slash command"
 
   out=$(FM_HOME="$home" "$RENDER" --harness omp --repair-line)
-  assert_contains "$out" "omp tool fm_watch_arm_omp" "omp repair line does not direct the model to its extension-owned tool"
-  assert_contains "$out" "fm-primary-omp-turnend-guard.ts" "omp repair line lost its explicit turn-end extension"
-  assert_contains "$out" "fm-primary-omp-watch.ts" "omp repair line lost its explicit watcher extension"
-  assert_contains "$out" "bin/fm-omp.sh" "omp repair line lost the canonical relaunch wrapper"
+  assert_contains "$out" "OMP tool fm_watch_arm_omp" "OMP repair line does not direct the model to the native extension tool"
+  assert_contains "$out" "omp -e $ROOT/.omp/extensions/fm-primary-omp.ts" "OMP repair line lost the explicit extension fallback"
   pass "renderer repair-line mode is harness-aware and honors conditional state"
 }
 
@@ -89,10 +87,10 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
 
   out=$("$RENDER" --harness omp)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
-  assert_contains "$ordinary" "omp extension already owns watcher continuity" "omp ordinary-wake line does not leave continuity to the extension"
-  assert_not_contains "$ordinary" "fm_watch_arm_omp" "omp ordinary-wake line incorrectly calls the recovery tool"
+  assert_contains "$ordinary" "OMP primary extension already owns watcher continuity" "OMP ordinary-wake line does not leave continuity to the extension"
+  assert_not_contains "$ordinary" "fm_watch_arm_omp" "OMP ordinary-wake line incorrectly calls the recovery tool"
   out=$("$RENDER" --harness omp --repair-line)
-  assert_contains "$out" "fm_watch_arm_omp" "omp recovery line lost the extension-owned repair tool"
+  assert_contains "$out" "fm_watch_arm_omp" "OMP recovery line lost the extension-owned repair tool"
 
   out=$("$RENDER" --harness opencode)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
@@ -173,6 +171,20 @@ test_grok_command_sources_effective_config() {
   pass "grok rendered command sources the effective x-mode config"
 }
 
+test_omp_snippet_uses_effective_extension_path() {
+  local home out extension
+  home="$TMP_ROOT/omp-home"
+  extension="$ROOT/.omp/extensions/fm-primary-omp.ts"
+  mkdir -p "$home/state" "$home/config"
+  out=$(FM_HOME="$home" "$RENDER" --harness omp)
+  assert_contains "$out" "Mode: OMP native extension background wake." "OMP snippet did not render the native-extension mode"
+  assert_contains "$out" "omp -e $extension" "OMP snippet did not render the explicit extension launch fallback"
+  assert_contains "$out" "lives at \`$extension\`" "OMP snippet did not render the effective extension path"
+  assert_not_contains "$out" "__FM_OMP_PRIMARY_EXT__" "renderer leaked the OMP primary extension placeholder"
+  assert_not_contains "$out" "fm_watch_arm_pi" "OMP snippet borrowed the Pi watcher tool"
+  pass "OMP supervision snippet renders its native integration path and distinct tool"
+}
+
 test_pi_snippet_uses_effective_extension_path() {
   local home out turnend watch
   home="$TMP_ROOT/pi-home"
@@ -187,22 +199,6 @@ test_pi_snippet_uses_effective_extension_path() {
   assert_not_contains "$out" "__FM_PI_TURNEND_EXT__" "renderer leaked the Pi turn-end extension path placeholder"
   assert_not_contains "$out" "state/fm-primary-pi-watch.ts" "pi snippet kept the old generated state-relative extension path"
   pass "pi supervision snippet renders the effective extension path"
-}
-
-test_omp_snippet_uses_effective_extension_path() {
-  local home out turnend watch
-  home="$TMP_ROOT/omp-home"
-  turnend="$ROOT/.pi/extensions/fm-primary-omp-turnend-guard.ts"
-  watch="$ROOT/.pi/extensions/fm-primary-omp-watch.ts"
-  mkdir -p "$home/state" "$home/config"
-  out=$(FM_HOME="$home" "$RENDER" --harness omp)
-  assert_contains "$out" "-e $turnend -e $watch" "omp snippet did not render both effective extension launch paths"
-  assert_contains "$out" "bin/fm-omp.sh" "omp snippet lost the canonical primary launch wrapper"
-  assert_contains "$out" "The turn-end guard extension lives at \`$turnend\`" "omp snippet did not render the turn-end guard extension path"
-  assert_contains "$out" "The watcher extension lives at \`$watch\`" "omp snippet did not render the watcher extension path"
-  assert_not_contains "$out" "__FM_OMP_EXT__" "renderer leaked the omp extension path placeholder"
-  assert_not_contains "$out" "__FM_OMP_TURNEND_EXT__" "renderer leaked the omp turn-end extension path placeholder"
-  pass "omp supervision snippet renders the effective extension path"
 }
 
 test_anti_drift_duties_render_on_every_harness() {
@@ -235,5 +231,5 @@ test_cross_harness_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol
 test_grok_is_background_notify
 test_grok_command_sources_effective_config
-test_pi_snippet_uses_effective_extension_path
 test_omp_snippet_uses_effective_extension_path
+test_pi_snippet_uses_effective_extension_path

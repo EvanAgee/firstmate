@@ -82,6 +82,11 @@
 #                                   supported as supervisor backends; the daemon
 #                                   refuses loudly at startup rather than trying
 #                                   tmux primitives against a non-tmux pane.
+#          FM_SUPERVISOR_HARNESS    exact supervisor harness identity. The
+#                                   detached launcher passes this explicitly;
+#                                   otherwise startup derives it with
+#                                   bin/fm-harness.sh. Herdr injection refuses
+#                                   when the identity is unknown.
 #          FM_INJECT_SKIP           |-prefixes force-self-handle bypassing
 #                                   classification (default "heartbeat"); empty
 #                                   disables. Use sparingly: it overrides the
@@ -591,6 +596,36 @@ fm_daemon_primary_harness() {
   printf '%s' "$FM_DAEMON_PRIMARY_HARNESS"
 }
 
+# supervisor_omp_bun: the launch-bound Bun of the LIVE OMP primary, re-read on
+# every use. The marker can be absent, unverifiable, or owned by another process
+# when the daemon starts and become valid (or change) later, so a value resolved
+# once at startup would strand every OMP composer probe without a Bun path -
+# every verdict unknown, every away-mode escalation deferred forever. Empty
+# output means "no proven OMP identity right now", which the OMP probes already
+# treat as unreadable.
+supervisor_omp_bun() {  # [state] -> canonical Bun path, empty when unprovable
+  local state=${1:-$(_state_root)} marker comm args bun=""
+  # An explicit environment override stays authoritative (operator-supplied and
+  # exercised by the live harness fixtures); it is never derived from a probe,
+  # so it cannot go stale behind a failed resolution.
+  if [ -n "${FM_SUPERVISOR_OMP_BUN:-}" ]; then
+    printf '%s' "$FM_SUPERVISOR_OMP_BUN"
+    return 0
+  fi
+  [ "${FM_SUPERVISOR_HARNESS:-}" = omp ] || return 0
+  marker="$state/.omp-primary-extension-loaded"
+  if fm_omp_primary_marker_read "$marker" 2>/dev/null; then
+    comm=$(ps -o comm= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)
+    args=$(ps -o args= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)
+    if FM_OMP_PROCESS_EXPECTED_BUN=$FM_OMP_MARKER_BUN \
+       FM_OMP_PROCESS_EXPECTED_BIN=$FM_OMP_MARKER_BIN \
+       fm_omp_process_matches "$comm" "$args" "$FM_OMP_MARKER_PID"; then
+      bun=$FM_OMP_MARKER_BUN
+    fi
+  fi
+  printf '%s' "$bun"
+}
+
 pane_is_busy() {  # <target> [backend]
   local target=$1 backend=${2:-tmux} native tail40 harness
   harness=$(fm_daemon_primary_harness)
@@ -608,7 +643,7 @@ pane_is_busy() {  # <target> [backend]
 # directly and applies the same positive-proof boundary.
 pane_input_pending() {  # <target> [backend]
   local target=$1 backend=${2:-tmux}
-  [ "$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)" != empty ]
+  [ "$(fm_backend_composer_state "$backend" "$target" "${FM_SUPERVISOR_HARNESS:-}" "$(supervisor_omp_bun)" 2>/dev/null)" != empty ]
 }
 
 task_window_backend() {  # <window> <state>
@@ -900,7 +935,7 @@ window_for_task() {  # <task-key> [state]
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded
+  local msg=$1 state target backend harness retries sleep_s verdict composer encoded omp_bun
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; firstmate drives the normal always-on
@@ -935,7 +970,8 @@ inject_msg() {  # <message> [state]
   #      target - typing the escalation into a shell could execute it - so defer
   #      on anything that is not affirmatively 'empty'. A deferred escalation
   #      stays buffered for the next cycle or the catch-up flush.
-  composer=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)
+  omp_bun=$(supervisor_omp_bun "$state")
+  composer=$(fm_backend_composer_state "$backend" "$target" "${FM_SUPERVISOR_HARNESS:-}" "$omp_bun" 2>/dev/null)
   if [ "$composer" != empty ]; then
     log "inject deferred: supervisor composer not confirmed-empty (state=${composer:-unknown}: pending input, dead-shell prompt, or unreadable pane)"
     return 1
@@ -947,9 +983,20 @@ inject_msg() {  # <message> [state]
   # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh): for
   # backend=tmux this calls fm_backend_tmux_send_text_submit, a verbatim
   # re-export of fm_tmux_submit_core - byte-identical to calling it directly.
+  harness=${FM_SUPERVISOR_HARNESS:-}
+  case "$harness" in
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi) ;;
+    *)
+      if [ "$backend" = herdr ]; then
+        log "inject deferred: herdr supervisor harness is not a verified exact identity (harness=${harness:-unknown})"
+        return 1
+      fi
+      harness=
+      ;;
+  esac
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
-  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s")
+  verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" "" "$harness" "$omp_bun")
   if [ "$verdict" = empty ]; then
     return 0  # Backend confirmed the submit.
   fi
@@ -1161,7 +1208,7 @@ fm_super_main() {
   # into FM_SUPERVISOR_BACKEND makes inject_msg/pane_is_busy/pane_input_pending
   # (which read that env var) dispatch through the right backend without an
   # extra global thread-through.
-  local discovered_backend backend_source
+  local discovered_backend backend_source discovered_harness
   backend_source="FM_SUPERVISOR_BACKEND"
   if [ -z "${FM_SUPERVISOR_BACKEND:-}" ]; then
     if [ -n "${TMUX_PANE:-}" ]; then
@@ -1187,6 +1234,13 @@ fm_super_main() {
     fm_lock_release "$LOCK" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
     exit 1
+  fi
+  discovered_harness=${FM_SUPERVISOR_HARNESS:-}
+  [ -n "$discovered_harness" ] || discovered_harness=$("$FM_DAEMON_DIR/fm-harness.sh")
+  FM_SUPERVISOR_HARNESS=$discovered_harness
+  export FM_SUPERVISOR_HARNESS
+  if [ "$FM_SUPERVISOR_HARNESS" = omp ] && [ -z "$(supervisor_omp_bun "$STATE")" ]; then
+    log "startup: OMP primary identity not provable yet; composer probes re-resolve it each use"
   fi
 
   # --- auto-discover the supervisor target (the pane running firstmate) -----

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: fm-watch.sh
 # Firstmate watcher.
 # Classifies supervision wakes in bash. In normal mode it absorbs benign wakes
 # and keeps blocking; it queues and exits only for actionable wakes.
@@ -119,6 +120,13 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # appended to that garbage. Arithmetic under `set -u` then aborts on the stray
 # token (e.g. the word "File" read as an unset variable), which silently kills the
 # watcher mid-cycle. Detect the platform once and pick the right form.
+#
+# stat_sig must also distinguish two *different* signals written to the same path
+# within one epoch second. A whole-second size:mtime pair cannot: a 0-byte
+# turn-ended marker that is removed and recreated for the next turn keeps the
+# signature "0:<same second>", so the second real turn-end is never notified.
+# Include the inode (recreation allocates a new one) and sub-second mtime
+# (in-place re-touch keeps the inode) so both same-second forms differ.
 if [ "$(uname)" = Darwin ]; then
   stat_mtime() { stat -f %m "$1" 2>/dev/null; }        # epoch seconds of mtime
 else
@@ -142,7 +150,9 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
                                       # turn-end hook) coalesce into one wake
 # Busy state is decided by the semantic contract in bin/fm-busy-lib.sh, which
 # is the single owner of per-harness sources, source attribution, and the one
-# remaining rendered-text fallback (Grok only).
+# remaining rendered-text fallback (Grok only). OMP, like every other harness
+# without a rendered fallback, is classified from its recorded turn state
+# there; its delivery-only footer lives in bin/fm-tmux-lib.sh.
 # Always-on wake triage: most wakes during a long crew validation are benign (a
 # working: note or turn-end while a pipeline runs, a no-change heartbeat). Rather
 # than wake firstmate's LLM for each, this watcher classifies every wake in bash

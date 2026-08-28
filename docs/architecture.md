@@ -67,16 +67,16 @@ The default path remains local-only; live GitHub enrichment exists only behind t
 Optional Relay integrates with the watcher only after explicit opt-in; [configuration.md](configuration.md#relay-env) owns its generated-artifact and dispatch mechanics.
 
 At session start, `bin/fm-session-start.sh` emits exactly one primary-harness supervision block rendered by `bin/fm-supervision-instructions.sh` from `docs/supervision-protocols/`.
-That block owns the live wait shape for the running primary harness: Claude's two Stop hooks own tokenless continuity, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked primary extensions, omp uses its [canonical primary launcher](configuration.md#harness-support), and OpenCode uses its TUI plugin.
+That block owns the live wait shape for the running primary harness: Claude's two Stop hooks own tokenless continuity, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked Pi extensions, OMP uses its native `.omp` primary extension, and OpenCode uses its TUI plugin.
 `bin/fm-watch-arm.sh` remains the verified arm wrapper for protocols that call it; it forks the watcher as a tracked child, verifies it is genuinely alive with a fresh liveness beacon, and prints an honest `started`, `attached`, or nonzero `FAILED` status.
 [`watcher-continuity.md`](watcher-continuity.md#arm-layer-cycle-contract) owns the arm layer's successor, terminal-delivery, re-arm recovery, and typed clean-close failure contract.
 The arm layer records one bounded lifecycle row per observed cycle in `state/.watch-cycle-exits.log`; `state/.watch-triage.log` remains exclusively the absorbed-wake debug log.
-Pi and OpenCode verify session-lock ownership and launch one singleton successor from their child-close handlers before delivering an actionable wake prompt, with bounded exponential retry for failed restoration.
+Pi, OMP, and OpenCode verify session-lock ownership and launch one singleton successor from their child-close handlers before delivering an actionable wake prompt, with bounded exponential retry for failed restoration.
 Claude's two cooperating Stop hooks fire on every Stop: `bin/fm-claude-watch-coordinator.sh` keeps one arm/watcher cycle alive with successor-first ordering and publishes a ready-to-notify record after verifying each successor, and `bin/fm-claude-watch-notifier.sh` parks until it can exit 2 on that record to wake the idle session ([`watcher-continuity.md`](watcher-continuity.md)).
 The notifier drives exhausted failure episodes with the Claude turn-end guard as documented in [`turnend-guard.md`](turnend-guard.md).
 [`watcher-continuity.md`](watcher-continuity.md) owns Claude's successor-first ordering and watcher-status command-gating boundary.
 Cursor's `bin/fm-turnend-guard-cursor.sh` hook remains a between-turns park in one synchronous step: it parks the awaited `stop` hook on the arm wrapper and translates an actionable close into one `followup_message`, with a generation baton that makes an older park still running after the next `stop` claim stand down instead of leaking a stale duplicate wake.
-The existing turn-end guard remains the final backstop for every harness-engine protocol, with pi-signed sharing Pi's protocol, the `--claude` mode cooperating with the notifier claim, and Cursor's `--cursor` mode rendering a block as one bounded follow-up because its `stop` step cannot be blocked.
+The existing turn-end guard remains the final backstop for every harness-engine protocol, with pi-signed sharing Pi's protocol, OMP using native blocking `session_stop`, the `--claude` mode cooperating with the notifier claim, and Cursor's `--cursor` mode rendering a block as one bounded follow-up because its `stop` step cannot be blocked.
 Its `--restart` mode signals only the watcher recorded in the current home's `state/.watch.lock`, so restarting one home cannot kill sibling secondmate watchers.
 A pull-based guard (`bin/fm-guard.sh`) warns through supervision tool output if the primary checkout is tangled, if work, process-event sources, or Relay polling has an unhealthy model-aware supervision verdict, or if queued wakes are waiting to be drained.
 The drain script calls that guard after presenting the queue; records remain durable, and may keep the queued-wakes warning visible, until the exact generation-bound acknowledgement printed by the drain succeeds after handling.
@@ -127,6 +127,18 @@ Endpoint death is the only process-level override and yields dead; child process
 Each record is bound to an incarnation token minted when the task's wiring is armed, so an event from a superseded incarnation is rejected rather than applied, and a record left behind by one classifies unknown.
 Three rendered-text checks deliberately remain outside this contract because they answer delivery questions: submit acknowledgement and the away-mode supervisor-pane busy guard consume the shared delivery-footer matcher owned by `bin/fm-composer-lib.sh`, while `bin/fm-pending-reply-lib.sh` owns the secondmate delivery-confirmation observation.
 All are harness-scoped rather than a global pattern union, and none is a recorded worker state source.
+
+## Harness identity and the Pi-compatible family
+
+`omp` is a durable harness identity in its own right, not an alias for `pi`.
+`bin/fm-pi-compatible-runtimes` owns the closed `pi|omp` allowlist for mechanics proven compatible, while detection, native extension entry points, lifecycle events, TUI behavior, skill invocation, and recovery remain thin runtime-specific adapters.
+No executable-name pattern, similar flag surface, or shared model provider can add a runtime to that family.
+`bin/fm-omp-capabilities.sh` requires the selected Bun-backed OMP entrypoint plus model, thinking, unattended approval, explicit extension, session-directory, and resume surfaces before endpoint publication, and selection never falls back to Pi or another harness.
+The distinct OMP recovery identity and supported canonical-path contract are owned by [the tmux backend guide](tmux-backend.md#current-behavior-and-safety).
+OMP workers, scouts, and secondmates preserve `harness=omp`; the primary uses OMP's blocking `session_stop` and native extension discovery instead of Pi event semantics.
+The complete OMP lifecycle is verified only on tmux and Herdr.
+Zellij lacks the structural/native OMP submission and recovery proofs, while Orca and cmux also lack secondmate support, so `fm-spawn.sh` rejects OMP on all three before runtime checks or endpoint creation.
+Current operator facts live in [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md), and dated evidence lives in [`verification/runtime-backends.md`](verification/runtime-backends.md) and [`verification/supervision.md`](verification/supervision.md).
 
 ## Runtime session backends
 

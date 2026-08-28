@@ -106,6 +106,9 @@
 # On a Pi primary, the supervision-block step also checks whether Pi's two
 # tracked primary extensions are loaded and prints a PI_WATCH_EXTENSION
 # reminder line when one is missing.
+# On an OMP primary, that step validates the tracked native integration marker
+# against the lock-owning process and prints a harness-specific recovery line
+# when the required integration is missing or stale.
 #
 # Why lock first: the old documented order (bootstrap, THEN lock) let a
 # SECOND concurrent session run bootstrap's mutating sweeps - converging
@@ -340,6 +343,10 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 fm_chrome_devtools_axi_export_mcp_path || true
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
+# shellcheck source=bin/fm-primary-watch-version-lib.sh
+. "$SCRIPT_DIR/fm-primary-watch-version-lib.sh"
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$SCRIPT_DIR/fm-omp-process-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
@@ -616,6 +623,26 @@ if [ "$REEMIT" -eq 0 ] && [ "$SESSION_SOURCE" = startup ]; then
   AGENTS_START_HASH=$(hash_file_sha256 "$FM_ROOT/AGENTS.md" 2>/dev/null || true)
 fi
 
+# Validate a native primary-integration marker against the lock-owning process.
+# The OMP runtime reads its four-line marker through fm_omp_primary_marker_read;
+# other runtimes read the two-line pi-shaped marker directly.
+primary_extension_loaded() {
+  local marker=$1 expected_version=$2 lock=$3 runtime=${4:-pi} marker_version marker_pid lock_pid
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ -f "$lock" ] && [ ! -L "$lock" ] \
+    && [ -n "$expected_version" ] || return 1
+  if [ "$runtime" = omp ]; then
+    fm_omp_primary_marker_read "$marker" || return 1
+    marker_version=$FM_OMP_MARKER_VERSION
+    marker_pid=$FM_OMP_MARKER_PID
+  else
+    marker_version=$(sed -n '1p' "$marker")
+    marker_pid=$(sed -n '2p' "$marker")
+  fi
+  lock_pid=$(sed -n '1p' "$lock")
+  [ -n "$marker_pid" ] || return 1
+  [ "$marker_version" = "$expected_version" ] && [ "$marker_pid" = "$lock_pid" ]
+}
+
 if [ "$REEMIT" -eq 1 ]; then
   section "SESSION START (CONTEXT RE-EMIT) - $FM_HOME"
   printf 'This session already took the helm at its own startup and has only lost its\n'
@@ -765,17 +792,13 @@ if [ "$PRIMARY_HARNESS" = pi ] || [ "$PRIMARY_HARNESS" = pi-signed ]; then
     || ! fm_pi_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
     printf 'PI_WATCH_EXTENSION: not loaded - approve Pi project trust once per clone, then restart %s so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$PI_RESTART_COMMAND" "$PI_TURNEND_EXT" "$PI_EXT" "$PI_TURNEND_EXT" "$PI_EXT"
   fi
-elif [ "$PRIMARY_HARNESS" = omp ]; then
-  OMP_EXT="$FM_ROOT/.pi/extensions/fm-primary-omp-watch.ts"
-  OMP_TURNEND_EXT="$FM_ROOT/.pi/extensions/fm-primary-omp-turnend-guard.ts"
-  OMP_WATCH_MARKER="$STATE/.omp-watch-extension-loaded"
-  OMP_TURNEND_MARKER="$STATE/.omp-turnend-extension-loaded"
-  OMP_LOCK="$STATE/.lock"
-  OMP_WATCH_VERSION=$(fm_pi_extension_version "$OMP_EXT" || printf '')
-  OMP_TURNEND_VERSION=$(fm_pi_extension_version "$OMP_TURNEND_EXT" || printf '')
-  if ! fm_pi_extension_loaded "$OMP_WATCH_MARKER" "$OMP_WATCH_VERSION" "$OMP_LOCK" \
-    || ! fm_pi_extension_loaded "$OMP_TURNEND_MARKER" "$OMP_TURNEND_VERSION" "$OMP_LOCK"; then
-    printf 'OMP_WATCH_EXTENSION: not loaded - relaunch with bin/fm-omp.sh, or restart omp with -e %s -e %s so both explicit extensions provide turn-end guard and background wake coverage\n' "$OMP_TURNEND_EXT" "$OMP_EXT"
+fi
+if [ "$PRIMARY_HARNESS" = omp ]; then
+  OMP_PRIMARY_EXT="$FM_ROOT/.omp/extensions/fm-primary-omp.ts"
+  OMP_PRIMARY_MARKER="$STATE/.omp-primary-extension-loaded"
+  OMP_PRIMARY_VERSION=$(fm_primary_watch_version "$OMP_PRIMARY_EXT" "$FM_ROOT" || printf '')
+  if ! primary_extension_loaded "$OMP_PRIMARY_MARKER" "$OMP_PRIMARY_VERSION" "$STATE/.lock" omp; then
+    printf 'OMP_PRIMARY_EXTENSION: not loaded or stale - restart plain omp from %s so %s auto-loads; if native project discovery is unavailable, restart with omp -e %s\n' "$FM_ROOT" "$OMP_PRIMARY_EXT" "$OMP_PRIMARY_EXT"
   fi
 fi
 "$SCRIPT_DIR/fm-supervision-instructions.sh" \

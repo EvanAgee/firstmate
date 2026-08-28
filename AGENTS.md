@@ -101,6 +101,7 @@ state/               runtime records and signals; gitignored
   <id>.muse-session  muse busy-source binding (sessions root plus task worktree) written by fm-spawn; removed by teardown
   <id>.cursor-session  cursor busy-source binding (projects root, task worktree, prior conversations) written by fm-spawn; removed by teardown
   <id>.pane-tail    bounded live worker-pane snapshot written by fm-watch for the task-detail API; removed by spawn and teardown
+  <id>.omp-ext.ts <id>.omp-ready <id>.omp-started   firstmate-generated OMP task extension plus its session-start and first-turn acknowledgement markers; removed by teardown
   <id>.meta          task metadata; each producer script's header owns its exact fields and mutation contract, with docs/configuration.md routing operator-facing backend and trace-context details
   <id>.herdr-presentation  quarantinable attempt and restart-binding journal for Herdr's optional visual projection; never task or endpoint authority; see docs/herdr-backend.md "Presentation spaces"
   <id>.check.sh      authenticated slow poll; the watcher dispatches validated PR data and the byte-identified Relay shim through trusted repository scripts, runs registered custom checks from hash-validated private snapshots, and rejects every other state check without execution
@@ -128,6 +129,7 @@ state/               runtime records and signals; gitignored
   .github-down       durable GitHub-unreachable flag holding a first-seen timestamp; set by bin/fm-github-health.sh on confirmed unreachability and cleared on recovery, its presence alone permits an outage local landing (section 13's outage-local-landing)
   .wake-queue        durable queued wakes retained until post-handling acknowledgement: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .watcher-down      private generation-bound recovery state coupling watcher downtime, durable wake presentation, and post-handling acknowledgement; never touch
+  .omp-primary-extension-loaded  this home's OMP primary adapter identity marker; published by the adapter, validated by fm-session-start.sh, never hand-edited (docs/configuration.md "Harness support")
   .<id>.open-decisions-cursor  per-task byte cursor and folded open-decision set bounding the OPEN DECISIONS scan's cost to new status-log appends; written only by fm-classify-lib.sh's status_open_decisions_incremental, removed by teardown, safe to delete (forces one full re-fold)
   .status-presentation-cursor .status-presentation-lock  fleet-wide per-task status identity/byte-offset manifest and serialization lock preventing already-presented status lines from being replayed as new; owned by fm-classify-lib.sh, with each task's row retired by teardown
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)

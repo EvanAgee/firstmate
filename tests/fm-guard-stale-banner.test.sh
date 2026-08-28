@@ -151,20 +151,33 @@ record_pi_extension_session() {
 }
 
 record_omp_extension_session() {
-  local dir=$1 session_pid=$2 home root pair source marker version
+  local dir=$1 session_pid=$2 home root version bun_bin omp_bin
   home=$(case_home "$dir")
   root=$(case_root "$dir")
-  mkdir -p "$root/.pi/extensions"
-  for pair in \
-    "fm-primary-omp-watch.ts:.omp-watch-extension-loaded" \
-    "fm-primary-omp-turnend-guard.ts:.omp-turnend-extension-loaded"; do
-    source=${pair%%:*}
-    marker=${pair#*:}
-    printf '// omp extension for %s\n' "$(basename "$dir")" > "$root/.pi/extensions/$source"
-    version=$(FM_STATE_OVERRIDE="$home/state" bash -c '. "$1"; fm_pi_extension_version "$2"' \
-      _ "$ROOT/bin/fm-wake-lib.sh" "$root/.pi/extensions/$source") || return 1
-    printf '%s\n%s\n' "$version" "$session_pid" > "$home/state/$marker"
-  done
+  mkdir -p "$root/.omp/extensions" "$root/bin"
+  # The native adapter plus its shared core are both hashed into the marker
+  # version, exactly as fm-primary-watch-version-lib.sh computes it, so create
+  # both files in this case's isolated root.
+  printf '// omp primary adapter for %s\n' "$(basename "$dir")" \
+    > "$root/.omp/extensions/fm-primary-omp.ts"
+  printf '// shared watcher core for %s\n' "$(basename "$dir")" \
+    > "$root/bin/fm-primary-watch-core.ts"
+  version=$(bash -c '. "$1"; fm_primary_watch_version "$2" "$3"' \
+    _ "$ROOT/bin/fm-primary-watch-version-lib.sh" \
+    "$root/.omp/extensions/fm-primary-omp.ts" "$root") || return 1
+  # The marker records canonical, executable, whitespace-free Bun and OMP
+  # identities, which fm_omp_primary_marker_read validates: each must equal its
+  # own resolved realpath, so canonicalize them here (mktemp roots can sit under
+  # a symlinked prefix such as macOS /var -> /private/var).
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$root/bin/bun"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$root/bin/omp"
+  chmod +x "$root/bin/bun" "$root/bin/omp"
+  bun_bin=$(bash -c '. "$1"; fm_omp_process_resolve_path "$2"' \
+    _ "$ROOT/bin/fm-omp-process-lib.sh" "$root/bin/bun") || return 1
+  omp_bin=$(bash -c '. "$1"; fm_omp_process_resolve_path "$2"' \
+    _ "$ROOT/bin/fm-omp-process-lib.sh" "$root/bin/omp") || return 1
+  printf '%s\n%s\n%s\n%s\n' "$version" "$session_pid" "$bun_bin" "$omp_bin" \
+    > "$home/state/.omp-primary-extension-loaded"
   printf '%s\n' "$session_pid" > "$home/state/.lock"
 }
 
