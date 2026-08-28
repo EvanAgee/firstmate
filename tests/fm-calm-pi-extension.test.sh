@@ -677,7 +677,15 @@ test_rendering_and_session_lifecycle() {
   cp "$VISIBILITY" "$fixture/lib/fm-calm-visibility.ts"
   cp "$WORKING_SHIP" "$fixture/lib/fm-calm-working-ship.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/lib/fm-operational-input.ts"
-  cp "$WATCH_EXT" "$fixture/fm-primary-pi-watch.ts"
+  # The watch extension imports ./lib/ siblings and the shared watcher core at
+  # ../../bin/fm-primary-watch-core.ts, so nest it under .pi/extensions/ with a
+  # bin/ two levels up, mirroring the real repo, while fm-calm stays flat.
+  watch_ext_dir="$fixture/.pi/extensions"
+  mkdir -p "$watch_ext_dir/lib" "$fixture/bin"
+  cp "$VISIBILITY" "$watch_ext_dir/lib/fm-calm-visibility.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$watch_ext_dir/lib/fm-operational-input.ts"
+  cp "$WATCH_EXT" "$watch_ext_dir/fm-primary-pi-watch.ts"
+  cp "$ROOT/bin/fm-primary-watch-core.ts" "$fixture/bin/fm-primary-watch-core.ts"
   ln -s "$PI_PACKAGE_DIR" "$fixture/node_modules/@earendil-works/pi-coding-agent"
   ln -s "$PI_PACKAGE_DIR/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
   ln -s "$PI_PACKAGE_DIR/node_modules/typebox" "$fixture/node_modules/typebox"
@@ -690,7 +698,7 @@ SH
   chmod +x "$fixture/operational-input-probe.sh"
 
   output_file="$fixture/node-output"
-  (cd "$fixture" && EXT="$fixture/fm-calm.ts" WATCH_EXT="$fixture/fm-primary-pi-watch.ts" FM_HOME="$fixture/home" FM_OPERATIONAL_INPUT_SCRIPT="$fixture/operational-input-probe.sh" FM_OPERATIONAL_INPUT_OWNER="$OPERATIONAL_INPUT" FM_OPERATIONAL_INPUT_CALLS="$fixture/operational-input-calls" PI_PACKAGE_DIR="$PI_PACKAGE_DIR" node --input-type=module) >"$output_file" 2>&1 <<'JS'
+  (cd "$fixture" && EXT="$fixture/fm-calm.ts" WATCH_EXT="$watch_ext_dir/fm-primary-pi-watch.ts" FM_HOME="$fixture/home" FM_OPERATIONAL_INPUT_SCRIPT="$fixture/operational-input-probe.sh" FM_OPERATIONAL_INPUT_OWNER="$OPERATIONAL_INPUT" FM_OPERATIONAL_INPUT_CALLS="$fixture/operational-input-calls" PI_PACKAGE_DIR="$PI_PACKAGE_DIR" node --input-type=module) >"$output_file" 2>&1 <<'JS'
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -3125,6 +3133,9 @@ test_interactive_terminal_e2e() {
   cp "$WORKING_SHIP" "$project/.pi/extensions/lib/fm-calm-working-ship.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$project/.pi/extensions/lib/fm-operational-input.ts"
   cp "$WATCH_EXT" "$project/.pi/extensions/fm-primary-pi-watch.ts"
+  # The watch extension imports the shared watcher core at ../../bin, so the
+  # project's bin/ must carry it for the real Pi runtime to load the extension.
+  cp "$ROOT/bin/fm-primary-watch-core.ts" "$project/bin/fm-primary-watch-core.ts"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$project/.pi/extensions/fm-primary-turnend-guard.ts"
   cp \
     "$ROOT/bin/fm-sessionstart-run.sh" \

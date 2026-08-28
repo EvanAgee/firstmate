@@ -22,6 +22,7 @@ import {
   FIRSTMATE_CALM_PRESENTATION_EVENT,
 } from "./lib/fm-calm-visibility.ts";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.ts";
+import { actionableLine, parentPid, pidAlive } from "../../bin/fm-primary-watch-core.ts";
 
 type ArmResult = {
   ok: boolean;
@@ -111,21 +112,6 @@ function positiveInteger(name: string, fallback: number): number {
   return Math.floor(value);
 }
 
-function parentPid(pid: string): string {
-  const result = spawnSync("ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" });
-  if (result.status !== 0) return "";
-  return result.stdout.trim();
-}
-
-function pidAlive(pid: string): boolean {
-  try {
-    process.kill(Number(pid), 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function lockOwnership(): LockOwnership {
   let lockPid = "";
   try {
@@ -147,11 +133,6 @@ function markLoaded(): void {
   if (lockOwnership() === "other") return;
   mkdirSync(state, { recursive: true });
   writeFileSync(marker, `${extensionVersion}\n${process.pid}\n`);
-}
-
-function actionableLine(output: string): string {
-  const lines = output.split(/\r?\n/);
-  return lines.find((line) => /^(signal:|stale:|check:|heartbeat($|:))/.test(line)) || "";
 }
 
 function classifyClose(stdout: string, stderr: string, code: number | null, signal: NodeJS.Signals | null): CloseClassification {

@@ -104,13 +104,17 @@ function positiveInteger(name: string, fallback: number): number {
   return Math.floor(value);
 }
 
-function parentPid(pid: string): string {
+// These three pure signal helpers are exported so the Pi runtime adapter
+// (.pi/extensions/fm-primary-pi-watch.ts) shares them instead of keeping its
+// own copies. They stay in this already-version-hashed core so the shared set
+// of watcher files does not grow.
+export function parentPid(pid: string): string {
   const result = spawnSync("ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" });
   if (result.status !== 0) return "";
   return result.stdout.trim();
 }
 
-function pidAlive(pid: string): boolean {
+export function pidAlive(pid: string): boolean {
   try {
     process.kill(Number(pid), 0);
     return true;
@@ -119,10 +123,11 @@ function pidAlive(pid: string): boolean {
   }
 }
 
-function actionableLine(output: string): string {
+export function actionableLine(output: string): string {
   const lines = output.split(/\r?\n/);
   return lines.find((line) => /^(signal:|stale:|check:|heartbeat($|:))/.test(line)) || "";
 }
+
 let nextGenerationId = 0;
 let activeGeneration: SessionGeneration | null = null;
 let activeBinding: symbol | null = null;
