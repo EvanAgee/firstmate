@@ -209,7 +209,7 @@ test_crew_pi_launch_disables_extension_discovery() {
   # session must never discover it. It is committed, because the real ones are
   # tracked files every worktree of that project inherits.
   mkdir -p "$PROJ_DIR/.pi/extensions"
-  printf 'export default function () {}\n' > "$PROJ_DIR/.pi/extensions/fm-primary-omp-watch.ts"
+  printf 'export default function () {}\n' > "$PROJ_DIR/.pi/extensions/fm-primary-pi-watch.ts"
   git -C "$PROJ_DIR" add .pi >/dev/null 2>&1
   git -C "$PROJ_DIR" commit -q -m 'add primary-only extension' >/dev/null 2>&1
 
@@ -222,7 +222,7 @@ test_crew_pi_launch_disables_extension_discovery() {
   assert_contains "$launch" "-e '$HOME_DIR/state/$id.pi-ext.ts'" \
     "--no-extensions must not cost the crew its explicit per-task turn-end extension"
   # The launch never edits the project copy; discovery is refused in the pane.
-  [ -f "$PROJ_DIR/.pi/extensions/fm-primary-omp-watch.ts" ] \
+  [ -f "$PROJ_DIR/.pi/extensions/fm-primary-pi-watch.ts" ] \
     || fail "the launch removed a project extension instead of refusing discovery"
   pass "a crew pi launch refuses extension discovery while keeping its own sidecar"
 }

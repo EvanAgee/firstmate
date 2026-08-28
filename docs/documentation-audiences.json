@@ -508,10 +508,6 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/omp-adapter-verification.md",
-      "audience": "maintainer-verification"
-    },
-    {
       "path": "docs/orca-backend.md",
       "audience": "operator-current"
     },

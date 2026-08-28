@@ -73,7 +73,7 @@ Backend-specific setup is linked in [Documentation](#documentation).
 **Claude Code, Grok, and Pi are equal co-primary recommendations** for running the primary firstmate session, with `pi-signed` supported as Pi's distinct signed-wrapper identity.
 Claude Code uses two tracked Stop hooks for tokenless watcher continuity and rewake, Grok uses background-notify wake cycles, and Pi uses its tracked primary watcher extension.
 omp (Oh My Pi) is a Pi-family fork with the same tracked primary watcher extension; it uses omp's `session_stop` event for the turn-end guard.
-Launch a primary omp session with [`bin/fm-omp.sh`](bin/fm-omp.sh); [harness configuration](docs/configuration.md#harness-support) owns its setup contract.
+Launch a primary omp session by running plain `omp` from the Firstmate root, which natively discovers `.omp/extensions/fm-primary-omp.ts`; [harness configuration](docs/configuration.md#harness-support) owns its setup contract.
 All three have verified turn-end guard paths when launched with their documented setup.
 Pick whichever one matches your subscription and workflow.
 

@@ -290,6 +290,12 @@ Kimi was not installed on the verification machine; its bordered shape is pinned
 This guard is the refresh command after an upgrade to any matrix-covered harness; rerun it and update the versions above rather than trusting this table across releases.
 Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
 
+OMP is also outside this matrix.
+The fork classifies an OMP worker's busy and idle state from the omp-ext extension marker (agent_start/agent_end), not by reading the OMP composer, so the shared classifier was never taught OMP's status-row-plus-input-row shape.
+When the shared classifier meets an OMP composer it returns `unknown`, and every steer or injection guard defers safely rather than typing.
+Screen-based and session-file OMP steer detection from upstream (the `fm_composer_terminal_width` two-row measurement and the `fm_backend_herdr_omp_session_*` readers) is deferred to a follow-up; its portable regressions in `tests/fm-backend-herdr.test.sh` and `tests/fm-tmux-submit-busy.test.sh` self-skip behind `FM_OMP_SCREEN_DETECTION=1`, which the follow-up sets once it teaches the shared classifier OMP's shape.
+Until then, OMP worker lifecycle stays covered by the opt-in real-omp live E2E suite (`tests/fm-omp-worker-tmux-live-e2e.test.sh`).
+
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
 
 ## Herdr
@@ -1075,7 +1081,7 @@ The same command with Pi's own install directory first on PATH prints `0.84.2`.
 Pi is installed under `~/.nvm/versions/node/v22.22.0/bin`, which holds both `pi` and the `node` that owns it, so the launch derives the pin from the resolved executable rather than from a version.
 
 **Project-local extensions.**
-A crewmate worktree of firstmate carries firstmate's tracked `.pi/extensions`, which are written for a primary session; `fm-primary-omp-watch.ts` imports `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui`.
+A crewmate worktree of firstmate carries firstmate's tracked `.pi/extensions`, which are written for a primary session; `fm-primary-pi-watch.ts` imports `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui`.
 A crew Pi session that discovers them dies with a require failure and drops the pane to a raw shell.
 `pi --help` on 0.84.2 documents `--no-extensions, -ne  Disable extension discovery (explicit -e paths still work)`, so the per-task `-e` sidecar is unaffected.
 

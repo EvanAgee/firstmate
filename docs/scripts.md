@@ -123,7 +123,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
-| `fm-omp.sh`              | Canonical primary omp launcher; see [harness configuration](configuration.md#harness-support) |
 | `fm-pi-compatible-lib.sh` | Shared membership predicate for the verified Pi-compatible harness family            |
 | `fm-pi-compatible-runtimes` | The tracked single owner of that closed family allowlist                          |
 | `fm-omp-process-lib.sh`  | Exact OMP process identity shared by primary ancestry and backend liveness probes    |
