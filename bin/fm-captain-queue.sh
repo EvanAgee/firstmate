@@ -365,7 +365,7 @@ cmd_reconcile() {
         cursor=$n
         printf 'handled: [id=%s] %s\n' "$id" "$answer"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --arg answer "$answer" \
-          'any(.resolved[]; .id == $id and .answer == $answer)' >/dev/null; then
+          'any(.resolved[]; .id == $id and (.answer == $answer or .answer == "backlog-done"))' >/dev/null; then
         # Crash window: the card already moved, the cursor did not. Same answer
         # means this line was applied; advance without dropping a new answer.
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"

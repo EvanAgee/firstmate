@@ -272,6 +272,40 @@ test_only_done_cards_auto_clear() {
   pass "only cards whose backlog item is done auto-clear"
 }
 
+test_dashboard_reply_after_auto_clear_does_not_orphan() {
+  local home out rc
+  if ! have_tasks_axi; then
+    echo "skip: tasks-axi not found (dashboard reply after auto-clear)"
+    return 0
+  fi
+  home=$(make_home reply-after-clear)
+  seed_backlog "$home"
+  backlog_add "$home" card-c "Ship on merge?"
+  run_q "$home" add --id card-c --question "Ship on merge?" >/dev/null
+  backlog_done "$home" card-c
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "cleared: [id=card-c] backlog-done" \
+    "the done card should auto-clear before the late reply"
+  [ "$(resolved_answer "$home" card-c)" = backlog-done ] \
+    || fail "auto-clear did not store backlog-done"
+  append_reply "$home" card-c "Done - command ran"
+  run_q "$home" add --id card-d --question "Later?" >/dev/null
+  append_reply "$home" card-d "yes d"
+  rc=0
+  out=$(run_q "$home" reconcile) || rc=$?
+  [ "$rc" -eq 0 ] || fail "late reply after auto-clear should exit 0, got $rc"
+  assert_contains "$out" "handled: [id=card-c] Done - command ran" \
+    "a late dashboard answer after auto-clear should still print handled"
+  assert_contains "$out" "handled: [id=card-d] yes d" \
+    "later replies must not stay blocked behind the late auto-cleared id"
+  assert_not_contains "$out" "orphan:" "late reply after auto-clear must not orphan"
+  [ "$(cursor_value "$home")" = 2 ] || fail "cursor should advance past both replies, got $(cursor_value "$home")"
+  [ "$(resolved_answer "$home" card-c)" = backlog-done ] \
+    || fail "late dashboard answer overwrote the stored backlog-done resolve"
+  [ -z "$(active_ids "$home")" ] || fail "later card stayed on the board: $(active_ids "$home")"
+  pass "a late dashboard reply after auto-clear prints handled, keeps backlog-done, and does not block later replies"
+}
+
 test_dashboard_reply_still_clears_when_backlog_item_is_open() {
   local home out
   if ! have_tasks_axi; then
@@ -302,6 +336,7 @@ test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
 test_done_backlog_item_clears_card_without_a_reply
 test_only_done_cards_auto_clear
+test_dashboard_reply_after_auto_clear_does_not_orphan
 test_dashboard_reply_still_clears_when_backlog_item_is_open
 
 echo "# fm-captain-queue.test.sh: all assertions passed"
