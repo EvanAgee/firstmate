@@ -1064,11 +1064,19 @@ fm_wake_print_deduped() {
 # historical-annotation staleness check, and by this home's own bookkeeping
 # writers.
 
-fm_wake_signal_sig() {  # <file> -> "size:mtime"
+# Signature is "size:inode:mtime". Two DIFFERENT signals written to the same
+# path within one epoch second must differ: a 0-byte turn-ended marker removed
+# and recreated for the next turn keeps size 0 and, where the filesystem's mtime
+# is only whole-second (common on Linux CI), the same whole second. The inode
+# (recreation allocates a new one) and sub-second mtime (an in-place re-touch
+# keeps the inode but advances the fractional time) together distinguish both
+# same-second forms. Only the leading size field is ever parsed; the rest is an
+# opaque dedup key.
+fm_wake_signal_sig() {  # <file> -> "size:inode:mtime"
   if [ "$_FM_UNAME" = Darwin ]; then
-    stat -f '%z:%Fm' "$1" 2>/dev/null
+    stat -f '%z:%i:%Fm' "$1" 2>/dev/null
   else
-    stat -c '%s:%Y' "$1" 2>/dev/null
+    stat -c '%s:%i:%.9Y' "$1" 2>/dev/null
   fi
 }
 
