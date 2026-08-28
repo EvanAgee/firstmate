@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-captain-queue.sh - fleet-board captain cards and dashboard-answer reconcile.
+# fm-captain-queue.sh - fleet-board captain cards, dashboard-answer reconcile, and done-item auto-retire.
 #
 # The dashboard posts each answer as one JSON line on state/captain-replies.jsonl
 # with the card's own id, and wakes firstmate through the home-local
