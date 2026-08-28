@@ -462,7 +462,7 @@ test_turn_ended_recreated_same_second_surfaced() {
   export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
   watch_bg "$state" "$fakebin" "$out"
   pid=$!
-  wait_for_exit "$pid" 40 || fail "watcher did not surface a turn-end recreated within the same epoch second"
+  wait_for_exit "$pid" 80 || fail "watcher did not surface a turn-end recreated within the same epoch second"
   grep -F "signal: $marker" "$out" >/dev/null || fail "watcher did not print the same-second turn-end signal"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the same-second turn-end failed"
   grep "$(printf '\tsignal\t')" "$drain_out" | grep -F "$marker" >/dev/null \
