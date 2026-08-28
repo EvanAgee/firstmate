@@ -95,10 +95,11 @@ set_mtime() {  # <epoch> <file>
   fi
 }
 
-# Signature a primed .seen-* marker must hold so the per-poll signal scan does not
-# fire on a pre-existing status (mirrors fm-watch.sh's stat_sig exactly).
+# Signature a primed .seen-* marker must hold so the per-poll signal scan does
+# not fire on a pre-existing status. Delegates to the one owner in
+# bin/fm-wake-lib.sh so it can never drift from the format the watcher computes.
 seen_sig() {
-  if [ "$(uname)" = Darwin ]; then stat -f '%z:%Fm' "$1" 2>/dev/null; else stat -c '%s:%Y' "$1" 2>/dev/null; fi
+  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_signal_sig "$2"' _ "$ROOT" "$1"
 }
 
 # Prime <file>'s .seen-* suppressor to its CURRENT signature, so the per-poll

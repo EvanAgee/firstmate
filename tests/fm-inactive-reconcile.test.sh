@@ -114,7 +114,7 @@ outcome_count() { # <home> <suffix>
 
 prime_seen() { # <state> <status>
   local state=$1 status=$2 sig
-  if [ "$(uname)" = Darwin ]; then sig=$(stat -f '%z:%Fm' "$status"); else sig=$(stat -c '%s:%Y' "$status"); fi
+  sig=$(bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_signal_sig "$2"' _ "$ROOT" "$status")
   printf '%s' "$sig" > "$state/.seen-$(basename "$status" | tr '.' '_')"
 }
 
