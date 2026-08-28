@@ -74,7 +74,9 @@ test_no_markers_is_unknown() {
 
 test_crew_resolution_defaults_to_own() {
   local result
-  result=$(detect_with OMPCODE=1 CLAUDECODE=1 "$HARNESS" crew)
+  result=$(env -u CLAUDECODE -u OMPCODE -u PI_CODING_AGENT -u GROK_AGENT \
+      -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u FM_PI_HARNESS \
+      OMPCODE=1 CLAUDECODE=1 "$HARNESS" crew)
   assert_contains "$result" "omp" "crew resolution with no config should mirror own (omp), got: $result"
 }
 

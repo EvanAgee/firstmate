@@ -278,7 +278,6 @@ test_primary_marker_refuses_whitespace_identity() {
   cp "$ROOT/bin/fm-pi-compatible-runtimes" "$fixture/bin/fm-pi-compatible-runtimes"
   : > "$entry"
   git init -q -b main "$fixture"
-  set +e
   out=$(EXTENSION="$fixture/.omp/extensions/fm-primary-omp.ts" OMP_ENTRY="$entry" \
     FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" FM_STATE_OVERRIDE="$fixture/state" \
     node --input-type=module 2>&1 <<'JS'
@@ -296,7 +295,6 @@ extension.default(api);
 JS
   )
   rc=$?
-  set -e
   [ "$rc" -ne 0 ] || fail "OMP primary marker accepted a whitespace-bearing entrypoint"
   assert_contains "$out" 'OMP primary identity paths containing whitespace are unsupported' \
     "OMP primary whitespace refusal was not actionable"

@@ -280,7 +280,7 @@ test_omp_composer_and_submission_use_verified_two_row_structure() {
   printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/bun"
   chmod +x "$fakebin/bun"
   top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
-  width=$(fm_composer_terminal_width "$top" "$bun") || fail "could not measure OMP fixture width"
+  width=$(fm_composer_terminal_width "$top" "$bun" "") || fail "could not measure OMP fixture width"
 
   printf '%s\n' "$top" > "$composer"
   printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$composer"

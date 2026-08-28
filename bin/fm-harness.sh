@@ -70,9 +70,14 @@ omp_ancestry_matches() {  # <exact|launch-shape>
           omp_launch_argv_shape "$args" && return 0
         fi
         ;;
-      *claude*|*codex*|*opencode*|*grok*|kimi|pi|pi-signed) return 1 ;;
+      *claude*|*codex*|*opencode*|*grok*|kimi|pi|pi-signed|muse|muse-bin-*) return 1 ;;
       node*|python*)
         args=$(ps -o args= -p "$pid" 2>/dev/null)
+        # Cursor runs as a bundled node script, so its own owner decides from
+        # Cursor's name or install tree, not a bare name pattern.
+        if fm_cursor_process_matches "$comm" "$args" "${args%% *}"; then
+          return 1
+        fi
         case "$args" in
           *claude*|*codex*|*opencode*|*grok*|*" pi "*|*/pi) return 1 ;;
         esac ;;
