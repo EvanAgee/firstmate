@@ -80,6 +80,10 @@ JS
 case "$*" in
   *"tpgid="*"$FM_TEST_AGENT_PID"*) printf '%s\n' "$FM_TEST_AGENT_PID" ;;
   *"args="*"$FM_TEST_AGENT_PID"*) printf '%s %s --auto-approve\n' "$FM_TEST_OMP_BUN" "$FM_TEST_OMP_BIN" ;;
+  # The held fixture process runs as node standing in for bun, so its real comm
+  # is node; report bun for the agent pid so the tmux Bun/OMP identity probe
+  # sees the same runtime the args line and pane command already describe.
+  *"comm="*"$FM_TEST_AGENT_PID"*) printf '%s\n' bun ;;
   *) exec /usr/bin/ps "$@" ;;
 esac
 SH
