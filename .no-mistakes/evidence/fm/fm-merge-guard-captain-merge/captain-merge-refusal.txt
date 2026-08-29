@@ -1,0 +1,6 @@
+command_exit=1
+error: captain approval required; refusing to merge captain-merge project "pto"
+error: registry: - pto [no-mistakes, factory-enabled, captain-merge (HARD: firstmate never merges without per-PR approval), evidence-required] - scratch registry proof
+error: PR: https://github.com/EvanAgee/faapto/pull/163
+error: pass --captain-approved https://github.com/EvanAgee/faapto/pull/163 only after a current explicit captain instruction naming this PR
+stdout_bytes=0
