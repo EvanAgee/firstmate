@@ -30,6 +30,8 @@
 #   (v) brackets in a legacy description do not enable captain-merge
 #   (w) a registry parser failure refuses before checking or merging
 #   (x) a mismatched approval still refuses for an unguarded project
+#   (y) project metadata must contain one nonempty project identity
+#   (z) duplicate captain approval flags refuse before policy lookup
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -393,6 +395,85 @@ test_unguarded_project_refuses_mismatched_approval() {
   assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
     "unguarded-approval-mismatch: gh-axi pr merge was invoked"
   pass "fm-pr-merge keeps generic mismatch refusal for unguarded projects"
+}
+
+test_project_metadata_requires_one_nonempty_identity() {
+  local case_dir variant rc
+  for variant in missing empty duplicate; do
+    case_dir=$(make_case "project-metadata-$variant")
+    case "$variant" in
+      missing)
+        fm_write_meta "$case_dir/state/task-x1.meta" \
+          'window=fm-task-x1' \
+          "worktree=$case_dir/wt" \
+          'kind=ship' \
+          'mode=no-mistakes'
+        ;;
+      empty)
+        fm_write_meta "$case_dir/state/task-x1.meta" \
+          'window=fm-task-x1' \
+          "worktree=$case_dir/wt" \
+          'project=' \
+          'kind=ship' \
+          'mode=no-mistakes'
+        ;;
+      duplicate)
+        fm_write_meta "$case_dir/state/task-x1.meta" \
+          'window=fm-task-x1' \
+          "worktree=$case_dir/wt" \
+          "project=$case_dir/project" \
+          "project=$case_dir/other-project" \
+          'kind=ship' \
+          'mode=no-mistakes'
+        ;;
+    esac
+    add_gh_mocks "$case_dir" 1919191919191919191919191919191919191919
+    : > "$case_dir/gh-axi.log"
+    : > "$case_dir/gh-axi-api.log"
+
+    set +e
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/55 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expect_code 1 "$rc" "project-metadata-$variant: invalid project identity should refuse"
+    assert_grep 'missing, empty, or ambiguous project identity' "$case_dir/stderr" \
+      "project-metadata-$variant: refusal did not explain the invalid project identity"
+    [ ! -s "$case_dir/gh-axi-api.log" ] \
+      || fail "project-metadata-$variant: review threads were checked"
+    assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+      "project-metadata-$variant: gh-axi pr merge was invoked"
+  done
+  pass "fm-pr-merge requires one nonempty project identity"
+}
+
+test_duplicate_captain_approval_refuses() {
+  local case_dir rc
+  case_dir=$(make_case duplicate-captain-approval)
+  printf '%s\n' \
+    '- project [no-mistakes captain-merge] - fixture (added 2026-08-29)' \
+    > "$case_dir/data/projects.md"
+  add_gh_mocks "$case_dir" 2020202020202020202020202020202020202020
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh-axi-api.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/56 \
+    --captain-approved https://github.com/example/repo/pull/55 \
+    --captain-approved https://github.com/example/repo/pull/56 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 2 "$rc" "duplicate-captain-approval: repeated approval flags should refuse"
+  assert_grep '--captain-approved may be supplied only once' "$case_dir/stderr" \
+    "duplicate-captain-approval: refusal did not explain the duplicate flag"
+  [ ! -s "$case_dir/gh-axi-api.log" ] \
+    || fail "duplicate-captain-approval: review threads were checked"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "duplicate-captain-approval: gh-axi pr merge was invoked"
+  pass "fm-pr-merge refuses duplicate captain approval flags"
 }
 
 test_records_pr_and_head_before_merging() {
@@ -794,3 +875,5 @@ test_project_absent_from_registry_merges
 test_legacy_description_brackets_do_not_enable_captain_merge
 test_registry_parser_failure_refuses_before_merge
 test_unguarded_project_refuses_mismatched_approval
+test_project_metadata_requires_one_nonempty_identity
+test_duplicate_captain_approval_refuses

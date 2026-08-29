@@ -80,6 +80,7 @@ shift 2
 # confused with gh-axi flags.
 allow_unresolved_threads=0
 captain_approved_url=
+captain_approved_seen=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --allow-unresolved-threads)
@@ -87,10 +88,15 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --captain-approved)
+      if [ "$captain_approved_seen" -eq 1 ]; then
+        echo "error: --captain-approved may be supplied only once" >&2
+        exit 2
+      fi
       if [ "$#" -lt 2 ] || [ -z "$2" ]; then
         echo "error: --captain-approved requires the canonical PR URL" >&2
         exit 2
       fi
+      captain_approved_seen=1
       captain_approved_url=$2
       shift 2
       ;;
@@ -181,20 +187,30 @@ if [ ! -f "$META" ] || [ -L "$META" ]; then
   exit 1
 fi
 
-PROJECT_PATH=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-PROJECT=
-[ -z "$PROJECT_PATH" ] || PROJECT=$(basename "$PROJECT_PATH")
+if ! PROJECT_RECORD=$(grep '^project=' "$META"); then
+  echo "error: task metadata has a missing, empty, or ambiguous project identity" >&2
+  exit 1
+fi
+case "$PROJECT_RECORD" in
+  project=|*$'\n'*)
+    echo "error: task metadata has a missing, empty, or ambiguous project identity" >&2
+    exit 1
+    ;;
+esac
+PROJECT_PATH=${PROJECT_RECORD#project=}
+if ! PROJECT=$(basename -- "$PROJECT_PATH") || [ -z "$PROJECT" ]; then
+  echo "error: task metadata has a missing, empty, or ambiguous project identity" >&2
+  exit 1
+fi
 captain_merge_line=
-if [ -n "$PROJECT" ]; then
-  if captain_merge_line=$("$SCRIPT_DIR/fm-project-mode.sh" --captain-merge "$PROJECT"); then
-    :
-  else
-    captain_merge_status=$?
-    captain_merge_line=
-    if [ "$captain_merge_status" -ne 1 ]; then
-      echo "error: could not read captain-merge policy for project \"$PROJECT\"" >&2
-      exit 1
-    fi
+if captain_merge_line=$("$SCRIPT_DIR/fm-project-mode.sh" --captain-merge "$PROJECT"); then
+  :
+else
+  captain_merge_status=$?
+  captain_merge_line=
+  if [ "$captain_merge_status" -ne 1 ]; then
+    echo "error: could not read captain-merge policy for project \"$PROJECT\"" >&2
+    exit 1
   fi
 fi
 if [ -n "$captain_merge_line" ]; then
