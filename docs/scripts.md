@@ -63,7 +63,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `backends/orca.sh`       | Experimental Orca backend adapter owning both worktree and terminal                  |
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
-| `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |
+| `fm-project-mode.sh`     | Resolve a project's registered delivery posture and PR merge policy from `data/projects.md` |
 | `fm-merge-local.sh`      | Fast-forward a project's local default branch: an approved `local-only` landing, or a PR-bound task's outage landing while GitHub is unreachable |
 | `fm-outage-sync.sh`      | On GitHub's return, reconcile each outage landing: fast-forward-push local main, dispatch its deferred workflows, escalate on divergence |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
@@ -120,7 +120,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-github-health.sh`    | Probe GitHub reachability, own the `state/.github-down` flag, and report each down/up transition once |
 | `fm-pr-check-migrate.sh` | Quarantine older task polls without execution and rebuild only canonical polls       |
 | `fm-pr-check.sh`         | Record validated `pr=` and `pr_head=` values, then atomically arm a static merge poll |
-| `fm-pr-merge.sh`         | Record PR metadata, then merge a task's canonical full GitHub URL                    |
+| `fm-pr-merge.sh`         | Enforce captain approval and review-thread checks, record PR metadata, then merge a task's canonical full GitHub URL |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |

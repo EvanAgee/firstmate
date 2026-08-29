@@ -32,10 +32,15 @@
 #
 # --raw prints the registered annotation unmapped, so a caller that must tell a
 # conditional policy apart from a flat mode sees "no-mistakes-prod-only" itself.
+# --captain-merge prints the complete registry line and exits zero when the
+# project's posture annotation contains the exact captain-merge token. The
+# annotation may use punctuation or whitespace between tokens. It prints
+# nothing and exits 1 when the registry, project, or token is absent. Other
+# failures keep their original nonzero status.
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" and warns
 # to stderr, so a typo never silently drops the gate.
-# Usage: fm-project-mode.sh [--raw] <project-name>
+# Usage: fm-project-mode.sh [--raw|--captain-merge] <project-name>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,27 +49,42 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/projects.md"
 RAW=0
-if [ "${1:-}" = "--raw" ]; then
-  RAW=1
-  shift
-fi
-NAME=${1:?usage: fm-project-mode.sh [--raw] <project-name>}
+CAPTAIN_MERGE=0
+case "${1:-}" in
+  --raw) RAW=1; shift ;;
+  --captain-merge) CAPTAIN_MERGE=1; shift ;;
+esac
+NAME=${1:?usage: fm-project-mode.sh [--raw|--captain-merge] <project-name>}
 
 if [ ! -f "$REG" ]; then
+  [ "$CAPTAIN_MERGE" -eq 0 ] || exit 1
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
   echo "no-mistakes off"
   exit 0
 fi
 
-# awk emits "<mode> <yolo>" (one line) or nothing if the project is absent.
-parsed=$(awk -v n="$NAME" '
+# awk emits "<mode> <yolo>", the full captain-merge registry line, or nothing.
+parsed=$(awk -v n="$NAME" -v captain_merge="$CAPTAIN_MERGE" '
   $1=="-" && $2==n {
-    mode="no-mistakes"; yolo="off";
+    annotation="";
     if ($3 ~ /^\[/) {
-      s="";
-      for (i=3; i<=NF; i++) { s = s (s==""?"":" ") $i; if ($i ~ /\]$/) break }
-      gsub(/^\[|\]$/, "", s);           # strip the surrounding brackets
-      k = split(s, a, " ");
+      for (i=3; i<=NF; i++) {
+        annotation = annotation (annotation==""?"":" ") $i;
+        if ($i ~ /\]$/) break;
+      }
+      if (annotation !~ /\]$/) annotation="";
+      gsub(/^\[|\]$/, "", annotation);
+    }
+    if (captain_merge == 1) {
+      tokens=annotation;
+      gsub(/[^[:alnum:]_-]+/, " ", tokens);
+      count=split(tokens, token, " ");
+      for (j=1; j<=count; j++) if (token[j]=="captain-merge") { print; break; }
+      exit;
+    }
+    mode="no-mistakes"; yolo="off";
+    if (annotation != "") {
+      k = split(annotation, a, " ");
       if (a[1] != "" && a[1] != "+yolo") mode = a[1];
       for (j=1; j<=k; j++) if (a[j]=="+yolo") yolo="on";
     }
@@ -73,8 +93,14 @@ parsed=$(awk -v n="$NAME" '
 ' "$REG")
 
 if [ -z "$parsed" ]; then
+  [ "$CAPTAIN_MERGE" -eq 0 ] || exit 1
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
   echo "no-mistakes off"
+  exit 0
+fi
+
+if [ "$CAPTAIN_MERGE" -eq 1 ]; then
+  printf '%s\n' "$parsed"
   exit 0
 fi
 
