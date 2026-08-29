@@ -8,6 +8,13 @@
 # --merge, --rebase, or --method after the optional -- separator. Extra args
 # must not include --repo or -R because the repository comes only from the URL.
 #
+# A project whose data/projects.md bracket list contains the exact
+# captain-merge token requires --captain-approved <pr-url>. The approval URL
+# must exactly equal the canonical PR URL produced by bin/fm-pr-lib.sh. This
+# per-PR flag bypasses only the captain-merge refusal and is logged to stderr.
+# The caller must pass it before the optional -- separator. No environment or
+# configuration value supplies approval.
+#
 # Before merging, the PR's review threads must all be resolved. GitHub's
 # mergeable state covers checks but not review conversations, so a green PR can
 # still carry open CodeRabbit, Copilot, or human feedback. This script asks
@@ -19,7 +26,8 @@
 # --allow-unresolved-threads bypasses only this gate and is logged so it is
 # never silent; the caller must pass it before the optional -- separator.
 # Usage:
-#   fm-pr-merge.sh <task-id> <pr-url> [--allow-unresolved-threads] \
+#   fm-pr-merge.sh <task-id> <pr-url> [--captain-approved <pr-url>] \
+#     [--allow-unresolved-threads] \
 #     [-- <extra gh-axi pr merge args>]
 set -eu
 
@@ -34,6 +42,19 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+
+usage() {
+  printf '%s\n' \
+    'Usage: fm-pr-merge.sh <task-id> <pr-url> [--captain-approved <pr-url>] [--allow-unresolved-threads] [-- <extra gh-axi pr merge args>]' \
+    '' \
+    '  --captain-approved <pr-url>  Bypass the captain-merge refusal only when this' \
+    '                               value exactly matches the canonical PR URL.' \
+    '  --allow-unresolved-threads   Bypass only the review-thread refusal.'
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -55,14 +76,36 @@ PR_REPO=$FM_PR_REPO
 PR_NUMBER=$FM_PR_NUMBER
 shift 2
 
-# --allow-unresolved-threads bypasses only the review-thread gate. It is read
-# before the optional -- separator so it is never confused with a gh-axi flag.
+# Approval flags are read before the optional -- separator so they are never
+# confused with gh-axi flags.
 allow_unresolved_threads=0
-if [ "${1:-}" = "--allow-unresolved-threads" ]; then
-  allow_unresolved_threads=1
-  shift
+captain_approved_url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --allow-unresolved-threads)
+      allow_unresolved_threads=1
+      shift
+      ;;
+    --captain-approved)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+        echo "error: --captain-approved requires the canonical PR URL" >&2
+        exit 2
+      fi
+      captain_approved_url=$2
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *) break ;;
+  esac
+done
+
+if [ -n "$captain_approved_url" ] && [ "$captain_approved_url" != "$URL" ]; then
+  echo "error: --captain-approved URL must exactly match $URL" >&2
+  exit 1
 fi
-[ "${1:-}" = "--" ] && shift
 
 caller_has_merge_method() {
   local arg
@@ -141,6 +184,26 @@ META="$STATE/$ID.meta"
 if [ ! -f "$META" ] || [ -L "$META" ]; then
   echo "error: task metadata is unavailable" >&2
   exit 1
+fi
+
+PROJECT_PATH=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+PROJECT=
+[ -z "$PROJECT_PATH" ] || PROJECT=$(basename "$PROJECT_PATH")
+captain_merge_line=
+if [ -n "$PROJECT" ]; then
+  captain_merge_line=$("$SCRIPT_DIR/fm-project-mode.sh" --captain-merge "$PROJECT" 2>/dev/null) \
+    || captain_merge_line=
+fi
+if [ -n "$captain_merge_line" ]; then
+  if [ "$captain_approved_url" = "$URL" ]; then
+    echo "note: --captain-approved matched $URL; bypassing the captain-merge refusal for project \"$PROJECT\"" >&2
+  else
+    echo "error: captain approval required; refusing to merge captain-merge project \"$PROJECT\"" >&2
+    echo "error: registry: $captain_merge_line" >&2
+    echo "error: PR: $URL" >&2
+    echo "error: pass --captain-approved $URL only after a current explicit captain instruction naming this PR" >&2
+    exit 1
+  fi
 fi
 
 "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"
