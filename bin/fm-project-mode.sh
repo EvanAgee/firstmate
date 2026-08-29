@@ -33,9 +33,10 @@
 # --raw prints the registered annotation unmapped, so a caller that must tell a
 # conditional policy apart from a flat mode sees "no-mistakes-prod-only" itself.
 # --captain-merge prints the complete registry line and exits zero when the
-# project's bracket list contains the exact captain-merge token. A parenthesis
-# may immediately follow the token. It prints nothing and exits non-zero when
-# the registry, project, or token is absent.
+# project's posture annotation contains the exact captain-merge token. The
+# annotation may use punctuation or whitespace between tokens. It prints
+# nothing and exits 1 when the registry, project, or token is absent. Other
+# failures keep their original nonzero status.
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" and warns
 # to stderr, so a typo never silently drops the gate.
@@ -65,20 +66,25 @@ fi
 # awk emits "<mode> <yolo>", the full captain-merge registry line, or nothing.
 parsed=$(awk -v n="$NAME" -v captain_merge="$CAPTAIN_MERGE" '
   $1=="-" && $2==n {
-    if (captain_merge == 1) {
-      bracket_start=index($0, "["); bracket_end=index($0, "]");
-      if (bracket_start > 0 && bracket_end > bracket_start) {
-        annotation=substr($0, bracket_start + 1, bracket_end - bracket_start - 1);
-        if ((" " annotation " ") ~ /[[:space:]]captain-merge([[:space:]]|\()/) print;
+    annotation="";
+    if ($3 ~ /^\[/) {
+      for (i=3; i<=NF; i++) {
+        annotation = annotation (annotation==""?"":" ") $i;
+        if ($i ~ /\]$/) break;
       }
+      if (annotation !~ /\]$/) annotation="";
+      gsub(/^\[|\]$/, "", annotation);
+    }
+    if (captain_merge == 1) {
+      tokens=annotation;
+      gsub(/[^[:alnum:]_-]+/, " ", tokens);
+      count=split(tokens, token, " ");
+      for (j=1; j<=count; j++) if (token[j]=="captain-merge") { print; break; }
       exit;
     }
     mode="no-mistakes"; yolo="off";
-    if ($3 ~ /^\[/) {
-      s="";
-      for (i=3; i<=NF; i++) { s = s (s==""?"":" ") $i; if ($i ~ /\]$/) break }
-      gsub(/^\[|\]$/, "", s);           # strip the surrounding brackets
-      k = split(s, a, " ");
+    if (annotation != "") {
+      k = split(annotation, a, " ");
       if (a[1] != "" && a[1] != "+yolo") mode = a[1];
       for (j=1; j<=k; j++) if (a[j]=="+yolo") yolo="on";
     }

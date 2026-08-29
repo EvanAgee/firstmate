@@ -102,11 +102,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -n "$captain_approved_url" ] && [ "$captain_approved_url" != "$URL" ]; then
-  echo "error: --captain-approved URL must exactly match $URL" >&2
-  exit 1
-fi
-
 caller_has_merge_method() {
   local arg
   for arg in "$@"; do
@@ -191,8 +186,16 @@ PROJECT=
 [ -z "$PROJECT_PATH" ] || PROJECT=$(basename "$PROJECT_PATH")
 captain_merge_line=
 if [ -n "$PROJECT" ]; then
-  captain_merge_line=$("$SCRIPT_DIR/fm-project-mode.sh" --captain-merge "$PROJECT" 2>/dev/null) \
-    || captain_merge_line=
+  if captain_merge_line=$("$SCRIPT_DIR/fm-project-mode.sh" --captain-merge "$PROJECT"); then
+    :
+  else
+    captain_merge_status=$?
+    captain_merge_line=
+    if [ "$captain_merge_status" -ne 1 ]; then
+      echo "error: could not read captain-merge policy for project \"$PROJECT\"" >&2
+      exit 1
+    fi
+  fi
 fi
 if [ -n "$captain_merge_line" ]; then
   if [ "$captain_approved_url" = "$URL" ]; then
@@ -204,6 +207,9 @@ if [ -n "$captain_merge_line" ]; then
     echo "error: pass --captain-approved $URL only after a current explicit captain instruction naming this PR" >&2
     exit 1
   fi
+elif [ -n "$captain_approved_url" ] && [ "$captain_approved_url" != "$URL" ]; then
+  echo "error: --captain-approved URL must exactly match $URL" >&2
+  exit 1
 fi
 
 "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"

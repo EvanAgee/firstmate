@@ -27,6 +27,9 @@
 #   (s) a matching --captain-approved bypass is logged to stderr and merges
 #   (t) a project without the exact captain-merge token merges normally
 #   (u) a project absent from an existing registry merges normally
+#   (v) brackets in a legacy description do not enable captain-merge
+#   (w) a registry parser failure refuses before checking or merging
+#   (x) a mismatched approval still refuses for an unguarded project
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -188,7 +191,7 @@ test_captain_merge_refuses_without_approval() {
   local case_dir project registry_line rc
   case_dir=$(make_case captain-merge-refusal)
   project=project
-  registry_line="- $project [no-mistakes +yolo captain-merge (explicit approval required)] - fixture (added 2026-08-29)"
+  registry_line="- $project [no-mistakes,captain-merge(explicit approval required),evidence-required] - fixture (added 2026-08-29)"
   printf '%s\n' "$registry_line" > "$case_dir/data/projects.md"
   add_gh_mocks "$case_dir" 1111111111111111111111111111111111111111
   : > "$case_dir/gh-axi.log"
@@ -217,12 +220,11 @@ test_captain_merge_refuses_without_approval() {
 }
 
 test_captain_approval_refuses_a_different_pr() {
-  local case_dir project rc
+  local case_dir project registry_line rc
   case_dir=$(make_case captain-approval-mismatch)
   project=project
-  printf '%s\n' \
-    "- $project [no-mistakes captain-merge] - fixture (added 2026-08-29)" \
-    > "$case_dir/data/projects.md"
+  registry_line="- $project [no-mistakes captain-merge] - fixture (added 2026-08-29)"
+  printf '%s\n' "$registry_line" > "$case_dir/data/projects.md"
   add_gh_mocks "$case_dir" 1212121212121212121212121212121212121212
   : > "$case_dir/gh-axi.log"
   : > "$case_dir/gh-axi-api.log"
@@ -235,8 +237,12 @@ test_captain_approval_refuses_a_different_pr() {
   set -e
 
   expect_code 1 "$rc" "captain-approval-mismatch: a different PR URL should refuse"
-  assert_grep 'must exactly match https://github.com/example/repo/pull/48' "$case_dir/stderr" \
-    "captain-approval-mismatch: refusal did not name the required PR URL"
+  assert_grep "captain-merge project \"$project\"" "$case_dir/stderr" \
+    "captain-approval-mismatch: refusal did not name the project"
+  assert_grep "$registry_line" "$case_dir/stderr" \
+    "captain-approval-mismatch: refusal did not show the registry line"
+  assert_grep 'error: PR: https://github.com/example/repo/pull/48' "$case_dir/stderr" \
+    "captain-approval-mismatch: refusal did not name the canonical PR URL"
   [ ! -s "$case_dir/gh-axi-api.log" ] \
     || fail "captain-approval-mismatch: review threads were checked before refusal"
   assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
@@ -311,6 +317,82 @@ test_project_absent_from_registry_merges() {
   grep -qxF 'pr merge 51 --repo example/repo --squash' "$case_dir/gh-axi.log" \
     || fail "project-absent-from-registry: gh-axi pr merge was not invoked"
   pass "fm-pr-merge does not require the flag for a project absent from the registry"
+}
+
+test_legacy_description_brackets_do_not_enable_captain_merge() {
+  local case_dir rc
+  case_dir=$(make_case legacy-description-brackets)
+  printf '%s\n' \
+    '- project - legacy description [captain-merge] (added 2026-08-29)' \
+    > "$case_dir/data/projects.md"
+  add_gh_mocks "$case_dir" 1616161616161616161616161616161616161616
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/52 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "legacy-description-brackets: description text should not require approval"
+  grep -qxF 'pr merge 52 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "legacy-description-brackets: gh-axi pr merge was not invoked"
+  pass "fm-pr-merge ignores captain-merge brackets outside the posture annotation"
+}
+
+test_registry_parser_failure_refuses_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case registry-parser-failure)
+  printf '%s\n' \
+    '- project [no-mistakes captain-merge] - fixture (added 2026-08-29)' \
+    > "$case_dir/data/projects.md"
+  add_gh_mocks "$case_dir" 1717171717171717171717171717171717171717
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 2' > "$case_dir/fakebin/awk"
+  chmod +x "$case_dir/fakebin/awk"
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh-axi-api.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/53 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "registry-parser-failure: policy read failure should refuse"
+  assert_grep 'could not read captain-merge policy for project "project"' "$case_dir/stderr" \
+    "registry-parser-failure: refusal did not name the policy read failure"
+  [ ! -s "$case_dir/gh-axi-api.log" ] \
+    || fail "registry-parser-failure: review threads were checked after a policy read failure"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "registry-parser-failure: gh-axi pr merge was invoked after a policy read failure"
+  pass "fm-pr-merge fails closed when the registry parser fails"
+}
+
+test_unguarded_project_refuses_mismatched_approval() {
+  local case_dir rc
+  case_dir=$(make_case unguarded-approval-mismatch)
+  printf '%s\n' \
+    '- project [no-mistakes] - fixture (added 2026-08-29)' \
+    > "$case_dir/data/projects.md"
+  add_gh_mocks "$case_dir" 1818181818181818181818181818181818181818
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh-axi-api.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/54 \
+    --captain-approved https://github.com/example/repo/pull/53 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "unguarded-approval-mismatch: a different PR URL should refuse"
+  assert_grep 'must exactly match https://github.com/example/repo/pull/54' "$case_dir/stderr" \
+    "unguarded-approval-mismatch: refusal did not name the canonical PR URL"
+  [ ! -s "$case_dir/gh-axi-api.log" ] \
+    || fail "unguarded-approval-mismatch: review threads were checked before refusal"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "unguarded-approval-mismatch: gh-axi pr merge was invoked"
+  pass "fm-pr-merge keeps generic mismatch refusal for unguarded projects"
 }
 
 test_records_pr_and_head_before_merging() {
@@ -709,3 +791,6 @@ test_captain_approval_refuses_a_different_pr
 test_matching_captain_approval_bypasses_and_logs
 test_project_without_captain_merge_token_merges
 test_project_absent_from_registry_merges
+test_legacy_description_brackets_do_not_enable_captain_merge
+test_registry_parser_failure_refuses_before_merge
+test_unguarded_project_refuses_mismatched_approval
