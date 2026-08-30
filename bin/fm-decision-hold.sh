@@ -184,6 +184,14 @@ validate_iso_date() {  # <label> <value>
   [ "$parsed" = "$value" ] || fail "$label is not a valid calendar date: $value"
 }
 
+validate_future_date() {  # <label> <value>
+  local label=$1 value=$2 today
+  validate_iso_date "$label" "$value"
+  today=$(date +%F) || fail "could not determine today's date"
+  [ "${value//-/}" -gt "${today//-/}" ] \
+    || fail "$label must be later than today: $value"
+}
+
 sha256_text() {  # <text>
   if command -v shasum >/dev/null 2>&1; then
     printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
@@ -782,7 +790,7 @@ command_park() {
   load_decision "$decision_file"
   if [ -n "$until" ]; then
     validate_one_line until "$until"
-    validate_iso_date until "$until"
+    validate_future_date until "$until"
     mode=future
     until_record=$until
   fi

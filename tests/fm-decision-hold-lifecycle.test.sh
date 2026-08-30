@@ -662,7 +662,7 @@ test_declined_decision_closes_without_routed_work() {
 # The same identity must leave the active captain queue with its reason and the
 # captain's exact decision preserved for the later revisit.
 test_parked_decision_keeps_identity_and_clears_captain_action() {
-  local home id parked future inactive show today help
+  local home id parked future inactive show today help before invalid_until
   home=$(make_home parked-decision)
   id=sample-park-review
   today=$(date +%F)
@@ -703,6 +703,18 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
     || fail "a parked decision did not satisfy the completion gate"
 
   printf 'Leave the dated choice unchanged until the review date.\n' > "$home/future-decision.txt"
+  before=$(tasks_in "$home" show "$future" --full)
+  for invalid_until in "$today" 2000-01-01; do
+    if run_decisions "$home" park "$id" revisit-on-date --decision-file "$home/future-decision.txt" \
+      --until "$invalid_until" > "$home/invalid-until.out" 2> "$home/invalid-until.err"; then
+      fail "park accepted a revisit date that was not later than today: $invalid_until"
+    fi
+    assert_grep "until must be later than today: $invalid_until" "$home/invalid-until.err" \
+      "park did not explain why it refused a non-future revisit date"
+    show=$(tasks_in "$home" show "$future" --full)
+    [ "$show" = "$before" ] \
+      || fail "refusing a non-future revisit date changed the active captain hold"
+  done
   run_decisions "$home" park "$id" revisit-on-date --decision-file "$home/future-decision.txt" \
     --until 2099-12-31 >/dev/null \
     || fail "park could not defer a captain hold until a date"
