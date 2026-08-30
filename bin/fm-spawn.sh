@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--issue <ref>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--class <class>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--captain-override <reason>] [--backend <name>] [--issue <ref>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--class <class>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--captain-override <reason>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -38,6 +38,11 @@
 #   agent-state classifier (tmux or herdr), refuses unless a still-present
 #   endpoint's shell is sitting in the recorded worktree, and clears the
 #   previous harness's per-task wiring before arming the new incarnation.
+#   --class <class> resolves a crewmate or scout runtime through
+#   bin/fm-dispatch-resolve.sh. When config/crew-dispatch.json exists, fresh
+#   crewmate and scout spawns require --class unless they use the raw launch
+#   command escape hatch. --class cannot be combined with --harness, --model,
+#   or --effort unless --captain-override records why this task differs.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are profile axes
@@ -105,11 +110,11 @@
 #   even when they select different backends. A fresh spawn first takes the
 #   per-home task-set lock and refuses rather than waits when forced teardown owns
 #   it; relaunch is exempt because the existing task's control lock covers it.
-#   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
-#   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
-#   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation, and a spawn naming a rung that file marks "enabled": false
-#   is refused outright - a switched-off rung is a hard lock, not a preference.
+#   With no class or harness arg, a crewmate/scout spawn resolves the CREW
+#   harness only when config/crew-dispatch.json is absent. When that file exists,
+#   a fresh crewmate/scout spawn requires --class and resolves the runtime in
+#   shell. A spawn naming a rung that file marks "enabled": false is refused
+#   outright - a switched-off rung is a hard lock, not a preference.
 #   A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
@@ -179,12 +184,13 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo/--issue
+#   source of truth; shared --scout/--class/--harness/--model/--effort/--captain-override/--backend/--mode/--yolo/--issue
 #   applies to every pair (each pair resolves bare #n refs against its own project repo).
 #   A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
-#   If config/crew-dispatch.json exists, shared --harness is required for crewmate
-#   and scout batches. The loop lives here, in bash, so callers never hand-write a
+#   If config/crew-dispatch.json exists, shared --class is required for crewmate
+#   and scout batches unless the raw launch command escape hatch is used. The
+#   loop lives here, in bash, so callers never hand-write a
 #   multi-task shell loop (the tool shell is zsh, which does not word-split unquoted
 #   $vars and silently breaks ad-hoc `for ... in $pairs` loops).
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
@@ -329,6 +335,8 @@ KIND_SET=0
 HARNESS_ARG=
 MODEL=
 EFFORT=
+DISPATCH_CLASS=
+CAPTAIN_OVERRIDE=
 BACKEND_ARG=
 MODE=
 YOLO=
@@ -336,6 +344,8 @@ TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+DISPATCH_CLASS_SET=0
+CAPTAIN_OVERRIDE_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -354,6 +364,8 @@ for a in "$@"; do
       harness) HARNESS_ARG=$a; HARNESS_SET=1 ;;
       model) MODEL=$a; MODEL_SET=1 ;;
       effort) EFFORT=$a; EFFORT_SET=1 ;;
+      class) DISPATCH_CLASS=$a; DISPATCH_CLASS_SET=1 ;;
+      captain-override) CAPTAIN_OVERRIDE=$a; CAPTAIN_OVERRIDE_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
@@ -374,6 +386,10 @@ for a in "$@"; do
     --model=*) MODEL=${a#--model=}; MODEL_SET=1 ;;
     --effort) want_value=effort ;;
     --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
+    --class) want_value=class ;;
+    --class=*) DISPATCH_CLASS=${a#--class=}; DISPATCH_CLASS_SET=1 ;;
+    --captain-override) want_value=captain-override ;;
+    --captain-override=*) CAPTAIN_OVERRIDE=${a#--captain-override=}; CAPTAIN_OVERRIDE_SET=1 ;;
     --backend) want_value=backend ;;
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
     --mode) want_value=mode ;;
@@ -392,6 +408,8 @@ done
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
 [ "$MODEL" != default ] || MODEL=
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
+[ "$DISPATCH_CLASS_SET" -eq 0 ] || [ -n "$DISPATCH_CLASS" ] || { echo "error: --class requires a non-empty value" >&2; exit 1; }
+[ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || [ -n "$CAPTAIN_OVERRIDE" ] || { echo "error: --captain-override requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
@@ -431,12 +449,31 @@ case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
+if [ "$DISPATCH_CLASS_SET" -eq 1 ] && { [ "$HARNESS_SET" -eq 1 ] || [ "$MODEL_SET" -eq 1 ] || [ "$EFFORT_SET" -eq 1 ]; } \
+  && [ "$CAPTAIN_OVERRIDE_SET" -eq 0 ]; then
+  echo "error: --class selects harness, model, and effort; pass --captain-override <reason> to override any of those axes" >&2
+  exit 1
+fi
+[ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || [ "$DISPATCH_CLASS_SET" -eq 1 ] || {
+  echo "error: --captain-override requires --class" >&2
+  exit 1
+}
+if [ "$CAPTAIN_OVERRIDE_SET" -eq 1 ] && [ "$HARNESS_SET" -eq 0 ] && [ "$MODEL_SET" -eq 0 ] && [ "$EFFORT_SET" -eq 0 ]; then
+  echo "error: --captain-override requires at least one of --harness, --model, or --effort" >&2
+  exit 1
+fi
+[ "$KIND" != secondmate ] || [ "$DISPATCH_CLASS_SET" -eq 0 ] || {
+  echo "error: --class applies only to crewmate and scout spawns; secondmates use config/secondmate-harness" >&2
+  exit 1
+}
 
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
+  [ "$DISPATCH_CLASS_SET" -eq 0 ] || { echo "error: --relaunch keeps the task's recorded dispatch; --class cannot replace it" >&2; exit 1; }
+  [ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || { echo "error: --relaunch keeps the task's recorded dispatch override; --captain-override cannot replace it" >&2; exit 1; }
   [ "$BACKEND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2; exit 1; }
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
@@ -1000,15 +1037,19 @@ if [ "$RELAUNCH" -eq 1 ] && [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart"
   exit 1
 fi
 if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in */*) false ;; *) true ;; esac; then
-  if [ "$KIND" != secondmate ] && [ -z "$HARNESS_ARG" ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
-    echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
-    exit 1
+  if [ "$KIND" != secondmate ] && [ "$DISPATCH_CLASS_SET" -eq 0 ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
+    case "$HARNESS_ARG" in
+      *' '*) : ;;
+      *) echo "error: config/crew-dispatch.json is active - pass one shared --class for the batch" >&2; exit 1 ;;
+    esac
   fi
   rc=0
   shared_args=()
-  [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
-  [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
-  [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  [ "$HARNESS_SET" -eq 0 ] || shared_args+=(--harness "$HARNESS_ARG")
+  [ "$MODEL_SET" -eq 0 ] || shared_args+=(--model "${MODEL:-default}")
+  [ "$EFFORT_SET" -eq 0 ] || shared_args+=(--effort "$EFFORT")
+  [ "$DISPATCH_CLASS_SET" -eq 0 ] || shared_args+=(--class "$DISPATCH_CLASS")
+  [ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || shared_args+=(--captain-override "$CAPTAIN_OVERRIDE")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -1235,6 +1276,44 @@ else
 fi
 [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
 
+DISPATCH_REASON=
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  if [ "$DISPATCH_CLASS_SET" -eq 1 ]; then
+    if [ "$HARNESS_SET" -eq 0 ] && [ -n "${POS[2]:-}" ]; then
+      echo "error: a positional harness cannot accompany --class; use --harness with --captain-override <reason>" >&2
+      exit 1
+    fi
+    DISPATCH_RESULT=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" --class "$DISPATCH_CLASS" --home "$FM_HOME") || exit 1
+    DISPATCH_HARNESS=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^harness=\([^ ]*\) model=.*/\1/p')
+    DISPATCH_MODEL=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* model=\([^ ]*\) effort=.*/\1/p')
+    DISPATCH_EFFORT=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* effort=\([^ ]*\) reason=.*/\1/p')
+    DISPATCH_REASON=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* reason=\([^ ]*\)$/\1/p')
+    [ -n "$DISPATCH_HARNESS" ] && [ -n "$DISPATCH_MODEL" ] && [ -n "$DISPATCH_EFFORT" ] && [ -n "$DISPATCH_REASON" ] || {
+      echo "error: dispatch resolver returned an invalid result" >&2
+      exit 1
+    }
+    if [ "$HARNESS_SET" -eq 0 ]; then
+      ARG3=$DISPATCH_HARNESS
+    fi
+    if [ "$MODEL_SET" -eq 0 ]; then
+      case "$DISPATCH_MODEL" in default) MODEL= ;; *) MODEL=$DISPATCH_MODEL ;; esac
+    fi
+    if [ "$EFFORT_SET" -eq 0 ]; then
+      case "$DISPATCH_EFFORT" in default) EFFORT= ;; *) EFFORT=$DISPATCH_EFFORT ;; esac
+    fi
+    printf 'dispatch: class=%s harness=%s model=%s effort=%s reason=%s\n' \
+      "$DISPATCH_CLASS" "$ARG3" "${MODEL:-default}" "${EFFORT:-default}" "$DISPATCH_REASON" >&2
+  elif [ -f "$CONFIG/crew-dispatch.json" ]; then
+    case "$ARG3" in
+      *' '*) : ;;
+      *)
+        echo "error: config/crew-dispatch.json is active - pass --class <class>; concrete harness, model, and effort selection belongs to the resolver" >&2
+        exit 1
+        ;;
+    esac
+  fi
+fi
+
 shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
@@ -1409,7 +1488,7 @@ case "$ARG3" in
   '')
     # No explicit harness: resolve from config. A secondmate AGENT launches on the
     # secondmate harness (config/secondmate-harness -> config/crew-harness -> own);
-    # every other kind uses the crew harness only when no dispatch profile file is
+    # every other kind reaches this branch only when no dispatch profile file is
     # active. Resolving here on every spawn is what makes the split DURABLE - a
     # respawn (recovery, /updatefirstmate, restart) re-resolves, so
     # config/secondmate-harness keeps governing secondmate launches across restarts.
@@ -1419,10 +1498,6 @@ case "$ARG3" in
       HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
       harness_src='config/secondmate-harness (falling back to config/crew-harness)'
     else
-      if [ -f "$CONFIG/crew-dispatch.json" ]; then
-        echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
-        exit 1
-      fi
       HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
       harness_src='config/crew-harness'
     fi
@@ -3246,6 +3321,9 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  [ -z "$DISPATCH_CLASS" ] || echo "dispatch_class=$DISPATCH_CLASS"
+  [ -z "$DISPATCH_REASON" ] || echo "dispatch_reason=$DISPATCH_REASON"
+  [ -z "$CAPTAIN_OVERRIDE" ] || echo "dispatch_override=$CAPTAIN_OVERRIDE"
   # Recorded only when the spawn passed --issue: absent issues= means no
   # claim, keeping the no-flag meta byte-identical to the pre-guard path.
   [ -z "$ISSUES" ] || echo "issues=$ISSUES"

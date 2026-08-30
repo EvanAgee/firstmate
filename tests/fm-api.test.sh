@@ -635,6 +635,7 @@ write_rung_fixture() {  # <home>
 {
   "rules": [
     {
+      "class": "builder",
       "when": "builder class: ordinary",
       "use": [
         { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
@@ -837,7 +838,7 @@ test_rig_config_without_token_is_unauthorized() {
   write_rung_fixture "$home"
   before=$(cat "$home/config/crew-dispatch.json")
   port=$(fm_test_api_start "$home")
-  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":[{"harness":"codex"}]}' \
+  HTTP_BODY='{"rules":[{"class":"builder","when":"x","use":[{"harness":"claude"}]}],"default":[{"harness":"codex"}]}' \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
@@ -853,7 +854,7 @@ test_rig_config_with_token_writes_config() {
   write_rung_fixture "$home"
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
-  HTTP_BODY='{"note":"n","rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}]}],"default":[{"harness":"codex","model":"gpt-5.5"}]}' \
+  HTTP_BODY='{"note":"n","rules":[{"class":"builder","when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}]}],"default":[{"harness":"codex","model":"gpt-5.5"}]}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
@@ -875,7 +876,7 @@ test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
   before=$(cat "$home/config/crew-dispatch.json")
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
-  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude","enabled":false}]}],"default":[{"harness":"codex"}]}' \
+  HTTP_BODY='{"rules":[{"class":"builder","when":"x","use":[{"harness":"claude","enabled":false}]}],"default":[{"harness":"codex"}]}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
@@ -895,7 +896,7 @@ test_rig_config_without_default_is_accepted() {
   cat > "$home/config/crew-dispatch.json" <<'EOF'
 {
   "rules": [
-    { "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
+    { "class": "builder", "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
   ]
 }
 EOF
@@ -935,7 +936,7 @@ test_rig_config_refuses_malformed_present_fields() {
   printf '%s' "$HTTP_BODY" | grep -F 'rules must be an array' >/dev/null \
     || fail "object rules error is not clear: $HTTP_BODY"
   # default present but a primitive.
-  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":"nope"}' \
+  HTTP_BODY='{"rules":[{"class":"builder","when":"x","use":[{"harness":"claude"}]}],"default":"nope"}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
@@ -956,7 +957,7 @@ test_rig_config_get_returns_the_whole_file() {
 {
   "note": "the note",
   "rules": [
-    { "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
+    { "class": "builder", "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
   ],
   "default": [{ "harness": "codex", "model": "gpt-5.5" }]
 }

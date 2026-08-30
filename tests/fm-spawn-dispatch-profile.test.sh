@@ -222,14 +222,14 @@ make_spawn_case() {
 
 enable_dispatch_profile() {
   local home=$1
-  printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"grok","model":"grok-4","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+  printf '%s\n' '{"rules":[{"class":"builder","when":"builder work","use":[{"harness":"codex","model":"gpt-5","effort":"high"},{"harness":"grok","model":"grok-4","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
     > "$home/config/crew-dispatch.json"
 }
 
 # A ladder with one switched-off rung (claude/opus/high) beside an enabled one.
 enable_dispatch_profile_with_switched_off_rung() {
   local home=$1
-  printf '%s\n' '{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5","effort":"high"}]}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+  printf '%s\n' '{"rules":[{"class":"builder","when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5","effort":"high"}]}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
     > "$home/config/crew-dispatch.json"
 }
 
@@ -298,6 +298,12 @@ assert_meta_profile() {
   assert_grep "harness=$harness" "$meta" "meta missing harness=$harness"
   assert_grep "model=$model" "$meta" "meta missing model=$model"
   assert_grep "effort=$effort" "$meta" "meta missing effort=$effort"
+}
+
+assert_meta_dispatch() {
+  local meta=$1 dispatch_class=$2 dispatch_reason=$3
+  assert_grep "dispatch_class=$dispatch_class" "$meta" "meta missing dispatch_class=$dispatch_class"
+  assert_grep "dispatch_reason=$dispatch_reason" "$meta" "meta missing dispatch_reason=$dispatch_reason"
 }
 
 test_no_profile_keeps_claude_profile_defaults() {
@@ -481,7 +487,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
   pass "unresolvable relative spawn overrides fail with named diagnostics"
 }
 
-test_active_dispatch_profile_requires_explicit_harness_for_ship() {
+test_active_dispatch_profile_requires_class_for_ship() {
   local rec id out status
   id=$(profile_id profile-required-ship-z11)
   rec=$(make_spawn_case profile-required-ship claude "$id")
@@ -490,14 +496,14 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 1 "$status" "ship spawn without explicit harness should fail when dispatch profiles are active"
-  assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
+  expect_code 1 "$status" "ship spawn without class should fail when dispatch profiles are active"
+  assert_contains "$out" "config/crew-dispatch.json is active - pass --class <class>" \
     "spawn did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "ship refusal should happen before meta is written"
-  pass "active crew-dispatch profile requires an explicit harness for ship spawns"
+  pass "active crew-dispatch profile requires a class for ship spawns"
 }
 
-test_active_dispatch_profile_requires_explicit_harness_for_scout() {
+test_active_dispatch_profile_requires_class_for_scout() {
   local rec id out status
   id=$(profile_id profile-required-scout-z12)
   rec=$(make_spawn_case profile-required-scout claude "$id")
@@ -506,14 +512,14 @@ test_active_dispatch_profile_requires_explicit_harness_for_scout() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
   status=$?
-  expect_code 1 "$status" "scout spawn without explicit harness should fail when dispatch profiles are active"
-  assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
+  expect_code 1 "$status" "scout spawn without class should fail when dispatch profiles are active"
+  assert_contains "$out" "config/crew-dispatch.json is active - pass --class <class>" \
     "scout refusal did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "scout refusal should happen before meta is written"
-  pass "active crew-dispatch profile requires an explicit harness for scout spawns"
+  pass "active crew-dispatch profile requires a class for scout spawns"
 }
 
-test_active_dispatch_profile_allows_explicit_harness() {
+test_class_resolves_pinned_runtime() {
   local rec id out status launch
   id=$(profile_id profile-explicit-z13)
   rec=$(make_spawn_case profile-explicit claude "$id")
@@ -521,18 +527,21 @@ test_active_dispatch_profile_allows_explicit_harness() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+    "$id" "$PROJ_DIR" --class builder)
   status=$?
-  expect_code 0 "$status" "explicit harness should satisfy active dispatch-profile requirement"
-  assert_contains "$out" "spawned $id harness=codex" "spawn did not report explicit codex harness"
+  expect_code 0 "$status" "class-based spawn should resolve and launch"
+  assert_contains "$out" "dispatch: class=builder harness=codex model=gpt-5 effort=high reason=pin" \
+    "spawn did not print the resolved runtime"
+  assert_contains "$out" "spawned $id harness=codex" "spawn did not report resolved codex harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
+  assert_meta_dispatch "$HOME_DIR/state/$id.meta" builder pin
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' -c 'model_reasoning_effort=\"high\"' --dangerously-bypass-approvals-and-sandbox" \
     "explicit harness launch did not thread model and effort"
-  pass "active crew-dispatch profile allows an explicit resolved harness"
+  pass "a dispatch class resolves its pinned runtime inside fm-spawn"
 }
 
-test_active_dispatch_profile_allows_positional_harness() {
+test_active_dispatch_profile_refuses_concrete_harness_without_class() {
   local rec id out status
   id=$(profile_id profile-positional-z14)
   rec=$(make_spawn_case profile-positional claude "$id")
@@ -540,12 +549,39 @@ test_active_dispatch_profile_allows_positional_harness() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" codex --model gpt-5 --effort high)
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
   status=$?
-  expect_code 0 "$status" "positional harness should satisfy active dispatch-profile requirement"
-  assert_contains "$out" "spawned $id harness=codex" "spawn did not report positional codex harness"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
-  pass "active crew-dispatch profile allows the legacy positional harness form"
+  expect_code 1 "$status" "concrete runtime without class should fail when dispatch profiles are active"
+  assert_contains "$out" "config/crew-dispatch.json is active - pass --class <class>" \
+    "explicit runtime bypassed class resolution"
+  assert_absent "$HOME_DIR/state/$id.meta" "concrete runtime refusal should happen before meta is written"
+  pass "an active dispatch profile refuses a concrete runtime without a class"
+}
+
+test_class_runtime_override_requires_and_records_captain_reason() {
+  local rec id out status
+  id=$(profile_id profile-override-z16)
+  rec=$(make_spawn_case profile-override claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness grok --model grok-4 --effort high)
+  status=$?
+  expect_code 1 "$status" "class runtime override without a captain reason should fail"
+  assert_contains "$out" "pass --captain-override <reason>" \
+    "spawn did not require a captain override reason"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness grok --model grok-4 --effort high \
+    --captain-override "captain chose Grok for this task")
+  status=$?
+  expect_code 0 "$status" "class runtime override with a captain reason should launch"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" grok grok-4 high
+  assert_meta_dispatch "$HOME_DIR/state/$id.meta" builder pin
+  assert_grep "dispatch_override=captain chose Grok for this task" "$HOME_DIR/state/$id.meta" \
+    "meta missing the captain override reason"
+  pass "a class runtime override requires and records the captain's reason"
 }
 
 test_active_dispatch_profile_allows_raw_launch_command() {
@@ -1162,7 +1198,7 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   pass "pi-signed is a distinct persistent secondmate runtime with shared Pi supervision semantics"
 }
 
-test_batch_forwards_shared_profile_flags() {
+test_batch_forwards_shared_class() {
   local rec id1 id2 out status
   id1=profile-batch-a-z9
   id2=profile-batch-b-z10
@@ -1171,14 +1207,16 @@ test_batch_forwards_shared_profile_flags() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --class builder)
   status=$?
-  expect_code 0 "$status" "batch spawn with shared profile flags should succeed"
+  expect_code 0 "$status" "batch spawn with a shared class should succeed"
   assert_contains "$out" "spawned $id1 harness=codex" "first batch task did not use shared harness"
   assert_contains "$out" "spawned $id2 harness=codex" "second batch task did not use shared harness"
   assert_meta_profile "$HOME_DIR/state/$id1.meta" codex gpt-5 high
   assert_meta_profile "$HOME_DIR/state/$id2.meta" codex gpt-5 high
-  pass "batch dispatch forwards shared --harness, --model, and --effort to every pair"
+  assert_meta_dispatch "$HOME_DIR/state/$id1.meta" builder pin
+  assert_meta_dispatch "$HOME_DIR/state/$id2.meta" builder pin
+  pass "batch dispatch forwards one shared class to every pair"
 }
 
 test_claude_forwards_firstmate_config_dir_when_set() {
@@ -1254,10 +1292,11 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
-test_active_dispatch_profile_requires_explicit_harness_for_ship
-test_active_dispatch_profile_requires_explicit_harness_for_scout
-test_active_dispatch_profile_allows_explicit_harness
-test_active_dispatch_profile_allows_positional_harness
+test_active_dispatch_profile_requires_class_for_ship
+test_active_dispatch_profile_requires_class_for_scout
+test_class_resolves_pinned_runtime
+test_active_dispatch_profile_refuses_concrete_harness_without_class
+test_class_runtime_override_requires_and_records_captain_reason
 test_active_dispatch_profile_allows_raw_launch_command
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort
@@ -1284,7 +1323,7 @@ test_omp_herdr_unacked_launch_cleans_owned_endpoint_worktree_and_artifacts
 test_omp_herdr_refused_close_preserves_worktree_and_artifacts
 test_omp_ack_cleanup_preserves_artifacts_when_ownership_changes
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
-test_batch_forwards_shared_profile_flags
+test_batch_forwards_shared_class
 test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset
 test_non_claude_harness_ignores_config_dir
@@ -1292,13 +1331,14 @@ test_active_dispatch_profile_does_not_block_secondmate_launch
 
 test_switched_off_rung_is_refused() {
   local rec id out status
-  id=rung-off-refused-z40
+  id=$(profile_id profile-rung-off-refused-z40)
   rec=$(make_spawn_case rung-off-refused claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness claude --model opus --effort high)
+    "$id" "$PROJ_DIR" --class builder --harness claude --model opus --effort high \
+    --captain-override "captain selected the disabled tuple for this proof")
   status=$?
   expect_code 1 "$status" "a spawn naming a switched-off rung should be refused"
   assert_contains "$out" "that rung is switched off in config/crew-dispatch.json" \
@@ -1309,13 +1349,13 @@ test_switched_off_rung_is_refused() {
 
 test_enabled_sibling_rung_still_spawns() {
   local rec id out status
-  id=rung-off-sibling-z41
+  id=$(profile_id profile-rung-off-sibling-z41)
   rec=$(make_spawn_case rung-off-sibling claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+    "$id" "$PROJ_DIR" --class builder)
   status=$?
   expect_code 0 "$status" "the enabled rung beside a switched-off one should still spawn"
   assert_contains "$out" "spawned $id harness=codex" "enabled sibling rung did not spawn"
@@ -1325,7 +1365,7 @@ test_enabled_sibling_rung_still_spawns() {
 
 test_off_ladder_profile_is_not_refused_by_the_switch() {
   local rec id out status
-  id=rung-off-ladder-z42
+  id=$(profile_id profile-rung-off-ladder-z42)
   rec=$(make_spawn_case rung-off-ladder claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
@@ -1333,7 +1373,8 @@ test_off_ladder_profile_is_not_refused_by_the_switch() {
   # claude/sonnet/high appears nowhere in the file. The switch blocks only rungs
   # the file marks off; an explicit off-ladder profile stays the captain's call.
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness claude --model sonnet --effort high)
+    "$id" "$PROJ_DIR" --class builder --harness claude --model sonnet --effort high \
+    --captain-override "captain selected an off-ladder runtime")
   status=$?
   expect_code 0 "$status" "a profile absent from the ladder should not be refused by the switch"
   assert_contains "$out" "spawned $id harness=claude" "off-ladder profile did not spawn"
@@ -1345,7 +1386,7 @@ test_off_ladder_profile_is_not_refused_by_the_switch() {
 # config/secondmate-harness, not the crewmate ladders.
 test_switched_off_rung_does_not_block_secondmate_launch() {
   local rec id sm out status
-  id=rung-off-secondmate-z43
+  id=$(profile_id profile-rung-off-secondmate-z43)
   rec=$(make_spawn_case rung-off-secondmate claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"

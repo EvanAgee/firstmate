@@ -34,8 +34,8 @@ STDIN_SENTINEL='SENTINEL-STDIN-MUST-NOT-REACH-VENDOR-CLI'
 # --- fake toolchain ---------------------------------------------------------
 #
 # quota-axi is present on PATH and logs every invocation. The script must never
-# call it: reading quota is the dispatch owner's job against one intake snapshot,
-# and a probe that re-read it would reintroduce the retired coupling.
+# call it: quota belongs only in the captain-facing health note, and the probe
+# must stay independent from runtime selection.
 make_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -196,15 +196,15 @@ test_probe_accepts_no_candidate_identity() {
   pass "the probe accepts no harness, model, or provider and so can hold no routing mapping"
 }
 
-# The retired script read quota to decide eligibility. This one must not, so an
-# intake keeps exactly one snapshot and the probe cannot re-derive a route.
+# The retired script read quota to decide eligibility. This one must not, so it
+# cannot re-derive or influence a route.
 test_probe_never_reads_quota() {
   local mode
   for mode in authenticated unauthenticated; do
     run_probe "no-quota-$mode" grok -- "FM_FAKE_GROK_MODE=$mode"
     assert_quota_never_read "no-quota-$mode"
   done
-  pass "the probe never reads quota, leaving one intake snapshot to the dispatch owner"
+  pass "the probe never reads quota or influences runtime selection"
 }
 
 # Neither outcome is a verdict, so neither may be encoded in the exit status. A

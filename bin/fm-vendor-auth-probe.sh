@@ -3,10 +3,9 @@
 # probe of a named vendor CLI.
 #
 # This script collects a FACT and renders no verdict. It takes no harness, model,
-# or provider, reads no quota, and never decides whether a dispatch candidate is
-# eligible. The dispatching first mate owns that judgment from `quota-axi`'s data
-# plus each harness's authoritative model catalog; the decision procedure is
-# owned once by .agents/skills/quota-array-dispatch/SKILL.md.
+# or provider, reads no quota, and never changes dispatch selection. Firstmate
+# may use this bounded fact in the captain-facing health note owned by
+# .agents/skills/quota-array-dispatch/SKILL.md.
 #
 # Why it exists rather than the agent running the vendor CLI itself: the
 # captain's 2026-07-30 `firstmate-grok-auth-preflight` decision approved exactly

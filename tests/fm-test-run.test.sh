@@ -263,14 +263,14 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" add .agents
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm skill-script-change
 
-  # A quota-array-dispatch supporting file must keep both families that skill's
-  # SKILL.md owns, not only pure-contract-unit.
+  # A quota-array-dispatch supporting file selects deterministic unit coverage
+  # and the vendored lock check, never credentialed harness selection.
   printf '\n' >>"$repo/.agents/skills/quota-array-dispatch/notes.md"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
     "a quota-array-dispatch supporting file selects pure-contract-unit"
-  assert_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" \
-    "a quota-array-dispatch supporting file selects live-harness-optin"
+  assert_not_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" \
+    "a quota-array-dispatch supporting file must not select live-harness-optin"
   assert_contains "$listed" "tests/fm-skills-lock.test.sh" \
     "a quota-array-dispatch supporting file selects the vendored lock check"
   git -C "$repo" add .agents

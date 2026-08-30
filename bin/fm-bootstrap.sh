@@ -62,9 +62,8 @@
 #          silent; bin/fm-chrome-devtools-axi-lib.sh owns that probe and its floor.
 #          tasks-axi and quota-axi are required bootstrap tools (same class as
 #          lavish-axi). A compatible tasks-axi default backend is silent.
-#          quota-axi is required for the agent-owned dispatch-pool
-#          procedure in AGENTS.md section 4 and
-#          .agents/skills/quota-array-dispatch/SKILL.md.
+#          quota-axi supports the captain-facing dispatch health note in
+#          .agents/skills/quota-array-dispatch/SKILL.md and never selects a runtime.
 #          On a primary home, the locked mutable path materializes the visible
 #          default config/startup-memory-budget=7500 when absent. It never
 #          guesses at malformed or unsafe existing files, and secondmate homes
@@ -1072,6 +1071,10 @@ crew_dispatch_validate() {
     if type != "object" then "top-level value must be an object"
     elif has("rules") and (.rules | type) != "array" then "rules must be an array"
     elif [(.rules // [])[]? | select(type != "object")] | length > 0 then "each rule must be an object"
+    elif [(.rules // [])[]? | select((.class? | type) != "string" or (.class | length) == 0)] | length > 0 then "each rule needs non-empty class"
+    elif ([(.rules // [])[]? | .class] | length) != ([ (.rules // [])[]? | .class ] | unique | length) then
+      "dispatch class must be unique: "
+      + ([.rules[]?.class] | group_by(.) | map(select(length > 1) | .[0]) | join(", "))
     elif [(.rules // [])[]? | select((.when? | type) != "string" or (.when | length) == 0)] | length > 0 then "each rule needs non-empty when"
     elif [(.rules // [])[]? | select((.use? | type) != "object" and (.use? | type) != "array")] | length > 0 then "each rule needs use"
     elif [(.rules // [])[]? | select((.use? | type) == "array" and (.use | length) == 0)] | length > 0 then "each rule needs at least one use profile"
@@ -1084,15 +1087,13 @@ crew_dispatch_validate() {
     elif malformed_optional_fields([(.rules // [])[]? | select(has("pin")) | .pin]) then "rule pin model and effort must be non-empty strings when present"
     elif (rule_pins_outside_pools | length) > 0 then
       "pin is not a member of the use pool for "
-      + ([rule_pins_outside_pools[] | "\(.when): \(profile_label(.pin))"] | join("; "))
+      + ([rule_pins_outside_pools[] | "\(.class): \(profile_label(.pin))"] | join("; "))
     elif (switched_off_rule_pins | length) > 0 then
       "pin names a switched-off member for "
-      + ([switched_off_rule_pins[] | "\(.when): \(profile_label(.pin))"] | join("; "))
+      + ([switched_off_rule_pins[] | "\(.class): \(profile_label(.pin))"] | join("; "))
     elif [(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0)] | length > 0 then
-      "every rung is turned off for: " + ([(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0) | .when] | join("; "))
-    elif [(.rules // [])[]? | select(has("select") and ((.select? | type) != "string" or (.select | length) == 0))] | length > 0 then "select must be a non-empty string"
-    elif [(.rules // [])[]? | .select? // empty | select(. != "quota-balanced")] | length > 0 then
-      "unknown select: " + ([ (.rules // [])[]? | .select? // empty | select(. != "quota-balanced") ] | unique | join(", "))
+      "every rung is turned off for: " + ([(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0) | .class] | join("; "))
+    elif [(.rules // [])[]? | select(has("select"))] | length > 0 then "select is not supported; use pin or resolver round-robin"
     elif has("default") and ((.default | type) != "object" and (.default | type) != "array") then "default must be a profile object or non-empty profile array"
     elif has("default") and ((.default | type) == "array" and (.default | length) == 0) then "default needs at least one profile"
     elif has("default") and ([profiles(.default)[]? | select(type != "object")] | length) > 0 then "each default profile must be an object"
@@ -1130,14 +1131,14 @@ crew_dispatch_validate() {
          else "" end)
       + (if ($p.effort? != null) then "/" + ($p.effort | tostring) else "" end)
       + (if ($p.enabled? == false) then " (off)" else "" end);
-    def profile_set($value; $selector):
+    def profile_set($value):
       if ($value | type) == "array" then
-        (($selector // "quota-balanced") + "[" + ([$value[] | profile(.)] | join(", ")) + "]")
+        ("round-robin[" + ([$value[] | profile(.)] | join(", ")) + "]")
       else profile($value)
       end;
     (["BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json"]
-      + [(.rules // [])[]? | "BOOTSTRAP_INFO: crew dispatch rule: " + (.when | tostring) + " -> " + profile_set(.use; .select?)]
-      + (if has("default") then ["BOOTSTRAP_INFO: crew dispatch default: " + profile_set(.default; null)] else [] end))
+      + [(.rules // [])[]? | "BOOTSTRAP_INFO: crew dispatch class: " + (.class | tostring) + " -> " + profile_set(.use)]
+      + (if has("default") then ["BOOTSTRAP_INFO: crew dispatch default: " + profile_set(.default)] else [] end))
     | .[]
   ' "$file"
   fi

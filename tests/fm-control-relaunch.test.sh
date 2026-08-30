@@ -282,6 +282,9 @@ test_relaunch_preserves_durable_task_metadata() {
     printf '%s\n' 'pr_head=feature/relaunch'
     printf '%s\n' 'x_request=request-19'
     printf '%s\n' 'decisions_reviewed=1'
+    printf '%s\n' 'dispatch_class=builder'
+    printf '%s\n' 'dispatch_reason=pin'
+    printf '%s\n' 'dispatch_override=captain requested this runtime'
   } >> "$dir/home/state/rl19.meta"
 
   out=$(run_control "$dir" rl19 relaunch --note "continuing review work"); rc=$?
@@ -294,6 +297,12 @@ test_relaunch_preserves_durable_task_metadata() {
     || fail "the task X request must survive relaunch"
   [ "$(meta_field "$dir" rl19 decisions_reviewed)" = 1 ] \
     || fail "the task decision state must survive relaunch"
+  [ "$(meta_field "$dir" rl19 dispatch_class)" = builder ] \
+    || fail "the task dispatch class must survive relaunch"
+  [ "$(meta_field "$dir" rl19 dispatch_reason)" = pin ] \
+    || fail "the task dispatch reason must survive relaunch"
+  [ "$(meta_field "$dir" rl19 dispatch_override)" = "captain requested this runtime" ] \
+    || fail "the task dispatch override must survive relaunch"
   pass "fm-control relaunch: durable task metadata survives replacement launch publication"
 }
 
@@ -546,7 +555,7 @@ test_relaunch_onto_disabled_omitted_model_rung_is_refused() {
   dir=$(new_case dispatchoff rl36)
   add_ship_task "$dir" rl36 pi
   mkdir -p "$dir/home/config"
-  printf '%s\n' '{"rules":[{"when":"big feature","use":[{"harness":"claude","enabled":false},{"harness":"codex"}]}],"default":{"harness":"codex"}}' \
+  printf '%s\n' '{"rules":[{"class":"builder","when":"big feature","use":[{"harness":"claude","enabled":false},{"harness":"codex"}]}],"default":{"harness":"codex"}}' \
     > "$dir/home/config/crew-dispatch.json"
   printf 'pi' > "$dir/fake/command"
   out=$(run_control "$dir" rl36 relaunch --harness claude --note "switching runtime"); rc=$?
