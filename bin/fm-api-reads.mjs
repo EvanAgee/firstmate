@@ -447,8 +447,8 @@ export function enrichFleetTasks(home, snapshot) {
 
 // --- captain holds ----------------------------------------------------------
 //
-// GET /captain-holds serves the decisions firstmate is waiting on the captain
-// for, the same set `tasks-axi list --kind captain` returns, each read in full
+// GET /captain-holds serves the open captain-decision records, including the
+// deferred records returned by `tasks-axi list --kind captain`. It reads each
 // with `tasks-axi show <id> --full`. This is the one holds query the dashboard
 // used to run itself; the API runs it now so no consumer parses tasks-axi
 // output. bin/fm-api-server.mjs owns the response contract. Answer options are

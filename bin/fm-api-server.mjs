@@ -28,7 +28,8 @@
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }
 //   The captain-kind decisions from tasks-axi, read in full and sorted
-//   actionable-first. tasks-axi absent: holds is [].
+//   actionable-first. Parked and future rows remain present with parked true
+//   and actionable and answerable false. tasks-axi absent: holds is [].
 // GET /blocked
 //   { ok, blocked: [{ task, key, summary }] }
 //   Blocked tasks still open in this home. Empty home: blocked is [].
@@ -44,8 +45,8 @@
 //   docs/configuration.md owns the public stream contract.
 // POST /captain-notes requires Authorization: Bearer <token> and queues a
 // captain note for firstmate on the wake queue, encoded as operational input.
-// The task may be a live task or a parked captain hold that lives only in the
-// backlog. Reads need no token. A captain note never closes a parked decision.
+// The task may be live or may exist only in the backlog. Reads need no token.
+// A captain note never closes a durable captain decision.
 // POST /workers/relay requires the token; body { task, text }. Queues a steer
 //   for firstmate to pass to the worker word for word on its next turn. Use it
 //   for a worker that is not parked on a decision; a keyed answer that closes a
@@ -53,7 +54,7 @@
 // POST /decisions/answer requires the token; body { task, key, text }. Queues
 //   an answer for firstmate on the same relay, which runs
 //   bin/fm-send.sh <task> --resolve-key <key> '<text>' on its next turn to
-//   close the parked decision. Unknown task: 404. Bad body: 400.
+//   close the active durable decision. Unknown task: 404. Bad body: 400.
 // POST /rigs/rung requires the token; body { rig, rung, enabled }. Sets a
 //   rung's enabled state in config/crew-dispatch.json, where rig is the rule's
 //   `when` line or "default" and rung is its index. A change that would turn
@@ -427,9 +428,9 @@ function handleCaptainNote(req, res, home, options) {
   readBody(req, MAX_BODY_BYTES)
     .then((raw) => {
       const note = parseTaskText(raw);
-      // A note may be about a live task or a parked captain hold that lives only
-      // in the backlog, so accept either. The relay and answer writes stay
-      // strict: they need a live task or an open decision.
+      // A note may be about a live task or a task that lives only in the backlog,
+      // so accept either. The relay and answer writes stay strict: they need a
+      // live task or an active decision.
       if (!taskExists(home, note.task) && !taskInBacklog(home, note.task)) {
         const error = new Error("not found");
         error.status = 404;
