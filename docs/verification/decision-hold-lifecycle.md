@@ -33,6 +33,7 @@ A separate regression drives the real `fm-send` over a stubbed transport to prov
 
 The captain-deferral regression proves parked and dated retagging, reason and identity preservation, durable provenance, inactive-hold refusal, and successful completion verification.
 It also proves that exact `hold` replays preserve parked and future states, exact expired dated retries remain idempotent, quoted and backslash reasons round-trip, empty revisit dates preserve active holds, and concurrent parking and answering serialize to one durable outcome.
+Boundary-shaped captain text is stored as a lossless framed payload, and exact `park` and `hold` retries cannot misread that text as record metadata.
 An explicit reactivation and second park keep one identity, retain the first cycle, and append the second cycle.
 A persisted pending future cycle finishes after its revisit date and records the resulting inactive future state as complete.
 
@@ -45,7 +46,7 @@ ok - non-forced scout teardown always requires durable inventory verification
 ok - a declined decision closes with a recorded answer and no routed work
 ok - park records deferrals, preserves reasons, supports dates, and keeps the completion gate green
 ok - reactivated decisions append a new deferral cycle on one identity
-ok - park retries preserve empty, escaped, and partial-transition state
+ok - park retries preserve empty, escaped, framed, and partial-transition state
 ok - concurrent park and answer keep one serialized decision
 ok - a decision closed outside the script is repairable and then clears teardown
 ok - an unanswered decision still blocks completion and resists both unrouted close paths

@@ -54,6 +54,7 @@ case "${1:-}:${2:-}" in
   --version:*) printf '%s\n' '0.2.4' ;;
   update:--help) printf '%s\n' '--archive-body' ;;
   mv:--help) printf '%s\n' 'usage: tasks-axi mv <id> [<id>...]' ;;
+  hold:--help) printf '%s\n' '--until YYYY-MM-DD' '--kind captain|external|load|parked|future' ;;
 esac
 SH
   cat > "$fakebin/tmux" <<'SH'

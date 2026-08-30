@@ -193,6 +193,10 @@ if [ "${1:-}" = mv ] && [ "${2:-}" = --help ]; then
   printf '%s\n' 'usage: tasks-axi mv <id> [<id>...] --to <path-or-dir>'
   exit 0
 fi
+if [ "${1:-}" = hold ] && [ "${2:-}" = --help ]; then
+  printf '%s\n' '  --until YYYY-MM-DD' '  --kind captain|external|load|parked|future'
+  exit 0
+fi
 exit 0
 SH
   chmod +x "$case_dir/fakebin/tasks-axi"

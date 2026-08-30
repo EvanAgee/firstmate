@@ -256,15 +256,6 @@ require_tasks_axi() {
     || fail "tasks-axi does not expose the captain-hold contract"
 }
 
-require_park_contract() {
-  local help
-  help=$(tasks-axi hold --help 2>&1) || fail "could not read the tasks-axi hold contract"
-  printf '%s\n' "$help" | grep -F -- 'parked|future' >/dev/null \
-    || fail "tasks-axi does not expose parked and future hold kinds"
-  printf '%s\n' "$help" | grep -F -- '--until' >/dev/null \
-    || fail "tasks-axi does not expose dated future holds"
-}
-
 task_show() {  # <id>
   tasks_axi show "$1" --full 2>/dev/null
 }
@@ -296,6 +287,32 @@ decode_toon_string() {  # <encoded-value>
       ;;
     *) printf '%s' "$value" ;;
   esac
+}
+
+encode_base64_text() {  # <text>
+  printf '%s' "$1" | node -e '
+    const chunks = [];
+    process.stdin.on("data", (chunk) => { chunks.push(chunk); });
+    process.stdin.on("end", () => {
+      process.stdout.write(Buffer.concat(chunks).toString("base64"));
+    });
+  '
+}
+
+decode_base64_text() {  # <encoded-value>
+  printf '%s' "$1" | node -e '
+    let input = "";
+    process.stdin.setEncoding("ascii");
+    process.stdin.on("data", (chunk) => { input += chunk; });
+    process.stdin.on("end", () => {
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input)) {
+        process.exit(1);
+      }
+      const decoded = Buffer.from(input, "base64");
+      if (decoded.toString("base64") !== input) process.exit(1);
+      process.stdout.write(decoded);
+    });
+  '
 }
 
 task_body() {  # <show-output>
@@ -353,6 +370,7 @@ body_has_resolution_record() {  # <hold-body>
 
 body_has_deferral_record() {  # <hold-body>
   case "$1" in
+    *"Deferral recorded by fm-decision-hold."*"Captain decision payload:"*) return 0 ;;
     *"Deferral recorded by fm-decision-hold."*"Captain decision:"*) return 0 ;;
   esac
   return 1
@@ -377,8 +395,11 @@ resolution_body() {  # <mode> <routed-csv> [routed-task-id...]
 }
 
 deferral_body() {  # <cycle> <mode> <date> <until-or-none> <original-reason>
-  printf 'Deferral recorded by fm-decision-hold.\nDeferral cycle: %s\nDecision digest: %s\nDeferral mode: %s\nDeferred on: %s\nDeferred until: %s\nOriginal hold reason: %s\n\nCaptain decision:\n%s' \
-    "$1" "$DECISION_DIGEST" "$2" "$3" "$4" "$5" "$DECISION_TEXT"
+  local decision_payload
+  decision_payload=$(encode_base64_text "$DECISION_TEXT") \
+    || fail "could not encode the captain deferral"
+  printf 'Deferral recorded by fm-decision-hold.\nDeferral cycle: %s\nDecision digest: %s\nDeferral mode: %s\nDeferred on: %s\nDeferred until: %s\nOriginal hold reason: %s\nCaptain decision encoding: base64\nCaptain decision payload: %s' \
+    "$1" "$DECISION_DIGEST" "$2" "$3" "$4" "$5" "$decision_payload"
 }
 
 append_deferral_body() {  # <body> <cycle> <mode> <date> <until-or-none> <original-reason>
@@ -560,6 +581,7 @@ RECORDED_DEFERRAL_LEGACY=0
 load_deferral_record() {
   local id=$1 hold_body=$2 deferral_prefix fields cycle_line
   local recorded_digest recorded_mode recorded_date recorded_until recorded_reason recorded_cycle
+  local decision_payload decoded_decision
   deferral_prefix=$'Deferral recorded by fm-decision-hold.\n'
   case "$hold_body" in
     *"$deferral_prefix"*) fields=${hold_body##*"$deferral_prefix"} ;;
@@ -586,6 +608,7 @@ load_deferral_record() {
     *) fail "captain hold $id has an invalid deferral identity record" ;;
   esac
   case "$fields" in
+    *$'\nDeferral mode: '*$'\nDeferred on: '*$'\nDeferred until: '*$'\nOriginal hold reason: '*$'\nCaptain decision encoding: base64\nCaptain decision payload: '*) ;;
     *$'\nDeferral mode: '*$'\nDeferred on: '*$'\nDeferred until: '*$'\nOriginal hold reason: '*$'\n\nCaptain decision:'*) ;;
     *) fail "captain hold $id has an invalid deferral identity record" ;;
   esac
@@ -610,6 +633,17 @@ load_deferral_record() {
       validate_iso_date deferred-until "$recorded_until"
       ;;
     *) fail "captain hold $id has an invalid deferral mode: $recorded_mode" ;;
+  esac
+  case "$fields" in
+    *$'\nCaptain decision encoding: base64\nCaptain decision payload: '*)
+      decision_payload=${fields#*$'\nCaptain decision encoding: base64\nCaptain decision payload: '}
+      decision_payload=${decision_payload%%$'\n'*}
+      validate_one_line captain-decision-payload "$decision_payload"
+      decoded_decision=$(decode_base64_text "$decision_payload") \
+        || fail "captain hold $id has an invalid captain decision payload"
+      [ "$(sha256_text "$decoded_decision")" = "$recorded_digest" ] \
+        || fail "captain hold $id has a captain decision payload that does not match its digest"
+      ;;
   esac
   RECORDED_DEFERRAL_DIGEST=$recorded_digest
   RECORDED_DEFERRAL_MODE=$recorded_mode
@@ -982,7 +1016,6 @@ command_park() {
     until_record=$until
   fi
   require_tasks_axi
-  require_park_contract
   id=$(hold_id "$origin" "$key")
   lock_decision_item "$id"
   show=$(task_show "$id") || fail "captain hold $id is absent from $FM_HOME/data/backlog.md"

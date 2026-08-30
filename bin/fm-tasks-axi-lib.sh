@@ -5,8 +5,9 @@
 #
 # Compatible means tasks-axi --version reports FM_TASKS_AXI_MIN or newer,
 # `tasks-axi update --help` exposes --archive-body for recoverable note rewrites,
-# and `tasks-axi mv --help` exposes [<id>...] for atomic multi-ID moves required
-# by secondmate handoffs.
+# `tasks-axi mv --help` exposes [<id>...] for atomic multi-ID moves required by
+# secondmate handoffs, and `tasks-axi hold --help` exposes parked and future
+# hold kinds plus dated holds for captain deferrals.
 # FM_TASKS_AXI_MIN follows the axi-family floor policy owned beside the floor
 # constants in bin/fm-bootstrap.sh.
 # The feature probes are a separate concern and stay as defense in depth for
@@ -19,7 +20,7 @@
 # This file is the single owner of FM_TASKS_AXI_MIN. bin/fm-bootstrap.sh turns a
 # failing check into the operator-facing MISSING diagnostic.
 #
-# COMPATIBILITY VERDICT REUSE. fm_tasks_axi_compatible costs three tasks-axi
+# COMPATIBILITY VERDICT REUSE. fm_tasks_axi_compatible costs four tasks-axi
 # subprocesses, and one session start needs the same verdict twice: once in
 # bin/fm-session-start.sh's backlog listing and once in the bin/fm-bootstrap.sh
 # child it runs. Two reuse layers collapse that to a single probe:
@@ -79,7 +80,9 @@ fm_tasks_axi_compatible_probe() {
   if [ "$major" -gt "$min_major" ] ||
     { [ "$major" -eq "$min_major" ] && [ "$minor" -gt "$min_minor" ]; } ||
     { [ "$major" -eq "$min_major" ] && [ "$minor" -eq "$min_minor" ] && [ "$patch" -ge "$min_patch" ]; }; then
-    fm_tasks_axi_update_has_archive_body && fm_tasks_axi_mv_has_multi_id
+    fm_tasks_axi_update_has_archive_body \
+      && fm_tasks_axi_mv_has_multi_id \
+      && fm_tasks_axi_hold_has_deferrals
     return $?
   fi
   return 1
@@ -97,6 +100,14 @@ fm_tasks_axi_mv_has_multi_id() {
   command -v tasks-axi >/dev/null 2>&1 || return 1
   output=$(tasks-axi mv --help 2>&1) || return 1
   printf '%s\n' "$output" | grep -F -- '[<id>...]' >/dev/null
+}
+
+fm_tasks_axi_hold_has_deferrals() {
+  local output
+  command -v tasks-axi >/dev/null 2>&1 || return 1
+  output=$(tasks-axi hold --help 2>&1) || return 1
+  printf '%s\n' "$output" | grep -F -- 'parked|future' >/dev/null \
+    && printf '%s\n' "$output" | grep -F -- '--until' >/dev/null
 }
 
 fm_backlog_backend_value() {
