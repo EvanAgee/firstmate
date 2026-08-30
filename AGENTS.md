@@ -206,7 +206,7 @@ If static `config/crew-harness` or `config/secondmate-harness` names an unverifi
 
 `docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/fm-harness.sh` owns static resolution, and `bin/fm-spawn.sh` owns launch flags and fail-closed validation.
 When dispatch profiles exist, consult them at every crewmate or scout intake and pass the resolved concrete profile required by `fm-spawn`.
-Routing precedence is an explicit per-task captain override, then the best-fit configured rule, then the configured default, then the static crewmate harness.
+Routing precedence is explicit per-task captain override, matched rule pin, rule-pool round-robin, configured default (`defaultPin` first), then static crewmate harness.
 Each rule's `use` array is a pool: every member holds that category's quality floor and is good enough for the work, so new tasks spread evenly across the pool rather than piling onto whichever member comes first.
 Pick a pool member by round-robin: choose the enabled, healthy member currently carrying the fewest live workers from this pool in this home, break ties by most quota headroom, then by list order.
 A member marked `"enabled": false` is switched off by the captain: drop it before counting live workers or selecting, never re-enable it on any evidence, and stop and ask when that empties a pool ([`docs/configuration.md`](docs/configuration.md) "Crew dispatch profiles").

@@ -297,9 +297,12 @@ Batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
 `AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the round-robin pool selection procedure.
-Optional `note`, per-rule `pin`, and top-level `defaultPin` are presentation only.
-Dispatch ignores them.
-`GET /rigs` returns those keys raw so a dashboard can show the same floor rule and pins without reading the file.
+Optional `note` is presentation only.
+A per-rule `pin` is the exact `{harness, model, effort}` tuple selected for every new crewmate or scout dispatch that matches that rule.
+Top-level `defaultPin` applies the same selection when firstmate reaches the `default` pool.
+Each pin must match a member of its pool with the same harness, model, and effort, including any omitted model or effort.
+If that member is switched off, absent from the pool, or proven unusable under the health rules, firstmate stops and asks the captain instead of choosing another member or falling through.
+`GET /rigs` still returns `note`, each rule's pin, and `defaultPin` raw so a dashboard can show them without reading the file.
 `bin/fm-api-server.mjs` owns that JSON.
 
 ```json
@@ -310,18 +313,21 @@ Dispatch ignores them.
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": "<true|false, optional, default true>" }
       ],
+      "pin": { "harness": "<same adapter>", "model": "<same optional model>", "effort": "<same optional effort>" },
       "why": "<optional rationale that helps firstmate choose>"
     }
   ],
   "default": [
     { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>" }
-  ]
+  ],
+  "defaultPin": { "harness": "<same adapter>", "model": "<same optional model>", "effort": "<same optional effort>" }
 }
 ```
 
 Per rule, `when` and `use` are required.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
-An array is a pool: every member holds that category's quality floor, and firstmate spreads new tasks evenly across the pool by round-robin rather than always picking the first member.
+An array is a pool, and every member holds that category's quality floor.
+When its rule has no pin, firstmate spreads new tasks evenly across the pool by round-robin rather than always picking the first member.
 The single-object form stays fully backward-compatible, and every profile needs `harness`.
 Profile `model` and `effort` fields and rule `why` are optional.
 An omitted model or effort means the selected harness uses its own default for that axis.
@@ -330,14 +336,14 @@ An absent `enabled` key means the rung is on, so every existing configuration ke
 Setting `"enabled": false` switches that rung off: firstmate drops it before counting live workers or selecting, and `fm-spawn.sh` refuses a crewmate or scout spawn that names it.
 A switched-off member is a hard lock that no evidence may re-enable, and a switch applies to the next dispatch only, so a worker already running finishes on its original harness.
 A rule whose members are all switched off, or an all-off `default`, is a configuration error rather than a silent fallback, because the floor rule forbids dropping to an unlisted lane.
-Every pool of more than one member is resolved by round-robin through `quota-array-dispatch`: firstmate picks the enabled, healthy member carrying the fewest live workers from that pool in this home, breaking ties by quota headroom, then list order.
+Every pool of more than one member without a pin is resolved by round-robin through `quota-array-dispatch`: firstmate picks the enabled, healthy member carrying the fewest live workers from that pool in this home, breaking ties by quota headroom, then list order.
 Quota is a health filter and a tie-break there, not the selector, so members are dropped only when unhealthy or genuinely quota-tight and the rest share the work evenly.
-If no dispatch rule fits, firstmate resolves `default` through the same object-or-pool path before falling back to `config/crew-harness`.
+If no dispatch rule fits, firstmate selects `defaultPin` when present or resolves `default` through the same object-or-pool path before falling back to `config/crew-harness`.
 If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, an empty or malformed rule/default array, an unverified harness, a non-boolean `enabled`, a rule with every member switched off, an all-off `default`, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
+Malformed JSON, an empty or malformed rule/default array, an invalid pin, an unverified harness, a non-boolean `enabled`, a rule with every member switched off, an all-off `default`, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
