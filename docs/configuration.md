@@ -346,7 +346,6 @@ Passing `--harness`, `--model`, or `--effort` with `--class` requires `--captain
 Without `--class`, an active dispatch file makes a fresh crewmate or scout spawn fail even when a concrete harness was passed.
 The raw launch-command escape hatch and `--relaunch` keep their existing behavior.
 A batch uses one shared `--class`, and each task resolves in sequence so the earlier task's metadata participates in the next count.
-
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
