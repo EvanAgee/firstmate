@@ -1,0 +1,50 @@
+$ fm-decision-hold.sh hold demo-review release-window --title "Choose release timing" --reason "captain release timing pending" --repo demo
+demo-review-decision-release-window
+$ fm-decision-hold.sh complete demo-review release-window
+complete: demo-review decision inventory reviewed (release-window)
+$ fm-decision-hold.sh park demo-review release-window --decision-file decision.txt
+parked: demo-review-decision-release-window
+$ tasks-axi show demo-review-decision-release-window --full
+task:
+  id: demo-review-decision-release-window
+  title: Choose release timing
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: "2026-08-30: captain release timing pending"
+  hold_kind: parked
+  hold_until: "-"
+  kind: captain
+  repo: demo
+  priority: "-"
+  created: 2026-08-30
+  closed: "-"
+  deps: none
+  links: none
+  body: "Origin: demo-review\nDecision key: release-window\nState: awaiting captain decision.\n\nDeferral recorded by fm-decision-hold.\nDeferral cycle: 1\nDecision digest: c24fb95229f76a8a61a4a7163a6aa72934c9c5fe15f3cd18f42f4f5bafadb400\nDeferral mode: parked\nDeferred on: 2026-08-30\nDeferred until: (none)\nOriginal hold reason: captain release timing pending\nCaptain decision encoding: base64\nCaptain decision payload: TGVhdmUgdGhpcyByZWxlYXNlIHVuY2hhbmdlZCBhbmQgcmV2aXNpdCBpdCBhZnRlciB0aGUgZmllbGQgdHJpYWwu\n\nDeferral cycle completed by fm-decision-hold: 1"
+$ fm-decision-hold.sh verify demo-review
+verified: demo-review unresolved-decision inventory
+$ fm-decision-hold.sh hold demo-review release-window --title "Choose release timing" --reason "captain release timing pending" --repo demo  # retry
+demo-review-decision-release-window
+replay check: parked state unchanged
+$ GET /captain-holds
+HTTP 200
+{
+  "ok": true,
+  "holds": [
+    {
+      "id": "demo-review-decision-release-window",
+      "title": "Choose release timing",
+      "reason": "2026-08-30: captain release timing pending",
+      "repo": "demo",
+      "createdAt": "2026-08-30",
+      "blockedBy": [],
+      "hold_kind": "parked",
+      "actionable": false,
+      "parked": true,
+      "done": false,
+      "answerable": false
+    }
+  ]
+}

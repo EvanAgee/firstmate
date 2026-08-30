@@ -1,0 +1,43 @@
+$ fm-decision-hold.sh park future-review dated-window --decision-file future.txt --until 2099-12-31
+parked: future-review-decision-dated-window until 2099-12-31
+$ tasks-axi show future-review-decision-dated-window --full
+task:
+  id: future-review-decision-dated-window
+  title: Choose dated release timing
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: "2026-08-30: captain dated release pending"
+  hold_kind: future
+  hold_until: 2099-12-31
+  kind: captain
+  repo: demo
+  priority: "-"
+  created: 2026-08-30
+  closed: "-"
+  deps: none
+  links: none
+  body: "Origin: future-review\nDecision key: dated-window\nState: awaiting captain decision.\n\nDeferral recorded by fm-decision-hold.\nDeferral cycle: 1\nDecision digest: 781d8584f99ac5d44d61cd4644f271a572c835b7fe03059f2b39a7c46f20ce02\nDeferral mode: future\nDeferred on: 2026-08-30\nDeferred until: 2099-12-31\nOriginal hold reason: captain dated release pending\nCaptain decision encoding: base64\nCaptain decision payload: V2FpdCB1bnRpbCB0aGUgZmllbGQgdHJpYWwgaGFzIGZpbmlzaGVkLg==\n\nDeferral cycle completed by fm-decision-hold: 1"
+$ fm-decision-hold.sh park future-review inactive-choice --decision-file inactive.txt
+exit 1
+fm-decision-hold: captain hold future-review-decision-inactive-choice is not queued (state=done)
+$ tasks-axi show future-review-decision-inactive-choice --full
+task:
+  id: future-review-decision-inactive-choice
+  title: Choose inactive release timing
+  state: done
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: captain inactive release pending
+  hold_kind: captain
+  hold_until: "-"
+  kind: captain
+  repo: demo
+  priority: "-"
+  created: "-"
+  closed: 2026-08-30
+  deps: none
+  links: none
+  body: "Origin: future-review\nDecision key: inactive-choice\nState: awaiting captain decision."
