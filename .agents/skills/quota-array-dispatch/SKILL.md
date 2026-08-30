@@ -21,7 +21,7 @@ If the pinned member is switched off, absent from the pool, or proven unusable u
 
 This skill is the single owner of the round-robin pool selection procedure.
 The name is kept for stability: `AGENTS.md`, `docs/configuration.md`, and the tests all reference it, so renaming it would break those triggers for no behavior gain.
-Selection is round-robin now, not quota-optimizing; quota is only a health filter and a tie-break.
+Unpinned pool selection is round-robin, not quota-optimizing; quota is only a health filter and a tie-break.
 
 `AGENTS.md` section 4 owns the always-loaded intake boundary, load trigger, malformed-config refusal, every-member accounting, and strongest-reasoning/tie safety rules.
 `harness-adapters` owns harness verification, model/provider discovery, and effort fallback.
@@ -30,22 +30,22 @@ Do not add a daemon, opaque composite score, routing wrapper, hard-coded model-s
 Deterministic shell owns schema, configuration, and version validation plus concrete spawn safeguards.
 Every model-to-provider, provider-to-credential, and quota-applicability relation is yours to establish transparently and to show your evidence for.
 
-## The goal is even spread
+## An unpinned pool spreads work evenly
 
-Each rule's `use` array is a pool of runners, all good enough for that category of work.
+Each unpinned rule's `use` array is a pool of runners, all good enough for that category of work.
 The point is to spread new tasks evenly across the pool so no single runner piles up while the others sit idle.
 Quota no longer chooses the runner; it only removes an unusable one and breaks a tie.
 
 ## Drop switched-off members first
 
 A member carrying `"enabled": false` in `config/crew-dispatch.json` is switched off by the captain.
-Remove every such member from the pool before you count live workers or collect a single quota fact.
+For an unpinned pool, remove every such member before you count live workers or collect a single quota fact.
 A member with no `enabled` key is on, which is what every existing configuration means.
 
-This filter is a hard lock in one direction only.
-You may drop a member further on health evidence, but you may never re-enable a switched-off member, however tight the remaining pool is.
-A switched-off member is not a tie-break candidate, not a fallback, and not eligible under the strongest-reasoning-class rule.
-Do not report it as an accounted member either; it left the pool before selection began.
+This unpinned filter is a hard lock in one direction only.
+You may drop an unpinned member further on health evidence, but you may never re-enable a switched-off member, however tight the remaining pool is.
+In an unpinned pool, a switched-off member is not a tie-break candidate, a fallback, or eligible under the strongest-reasoning-class rule.
+Do not report it as an accounted member of an unpinned selection either; it left the pool before selection began.
 
 If the filter empties a pool, stop and ask the captain.
 Never fall through to `config/crew-harness`, to a pay-per-token surface, or to any member the file does not list, exactly as the floor rule requires.
@@ -58,7 +58,8 @@ A worker already running finishes on the runtime it launched with; never switch 
 Quota's job here is a health gate, not a ranking.
 Run `quota-axi --json` once per intake and reuse that snapshot for every member.
 Read `quota-axi auth --json` when a member's credential surface is in question.
-Drop a member only when concrete evidence shows it cannot do the work:
+These health rules decide whether a member can do the work.
+In an unpinned pool, drop a member only when concrete evidence shows it cannot do the work:
 
 - the authoritative catalog proves the model unsupported, or
 - the credential the member actually selects is proven unusable, or
@@ -97,7 +98,7 @@ Never launch a vendor CLI yourself, and never probe a credential store the membe
 
 ### What "genuinely quota-tight" means
 
-Drop a member for quota only when known evidence shows it cannot carry this task to completion.
+In an unpinned pool, drop a member for quota only when known evidence shows it cannot carry this task to completion.
 For each member preserve the horizon facts so the drop, or the decision to keep it, is inspectable:
 
 - applicable effective headroom (`effectivePercentRemaining`) from the established provider/model scope
@@ -112,12 +113,12 @@ Read all windows named by `boundedBy`, `limitingWindowIds`, `aheadWindowIds`, `b
 `unknown` is valid explicit uncertainty from quota-axi, not parser failure or permission to assume health.
 Known runway that does not reach the likely-completion horizon is the signal that a member is quota-tight for this task; absent, `unknown`, or unmeasurable runway is not, and keeps the member in the pool.
 
-When the whole pool is quota-tight, preserve the captain's strongest-reasoning class rather than silently downgrading it to conserve quota.
+When a whole unpinned pool is quota-tight, preserve the captain's strongest-reasoning class rather than silently downgrading it to conserve quota.
 Dispatch inside that class when a member can proceed, or report that its strongest-class choice cannot proceed rather than downgrading it.
 
 ## Selection order
 
-Apply this only to the healthy members left after the switch-off filter and the health filter.
+Apply this only to an unpinned pool's healthy members left after the switch-off filter and the health filter.
 Apply only among members satisfying required fit and strongest reasoning class; never use live-worker count, headroom, or reserve to silently replace that reasoning class.
 
 1. Count the live workers each remaining member is currently carrying from this pool in this home.

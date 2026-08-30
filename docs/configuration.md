@@ -333,7 +333,7 @@ Profile `model` and `effort` fields and rule `why` are optional.
 An omitted model or effort means the selected harness uses its own default for that axis.
 Profile `enabled` is optional and must be `true` or `false` when present.
 An absent `enabled` key means the rung is on, so every existing configuration keeps its current behavior.
-Setting `"enabled": false` switches that rung off: firstmate drops it before counting live workers or selecting, and `fm-spawn.sh` refuses a crewmate or scout spawn that names it.
+Setting `"enabled": false` switches that rung off: firstmate drops it before counting live workers or selecting from an unpinned pool, and `fm-spawn.sh` refuses a crewmate or scout spawn that names it.
 A switched-off member is a hard lock that no evidence may re-enable, and a switch applies to the next dispatch only, so a worker already running finishes on its original harness.
 A rule whose members are all switched off, or an all-off `default`, is a configuration error rather than a silent fallback, because the floor rule forbids dropping to an unlisted lane.
 Every pool of more than one member without a pin is resolved by round-robin through `quota-array-dispatch`: firstmate picks the enabled, healthy member carrying the fewest live workers from that pool in this home, breaking ties by quota headroom, then list order.

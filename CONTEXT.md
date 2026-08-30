@@ -31,4 +31,6 @@ A queued signal that makes firstmate look at something on its next supervision t
 The assembled current picture of every task: statuses, stages, and liveness, gathered fresh at the moment of asking.
 
 **Rig**:
-A named pool of harness models good enough for one class of tasks. New tasks of that class spread evenly across the pool by round-robin. A single pool member is a **rung**; a rung can be enabled or disabled, and a rig can never have every rung off.
+A named pool of harness models good enough for one class of tasks.
+An optional pin selects one exact rung for every new matching dispatch; without a pin, new tasks spread evenly across the pool by round-robin.
+A single pool member is a **rung**; a rung can be enabled or disabled, and a rig can never have every rung off.
