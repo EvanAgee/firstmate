@@ -662,7 +662,8 @@ test_declined_decision_closes_without_routed_work() {
 # The same identity must leave the active captain queue with its reason and the
 # captain's exact decision preserved for the later revisit.
 test_parked_decision_keeps_identity_and_clears_captain_action() {
-  local home id parked future inactive show today help before invalid_until
+  local home id parked future expired inactive show today help before invalid_until
+  local expired_text expired_digest expired_body
   home=$(make_home parked-decision)
   id=sample-park-review
   today=$(date +%F)
@@ -704,6 +705,11 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
     || fail "an exact parked-decision retry failed"
   show=$(tasks_in "$home" show "$parked" --full)
   [ "$show" = "$before" ] || fail "an exact parked-decision retry changed the hold"
+  run_decisions "$home" hold "$id" revisit-later \
+    --title "Revisit the sample choice" --reason "captain sample choice pending" --repo sample >/dev/null \
+    || fail "an exact hold replay rejected the parked decision"
+  show=$(tasks_in "$home" show "$parked" --full)
+  [ "$show" = "$before" ] || fail "an exact hold replay reactivated the parked decision"
   run_decisions "$home" verify "$id" >/dev/null \
     || fail "a parked decision did not satisfy the completion gate"
 
@@ -735,8 +741,38 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
     || fail "an exact future-decision retry failed"
   show=$(tasks_in "$home" show "$future" --full)
   [ "$show" = "$before" ] || fail "an exact future-decision retry changed the hold"
+  run_decisions "$home" hold "$id" revisit-on-date \
+    --title "Revisit the dated sample choice" --reason "captain dated choice pending" --repo sample >/dev/null \
+    || fail "an exact hold replay rejected the future decision"
+  show=$(tasks_in "$home" show "$future" --full)
+  [ "$show" = "$before" ] || fail "an exact hold replay reactivated the future decision"
   run_decisions "$home" verify "$id" >/dev/null \
     || fail "a future decision did not satisfy the completion gate"
+
+  expired=$(run_decisions "$home" hold "$id" expired-revisit \
+    --title "Revisit the expired sample choice" --reason "captain expired choice pending" --repo sample) \
+    || fail "could not register the expired future-hold fixture"
+  printf 'Keep the expired choice deferred exactly as recorded.\n' > "$home/expired-decision.txt"
+  expired_text=$(cat "$home/expired-decision.txt")
+  if command -v shasum >/dev/null 2>&1; then
+    expired_digest=$(printf '%s' "$expired_text" | shasum -a 256 | awk '{print $1}')
+  else
+    expired_digest=$(printf '%s' "$expired_text" | sha256sum | awk '{print $1}')
+  fi
+  expired_body=$(printf 'Deferral recorded by fm-decision-hold.\nDecision digest: %s\nDeferral mode: future\nDeferred on: %s\nDeferred until: %s\nOriginal hold reason: captain expired choice pending\n\nCaptain decision:\n%s' \
+    "$expired_digest" "$today" "$today" "$expired_text")
+  tasks_in "$home" update "$expired" --body "$expired_body" >/dev/null \
+    || fail "could not persist the expired future-hold fixture"
+  tasks_in "$home" hold "$expired" --reason "$today: captain expired choice pending" \
+    --kind future --until "$today" >/dev/null \
+    || fail "could not expire the future-hold fixture"
+  before=$(tasks_in "$home" show "$expired" --full)
+  assert_contains "$before" "held: no" "the exact-retry fixture did not expire"
+  run_decisions "$home" park "$id" expired-revisit --decision-file "$home/expired-decision.txt" \
+    --until "$today" >/dev/null \
+    || fail "an exact expired future-decision retry failed"
+  show=$(tasks_in "$home" show "$expired" --full)
+  [ "$show" = "$before" ] || fail "an exact expired future-decision retry changed the hold"
 
   inactive=$(run_decisions "$home" hold "$id" inactive-choice \
     --title "Inactive sample choice" --reason "captain inactive choice pending" --repo sample) \

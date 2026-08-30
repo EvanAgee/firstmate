@@ -451,9 +451,8 @@ export function enrichFleetTasks(home, snapshot) {
 // for, the same set `tasks-axi list --kind captain` returns, each read in full
 // with `tasks-axi show <id> --full`. This is the one holds query the dashboard
 // used to run itself; the API runs it now so no consumer parses tasks-axi
-// output. Each hold: { id, title, reason, repo, createdAt, blockedBy[],
-// hold_kind, actionable, parked, done, answerable }. Answer options are a
-// consumer concern and stay out of this contract.
+// output. bin/fm-api-server.mjs owns the response contract. Answer options are
+// a consumer concern and stay out of that contract.
 
 function tasksAxiEnv(home) {
   const env = {

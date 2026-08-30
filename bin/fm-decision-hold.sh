@@ -197,11 +197,15 @@ validate_iso_date() {  # <label> <value>
 }
 
 validate_future_date() {  # <label> <value>
-  local label=$1 value=$2 today
+  local label=$1 value=$2
   validate_iso_date "$label" "$value"
+  date_is_future "$value" || fail "$label must be later than today: $value"
+}
+
+date_is_future() {  # <value>
+  local value=$1 today
   today=$(date +%F) || fail "could not determine today's date"
-  [ "${value//-/}" -gt "${today//-/}" ] \
-    || fail "$label must be later than today: $value"
+  [ "${value//-/}" -gt "${today//-/}" ]
 }
 
 sha256_text() {  # <text>
@@ -449,8 +453,9 @@ verify_hold_durable() {  # <hold-id>
   fail "captain decision $id is neither active, durably deferred, nor durably resolved"
 }
 
-verify_parked_hold() {  # <hold-id> <mode> <until-or-empty> <reason>
-  local id=$1 mode=$2 until=$3 reason=$4 show state held kind hold_kind hold_until
+verify_parked_hold() {  # <hold-id> <mode> <until-or-empty> <reason> [allow-expired]
+  local id=$1 mode=$2 until=$3 reason=$4 allow_expired=${5:-0}
+  local show state held kind hold_kind hold_until
   show=$(task_show "$id") || fail "captain decision $id disappeared while recording the deferral"
   state=$(show_field "$show" state)
   held=$(show_field "$show" held)
@@ -458,11 +463,15 @@ verify_parked_hold() {  # <hold-id> <mode> <until-or-empty> <reason>
   hold_kind=$(show_field "$show" hold_kind)
   hold_until=$(show_field "$show" hold_until)
   [ "$state" = queued ] || fail "parking $id changed its queued state"
-  [ "$held" = yes ] || fail "parking $id released its hold"
   [ "$kind" = captain ] || fail "parking $id changed its captain task kind"
   [ "$hold_kind" = "$mode" ] || fail "parking $id recorded hold kind $hold_kind instead of $mode"
   if [ "$mode" = future ]; then
     [ "$hold_until" = "$until" ] || fail "parking $id lost its revisit date"
+  fi
+  if [ "$held" != yes ]; then
+    if [ "$allow_expired" != 1 ] || [ "$mode" != future ] || date_is_future "$until"; then
+      fail "parking $id released its hold"
+    fi
   fi
   [ "$(active_hold_reason "$id")" = "$reason" ] \
     || fail "parking $id did not preserve its dated hold reason"
@@ -490,8 +499,11 @@ verify_resolution_identity() {
 
 RECORDED_DEFERRAL_DATE=''
 RECORDED_HOLD_REASON=''
-verify_deferral_identity() {
-  local id=$1 hold_body=$2 decision_digest=$3 mode=$4 until=$5 deferral_prefix fields
+RECORDED_DEFERRAL_DIGEST=''
+RECORDED_DEFERRAL_MODE=''
+RECORDED_DEFERRAL_UNTIL=''
+load_deferral_record() {
+  local id=$1 hold_body=$2 deferral_prefix fields
   local recorded_digest recorded_mode recorded_date recorded_until recorded_reason
   deferral_prefix='"Deferral recorded by fm-decision-hold.\nDecision digest: '
   case "$hold_body" in
@@ -511,16 +523,35 @@ verify_deferral_identity() {
   recorded_until=${fields%%\\n*}
   fields=${fields#*\\nOriginal hold reason: }
   recorded_reason=${fields%%\\n*}
-  [ "$recorded_digest" = "$decision_digest" ] \
-    || fail "captain hold $id records a different captain deferral"
-  [ "$recorded_mode" = "$mode" ] \
-    || fail "captain hold $id records a different deferral mode"
-  [ "$recorded_until" = "$until" ] \
-    || fail "captain hold $id records a different revisit date"
+  validate_one_line decision-digest "$recorded_digest"
   validate_iso_date deferred-on "$recorded_date"
   validate_one_line original-hold-reason "$recorded_reason"
+  case "$recorded_mode" in
+    parked)
+      [ "$recorded_until" = '(none)' ] \
+        || fail "captain hold $id has an invalid parked revisit date"
+      ;;
+    future)
+      validate_iso_date deferred-until "$recorded_until"
+      ;;
+    *) fail "captain hold $id has an invalid deferral mode: $recorded_mode" ;;
+  esac
+  RECORDED_DEFERRAL_DIGEST=$recorded_digest
+  RECORDED_DEFERRAL_MODE=$recorded_mode
   RECORDED_DEFERRAL_DATE=$recorded_date
+  RECORDED_DEFERRAL_UNTIL=$recorded_until
   RECORDED_HOLD_REASON=$recorded_reason
+}
+
+verify_deferral_identity() {
+  local id=$1 hold_body=$2 decision_digest=$3 mode=$4 until=$5
+  load_deferral_record "$id" "$hold_body"
+  [ "$RECORDED_DEFERRAL_DIGEST" = "$decision_digest" ] \
+    || fail "captain hold $id records a different captain deferral"
+  [ "$RECORDED_DEFERRAL_MODE" = "$mode" ] \
+    || fail "captain hold $id records a different deferral mode"
+  [ "$RECORDED_DEFERRAL_UNTIL" = "$until" ] \
+    || fail "captain hold $id records a different revisit date"
 }
 
 command_id() {
@@ -530,6 +561,7 @@ command_id() {
 
 command_hold() {
   local origin=${1:-} key=${2:-} title='' reason='' repo='' id show state kind existing_title body
+  local hold_kind hold_body parked_reason until
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -557,6 +589,23 @@ command_hold() {
     [ "$state" != "done" ] || fail "captain decision $id is already durably resolved; use a new decision key for a new decision"
     [ "$kind" = captain ] || fail "existing backlog identity $id is not kind captain"
     [ "$existing_title" = "$title" ] || fail "existing captain hold $id has a different title"
+    hold_kind=$(show_field "$show" hold_kind)
+    case "$hold_kind" in
+      parked|future)
+        hold_body=$(show_field "$show" body)
+        load_deferral_record "$id" "$hold_body"
+        [ "$RECORDED_DEFERRAL_MODE" = "$hold_kind" ] \
+          || fail "captain hold $id has inconsistent deferred state"
+        [ "$RECORDED_HOLD_REASON" = "$reason" ] \
+          || fail "existing captain hold $id has a different original hold reason"
+        parked_reason="$RECORDED_DEFERRAL_DATE: $RECORDED_HOLD_REASON"
+        until=''
+        [ "$hold_kind" != future ] || until=$RECORDED_DEFERRAL_UNTIL
+        verify_parked_hold "$id" "$hold_kind" "$until" "$parked_reason" 1
+        printf '%s\n' "$id"
+        return 0
+        ;;
+    esac
   else
     if [ -z "$repo" ] && [ -f "$STATE/$origin.meta" ]; then
       repo=$(meta_value "$STATE/$origin.meta" project)
@@ -830,7 +879,7 @@ command_park() {
   load_decision "$decision_file"
   if [ -n "$until" ]; then
     validate_one_line until "$until"
-    validate_future_date until "$until"
+    validate_iso_date until "$until"
     mode=future
     until_record=$until
   fi
@@ -848,7 +897,7 @@ command_park() {
     parked_reason="$deferral_date: $hold_reason"
     case "$hold_kind" in
       parked|future)
-        verify_parked_hold "$id" "$mode" "$until" "$parked_reason"
+        verify_parked_hold "$id" "$mode" "$until" "$parked_reason" 1
         printf 'parked: %s%s\n' "$id" "${until:+ until $until}"
         return 0
         ;;
@@ -856,11 +905,13 @@ command_park() {
     verify_hold_active "$id"
     [ "$(active_hold_reason "$id")" = "$hold_reason" ] \
       || fail "captain hold $id records a different original hold reason"
+    [ "$mode" != future ] || validate_future_date until "$until"
   else
     verify_hold_active "$id"
     hold_reason=$(active_hold_reason "$id")
     body_has_resolution_record "$hold_body" \
       && fail "captain hold $id already records a closing decision"
+    [ "$mode" != future ] || validate_future_date until "$until"
     deferral_date=$(date +%F) || fail "could not determine the deferral date"
     body=$(deferral_body "$mode" "$deferral_date" "$until_record" "$hold_reason")
     tasks_axi update "$id" --body "$body" >/dev/null \
