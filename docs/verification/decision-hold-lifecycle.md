@@ -32,7 +32,9 @@ A replayed delivery closes nothing new and is not rejected as a different decisi
 A separate regression drives the real `fm-send` over a stubbed transport to prove the chat channel reaches the same intake for a decision already transferred to its hold, which the status ledger alone can no longer close.
 
 The captain-deferral regression proves parked and dated retagging, reason and identity preservation, durable provenance, inactive-hold refusal, and successful completion verification.
-It also proves that exact `hold` replays preserve parked and future states, exact expired dated retries remain idempotent, and concurrent parking and answering serialize to one durable outcome.
+It also proves that exact `hold` replays preserve parked and future states, exact expired dated retries remain idempotent, quoted and backslash reasons round-trip, empty revisit dates preserve active holds, and concurrent parking and answering serialize to one durable outcome.
+An explicit reactivation and second park keep one identity, retain the first cycle, and append the second cycle.
+A persisted pending future cycle finishes after its revisit date and records the resulting inactive future state as complete.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -42,6 +44,8 @@ ok - report-only unresolved decision is reproduced and completion refuses before
 ok - non-forced scout teardown always requires durable inventory verification
 ok - a declined decision closes with a recorded answer and no routed work
 ok - park records deferrals, preserves reasons, supports dates, and keeps the completion gate green
+ok - reactivated decisions append a new deferral cycle on one identity
+ok - park retries preserve empty, escaped, and partial-transition state
 ok - concurrent park and answer keep one serialized decision
 ok - a decision closed outside the script is repairable and then clears teardown
 ok - an unanswered decision still blocks completion and resists both unrouted close paths

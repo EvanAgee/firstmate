@@ -37,8 +37,10 @@ Both record `(none)` as the routed identities and refuse while any task in the s
 Every candidate found in the listing prefilter is confirmed against its own structured record before the refusal is reported.
 `answer` exists so the act carrying a captain answer can also be the act that closes its hold; `decline` continues to mean the stronger claim that the answer routes no follow-up work at all.
 
-The `park` subcommand requires the same non-empty captain decision file and records a deferral block with its digest, deferral date, hold kind, optional revisit date, original hold reason, and exact text in the hold body.
+The `park` subcommand requires the same non-empty captain decision file and appends a numbered deferral cycle with its digest, deferral date, hold kind, optional revisit date, original hold reason, and exact text in the hold body.
+It records the cycle before changing the hold kind and records completion afterward, so an exact retry can finish an interrupted transition without creating another cycle.
 It then re-holds the same queued identity as `parked`, or as `future` with the supplied revisit date, while preserving the original hold reason after a deferral-date prefix.
+Reactivation is a separate tasks-axi captain hold transition, and the next `park` appends another cycle on the same identity without replacing earlier provenance.
 It never marks the item Done.
 
 The `repair` subcommand records the resolution block on a hold that was already closed outside the script, such as by a direct `tasks-axi done`, so an origin whose decision was genuinely answered stops failing `verify`.

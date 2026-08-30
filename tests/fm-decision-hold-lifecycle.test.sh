@@ -128,6 +128,14 @@ run_decisions() {  # <home> <command args...>
     FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-decision-hold.sh" "$@"
 }
 
+sha256_value() {  # <text>
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+  else
+    printf '%s' "$1" | sha256sum | awk '{print $1}'
+  fi
+}
+
 write_origin_meta() {  # <home> <id> [kind]
   local home=$1 id=$2 kind=${3:-scout}
   fm_write_meta "$home/state/$id.meta" \
@@ -754,11 +762,7 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
     || fail "could not register the expired future-hold fixture"
   printf 'Keep the expired choice deferred exactly as recorded.\n' > "$home/expired-decision.txt"
   expired_text=$(cat "$home/expired-decision.txt")
-  if command -v shasum >/dev/null 2>&1; then
-    expired_digest=$(printf '%s' "$expired_text" | shasum -a 256 | awk '{print $1}')
-  else
-    expired_digest=$(printf '%s' "$expired_text" | sha256sum | awk '{print $1}')
-  fi
+  expired_digest=$(sha256_value "$expired_text")
   expired_body=$(printf 'Deferral recorded by fm-decision-hold.\nDecision digest: %s\nDeferral mode: future\nDeferred on: %s\nDeferred until: %s\nOriginal hold reason: captain expired choice pending\n\nCaptain decision:\n%s' \
     "$expired_digest" "$today" "$today" "$expired_text")
   tasks_in "$home" update "$expired" --body "$expired_body" >/dev/null \
@@ -789,6 +793,117 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
     "a refused park wrote a captain deferral"
 
   pass "park records deferrals, preserves reasons, supports dates, and keeps the completion gate green"
+}
+
+test_reactivated_decision_appends_deferral_cycle() {
+  local home origin hold first second show before today
+  home=$(make_home repeated-park)
+  origin=sample-repeated-park-review
+  today=$(date +%F)
+  mkdir -p "$home/data/$origin"
+  tasks_in "$home" add "$origin" "Review repeated parking" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the repeated-park origin"
+  write_origin_meta "$home" "$origin"
+  printf 'done: report complete\n' > "$home/state/$origin.status"
+  printf '# Repeated park review\n' > "$home/data/$origin/report.md"
+  hold=$(run_decisions "$home" hold "$origin" repeated-choice \
+    --title "Revisit the repeated choice" --reason "captain first review pending" --repo sample) \
+    || fail "could not register the repeated-park hold"
+
+  printf 'Keep the first version parked.\n' > "$home/first-park.txt"
+  run_decisions "$home" park "$origin" repeated-choice --decision-file "$home/first-park.txt" >/dev/null \
+    || fail "could not record the first deferral cycle"
+  tasks_in "$home" hold "$hold" --reason "captain revised review pending" --kind captain >/dev/null \
+    || fail "could not explicitly reactivate the parked decision"
+  show=$(tasks_in "$home" show "$hold" --full)
+  assert_contains "$show" "hold_kind: captain" "reactivation did not restore the captain hold kind"
+
+  printf 'Keep the revised version parked too.\n' > "$home/second-park.txt"
+  second=$(run_decisions "$home" park "$origin" repeated-choice \
+    --decision-file "$home/second-park.txt") \
+    || fail "could not record the second deferral cycle"
+  [ "$second" = "parked: $hold" ] || fail "the second deferral changed the durable identity"
+  show=$(tasks_in "$home" show "$hold" --full)
+  assert_contains "$show" "hold_kind: parked" "the second deferral stayed active for the captain"
+  assert_contains "$show" "hold_reason: \"$today: captain revised review pending\"" \
+    "the second deferral lost its reactivation reason"
+  first=$(printf '%s' "$show" | grep -o -F "Keep the first version parked." | wc -l | tr -d ' ')
+  [ "$first" = 1 ] || fail "the second deferral did not retain the first decision"
+  assert_contains "$show" "Keep the revised version parked too." \
+    "the second deferral did not append its decision"
+  assert_contains "$show" "Deferral cycle: 1" "the first deferral cycle is absent"
+  assert_contains "$show" "Deferral cycle: 2" "the second deferral cycle is absent"
+  before=$show
+  run_decisions "$home" park "$origin" repeated-choice --decision-file "$home/second-park.txt" >/dev/null \
+    || fail "an exact second-cycle retry failed"
+  show=$(tasks_in "$home" show "$hold" --full)
+  [ "$show" = "$before" ] || fail "an exact second-cycle retry appended another record"
+  pass "reactivated decisions append a new deferral cycle on one identity"
+}
+
+test_park_retry_edges_preserve_state() {
+  local home origin empty escaped partial before show today escaped_reason partial_text partial_digest partial_body
+  home=$(make_home park-retry-edges)
+  origin=sample-park-edge-review
+  today=$(date +%F)
+  escaped_reason='captain says "wait" at C:\review'
+  mkdir -p "$home/data/$origin"
+  tasks_in "$home" add "$origin" "Review park retry edges" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the park-edge origin"
+  write_origin_meta "$home" "$origin"
+  printf 'done: report complete\n' > "$home/state/$origin.status"
+  printf '# Park retry edge review\n' > "$home/data/$origin/report.md"
+
+  empty=$(run_decisions "$home" hold "$origin" empty-date \
+    --title "Revisit an empty date" --reason "captain empty date pending" --repo sample) \
+    || fail "could not register the empty-date hold"
+  printf 'Keep the empty-date choice parked.\n' > "$home/empty-date.txt"
+  before=$(tasks_in "$home" show "$empty" --full)
+  if run_decisions "$home" park "$origin" empty-date --decision-file "$home/empty-date.txt" \
+    --until "" > "$home/empty-date.out" 2> "$home/empty-date.err"; then
+    fail "park accepted an explicitly empty revisit date"
+  fi
+  assert_grep "until must not be empty" "$home/empty-date.err" \
+    "park did not explain the empty revisit date"
+  show=$(tasks_in "$home" show "$empty" --full)
+  [ "$show" = "$before" ] || fail "refusing an empty revisit date changed the active hold"
+
+  escaped=$(run_decisions "$home" hold "$origin" escaped-reason \
+    --title "Revisit an escaped reason" --reason "$escaped_reason" --repo sample) \
+    || fail "could not register the escaped-reason hold"
+  printf 'Keep the quoted path parked.\n' > "$home/escaped-reason.txt"
+  run_decisions "$home" park "$origin" escaped-reason \
+    --decision-file "$home/escaped-reason.txt" >/dev/null \
+    || fail "could not park the escaped-reason hold"
+  before=$(tasks_in "$home" show "$escaped" --full)
+  run_decisions "$home" park "$origin" escaped-reason \
+    --decision-file "$home/escaped-reason.txt" >/dev/null \
+    || fail "an exact escaped-reason park retry failed"
+  run_decisions "$home" hold "$origin" escaped-reason \
+    --title "Revisit an escaped reason" --reason "$escaped_reason" --repo sample >/dev/null \
+    || fail "an exact escaped-reason hold replay failed"
+  show=$(tasks_in "$home" show "$escaped" --full)
+  [ "$show" = "$before" ] || fail "an escaped-reason replay changed the parked hold"
+
+  partial=$(run_decisions "$home" hold "$origin" partial-future \
+    --title "Revisit a partial future park" --reason "captain partial future pending" --repo sample) \
+    || fail "could not register the partial future hold"
+  printf 'Keep the partial future choice deferred.\n' > "$home/partial-future.txt"
+  partial_text=$(cat "$home/partial-future.txt")
+  partial_digest=$(sha256_value "$partial_text")
+  partial_body=$(printf 'Deferral recorded by fm-decision-hold.\nDeferral cycle: 1\nDecision digest: %s\nDeferral mode: future\nDeferred on: %s\nDeferred until: %s\nOriginal hold reason: captain partial future pending\n\nCaptain decision:\n%s' \
+    "$partial_digest" "$today" "$today" "$partial_text")
+  tasks_in "$home" update "$partial" --body "$partial_body" >/dev/null \
+    || fail "could not persist the partial future deferral"
+  run_decisions "$home" park "$origin" partial-future --decision-file "$home/partial-future.txt" \
+    --until "$today" >/dev/null \
+    || fail "a matching partial future retry failed after its revisit date"
+  show=$(tasks_in "$home" show "$partial" --full)
+  assert_contains "$show" "hold_kind: future" "the partial retry did not finish the future retag"
+  assert_contains "$show" "held: no" "the expired partial retry did not retain its inactive future state"
+  assert_contains "$show" "Deferral cycle completed by fm-decision-hold: 1" \
+    "the partial retry did not complete its durable cycle"
+  pass "park retries preserve empty, escaped, and partial-transition state"
 }
 
 test_concurrent_park_and_answer_keep_one_decision() {
@@ -1334,6 +1449,8 @@ test_uninventoried_report_decision_refuses_completion
 test_scout_teardown_always_requires_inventory_verification
 test_declined_decision_closes_without_routed_work
 test_parked_decision_keeps_identity_and_clears_captain_action
+test_reactivated_decision_appends_deferral_cycle
+test_park_retry_edges_preserve_state
 test_concurrent_park_and_answer_keep_one_decision
 test_out_of_band_close_is_repairable_before_teardown
 test_unanswered_decision_still_blocks_completion_and_teardown
