@@ -8,7 +8,7 @@
 # routes dependent work. This script supplies deterministic identities, creates
 # and verifies structured tasks-axi captain holds, records completion attestation
 # in the originating task's metadata, and requires a durable captain decision
-# record before it closes or repairs a hold.
+# record before it closes, parks, or repairs a hold.
 #
 # A hold identity is <origin-id>-decision-<decision-key>. Origin ids and decision
 # keys must already be privacy-safe slugs. Repeating `hold` with the same identity
@@ -25,11 +25,13 @@
 #   fm-decision-hold.sh resolve <origin-id> <decision-key> \
 #     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...]
 #   fm-decision-hold.sh answer <origin-id> <decision-key> --decision-file <path>
+#   fm-decision-hold.sh park <origin-id> <decision-key> \
+#     --decision-file <path> [--until <date>]
+#   fm-decision-hold.sh decline <origin-id> <decision-key> --decision-file <path>
 #   fm-decision-hold.sh answers <origin-id> --source <provenance>   (keyed answers on stdin)
 #   fm-decision-hold.sh bind <source-id> <origin-id>
 #   fm-decision-hold.sh unbind <source-id>
 #   fm-decision-hold.sh binding <source-id>
-#   fm-decision-hold.sh decline <origin-id> <decision-key> --decision-file <path>
 #   fm-decision-hold.sh repair <origin-id> <decision-key> --decision-file <path>
 #
 # `complete` is the shared investigation and visual-review completion gate.
@@ -47,6 +49,11 @@
 # retry is idempotent while a changed decision or, for `resolve`, routed set is
 # rejected. New records include a `Resolution mode:` naming their path; older
 # routed records remain valid.
+#
+# `park` is the non-closing deferral path. It requires the same captain decision
+# record as a close path, then changes an active captain hold to `parked`, or to
+# `future` when --until supplies a revisit date. The original hold reason remains
+# intact after a deferral-date prefix, and the backlog identity stays queued.
 #
 # `resolve` is the routed path. It requires every --routed-to task to exist and to
 # be blocked by the hold. It writes the captain decision and routed identities into
@@ -165,6 +172,18 @@ validate_one_line() {  # <label> <value>
   esac
 }
 
+validate_iso_date() {  # <label> <value>
+  local label=$1 value=$2 parsed=''
+  case "$value" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) fail "$label must use YYYY-MM-DD: $value" ;;
+  esac
+  parsed=$(date -j -f '%Y-%m-%d' "$value" '+%Y-%m-%d' 2>/dev/null \
+    || date -d "$value" '+%Y-%m-%d' 2>/dev/null) \
+    || fail "$label is not a valid calendar date: $value"
+  [ "$parsed" = "$value" ] || fail "$label is not a valid calendar date: $value"
+}
+
 sha256_text() {  # <text>
   if command -v shasum >/dev/null 2>&1; then
     printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
@@ -208,6 +227,15 @@ require_tasks_axi() {
   fm_tasks_axi_compatible || fail "compatible tasks-axi is required"
   tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null \
     || fail "tasks-axi does not expose the captain-hold contract"
+}
+
+require_park_contract() {
+  local help
+  help=$(tasks-axi hold --help 2>&1) || fail "could not read the tasks-axi hold contract"
+  printf '%s\n' "$help" | grep -F -- 'parked|future' >/dev/null \
+    || fail "tasks-axi does not expose parked and future hold kinds"
+  printf '%s\n' "$help" | grep -F -- '--until' >/dev/null \
+    || fail "tasks-axi does not expose dated future holds"
 }
 
 task_show() {  # <id>
@@ -268,6 +296,13 @@ body_has_resolution_record() {  # <hold-body>
   return 1
 }
 
+body_has_deferral_record() {  # <hold-body>
+  case "$1" in
+    *"Deferral recorded by fm-decision-hold."*"Captain decision:"*) return 0 ;;
+  esac
+  return 1
+}
+
 resolution_body() {  # <mode> <routed-csv> [routed-task-id...]
   local mode=$1 routed_csv=$2 body dep
   shift 2
@@ -284,6 +319,27 @@ resolution_body() {  # <mode> <routed-csv> [routed-task-id...]
     done
   fi
   printf '%s' "$body"
+}
+
+deferral_body() {  # <mode> <date> <until-or-none>
+  printf 'Deferral recorded by fm-decision-hold.\nDecision digest: %s\nDeferral mode: %s\nDeferred on: %s\nDeferred until: %s\n\nCaptain decision:\n%s' \
+    "$DECISION_DIGEST" "$1" "$2" "$3" "$DECISION_TEXT"
+}
+
+# tasks-axi forbids parentheses in hold reasons, so its backlog metadata has one
+# unambiguous boundary even when the reason itself contains quotes or colons.
+active_hold_reason() {  # <hold-id>
+  local id=$1 line reason
+  line=$(grep -F -- "- [ ] $id - " "$DATA/backlog.md" | head -1) \
+    || fail "could not read the active hold reason for $id"
+  case "$line" in
+    *' (hold: '*' (hold-kind: '*) ;;
+    *) fail "active backlog item $id has no structured hold reason" ;;
+  esac
+  reason=${line##* (hold: }
+  reason=${reason%%) (hold-kind:*}
+  validate_one_line hold-reason "$reason"
+  printf '%s' "$reason"
 }
 
 # tasks-axi quotes multi-entry blocked_by as "a,b,c"; strip so edge ids match.
@@ -355,13 +411,22 @@ verify_hold_durable() {  # <hold-id>
   kind=$(show_field "$show" kind)
   hold_kind=$(show_field "$show" hold_kind)
   body=$(show_field "$show" body)
-  if [ "$state" = queued ] && [ "$held" = yes ] && [ "$kind" = captain ] && [ "$hold_kind" = captain ]; then
-    return 0
+  if [ "$state" = queued ] && [ "$held" = yes ] && [ "$kind" = captain ]; then
+    case "$hold_kind" in
+      captain) return 0 ;;
+      parked)
+        body_has_deferral_record "$body" && return 0
+        ;;
+      future)
+        [ "$(show_field "$show" hold_until)" != "-" ] \
+          && body_has_deferral_record "$body" && return 0
+        ;;
+    esac
   fi
   if [ "$state" = "done" ] && [ "$kind" = captain ] && body_has_resolution_record "$body"; then
     return 0
   fi
-  fail "captain decision $id is neither actively held nor durably resolved"
+  fail "captain decision $id is neither active, durably deferred, nor durably resolved"
 }
 
 verify_resolution_identity() {
@@ -382,6 +447,35 @@ verify_resolution_identity() {
     || fail "captain hold $id records a different captain decision"
   [ "$recorded_routes" = "$routed_csv" ] \
     || fail "captain hold $id records different routed work"
+}
+
+RECORDED_DEFERRAL_DATE=''
+verify_deferral_identity() {
+  local id=$1 hold_body=$2 decision_digest=$3 mode=$4 until=$5 deferral_prefix fields
+  local recorded_digest recorded_mode recorded_date recorded_until
+  deferral_prefix='"Deferral recorded by fm-decision-hold.\nDecision digest: '
+  case "$hold_body" in
+    "$deferral_prefix"*) fields=${hold_body#"$deferral_prefix"} ;;
+    *) fail "captain hold $id has no deferral identity record" ;;
+  esac
+  case "$fields" in
+    *'\nDeferral mode: '*'\nDeferred on: '*'\nDeferred until: '*'\n\nCaptain decision:'*) ;;
+    *) fail "captain hold $id has an invalid deferral identity record" ;;
+  esac
+  recorded_digest=${fields%%\\n*}
+  fields=${fields#*\\nDeferral mode: }
+  recorded_mode=${fields%%\\n*}
+  fields=${fields#*\\nDeferred on: }
+  recorded_date=${fields%%\\n*}
+  fields=${fields#*\\nDeferred until: }
+  recorded_until=${fields%%\\n*}
+  [ "$recorded_digest" = "$decision_digest" ] \
+    || fail "captain hold $id records a different captain deferral"
+  [ "$recorded_mode" = "$mode" ] \
+    || fail "captain hold $id records a different deferral mode"
+  [ "$recorded_until" = "$until" ] \
+    || fail "captain hold $id records a different revisit date"
+  RECORDED_DEFERRAL_DATE=$recorded_date
 }
 
 command_id() {
@@ -670,6 +764,75 @@ command_answer() {
   close_unrouted_hold answered answered "$@"
 }
 
+command_park() {
+  local origin=${1:-} key=${2:-} decision_file='' until='' mode=parked until_record='(none)'
+  local id show hold_body hold_reason body deferral_date parked_reason state held kind hold_kind hold_until
+  [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --decision-file) shift; decision_file=${1:-} ;;
+      --until) shift; until=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug origin-id "$origin"
+  validate_slug decision-key "$key"
+  load_decision "$decision_file"
+  if [ -n "$until" ]; then
+    validate_one_line until "$until"
+    validate_iso_date until "$until"
+    mode=future
+    until_record=$until
+  fi
+  require_tasks_axi
+  require_park_contract
+  id=$(hold_id "$origin" "$key")
+  show=$(task_show "$id") || fail "captain hold $id is absent from $FM_HOME/data/backlog.md"
+  verify_hold_active "$id"
+  hold_reason=$(active_hold_reason "$id")
+  hold_body=$(show_field "$show" body)
+  if body_has_deferral_record "$hold_body"; then
+    verify_deferral_identity "$id" "$hold_body" "$DECISION_DIGEST" "$mode" "$until_record"
+    deferral_date=$RECORDED_DEFERRAL_DATE
+  else
+    body_has_resolution_record "$hold_body" \
+      && fail "captain hold $id already records a closing decision"
+    deferral_date=$(date +%F) || fail "could not determine the deferral date"
+    body=$(deferral_body "$mode" "$deferral_date" "$until_record")
+    tasks_axi update "$id" --body "$body" >/dev/null \
+      || fail "could not record the captain deferral on $id"
+  fi
+  parked_reason="$deferral_date: $hold_reason"
+  if [ "$mode" = future ]; then
+    tasks_axi hold "$id" --reason "$parked_reason" --kind future --until "$until" >/dev/null \
+      || fail "could not defer captain hold $id until $until"
+  else
+    tasks_axi hold "$id" --reason "$parked_reason" --kind parked >/dev/null \
+      || fail "could not park captain hold $id"
+  fi
+
+  show=$(task_show "$id") || fail "captain decision $id disappeared while recording the deferral"
+  state=$(show_field "$show" state)
+  held=$(show_field "$show" held)
+  kind=$(show_field "$show" kind)
+  hold_kind=$(show_field "$show" hold_kind)
+  hold_until=$(show_field "$show" hold_until)
+  hold_body=$(show_field "$show" body)
+  [ "$state" = queued ] || fail "parking $id changed its queued state"
+  [ "$held" = yes ] || fail "parking $id released its hold"
+  [ "$kind" = captain ] || fail "parking $id changed its captain task kind"
+  [ "$hold_kind" = "$mode" ] || fail "parking $id recorded hold kind $hold_kind instead of $mode"
+  if [ "$mode" = future ]; then
+    [ "$hold_until" = "$until" ] || fail "parking $id lost its revisit date"
+  fi
+  [ "$(active_hold_reason "$id")" = "$parked_reason" ] \
+    || fail "parking $id did not preserve its dated hold reason"
+  verify_deferral_identity "$id" "$hold_body" "$DECISION_DIGEST" "$mode" "$until_record"
+  printf 'parked: %s%s\n' "$id" "${until:+ until $until}"
+}
+
 # --- the one keyed-answer intake, and the source bindings that feed it --------
 
 BINDING_DIR="$STATE/decision-bindings"
@@ -839,6 +1002,7 @@ case "${1:-}" in
   verify) shift; command_verify "$@" ;;
   resolve) shift; command_resolve "$@" ;;
   answer) shift; command_answer "$@" ;;
+  park) shift; command_park "$@" ;;
   answers) shift; command_answers "$@" ;;
   bind) shift; command_bind "$@" ;;
   unbind) shift; command_unbind "$@" ;;

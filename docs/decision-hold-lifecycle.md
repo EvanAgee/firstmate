@@ -36,6 +36,10 @@ Both record `(none)` as the routed identities and refuse while any task in the s
 Every candidate found in the listing prefilter is confirmed against its own structured record before the refusal is reported.
 `answer` exists so the act carrying a captain answer can also be the act that closes its hold; `decline` continues to mean the stronger claim that the answer routes no follow-up work at all.
 
+The `park` subcommand requires the same non-empty captain decision file and records a deferral block with its digest, deferral date, hold kind, optional revisit date, and exact text in the hold body.
+It then re-holds the same queued identity as `parked`, or as `future` with `--until`, while preserving the original hold reason after a deferral-date prefix.
+It refuses a hold that is no longer an active captain hold and never marks the item Done.
+
 The `repair` subcommand records the resolution block on a hold that was already closed outside the script, such as by a direct `tasks-axi done`, so an origin whose decision was genuinely answered stops failing `verify`.
 It refuses a hold that is still actively held, never reopens a closed hold, and never clears a dependency edge, so an unanswered decision keeps blocking teardown until the captain's word closes it.
 It also requires the identity to carry the captain-hold provenance that tasks-axi preserves through a close, so an ordinary captain-kind task that was never held cannot be repaired into a resolved decision.
@@ -88,6 +92,7 @@ Additional quoted `blocked_by` regression verification date: 2026-07-17.
 Plural blocker-readiness and mixed-home projection verification date: 2026-07-22.
 Unrouted close-path verification date: 2026-08-13.
 Answer-time closure verification date: 2026-08-16.
+Captain-deferral verification date: 2026-08-30.
 
 The focused end-to-end regression uses only synthetic `sample` identities and decision text.
 It begins with a completed investigation and visual review whose genuine unresolved choice exists only in the report.
@@ -114,6 +119,7 @@ $ bash tests/fm-decision-hold-lifecycle.test.sh
 ok - report-only unresolved decision is reproduced and completion refuses before loss
 ok - non-forced scout teardown always requires durable inventory verification
 ok - a declined decision closes with a recorded answer and no routed work
+ok - park records deferrals, preserves reasons, supports dates, and keeps the completion gate green
 ok - a decision closed outside the script is repairable and then clears teardown
 ok - an unanswered decision still blocks completion and resists both unrouted close paths
 ok - captain holds are idempotent, distinct, teardown-safe, Bearings-visible, and durably routed before close
@@ -154,7 +160,7 @@ $ bin/fm-lint.sh
 fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
 
 $ bin/fm-doc-audience-check.sh
-fm-doc-audience-check: ok surfaces=68 local_links=253
+fm-doc-audience-check: ok surfaces=120 local_links=290
 
 $ git diff --check
 (no output)

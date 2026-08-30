@@ -658,6 +658,80 @@ test_declined_decision_closes_without_routed_work() {
   pass "a declined decision closes with a recorded answer and no routed work"
 }
 
+# A captain deferral answers the current question without closing the work item.
+# The same identity must leave the active captain queue with its reason and the
+# captain's exact decision preserved for the later revisit.
+test_parked_decision_keeps_identity_and_clears_captain_action() {
+  local home id parked future inactive show today help
+  home=$(make_home parked-decision)
+  id=sample-park-review
+  today=$(date +%F)
+  help=$(run_decisions "$home" --help) || fail "could not read decision-hold help"
+  assert_contains "$help" "fm-decision-hold.sh park <origin-id> <decision-key>" \
+    "decision-hold help does not list park beside the answer paths"
+  assert_contains "$help" "--decision-file <path> [--until <date>]" \
+    "decision-hold help does not document park's flags"
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review sample parking choices" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create parked-decision origin"
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Sample parking review\n\nTwo captain choices can be revisited later.\n' > "$home/data/$id/report.md"
+  parked=$(run_decisions "$home" hold "$id" revisit-later \
+    --title "Revisit the sample choice" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the parkable hold"
+  future=$(run_decisions "$home" hold "$id" revisit-on-date \
+    --title "Revisit the dated sample choice" --reason "captain dated choice pending" --repo sample) \
+    || fail "could not register the future hold"
+  run_decisions "$home" complete "$id" revisit-later revisit-on-date >/dev/null \
+    || fail "completion failed before parking the decisions"
+
+  printf 'Leave the sample choice unchanged and revisit it later.\n' > "$home/park-decision.txt"
+  run_decisions "$home" park "$id" revisit-later --decision-file "$home/park-decision.txt" >/dev/null \
+    || fail "park could not defer an active captain hold"
+  show=$(tasks_in "$home" show "$parked" --full)
+  assert_contains "$show" "state: queued" "park closed the held item"
+  assert_contains "$show" "held: yes" "park released the held item"
+  assert_contains "$show" "hold_kind: parked" "park left the item in the captain hold category"
+  assert_contains "$show" "hold_reason: \"$today: captain sample choice pending\"" \
+    "park did not preserve and date-prefix the hold reason"
+  assert_contains "$show" "Deferral recorded by fm-decision-hold" \
+    "park did not record durable decision provenance"
+  assert_contains "$show" "Leave the sample choice unchanged and revisit it later." \
+    "park did not record the captain's deferral"
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "a parked decision did not satisfy the completion gate"
+
+  printf 'Leave the dated choice unchanged until the review date.\n' > "$home/future-decision.txt"
+  run_decisions "$home" park "$id" revisit-on-date --decision-file "$home/future-decision.txt" \
+    --until 2099-12-31 >/dev/null \
+    || fail "park could not defer a captain hold until a date"
+  show=$(tasks_in "$home" show "$future" --full)
+  assert_contains "$show" "state: queued" "dated park closed the held item"
+  assert_contains "$show" "hold_kind: future" "dated park did not use the future hold category"
+  assert_contains "$show" "hold_until: 2099-12-31" "dated park lost its revisit date"
+  assert_contains "$show" "hold_reason: \"$today: captain dated choice pending\"" \
+    "dated park did not preserve and date-prefix the hold reason"
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "a future decision did not satisfy the completion gate"
+
+  inactive=$(run_decisions "$home" hold "$id" inactive-choice \
+    --title "Inactive sample choice" --reason "captain inactive choice pending" --repo sample) \
+    || fail "could not register the inactive-hold fixture"
+  tasks_in "$home" "done" "$inactive" >/dev/null || fail "could not make the hold inactive"
+  if run_decisions "$home" park "$id" inactive-choice --decision-file "$home/park-decision.txt" \
+    > "$home/inactive-park.out" 2> "$home/inactive-park.err"; then
+    fail "park accepted an inactive captain hold"
+  fi
+  assert_grep "not queued" "$home/inactive-park.err" "park did not report why the inactive hold was refused"
+  show=$(tasks_in "$home" show "$inactive" --full)
+  assert_contains "$show" "state: done" "a refused park reopened the inactive hold"
+  assert_not_contains "$show" "Deferral recorded by fm-decision-hold" \
+    "a refused park wrote a captain deferral"
+
+  pass "park records deferrals, preserves reasons, supports dates, and keeps the completion gate green"
+}
+
 # The exact incident: two declined captain decisions were closed with a direct
 # tasks-axi done, so the durable resolution attestation this gate reads was never
 # written and the investigation could no longer be cleaned up.
@@ -1118,6 +1192,7 @@ test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
 test_declined_decision_closes_without_routed_work
+test_parked_decision_keeps_identity_and_clears_captain_action
 test_out_of_band_close_is_repairable_before_teardown
 test_unanswered_decision_still_blocks_completion_and_teardown
 test_structured_holds_survive_teardown_and_route_resolution
