@@ -1,0 +1,25 @@
+Firstmate crew-dispatch pin validation
+Public command: bin/fm-bootstrap.sh
+
+CASE: matching rule pin and defaultPin
+CONFIG: {"rules":[{"when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}],"default":[{"harness":"pi","model":"xai/grok-4.6","effort":"medium"}],"defaultPin":{"harness":"pi","model":"xai/grok-4.6","effort":"medium"}}
+BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json
+BOOTSTRAP_INFO: crew dispatch rule: builder -> quota-balanced[codex/gpt-5.6-sol/high]
+BOOTSTRAP_INFO: crew dispatch default: quota-balanced[pi/xai/grok-4.6/medium]
+
+CASE: rule pin outside its pool
+CONFIG: {"rules":[{"when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"pin":{"harness":"grok","model":"grok-4.5","effort":"high"}}]}
+CREW_DISPATCH: invalid config/crew-dispatch.json - pin is not a member of the use pool for builder: grok/grok-4.5/high
+
+CASE: defaultPin outside the default pool
+CONFIG: {"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"defaultPin":{"harness":"grok","model":"grok-4.5","effort":"high"}}
+CREW_DISPATCH: invalid config/crew-dispatch.json - defaultPin is not a member of the default pool: grok/grok-4.5/high
+
+CASE: rule pin names a switched-off member
+CONFIG: {"rules":[{"when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":false},{"harness":"grok","model":"grok-4.5","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}]}
+CREW_DISPATCH: invalid config/crew-dispatch.json - pin names a switched-off member for builder: codex/gpt-5.6-sol/high
+
+CASE: defaultPin names a switched-off member
+CONFIG: {"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":false},{"harness":"grok","model":"grok-4.5","effort":"high"}],"defaultPin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}
+CREW_DISPATCH: invalid config/crew-dispatch.json - defaultPin names a switched-off member: codex/gpt-5.6-sol/high
+

@@ -1,0 +1,45 @@
+GET /rigs
+HTTP 200
+{
+  "ok": true,
+  "note": "Pinned routes are shown exactly to the dashboard.",
+  "rigs": [
+    {
+      "name": "builder",
+      "rungs": [
+        {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "enabled": true
+        }
+      ],
+      "pin": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "enabled": true
+      }
+    },
+    {
+      "name": "default",
+      "rungs": [
+        {
+          "harness": "pi",
+          "model": "xai/grok-4.6",
+          "effort": "medium",
+          "enabled": true
+        }
+      ],
+      "pin": null
+    }
+  ],
+  "defaultPin": {
+    "harness": "pi",
+    "model": "xai/grok-4.6",
+    "effort": "medium",
+    "enabled": true
+  },
+  "crew": "",
+  "secondmate": ""
+}
