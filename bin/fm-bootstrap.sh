@@ -1036,6 +1036,31 @@ crew_dispatch_validate() {
       if ($p | has("enabled")) then $p.enabled else true end;
     def enabled_profiles($items):
       [$items[] | select(rung_enabled(.))];
+    def same_tuple($left; $right):
+      {harness: $left.harness, model: ($left.model // null), effort: ($left.effort // null)}
+      == {harness: $right.harness, model: ($right.model // null), effort: ($right.effort // null)};
+    def profile_label($profile):
+      "\($profile.harness)/\($profile.model // "<default>")/\($profile.effort // "<default>")";
+    def rule_pins_outside_pools:
+      [(.rules // [])[]?
+        | select(has("pin"))
+        | . as $rule
+        | select([profiles($rule.use)[]? | select(same_tuple(.; $rule.pin))] | length == 0)];
+    def switched_off_rule_pins:
+      [(.rules // [])[]?
+        | select(has("pin"))
+        | . as $rule
+        | select([profiles($rule.use)[]?
+          | select(same_tuple(.; $rule.pin) and rung_enabled(.))] | length == 0)];
+    def default_pin_outside_pool:
+      . as $config
+      | has("defaultPin")
+      and ([profiles($config.default)[]? | select(same_tuple(.; $config.defaultPin))] | length == 0);
+    def switched_off_default_pin:
+      . as $config
+      | has("defaultPin")
+      and ([profiles($config.default)[]?
+        | select(same_tuple(.; $config.defaultPin) and rung_enabled(.))] | length == 0);
     def bad_efforts:
       configured_profiles
       | map({h: .harness, e: .effort})
@@ -1054,6 +1079,15 @@ crew_dispatch_validate() {
     elif [(.rules // [])[]? | profiles(.use?)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "each use profile needs harness"
     elif malformed_optional_fields([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile model and effort must be non-empty strings when present"
     elif malformed_enabled([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile enabled must be true or false when present"
+    elif [(.rules // [])[]? | select(has("pin") and ((.pin | type) != "object"))] | length > 0 then "rule pin must be a profile object"
+    elif [(.rules // [])[]? | select(has("pin")) | .pin | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "rule pin needs harness"
+    elif malformed_optional_fields([(.rules // [])[]? | select(has("pin")) | .pin]) then "rule pin model and effort must be non-empty strings when present"
+    elif (rule_pins_outside_pools | length) > 0 then
+      "pin is not a member of the use pool for "
+      + ([rule_pins_outside_pools[] | "\(.when): \(profile_label(.pin))"] | join("; "))
+    elif (switched_off_rule_pins | length) > 0 then
+      "pin names a switched-off member for "
+      + ([switched_off_rule_pins[] | "\(.when): \(profile_label(.pin))"] | join("; "))
     elif [(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0)] | length > 0 then
       "every rung is turned off for: " + ([(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0) | .when] | join("; "))
     elif [(.rules // [])[]? | select(has("select") and ((.select? | type) != "string" or (.select | length) == 0))] | length > 0 then "select must be a non-empty string"
@@ -1065,6 +1099,11 @@ crew_dispatch_validate() {
     elif has("default") and ([profiles(.default)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length) > 0 then "each default profile needs harness"
     elif has("default") and malformed_optional_fields([profiles(.default)[]?]) then "default profile model and effort must be non-empty strings when present"
     elif has("default") and malformed_enabled([profiles(.default)[]?]) then "default profile enabled must be true or false when present"
+    elif has("defaultPin") and ((.defaultPin | type) != "object") then "defaultPin must be a profile object"
+    elif has("defaultPin") and ((.defaultPin.harness? | type) != "string" or (.defaultPin.harness | length) == 0) then "defaultPin needs harness"
+    elif has("defaultPin") and malformed_optional_fields([.defaultPin]) then "defaultPin model and effort must be non-empty strings when present"
+    elif default_pin_outside_pool then "defaultPin is not a member of the default pool: " + profile_label(.defaultPin)
+    elif switched_off_default_pin then "defaultPin names a switched-off member: " + profile_label(.defaultPin)
     elif has("default") and ((enabled_profiles([profiles(.default)[]?]) | length) == 0) then "every default rung is turned off"
     else
       (configured_profiles

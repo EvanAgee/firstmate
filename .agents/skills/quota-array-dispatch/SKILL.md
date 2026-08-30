@@ -12,6 +12,13 @@ metadata:
 
 # quota-array-dispatch
 
+## A pin short-circuits selection
+
+A matched rule's `pin` selects its exact harness, model, and effort tuple for every new crewmate or scout dispatch in that class.
+The top-level `defaultPin` does the same when intake reaches the `default` pool.
+Round-robin applies only when that pool has no pin.
+If the pinned member is switched off, absent from the pool, or proven unusable under the health rules below, stop and ask the captain instead of falling through to round-robin or another member.
+
 This skill is the single owner of the round-robin pool selection procedure.
 The name is kept for stability: `AGENTS.md`, `docs/configuration.md`, and the tests all reference it, so renaming it would break those triggers for no behavior gain.
 Selection is round-robin now, not quota-optimizing; quota is only a health filter and a tie-break.
