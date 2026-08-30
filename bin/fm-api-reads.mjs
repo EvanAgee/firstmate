@@ -452,8 +452,8 @@ export function enrichFleetTasks(home, snapshot) {
 // with `tasks-axi show <id> --full`. This is the one holds query the dashboard
 // used to run itself; the API runs it now so no consumer parses tasks-axi
 // output. Each hold: { id, title, reason, repo, createdAt, blockedBy[],
-// actionable, done, answerable }. Answer options are a consumer concern and
-// stay out of this contract.
+// hold_kind, actionable, parked, done, answerable }. Answer options are a
+// consumer concern and stay out of this contract.
 
 function tasksAxiEnv(home) {
   const env = {
@@ -518,6 +518,8 @@ function parseHoldRecord(output) {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
+  const holdKind = fields.get("hold_kind") || "";
+  const parked = holdKind === "parked" || holdKind === "future";
 
   return {
     id,
@@ -526,9 +528,11 @@ function parseHoldRecord(output) {
     repo: fields.get("repo") || "",
     createdAt: fields.get("created") || "",
     blockedBy,
-    actionable: fields.get("blocked") !== "yes" && blockedBy.length === 0,
+    hold_kind: holdKind,
+    actionable: !parked && fields.get("blocked") !== "yes" && blockedBy.length === 0,
+    parked,
     done: fields.get("state") === "done",
-    answerable: id.includes("-decision-"),
+    answerable: !parked && id.includes("-decision-"),
   };
 }
 

@@ -136,7 +136,13 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 DECISION_META_LOCK=
 DECISION_META_LOCK_HELD=0
+DECISION_ITEM_LOCK=
+DECISION_ITEM_LOCK_HELD=0
 decision_hold_cleanup() {
+  if [ "$DECISION_ITEM_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$DECISION_ITEM_LOCK" || true
+    DECISION_ITEM_LOCK_HELD=0
+  fi
   if [ "$DECISION_META_LOCK_HELD" = 1 ]; then
     fm_lock_release "$DECISION_META_LOCK" || true
     DECISION_META_LOCK_HELD=0
@@ -155,6 +161,12 @@ usage() {
 fail() {
   printf 'fm-decision-hold: %s\n' "$*" >&2
   exit 1
+}
+
+lock_decision_item() {  # <hold-id>
+  DECISION_ITEM_LOCK="$STATE/.decision-hold-$1.lock"
+  fm_lock_acquire_wait "$DECISION_ITEM_LOCK"
+  DECISION_ITEM_LOCK_HELD=1
 }
 
 validate_slug() {  # <label> <value>
@@ -329,9 +341,9 @@ resolution_body() {  # <mode> <routed-csv> [routed-task-id...]
   printf '%s' "$body"
 }
 
-deferral_body() {  # <mode> <date> <until-or-none>
-  printf 'Deferral recorded by fm-decision-hold.\nDecision digest: %s\nDeferral mode: %s\nDeferred on: %s\nDeferred until: %s\n\nCaptain decision:\n%s' \
-    "$DECISION_DIGEST" "$1" "$2" "$3" "$DECISION_TEXT"
+deferral_body() {  # <mode> <date> <until-or-none> <original-reason>
+  printf 'Deferral recorded by fm-decision-hold.\nDecision digest: %s\nDeferral mode: %s\nDeferred on: %s\nDeferred until: %s\nOriginal hold reason: %s\n\nCaptain decision:\n%s' \
+    "$DECISION_DIGEST" "$1" "$2" "$3" "$4" "$DECISION_TEXT"
 }
 
 # tasks-axi forbids parentheses in hold reasons, so its backlog metadata has one
@@ -437,6 +449,25 @@ verify_hold_durable() {  # <hold-id>
   fail "captain decision $id is neither active, durably deferred, nor durably resolved"
 }
 
+verify_parked_hold() {  # <hold-id> <mode> <until-or-empty> <reason>
+  local id=$1 mode=$2 until=$3 reason=$4 show state held kind hold_kind hold_until
+  show=$(task_show "$id") || fail "captain decision $id disappeared while recording the deferral"
+  state=$(show_field "$show" state)
+  held=$(show_field "$show" held)
+  kind=$(show_field "$show" kind)
+  hold_kind=$(show_field "$show" hold_kind)
+  hold_until=$(show_field "$show" hold_until)
+  [ "$state" = queued ] || fail "parking $id changed its queued state"
+  [ "$held" = yes ] || fail "parking $id released its hold"
+  [ "$kind" = captain ] || fail "parking $id changed its captain task kind"
+  [ "$hold_kind" = "$mode" ] || fail "parking $id recorded hold kind $hold_kind instead of $mode"
+  if [ "$mode" = future ]; then
+    [ "$hold_until" = "$until" ] || fail "parking $id lost its revisit date"
+  fi
+  [ "$(active_hold_reason "$id")" = "$reason" ] \
+    || fail "parking $id did not preserve its dated hold reason"
+}
+
 verify_resolution_identity() {
   local id=$1 hold_body=$2 decision_digest=$3 routed_csv=$4 resolution_prefix resolution_fields recorded_digest recorded_routes
   resolution_prefix='"Resolution recorded by fm-decision-hold.\nDecision digest: '
@@ -458,16 +489,17 @@ verify_resolution_identity() {
 }
 
 RECORDED_DEFERRAL_DATE=''
+RECORDED_HOLD_REASON=''
 verify_deferral_identity() {
   local id=$1 hold_body=$2 decision_digest=$3 mode=$4 until=$5 deferral_prefix fields
-  local recorded_digest recorded_mode recorded_date recorded_until
+  local recorded_digest recorded_mode recorded_date recorded_until recorded_reason
   deferral_prefix='"Deferral recorded by fm-decision-hold.\nDecision digest: '
   case "$hold_body" in
     "$deferral_prefix"*) fields=${hold_body#"$deferral_prefix"} ;;
     *) fail "captain hold $id has no deferral identity record" ;;
   esac
   case "$fields" in
-    *'\nDeferral mode: '*'\nDeferred on: '*'\nDeferred until: '*'\n\nCaptain decision:'*) ;;
+    *'\nDeferral mode: '*'\nDeferred on: '*'\nDeferred until: '*'\nOriginal hold reason: '*'\n\nCaptain decision:'*) ;;
     *) fail "captain hold $id has an invalid deferral identity record" ;;
   esac
   recorded_digest=${fields%%\\n*}
@@ -477,13 +509,18 @@ verify_deferral_identity() {
   recorded_date=${fields%%\\n*}
   fields=${fields#*\\nDeferred until: }
   recorded_until=${fields%%\\n*}
+  fields=${fields#*\\nOriginal hold reason: }
+  recorded_reason=${fields%%\\n*}
   [ "$recorded_digest" = "$decision_digest" ] \
     || fail "captain hold $id records a different captain deferral"
   [ "$recorded_mode" = "$mode" ] \
     || fail "captain hold $id records a different deferral mode"
   [ "$recorded_until" = "$until" ] \
     || fail "captain hold $id records a different revisit date"
+  validate_iso_date deferred-on "$recorded_date"
+  validate_one_line original-hold-reason "$recorded_reason"
   RECORDED_DEFERRAL_DATE=$recorded_date
+  RECORDED_HOLD_REASON=$recorded_reason
 }
 
 command_id() {
@@ -512,6 +549,7 @@ command_hold() {
   require_tasks_axi
   origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $FM_HOME"
   id=$(hold_id "$origin" "$key")
+  lock_decision_item "$id"
   if show=$(task_show "$id"); then
     state=$(show_field "$show" state)
     kind=$(show_field "$show" kind)
@@ -665,6 +703,7 @@ command_resolve() {
   routed_csv=$(printf '%s\n' "$routed" | tr ' ' ',')
   require_tasks_axi
   id=$(hold_id "$origin" "$key")
+  lock_decision_item "$id"
   if verify_hold_resolved "$id"; then
     hold_show=$(task_show "$id")
     hold_body=$(show_field "$hold_show" body)
@@ -738,6 +777,7 @@ close_unrouted_hold() {  # <mode> <outcome-word> <origin-id> <decision-key> <fla
   load_decision "$decision_file"
   require_tasks_axi
   id=$(hold_id "$origin" "$key")
+  lock_decision_item "$id"
   if verify_hold_resolved "$id"; then
     hold_show=$(task_show "$id")
     hold_body=$(show_field "$hold_show" body)
@@ -774,7 +814,7 @@ command_answer() {
 
 command_park() {
   local origin=${1:-} key=${2:-} decision_file='' until='' mode=parked until_record='(none)'
-  local id show hold_body hold_reason body deferral_date parked_reason state held kind hold_kind hold_until
+  local id show hold_body hold_reason body deferral_date parked_reason hold_kind
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -797,18 +837,32 @@ command_park() {
   require_tasks_axi
   require_park_contract
   id=$(hold_id "$origin" "$key")
+  lock_decision_item "$id"
   show=$(task_show "$id") || fail "captain hold $id is absent from $FM_HOME/data/backlog.md"
-  verify_hold_active "$id"
-  hold_reason=$(active_hold_reason "$id")
   hold_body=$(show_field "$show" body)
+  hold_kind=$(show_field "$show" hold_kind)
   if body_has_deferral_record "$hold_body"; then
     verify_deferral_identity "$id" "$hold_body" "$DECISION_DIGEST" "$mode" "$until_record"
     deferral_date=$RECORDED_DEFERRAL_DATE
+    hold_reason=$RECORDED_HOLD_REASON
+    parked_reason="$deferral_date: $hold_reason"
+    case "$hold_kind" in
+      parked|future)
+        verify_parked_hold "$id" "$mode" "$until" "$parked_reason"
+        printf 'parked: %s%s\n' "$id" "${until:+ until $until}"
+        return 0
+        ;;
+    esac
+    verify_hold_active "$id"
+    [ "$(active_hold_reason "$id")" = "$hold_reason" ] \
+      || fail "captain hold $id records a different original hold reason"
   else
+    verify_hold_active "$id"
+    hold_reason=$(active_hold_reason "$id")
     body_has_resolution_record "$hold_body" \
       && fail "captain hold $id already records a closing decision"
     deferral_date=$(date +%F) || fail "could not determine the deferral date"
-    body=$(deferral_body "$mode" "$deferral_date" "$until_record")
+    body=$(deferral_body "$mode" "$deferral_date" "$until_record" "$hold_reason")
     tasks_axi update "$id" --body "$body" >/dev/null \
       || fail "could not record the captain deferral on $id"
   fi
@@ -821,22 +875,9 @@ command_park() {
       || fail "could not park captain hold $id"
   fi
 
+  verify_parked_hold "$id" "$mode" "$until" "$parked_reason"
   show=$(task_show "$id") || fail "captain decision $id disappeared while recording the deferral"
-  state=$(show_field "$show" state)
-  held=$(show_field "$show" held)
-  kind=$(show_field "$show" kind)
-  hold_kind=$(show_field "$show" hold_kind)
-  hold_until=$(show_field "$show" hold_until)
   hold_body=$(show_field "$show" body)
-  [ "$state" = queued ] || fail "parking $id changed its queued state"
-  [ "$held" = yes ] || fail "parking $id released its hold"
-  [ "$kind" = captain ] || fail "parking $id changed its captain task kind"
-  [ "$hold_kind" = "$mode" ] || fail "parking $id recorded hold kind $hold_kind instead of $mode"
-  if [ "$mode" = future ]; then
-    [ "$hold_until" = "$until" ] || fail "parking $id lost its revisit date"
-  fi
-  [ "$(active_hold_reason "$id")" = "$parked_reason" ] \
-    || fail "parking $id did not preserve its dated hold reason"
   verify_deferral_identity "$id" "$hold_body" "$DECISION_DIGEST" "$mode" "$until_record"
   printf 'parked: %s%s\n' "$id" "${until:+ until $until}"
 }
@@ -976,6 +1017,7 @@ command_repair() {
   load_decision "$decision_file"
   require_tasks_axi
   id=$(hold_id "$origin" "$key")
+  lock_decision_item "$id"
   show=$(task_show "$id") || fail "captain decision $id is absent from $FM_HOME/data/backlog.md"
   kind=$(show_field "$show" kind)
   [ "$kind" = captain ] || fail "backlog item $id is not kind captain"

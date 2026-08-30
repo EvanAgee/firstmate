@@ -26,7 +26,7 @@
 //   source. Empty home or missing file: items is [].
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
-//   actionable, done, answerable }] }
+//   hold_kind, actionable, parked, done, answerable }] }
 //   The captain-kind decisions from tasks-axi, read in full and sorted
 //   actionable-first. tasks-axi absent: holds is [].
 // GET /blocked

@@ -42,7 +42,7 @@ Bearings reads the resulting structured state and must never compensate by scrap
 4. Run the script's `complete` command with the full unresolved-key inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
 6. If the captain authorizes dependent work, record it with normal tasks-axi commands and block it by the hold identity.
-7. Put the captain's exact deferral in a file and use the script's `park` command, adding `--until` only when the captain gave a revisit date.
+7. Put the captain's exact deferral in a file and use the script's `park` command, including the revisit date when the captain gave one.
 8. Put the captain's exact durable decision in a file and close the hold with the script's `resolve` command and every routed task, its `answer` command when the captain answered a hold with no routed work behind it, its `decline` command when the answer routes no work at all, or its `repair` command when the hold was already closed outside the script.
    A hold that a channel already closed by feeding its keyed answer needs none of these; confirm it in step 9 instead.
 9. Confirm Bearings no longer shows any closed or parked hold in Captain's Call and that any routed work remains in structured backlog state.

@@ -699,6 +699,11 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
     "park did not record durable decision provenance"
   assert_contains "$show" "Leave the sample choice unchanged and revisit it later." \
     "park did not record the captain's deferral"
+  before=$show
+  run_decisions "$home" park "$id" revisit-later --decision-file "$home/park-decision.txt" >/dev/null \
+    || fail "an exact parked-decision retry failed"
+  show=$(tasks_in "$home" show "$parked" --full)
+  [ "$show" = "$before" ] || fail "an exact parked-decision retry changed the hold"
   run_decisions "$home" verify "$id" >/dev/null \
     || fail "a parked decision did not satisfy the completion gate"
 
@@ -724,6 +729,12 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
   assert_contains "$show" "hold_until: 2099-12-31" "dated park lost its revisit date"
   assert_contains "$show" "hold_reason: \"$today: captain dated choice pending\"" \
     "dated park did not preserve and date-prefix the hold reason"
+  before=$show
+  run_decisions "$home" park "$id" revisit-on-date --decision-file "$home/future-decision.txt" \
+    --until 2099-12-31 >/dev/null \
+    || fail "an exact future-decision retry failed"
+  show=$(tasks_in "$home" show "$future" --full)
+  [ "$show" = "$before" ] || fail "an exact future-decision retry changed the hold"
   run_decisions "$home" verify "$id" >/dev/null \
     || fail "a future decision did not satisfy the completion gate"
 
@@ -742,6 +753,88 @@ test_parked_decision_keeps_identity_and_clears_captain_action() {
     "a refused park wrote a captain deferral"
 
   pass "park records deferrals, preserves reasons, supports dates, and keeps the completion gate green"
+}
+
+test_concurrent_park_and_answer_keep_one_decision() {
+  local home id hold park_pid answer_pid park_rc answer_rc show i
+  home=$(make_home concurrent-park-answer)
+  id=sample-concurrent-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review concurrent decision handling" \
+    --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the concurrent-decision origin"
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Concurrent decision review\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" concurrent-choice \
+    --title "Choose the concurrent outcome" --reason "captain concurrent choice pending" --repo sample) \
+    || fail "could not register the concurrent-decision hold"
+  printf 'Revisit the concurrent choice later.\n' > "$home/park-concurrent.txt"
+  printf 'Apply the concurrent choice now.\n' > "$home/answer-concurrent.txt"
+  cat > "$home/fakebin/tasks-axi" <<'EOF'
+#!/usr/bin/env bash
+if [ -n "${FM_TEST_PAUSE_PARK_UPDATE:-}" ] && [ "${1:-}" = update ]; then
+  case "$*" in
+    *"Deferral recorded by fm-decision-hold."*)
+      : > "$FM_TEST_PAUSE_PARK_UPDATE"
+      while [ ! -f "$FM_TEST_RELEASE_PARK_UPDATE" ]; do sleep 0.01; done
+      ;;
+  esac
+fi
+"$REAL_TASKS_AXI" "$@"
+rc=$?
+if [ -n "${FM_TEST_MARK_ANSWER_DONE:-}" ] && [ "${1:-}" = done ]; then
+  : > "$FM_TEST_MARK_ANSWER_DONE"
+fi
+exit "$rc"
+EOF
+  chmod +x "$home/fakebin/tasks-axi"
+
+  FM_TEST_PAUSE_PARK_UPDATE="$home/park-update-ready" \
+    FM_TEST_RELEASE_PARK_UPDATE="$home/release-park-update" \
+    run_decisions "$home" park "$id" concurrent-choice \
+      --decision-file "$home/park-concurrent.txt" > "$home/concurrent-park.out" \
+      2> "$home/concurrent-park.err" &
+  park_pid=$!
+  i=0
+  while [ ! -f "$home/park-update-ready" ] && kill -0 "$park_pid" 2>/dev/null && [ "$i" -lt 200 ]; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  if [ ! -f "$home/park-update-ready" ]; then
+    : > "$home/release-park-update"
+    wait "$park_pid" || true
+    fail "park did not reach the staged deferral write"
+  fi
+
+  FM_TEST_MARK_ANSWER_DONE="$home/answer-done" \
+    run_decisions "$home" answer "$id" concurrent-choice \
+      --decision-file "$home/answer-concurrent.txt" > "$home/concurrent-answer.out" \
+      2> "$home/concurrent-answer.err" &
+  answer_pid=$!
+  i=0
+  while [ ! -f "$home/answer-done" ] && kill -0 "$answer_pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  : > "$home/release-park-update"
+  set +e
+  wait "$park_pid"
+  park_rc=$?
+  wait "$answer_pid"
+  answer_rc=$?
+  set -e
+
+  [ "$park_rc" -eq 0 ] || fail "serialized park failed: $(cat "$home/concurrent-park.err")"
+  [ "$answer_rc" -ne 0 ] || fail "a concurrent answer replaced the serialized deferral"
+  show=$(tasks_in "$home" show "$hold" --full)
+  assert_contains "$show" "state: queued" "the concurrent answer closed the parked decision"
+  assert_contains "$show" "hold_kind: parked" "the concurrent answer replaced the parked hold kind"
+  assert_contains "$show" "Deferral recorded by fm-decision-hold" \
+    "the concurrent answer erased the durable deferral"
+  assert_not_contains "$show" "Resolution recorded by fm-decision-hold" \
+    "the parked decision retained a losing concurrent resolution"
+  pass "concurrent park and answer keep one serialized decision"
 }
 
 # The exact incident: two declined captain decisions were closed with a direct
@@ -1205,6 +1298,7 @@ test_uninventoried_report_decision_refuses_completion
 test_scout_teardown_always_requires_inventory_verification
 test_declined_decision_closes_without_routed_work
 test_parked_decision_keeps_identity_and_clears_captain_action
+test_concurrent_park_and_answer_keep_one_decision
 test_out_of_band_close_is_repairable_before_teardown
 test_unanswered_decision_still_blocks_completion_and_teardown
 test_structured_holds_survive_teardown_and_route_resolution
