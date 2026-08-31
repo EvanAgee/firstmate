@@ -11,7 +11,7 @@ TMP_ROOT=$(fm_test_tmproot fm-pr-autoarm)
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 
 make_case() {
-  local name=$1 provider=${2:-github} kind=${3:-ship} dir="$TMP_ROOT/$1" fakebin
+  local provider=${2:-github} kind=${3:-ship} dir="$TMP_ROOT/$1" fakebin
   mkdir -p "$dir/home/state" "$dir/wt"
   fm_git_init_commit "$dir/wt"
   git -C "$dir/wt" checkout -qb actual-feature
@@ -492,7 +492,7 @@ for wrapper in double single backtick; do
   case "$wrapper" in
     double) number=81; line='done: PR "https://github.com/acme/widget/pull/81"' ;;
     single) number=82; line="done: PR 'https://github.com/acme/widget/pull/82'" ;;
-    backtick) number=83; line='done: PR `https://github.com/acme/widget/pull/83`' ;;
+    backtick) number=83; line="done: PR \`https://github.com/acme/widget/pull/83\`" ;;
   esac
   FM_HOME="$dir/home" \
     FM_STATE_OVERRIDE="$dir/home/state" \
@@ -798,7 +798,8 @@ FM_ROOT_OVERRIDE="$ROOT" \
   PATH="$dir/fakebin:$BASE_PATH" \
   "$ROOT/bin/fm-pr-check.sh" --only-if-unarmed different-task \
   https://github.com/acme/widget/pull/99 >/dev/null
-cmp -s "$dir/meta.snapshot" "$dir/home/state/different-task.meta" \
-  && cmp -s "$dir/registration.snapshot" "$dir/home/state/different-task.pr-poll-registration" \
-  || fail "an exact completed retry republished the transaction"
+if ! cmp -s "$dir/meta.snapshot" "$dir/home/state/different-task.meta" \
+  || ! cmp -s "$dir/registration.snapshot" "$dir/home/state/different-task.pr-poll-registration"; then
+  fail "an exact completed retry republished the transaction"
+fi
 pass "PR watch publication is recoverable and exact-idempotent"

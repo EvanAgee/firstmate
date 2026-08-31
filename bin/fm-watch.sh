@@ -530,7 +530,7 @@ autoarm_status_cursor_write() {  # <cursor> <inode> <offset>
 }
 
 autoarm_status_announcements() {  # <changed signal paths...>
-  local file task line sig size inode ignored cursor cursor_inode offset extra line_bytes deadline remaining
+  local file task line sig size inode cursor cursor_inode offset extra line_bytes deadline remaining
   deadline=$((SECONDS + AUTOARM_ANNOUNCE_TIMEOUT))
   for file in "$@"; do
     [ "$SECONDS" -lt "$deadline" ] || break
@@ -541,7 +541,7 @@ autoarm_status_announcements() {  # <changed signal paths...>
     task=$(basename "$file" .status)
     fm_pr_task_id_valid "$task" || continue
     sig=$(fm_wake_signal_sig "$file") || continue
-    IFS=: read -r size inode ignored <<< "$sig"
+    IFS=: read -r size inode _ <<< "$sig"
     case "$size:$inode" in *[!0-9:]*) continue ;; esac
     cursor="$STATE/.pr-autoarm-status-$task.cursor"
     cursor_inode=
@@ -556,9 +556,8 @@ autoarm_status_announcements() {  # <changed signal paths...>
     LC_ALL=C tail -c "+$((offset + 1))" "$file" 2>/dev/null | while IFS= read -r line; do
       remaining=$((deadline - SECONDS))
       [ "$remaining" -gt 0 ] || break
-      if ! (CHECK_TIMEOUT="$remaining"; \
-        FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-        run_check_process "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" \
+      if ! (FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        run_check_process "$remaining" "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" \
         >/dev/null 2>&1); then
         break
       fi
@@ -619,21 +618,21 @@ procevent_surface_queued() {
   wake "$reason"
 }
 
-run_check_process() {
-  local c=$1
-  shift
+run_check_process() {  # <timeout> <command> [args...]
+  local check_timeout=$1 c=$2
+  shift 2
   if [ "${FM_CHECK_FORCE_FALLBACK:-0}" != 1 ] && command -v timeout >/dev/null 2>&1; then
-    exec timeout "$CHECK_TIMEOUT" bash "$c" "$@"
+    exec timeout "$check_timeout" bash "$c" "$@"
   elif [ "${FM_CHECK_FORCE_FALLBACK:-0}" != 1 ] && command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout "$CHECK_TIMEOUT" bash "$c" "$@"
+    exec gtimeout "$check_timeout" bash "$c" "$@"
   else
     # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$CHECK_TIMEOUT" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
+    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$check_timeout" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
   fi
 }
 
 run_check() {
-  ( run_check_process "$@" ) 2>/dev/null || true
+  ( run_check_process "$CHECK_TIMEOUT" "$@" ) 2>/dev/null || true
 }
 
 FM_ACTIVE_CHECK_PID=
@@ -681,7 +680,7 @@ run_check_capture() {
   FM_CHECK_SIGNAL_PENDING=
   trap 'FM_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
-  ( FM_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
   FM_ACTIVE_CHECK_PID=$!
   FM_ACTIVE_CHECK_PGID=$FM_ACTIVE_CHECK_PID
   set +m
