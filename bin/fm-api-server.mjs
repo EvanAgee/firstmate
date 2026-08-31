@@ -32,9 +32,10 @@
 //   { id, generation, answer }. Generation is the positive integer served on
 //   that card. Unknown cards and generations newer than the persisted card are
 //   refused. A resolved current generation accepts only its recorded answer.
-//   Real prior generations remain valid stale replies. Accepted replies append
-//   { id, generation, answer, at } to state/captain-replies.jsonl and queue a
-//   captain-reply wake.
+//   Real prior generations remain valid stale replies. The server serializes
+//   each reply log and appends an identical id, generation, and answer only
+//   once. Every accepted request queues a captain-reply wake, including a retry
+//   after an earlier wake failure.
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }
@@ -111,6 +112,7 @@ const TASK_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const DECISION_KEY = /^[A-Za-z0-9._-]{1,128}$/;
 const CARD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENDED_VERBS = new Set(["done", "closed", "cancelled"]);
+const captainReplyWriteTails = new Map();
 
 const EVENT_QUIET_MS = 100;
 const EVENT_DEADLINE_MS = 1000;
@@ -500,34 +502,97 @@ async function enqueueCheckWake(home, stateDir, key, payload) {
   if (result.code !== 0) throw new Error("wake append failed");
 }
 
-async function queueCaptainReply(home, stateDir, reply) {
+function serializeCaptainReply(file, operation) {
+  const previous = captainReplyWriteTails.get(file) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  captainReplyWriteTails.set(file, current);
+  current
+    .finally(() => {
+      if (captainReplyWriteTails.get(file) === current) captainReplyWriteTails.delete(file);
+    })
+    .catch(() => {});
+  return current;
+}
+
+function captainReplyRecorded(file, reply) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return false;
+    throw error;
+  }
+  let found = false;
+  const lines = raw.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (!line && index === lines.length - 1) continue;
+    if (!line) throw new Error("reply log is malformed");
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      throw new Error("reply log is malformed");
+    }
+    const hasGeneration = Object.prototype.hasOwnProperty.call(record || {}, "generation");
+    const generation = hasGeneration ? record.generation : 1;
+    if (
+      !record ||
+      typeof record !== "object" ||
+      Array.isArray(record) ||
+      typeof record.id !== "string" ||
+      !record.id ||
+      typeof record.answer !== "string" ||
+      !Number.isInteger(generation) ||
+      generation < 1
+    ) {
+      throw new Error("reply log is malformed");
+    }
+    if (
+      record.id === reply.id &&
+      generation === reply.generation &&
+      record.answer === reply.answer
+    ) {
+      found = true;
+    }
+  }
+  return found;
+}
+
+function queueCaptainReply(home, stateDir, reply) {
   const state = stateDir || path.join(home, "state");
   const file = path.join(state, "captain-replies.jsonl");
-  fs.mkdirSync(state, { recursive: true });
-  try {
-    if (fs.lstatSync(file).isSymbolicLink()) throw new Error("reply log is a symlink");
-  } catch (error) {
-    if (!error || error.code !== "ENOENT") throw error;
-  }
-  const record = { ...reply, at: new Date().toISOString() };
-  let separator = "";
-  let handle;
-  try {
-    handle = fs.openSync(file, "r");
-    const { size } = fs.fstatSync(handle);
-    if (size > 0) {
-      const lastByte = Buffer.allocUnsafe(1);
-      fs.readSync(handle, lastByte, 0, 1, size - 1);
-      if (lastByte[0] !== 0x0a) separator = "\n";
+  return serializeCaptainReply(file, async () => {
+    fs.mkdirSync(state, { recursive: true });
+    try {
+      if (fs.lstatSync(file).isSymbolicLink()) throw new Error("reply log is a symlink");
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
     }
-  } catch (error) {
-    if (!error || error.code !== "ENOENT") throw error;
-  } finally {
-    if (handle !== undefined) fs.closeSync(handle);
-  }
-  fs.appendFileSync(file, `${separator}${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "a" });
-  const key = `captain-reply:${reply.id}:${reply.generation}:${crypto.randomBytes(8).toString("hex")}`;
-  await enqueueCheckWake(home, state, key, "check: captain-reply");
+    if (!captainReplyRecorded(file, reply)) {
+      const record = { ...reply, at: new Date().toISOString() };
+      let separator = "";
+      let handle;
+      try {
+        handle = fs.openSync(file, "r");
+        const { size } = fs.fstatSync(handle);
+        if (size > 0) {
+          const lastByte = Buffer.allocUnsafe(1);
+          fs.readSync(handle, lastByte, 0, 1, size - 1);
+          if (lastByte[0] !== 0x0a) separator = "\n";
+        }
+      } catch (error) {
+        if (!error || error.code !== "ENOENT") throw error;
+      } finally {
+        if (handle !== undefined) fs.closeSync(handle);
+      }
+      fs.appendFileSync(file, `${separator}${JSON.stringify(record)}\n`, {
+        encoding: "utf8",
+        flag: "a",
+      });
+    }
+    const key = `captain-reply:${reply.id}:${reply.generation}:${crypto.randomBytes(8).toString("hex")}`;
+    await enqueueCheckWake(home, state, key, "check: captain-reply");
+  });
 }
 
 function handleCaptainReply(req, res, home, options) {

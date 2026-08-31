@@ -766,6 +766,75 @@ test_captain_reply_appends_after_newline_less_record_and_reconciles() {
   pass "captain reply append frames and reconciles after a newline-less record"
 }
 
+test_captain_reply_retry_after_wake_failure_appends_once() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (captain reply retry reconcile)"; return 0; }
+
+  local home port token resp out now handled_count
+  home=$(fm_test_api_home api-captain-reply-retry)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id retry-card --question "Retry answer?" >/dev/null
+  mkdir "$home/state/.wake-queue"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  HTTP_BODY='{"id":"retry-card","generation":1,"answer":"run once"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 500 ] \
+    || fail "wake-failing captain reply status $HTTP_CODE, wanted 500: $HTTP_BODY"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 1 ] \
+    || fail "the failed wake did not leave exactly one durable captain reply"
+
+  rmdir "$home/state/.wake-queue"
+  HTTP_BODY='{"id":"retry-card","generation":1,"answer":"run once"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "retried captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 1 ] \
+    || fail "retry appended an identical captain reply twice"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "retried captain reply did not reconcile: $out"
+  handled_count=$(printf '%s\n' "$out" | grep -cF 'handled: [id=retry-card] run once' || true)
+  [ "$handled_count" = 1 ] \
+    || fail "retried captain reply was delivered $handled_count times: $out"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 1 ] \
+    || fail "retried captain reply did not advance exactly one log line"
+  pass "captain reply retry after wake failure appends and delivers once"
+}
+
+test_captain_reply_refuses_a_malformed_existing_log() {
+  local home port token resp before after queue
+  home=$(fm_test_api_home api-captain-reply-malformed-log)
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-08-31T18:00:00Z \
+    "$ROOT/bin/fm-captain-queue.sh" add \
+    --id malformed-log-card --question "Can this answer append?" >/dev/null
+  printf '{not-json}\n' > "$home/state/captain-replies.jsonl"
+  before=$(cat "$home/state/captain-replies.jsonl")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  HTTP_BODY='{"id":"malformed-log-card","generation":1,"answer":"blocked"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 500 ] \
+    || fail "malformed reply log status $HTTP_CODE, wanted 500: $HTTP_BODY"
+  after=$(cat "$home/state/captain-replies.jsonl")
+  [ "$after" = "$before" ] || fail "the API appended behind a malformed reply record"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -z "$queue" ] || fail "a rejected malformed-log append queued a wake: $queue"
+  fm_test_api_stop "$home"
+  pass "captain replies fail closed on a malformed existing log"
+}
+
 # A crew-dispatch config with one class rig (two rungs, both on) and a default
 # ladder (two rungs). Used by the rung-toggle tests below.
 write_rung_fixture() {  # <home>
@@ -1366,6 +1435,8 @@ test_question_back_note_does_not_close_a_hold
 test_captain_reply_requires_generation_and_persists_it
 test_captain_reply_validates_card_and_generation_before_append
 test_captain_reply_appends_after_newline_less_record_and_reconciles
+test_captain_reply_retry_after_wake_failure_appends_once
+test_captain_reply_refuses_a_malformed_existing_log
 test_worker_relay_without_token_is_unauthorized
 test_worker_relay_with_token_lands_in_wake_queue
 test_worker_relay_unknown_task_is_not_found

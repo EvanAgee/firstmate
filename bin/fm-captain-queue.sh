@@ -687,10 +687,10 @@ park_expired_cards() {
     if ! printf '%s\n' "$queue" | jq -e \
         --arg id "$id" \
         --arg stamp "$stamp" \
-        --argjson expiry "$UNBACKED_CARD_EXPIRY_SECONDS" '
-          ($stamp | fromdateiso8601?) as $now
-          | (.records[] | select(.id == $id and .state == "open") | .asked_at | fromdateiso8601?) as $asked
-          | $now != null and $asked != null and ($now - $asked >= $expiry)
+        --argjson expiry "$UNBACKED_CARD_EXPIRY_SECONDS" "$ISO_EPOCH_JQ"'
+          ($stamp | fm_iso_epoch) as $now
+          | (.records[] | select(.id == $id and .state == "open") | .asked_at | fm_iso_epoch) as $asked
+          | $now - $asked >= $expiry
         ' >/dev/null; then
       continue
     fi

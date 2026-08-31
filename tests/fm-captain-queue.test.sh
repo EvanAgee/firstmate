@@ -202,6 +202,33 @@ test_asked_at_is_normalized_or_rejected() {
   pass "asked_at normalizes offsets and rejects invalid or future times"
 }
 
+test_legacy_offset_asked_at_expires() {
+  local home out
+  home=$(make_home legacy-offset-expiry)
+  jq -n '{
+    updated_at: "2026-08-20T18:00:00Z",
+    records: [{
+      id: "legacy-offset-expiry",
+      num: 1,
+      generation: 1,
+      question: "Offset legacy question?",
+      asked_at: "2026-08-20T13:00:00-05:00",
+      backlog_backed: false,
+      state: "open"
+    }]
+  }' > "$home/data/captain-queue.json"
+
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=legacy-offset-expiry] expired-unbacked" \
+    "a signed-offset legacy timestamp should expire at the same instant"
+  jq -e '
+    .records[0].state == "parked"
+    and .records[0].asked_at == "2026-08-20T13:00:00-05:00"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "signed-offset expiry changed or failed to park the legacy card"
+  pass "a signed-offset legacy asked-at reaches bounded expiry"
+}
+
 test_expiry_preserves_card_and_is_idempotent() {
   local home out
   home=$(make_home expiry-body)
@@ -1133,6 +1160,7 @@ test_unbacked_card_expires_to_parked
 test_unbacked_card_stays_active_before_expiry
 test_reposting_preserves_the_expiry_anchor
 test_asked_at_is_normalized_or_rejected
+test_legacy_offset_asked_at_expires
 test_expiry_preserves_card_and_is_idempotent
 test_manual_park_defers_a_fresh_unbacked_card
 test_legacy_card_waits_for_verified_migration
