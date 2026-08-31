@@ -47,6 +47,11 @@ case "${1:-} ${2:-}" in
           *repos/acme/late/pulls*) printf 'https://github.com/acme/late/pull/51\tacme/late\tactual-feature\n' ;;
         esac
         ;;
+      interrupt)
+        kill -TERM "$(cat "$FM_TEST_SWEEP_PID_FILE")"
+        sleep 0.1
+        exit 1
+        ;;
       fail) exit 1 ;;
     esac
     ;;
@@ -254,6 +259,37 @@ grep -qxF 'z-late https://github.com/acme/late/pull/51' "$dir/arm.log" \
   || fail "a slow prefix starved later task metadata"
 pass "sweep continuation reaches tasks after a timed-out prefix"
 
+dir=$(make_case sweep-interruption)
+cat > "$dir/interrupt-sweep" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$FM_TEST_SWEEP_PID_FILE"
+exec "$FM_TEST_AUTOARM" sweep
+SH
+chmod +x "$dir/interrupt-sweep"
+if FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/arm" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  FM_TEST_ARM_LOG="$dir/arm.log" \
+  FM_TEST_FORGE_RESULT=interrupt \
+  FM_TEST_SWEEP_PID_FILE="$dir/sweep.pid" \
+  FM_TEST_AUTOARM="$AUTOARM" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$dir/interrupt-sweep" >/dev/null 2>&1; then
+  fail "the interrupted sweep fixture exited successfully"
+fi
+FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/arm" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  FM_TEST_ARM_LOG="$dir/arm.log" \
+  FM_TEST_FORGE_RESULT=zero \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$AUTOARM" sweep >/dev/null
+[ "$(grep -c 'repos/acme/widget/pulls' "$dir/forge.log")" -eq 2 ] \
+  || fail "an interrupted task was skipped when the sweep resumed"
+pass "sweep progress records only completed task inspections"
+
 dir=$(make_case watcher-cycle)
 watch_out="$dir/watch.out"
 FM_HOME="$dir/home" \
@@ -326,6 +362,86 @@ FM_HOME="$dir/home" \
 [ "$(wc -l < "$dir/arm.log" | tr -d ' ')" -eq 1 ] || fail "an announced PR was re-armed"
 pass "every new worker status line is checked for a PR announcement"
 
+for wrapper in double single backtick; do
+  dir=$(make_case "announcement-$wrapper")
+  case "$wrapper" in
+    double) number=81; line='done: PR "https://github.com/acme/widget/pull/81"' ;;
+    single) number=82; line="done: PR 'https://github.com/acme/widget/pull/82'" ;;
+    backtick) number=83; line='done: PR `https://github.com/acme/widget/pull/83`' ;;
+  esac
+  FM_HOME="$dir/home" \
+    FM_STATE_OVERRIDE="$dir/home/state" \
+    FM_PR_CHECK_BIN="$dir/arm" \
+    FM_TEST_ARM_LOG="$dir/arm.log" \
+    PATH="$dir/fakebin:$BASE_PATH" \
+    "$AUTOARM" announce different-task "$line"
+  grep -qxF "different-task https://github.com/acme/widget/pull/$number" "$dir/arm.log" \
+    || fail "a $wrapper-quoted PR URL was not armed"
+done
+pass "quoted PR announcements extract the canonical URL"
+
+dir=$(make_case announcement-retry)
+cat > "$dir/retry-arm" <<'SH'
+#!/usr/bin/env bash
+attempt=$(cat "$FM_TEST_ARM_ATTEMPTS" 2>/dev/null || echo 0)
+attempt=$((attempt + 1))
+printf '%s\n' "$attempt" > "$FM_TEST_ARM_ATTEMPTS"
+[ "$attempt" -gt 1 ] || exit 1
+[ "${1:-}" != --only-if-unarmed ] || shift
+printf '%s %s\n' "$1" "$2" >> "$FM_TEST_ARM_LOG"
+printf 'pr=%s\n' "$2" >> "$FM_STATE_OVERRIDE/$1.meta"
+SH
+chmod +x "$dir/retry-arm"
+printf '%s\n' 'done: PR https://github.com/acme/widget/pull/84' \
+  > "$dir/home/state/different-task.status"
+FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/retry-arm" \
+  FM_TEST_ARM_ATTEMPTS="$dir/arm.attempts" \
+  FM_TEST_ARM_LOG="$dir/arm.log" \
+  FM_CHECK_INTERVAL=999999 \
+  FM_HEARTBEAT=999999 \
+  FM_GH_HEALTH_PROBE_CMD=true \
+  FM_SIGNAL_GRACE=0 \
+  FM_POLL=0.1 \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$WATCH" > "$dir/first-watch.out"
+[ "$(cat "$dir/arm.attempts")" -eq 1 ] || fail "the first watcher did not make one failed arm attempt"
+[ ! -s "$dir/arm.log" ] || fail "the failed announcement arm unexpectedly succeeded"
+rm -rf "$dir/home/state/.watch.lock"
+rm -f "$dir/home/state/.watcher-down"
+: > "$dir/home/state/.wake-queue"
+FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/retry-arm" \
+  FM_TEST_ARM_ATTEMPTS="$dir/arm.attempts" \
+  FM_TEST_ARM_LOG="$dir/arm.log" \
+  FM_CHECK_INTERVAL=999999 \
+  FM_HEARTBEAT=999999 \
+  FM_GH_HEALTH_PROBE_CMD=true \
+  FM_SIGNAL_GRACE=0 \
+  FM_POLL=0.1 \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$WATCH" > "$dir/second-watch.out" 2>&1 &
+watch_pid=$!
+i=0
+while [ "$i" -lt 60 ] && [ ! -s "$dir/arm.log" ] && kill -0 "$watch_pid" 2>/dev/null; do
+  sleep 0.1
+  i=$((i + 1))
+done
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+grep -qxF 'different-task https://github.com/acme/widget/pull/84' "$dir/arm.log" \
+  || fail "a successor watcher did not retry the failed announcement: attempts=$(cat "$dir/arm.attempts"), output=$(cat "$dir/second-watch.out")"
+pass "announcement cursors retry without another status append"
+
+dir=$(make_case secondmate-sweep github secondmate)
+out=$(run_sweep "$dir" one)
+[ -z "$out" ] || fail "a secondmate sweep should be silent: $out"
+[ ! -s "$dir/forge.log" ] || fail "a secondmate sweep reached the forge"
+[ ! -s "$dir/arm.log" ] || fail "a secondmate sweep attached a child PR"
+pass "secondmate metadata is excluded from the branch sweep"
+
 dir=$(make_case secondmate-announcement github secondmate)
 FM_HOME="$dir/home" \
   FM_STATE_OVERRIDE="$dir/home/state" \
@@ -387,3 +503,65 @@ grep -qxF 'pr=https://github.com/acme/widget/pull/40' "$dir/home/state/different
 assert_no_grep 'pr=https://github.com/acme/widget/pull/99' \
   "$dir/home/state/different-task.meta" "the announcement replaced an existing PR under the metadata lock"
 pass "announcement arming cannot replace a watch won by a concurrent caller"
+
+dir=$(make_case publication-race)
+real_mv=$(command -v mv)
+cat > "$dir/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+block=0
+for argument in "$@"; do
+  case "$argument" in */.fm-pr-poll-data.*) block=1 ;; esac
+done
+if [ "${FM_TEST_BLOCK_PUBLISH:-}" = 1 ] && [ "$block" -eq 1 ]; then
+  : > "$FM_TEST_PUBLISH_READY"
+  while [ ! -e "$FM_TEST_PUBLISH_RELEASE" ]; do sleep 0.02; done
+fi
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+chmod +x "$dir/fakebin/mv"
+first_rc=0
+FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_GUARD_GRACE=999999 \
+  FM_TEST_BLOCK_PUBLISH=1 \
+  FM_TEST_PUBLISH_READY="$dir/publish.ready" \
+  FM_TEST_PUBLISH_RELEASE="$dir/publish.release" \
+  FM_TEST_REAL_MV="$real_mv" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$ROOT/bin/fm-pr-check.sh" --only-if-unarmed different-task \
+  https://github.com/acme/widget/pull/99 >/dev/null 2>&1 &
+first_pid=$!
+i=0
+while [ "$i" -lt 100 ] && [ ! -e "$dir/publish.ready" ]; do sleep 0.02; i=$((i + 1)); done
+[ -e "$dir/publish.ready" ] || fail "the first arm did not pause during poll publication"
+(
+  FM_ROOT_OVERRIDE="$ROOT" \
+    FM_HOME="$dir/home" \
+    FM_STATE_OVERRIDE="$dir/home/state" \
+    FM_GUARD_GRACE=999999 \
+    FM_TEST_REAL_MV="$real_mv" \
+    FM_TEST_FORGE_LOG="$dir/forge.log" \
+    PATH="$dir/fakebin:$BASE_PATH" \
+    "$ROOT/bin/fm-pr-check.sh" different-task \
+    https://github.com/acme/widget/pull/40 >/dev/null 2>&1
+  : > "$dir/second-arm.done"
+) &
+second_pid=$!
+i=0
+while [ "$i" -lt 50 ] && [ ! -e "$dir/second-arm.done" ]; do sleep 0.02; i=$((i + 1)); done
+: > "$dir/publish.release"
+wait "$first_pid" || first_rc=$?
+second_rc=0
+wait "$second_pid" || second_rc=$?
+[ "$first_rc" -eq 0 ] || fail "the first concurrent arm failed during publication"
+[ "$second_rc" -eq 0 ] || fail "the second concurrent arm failed during publication"
+grep -qxF 'pr=https://github.com/acme/widget/pull/40' "$dir/home/state/different-task.meta" \
+  || fail "the last concurrent caller did not own the recorded PR"
+FM_ROOT_OVERRIDE="$ROOT" bash -c '
+  . "$1/bin/fm-pr-lib.sh"
+  fm_pr_poll_artifacts_valid "$2" different-task "$1/bin/fm-pr-poll.sh"
+' _ "$ROOT" "$dir/home/state" \
+  || fail "concurrent arming left the recorded PR without a valid poll"
+pass "metadata locking covers poll publication"

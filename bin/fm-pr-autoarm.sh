@@ -281,12 +281,12 @@ fm_pr_autoarm_sweep() {
       [ "$task" != "$cursor" ] || resume=1
       continue
     fi
+    fm_pr_autoarm_sweep_one "$meta"
     if ! fm_pr_autoarm_cursor_write "$task"; then
       fm_pr_autoarm_note "$task" "could not save sweep progress"
       exhausted=1
       break
     fi
-    fm_pr_autoarm_sweep_one "$meta"
     processed=$((processed + 1))
     if [ "$processed" -gt 0 ] && [ $((SECONDS - started)) -ge "$SWEEP_BUDGET" ] \
       && [ "$task" != "$last_task" ]; then
@@ -300,27 +300,34 @@ fm_pr_autoarm_sweep() {
 }
 
 fm_pr_autoarm_announce() {
-  local task=$1 line=$2 meta candidate urls='' count=0 url=''
+  local task=$1 line=$2 meta candidate remainder tail char urls='' count=0 url=''
   fm_pr_task_id_valid "$task" || return 0
   meta="$STATE/$task.meta"
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
   fm_pr_autoarm_meta_has_pr "$meta" && return 0
   [ "$(fm_pr_autoarm_meta_field "$meta" kind)" != secondmate ] || return 0
-  while IFS= read -r candidate || [ -n "$candidate" ]; do
-    [ -n "$candidate" ] || continue
-    while :; do
-      case "$candidate" in
-        *'>'|*')'|*']'|*'}'|*','|*'.'|*';'|*':'|*'!') candidate=${candidate%?} ;;
+  remainder=$line
+  while [[ "$remainder" == *https://* ]]; do
+    tail=${remainder#*https://}
+    candidate=https://
+    while [ -n "$tail" ]; do
+      char=${tail:0:1}
+      case "$char" in
+        [A-Za-z0-9._/-])
+          candidate=$candidate$char
+          tail=${tail:1}
+          ;;
         *) break ;;
       esac
     done
+    remainder=$tail
     fm_pr_url_parse "$candidate" || continue
     if ! printf '%s\n' "$urls" | grep -Fqx "$FM_PR_URL"; then
       urls="${urls}${FM_PR_URL}"$'\n'
       count=$((count + 1))
       url=$FM_PR_URL
     fi
-  done < <(printf '%s\n' "$line" | grep -Eo 'https://[^[:space:]]+' || true)
+  done
   [ "$count" -eq 1 ] || return 0
   fm_pr_autoarm_arm "$task" "$url"
 }

@@ -515,7 +515,7 @@ scan_signals() {
 
 # Arm PR URLs from every complete status line appended since the prior scan.
 # The separate cursor advances only after the announcement helper accepts a
-# line, so an interrupted or failed arm is retried on the next status change.
+# line, so an interrupted or failed arm is retried on the next watcher cycle.
 autoarm_status_cursor_write() {  # <cursor> <inode> <offset>
   local cursor=$1 inode=$2 offset=$3 tmp
   tmp=$(umask 077; mktemp "$STATE/.pr-autoarm-status.XXXXXX") || return 1
@@ -1065,6 +1065,10 @@ while :; do
     touch "$STATE/.last-check"
   fi
 
+  # Reconcile announcement cursors independently of ordinary signal markers.
+  # A failed arm must retry even when no worker appends another status line.
+  autoarm_status_announcements "$STATE"/*.status
+
   # On the first changed signal, linger one grace period and re-scan before
   # classifying: a crewmate's final status write and the same turn's turn-end
   # hook land seconds apart, and reporting them as separate actionable wakes
@@ -1081,11 +1085,6 @@ while :; do
     done <<EOF
 $pending
 EOF
-    # The worker's PR-ready line is the fastest certain source. Arm it before
-    # yielding the signal to firstmate, while the branch sweep above covers any
-    # missed or malformed announcement on its next slow-check cycle.
-    # shellcheck disable=SC2086 # Paths come from validated task ids and are intentionally expanded.
-    autoarm_status_announcements $files
     reason="signal:$files"
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
