@@ -122,22 +122,65 @@ test_two_colon_form_decisions_stay_distinct() {
   pass "two colon-form keyed decisions never collapse into one shared bucket"
 }
 
-test_mid_note_prose_mention_is_not_a_stated_key() {
+test_multiple_mid_note_keys_are_not_guessed() {
   local dir
   dir=$(case_dir prose)
-  # Only a token at the head of the note states a key; a summary merely
-  # mentioning "[key=x]" deeper in must neither open nor close that key.
-  printf 'needs-decision: pick a [key=red] or [key=blue] theme\n' > "$dir/t.status"
+  # Two interior canonical tokens are ambiguous. Keep the historical default
+  # record instead of choosing one key and letting an answer close the wrong
+  # decision.
+  printf 'needs-decision: should docs mention [key=red] or [key=blue]?\n' > "$dir/t.status"
   assert_fold "$dir/t.status" \
-    "$(printf 'default\tneeds-decision\tpick a [key=red] or [key=blue] theme\n')" \
-    "mid-note prose mention"
+    "$(printf 'default\tneeds-decision\tshould docs mention [key=red] or [key=blue]?\n')" \
+    "punctuated mid-note prose mention"
 
   printf 'needs-decision [key=red]: which shade\n' >> "$dir/t.status"
   printf 'working: still thinking about [key=red] here\n' >> "$dir/t.status"
   assert_fold "$dir/t.status" \
-    "$(printf 'default\tneeds-decision\tpick a [key=red] or [key=blue] theme\nred\tneeds-decision\twhich shade\n')" \
+    "$(printf 'default\tneeds-decision\tshould docs mention [key=red] or [key=blue]?\nred\tneeds-decision\twhich shade\n')" \
     "prose mention leaves the open set untouched"
-  pass "a [key=x] mentioned mid-note is prose, never an opened or closed key"
+  pass "punctuation after a complete key preserves multiple-key ambiguity"
+}
+
+test_interior_cleanup_removes_the_accepted_occurrence() {
+  local dir
+  dir=$(case_dir accepted-occurrence)
+  printf '%s\n' \
+    'needs-decision: compare x[key=route] prose, then choose [key=route]: A or B' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'route\tneeds-decision\tcompare x[key=route] prose, then choose: A or B\n')" \
+    "accepted interior key occurrence"
+  pass "note cleanup removes the accepted key occurrence and keeps its lookalike"
+}
+
+test_malformed_positional_key_does_not_hide_valid_mid_note_key() {
+  local dir
+  dir=$(case_dir malformed-positional-valid-mid-note)
+  printf '%s\n' \
+    'needs-decision: [key=bad key] review found [key=review-labels]: choose the labels' \
+    > "$dir/head.status"
+  assert_fold "$dir/head.status" \
+    "$(printf 'review-labels\tneeds-decision\t[key=bad key] review found: choose the labels\n')" \
+    "malformed head before one valid canonical mid-note key"
+  printf '%s\n' \
+    'needs-decision [key=bad key]: review found [key=review-labels]: choose the labels' \
+    > "$dir/before.status"
+  assert_fold "$dir/before.status" \
+    "$(printf 'review-labels\tneeds-decision\treview found: choose the labels\n')" \
+    "malformed before-colon key before one valid canonical mid-note key"
+  pass "a malformed positional key cannot hide the only valid canonical mid-note key"
+}
+
+test_malformed_head_does_not_break_mid_note_ambiguity() {
+  local dir
+  dir=$(case_dir malformed-head-ambiguous-mid-note)
+  printf '%s\n' \
+    'needs-decision: [key=bad key] pick a [key=red] or [key=blue] theme' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'default\tneeds-decision\t[key=bad key] pick a [key=red] or [key=blue] theme\n')" \
+    "malformed head before multiple valid canonical mid-note keys"
+  pass "multiple valid mid-note keys stay ambiguous after a malformed head"
 }
 
 test_malformed_stated_key_never_collapses_to_default() {
@@ -268,20 +311,113 @@ test_bare_bracket_token_is_a_stated_key() {
   pass "a bare [slug] token states the key in the documented and closing forms"
 }
 
-test_existing_prose_mentions_keep_folding_to_default_like_before() {
+test_unique_canonical_mid_note_key_is_stated() {
   local dir
-  dir=$(case_dir unchanged-prose)
-  # The tail position must not widen the surface for mid-note mentions: an
-  # interior [key=X] remains prose, and a corr-tagged line with no key token
-  # still folds to default.
-  printf 'needs-decision: explain what [key=blue] means in the report\n' > "$dir/t.status"
+  dir=$(case_dir unique-mid-note)
+  printf '%s\n' \
+    'needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels' \
+    > "$dir/t.status"
   assert_fold "$dir/t.status" \
-    "$(printf 'default\tneeds-decision\texplain what [key=blue] means in the report\n')" \
-    "mid-note key mention stays prose"
-  pass "mid-note [key=X] prose and corr-tagged lines keep their historical folding"
+    "$(printf '169-noun-and-grade-labels\tneeds-decision\tfix-review found 2 new ask-user findings: choose the noun and grade labels\n')" \
+    "unique canonical mid-note key"
+  pass "the pto-export-window-ui mid-sentence key opens under its stated key"
 }
 
-test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded() {
+test_blocked_unique_mid_note_key_is_stated() {
+  local dir
+  dir=$(case_dir blocked-unique-mid-note)
+  printf 'blocked: deploy review failed [key=deploy-token]: waiting for a fresh token\n' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'deploy-token\tblocked\tdeploy review failed: waiting for a fresh token\n')" \
+    "blocked unique canonical mid-note key"
+  pass "a blocked line accepts one canonical key inside its note"
+}
+
+test_invalid_lookalike_before_valid_mid_note_key_is_ignored() {
+  local dir
+  dir=$(case_dir invalid-before-valid-mid-note)
+  printf '%s\n' \
+    'needs-decision: review mentions [key=bad key] before its finding [key=review-labels]: choose the labels' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'review-labels\tneeds-decision\treview mentions [key=bad key] before its finding: choose the labels\n')" \
+    "invalid lookalike before one valid canonical mid-note key"
+  printf 'resolved [key=review-labels]: labels chosen\n' >> "$dir/t.status"
+  assert_fold "$dir/t.status" "" "valid key after invalid lookalike closes normally"
+  pass "an invalid key lookalike cannot hide the only valid canonical key"
+}
+
+test_v7_cursor_that_skipped_valid_key_is_rebuilt() {
+  local dir f cf ident size expected got
+  dir=$(case_dir stale-v7-invalid-before-valid)
+  f="$dir/t.status"
+  cf=$(_fm_open_decisions_cursor_path "$f")
+  printf '%s\n' \
+    'needs-decision: [key=bad key] review found [key=review-labels]: choose the labels' \
+    > "$f"
+  ident=$(_fm_open_decisions_file_ident "$f")
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted v7 cursor"
+  size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
+  {
+    printf 'version=7\n'
+    printf 'offset=%s\n' "$size"
+    printf 'ident=%s\n' "$ident"
+  } > "$cf"
+  expected=$(printf 'review-labels\tneeds-decision\t[key=bad key] review found: choose the labels\n')
+  got=$(status_open_decisions_incremental "$f")
+  [ "$got" = "$expected" ] \
+    || fail "stale v7 cursor was kept: got '$got' want '$expected'"
+  pass "a v7 cursor that skipped a valid key after a malformed head is rebuilt"
+}
+
+test_v8_cursor_that_chose_one_punctuated_key_is_rebuilt() {
+  local dir f cf ident size expected got
+  dir=$(case_dir stale-v8-punctuated-ambiguity)
+  f="$dir/t.status"
+  cf=$(_fm_open_decisions_cursor_path "$f")
+  printf 'needs-decision: should docs mention [key=prose] or [key=example]?\n' > "$f"
+  ident=$(_fm_open_decisions_file_ident "$f")
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted v8 cursor"
+  size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
+  {
+    printf 'version=8\n'
+    printf 'offset=%s\n' "$size"
+    printf 'ident=%s\n' "$ident"
+    printf 'prose\tneeds-decision\tshould docs mention or [key=example]?\n'
+  } > "$cf"
+  expected=$(printf 'default\tneeds-decision\tshould docs mention [key=prose] or [key=example]?\n')
+  got=$(status_open_decisions_incremental "$f")
+  [ "$got" = "$expected" ] \
+    || fail "stale v8 cursor was kept: got '$got' want '$expected'"
+  pass "a v8 cursor that chose one punctuated key is rebuilt"
+}
+
+test_v5_cursor_holding_default_for_mid_sentence_key_is_rebuilt() {
+  local dir f cf ident size expected got
+  dir=$(case_dir stale-v5-mid-sentence)
+  f="$dir/t.status"
+  cf=$(_fm_open_decisions_cursor_path "$f")
+  printf '%s\n' \
+    'needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels' \
+    > "$f"
+  ident=$(_fm_open_decisions_file_ident "$f")
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted v5 cursor"
+  size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
+  {
+    printf 'version=5\n'
+    printf 'offset=%s\n' "$size"
+    printf 'ident=%s\n' "$ident"
+    printf 'default\tneeds-decision\tfix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels\n'
+  } > "$cf"
+  expected=$(printf '169-noun-and-grade-labels\tneeds-decision\tfix-review found 2 new ask-user findings: choose the noun and grade labels\n')
+  got=$(status_open_decisions_incremental "$f")
+  [ "$got" = "$expected" ] \
+    || fail "stale v5 cursor was kept: got '$got' want '$expected'"
+  pass "a v5 cursor holding the pto-export-window-ui ghost is rebuilt from its status log"
+}
+
+test_v4_cursor_holding_default_for_trailing_key_is_discarded() {
   local dir f cf ident size expected got
   dir=$(case_dir stale-v4-cursor)
   f="$dir/t.status"
@@ -304,7 +440,7 @@ test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded() {
   got=$(status_open_decisions_incremental "$f")
   [ "$got" = "$expected" ] \
     || fail "stale v4 cursor was kept: got '$got' want '$expected'"
-  pass "an old same-version cursor holding default for a trailing-key line is discarded after the fold-version bump"
+  pass "a v4 cursor holding default for a trailing-key line is discarded after the fold-version bump"
 }
 
 test_incremental_agrees_with_full_fold_across_appends() {
@@ -335,15 +471,23 @@ test_bare_keyless_line_still_folds_to_default
 test_resolution_closes_across_positions
 test_blocked_is_position_tolerant_like_needs_decision
 test_two_colon_form_decisions_stay_distinct
-test_mid_note_prose_mention_is_not_a_stated_key
+test_multiple_mid_note_keys_are_not_guessed
+test_interior_cleanup_removes_the_accepted_occurrence
+test_malformed_positional_key_does_not_hide_valid_mid_note_key
+test_malformed_head_does_not_break_mid_note_ambiguity
 test_malformed_stated_key_never_collapses_to_default
 test_status_line_verb_strips_every_bracket_tag_before_colon
 test_corr_and_key_tags_open_and_close_under_the_stated_key
 test_corr_only_tag_opens_as_default_like_a_bare_line
 test_key_only_before_colon_still_opens_no_regression
 test_blocked_and_resolved_are_tag_order_independent
-test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded
+test_v5_cursor_holding_default_for_mid_sentence_key_is_rebuilt
+test_v4_cursor_holding_default_for_trailing_key_is_discarded
 test_incremental_agrees_with_full_fold_across_appends
 test_trailing_note_token_is_a_stated_key
 test_bare_bracket_token_is_a_stated_key
-test_existing_prose_mentions_keep_folding_to_default_like_before
+test_unique_canonical_mid_note_key_is_stated
+test_blocked_unique_mid_note_key_is_stated
+test_invalid_lookalike_before_valid_mid_note_key_is_ignored
+test_v7_cursor_that_skipped_valid_key_is_rebuilt
+test_v8_cursor_that_chose_one_punctuated_key_is_rebuilt

@@ -85,7 +85,7 @@ pid_is_numeric() {
 # start_worker <remote-root> <account-home> <state-root>: start the worker
 # through the shared library start path and echo the supervisor pid.
 start_worker() {
-  local root=$1 account_home=$2 state_root=$3 pid deadline
+  local root=$1 account_home=$2 state_root=$3 pid serve deadline
   pid=$(
     export FM_REMOTE_JOB_STATE_ROOT="$state_root"
     export FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux
@@ -96,7 +96,9 @@ start_worker() {
     deadline=$(( $(date +%s) + 10 ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
       pid=$(pgrep -f "^/bin/bash $root/bin/fm-remote-job-worker.sh\$" | head -n 1)
-      if pid_is_numeric "$pid"; then
+      serve=$(cat "$state_root/worker.pid" 2>/dev/null || true)
+      if pid_is_numeric "$pid" && pid_is_numeric "$serve" &&
+        [ -f "$state_root/worker.ready" ] && kill -0 "$serve" 2>/dev/null; then
         printf '%s\n' "$pid"
         exit 0
       fi
@@ -114,8 +116,7 @@ build_remote_root "$CASE1/remote-root"
 WORKER=$(start_worker "$CASE1/remote-root" "$CASE1/account" "$CASE1/remote-jobs") ||
   fail "could not start the fixture remote job worker"
 track "$WORKER"
-wait_child "$WORKER" 10 || fail "the fixture worker never started its serving child"
-SERVE=$(pgrep -P "$WORKER" | head -n 1)
+SERVE=$(cat "$CASE1/remote-jobs/worker.pid")
 
 [ "$(pgid_of "$WORKER")" = "$WORKER" ] ||
   fail "the started worker is not its own process group leader, so its tree cannot be signalled as one group"

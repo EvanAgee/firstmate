@@ -209,12 +209,14 @@ test_classifier_primitives() {
     && fail "FM_CAPTAIN_RE override bypassed paused: suppression"
   FM_CAPTAIN_RE='custom-verb:' status_is_captain_relevant "custom-verb: x" \
     || fail "nonterminal suppression weakened custom bare-line behavior"
-  printf 'needs-decision: should docs mention [key=prose]?\nneeds-decision [key=q1]: real choice\nresolved: docs still mention [key=q1] in passing\nneeds-decision [key=bad key]: malformed\n' > "$state/keys.status"
+  printf 'needs-decision: should docs mention [key=prose] or [key=example]?\nneeds-decision [key=q1]: real choice\nresolved: docs still mention [key=q1] in passing\nneeds-decision [key=bad key]: malformed\n' > "$state/keys.status"
   open=$(status_open_decisions "$state/keys.status")
   printf '%s' "$open" | grep -F $'q1\t' >/dev/null \
     || fail "a key token in resolved note prose closed the keyed decision"
   printf '%s' "$open" | grep -F $'prose\t' >/dev/null \
     && fail "a key token in note prose changed the decision key"
+  printf '%s' "$open" | grep -F $'example\t' >/dev/null \
+    && fail "a punctuated key token in note prose changed the decision key"
   printf '%s' "$open" | grep -F $'bad key\t' >/dev/null \
     && fail "an invalid key slug entered the open-decision set"
   cat > "$state/activity.status" <<'EOF'
@@ -239,6 +241,18 @@ EOF
   printf 'working: legacy start\ndone: legacy completion\n' > "$state/legacy-activity.status"
   [ -z "$(status_open_activities "$state/legacy-activity.status")" ] \
     || fail "a legacy terminal event did not supersede the default working phase"
+  printf 'working: documenting the [key=foo] syntax\ndone: documentation finished\n' \
+    > "$state/interior-key-prose.status"
+  [ -z "$(status_open_activities "$state/interior-key-prose.status")" ] \
+    || fail "an interior key mention opened a keyed working phase"
+  [ "$(status_line_note 'working: documenting the [key=foo] syntax')" = \
+      'documenting the [key=foo] syntax' ] \
+    || fail "an interior key mention was stripped from an ordinary status note"
+  printf 'working [key=bar]: active phase\ndone: docs mention [key=bar] syntax\n' \
+    > "$state/interior-key-close.status"
+  activity=$(status_open_activities "$state/interior-key-close.status")
+  printf '%s' "$activity" | grep -F $'bar\tworking\tactive phase' >/dev/null \
+    || fail "an interior key mention in an ordinary done line closed a keyed phase"
   pass "classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides"
 }
 
