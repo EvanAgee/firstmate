@@ -363,11 +363,9 @@ _fm_decision_key_transition_allowed() {  # <key> <note>
 
 _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb>
   local open=$1 line=$2 resolve=$3 held=$4 verb key note
-  # Blank-line guard. A `case` glob answers "does this line hold any non-space
-  # character" in one pattern match; the equivalent ${line//[[:space:]]/} costs
-  # tens of milliseconds per line under bash 3.2's global bracket-class
-  # substitution, which is the whole per-line cost of both folds on a status log
-  # of ordinary width. Same verdict, bounded cost.
+  # Use a case glob so Bash 3.2 does not run its slow global bracket-class
+  # substitution for every status line. This keeps the same whitespace-only
+  # verdict without building a stripped copy.
   case "$line" in
     *[![:space:]]*) ;;
     *) printf '%s' "$open"; return 0 ;;
