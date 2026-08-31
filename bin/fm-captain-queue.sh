@@ -382,13 +382,7 @@ cmd_add() {
           $item + {
             num: .num,
             asked_at: (.asked_at // $item.asked_at),
-            backlog_backed: (
-              if (.backlog_backed | type) == "boolean" then
-                .backlog_backed
-              else
-                $item.backlog_backed
-              end
-            )
+            backlog_backed: .backlog_backed
           }
         else
           $item + {num: .num}

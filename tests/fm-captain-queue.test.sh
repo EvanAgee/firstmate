@@ -507,7 +507,7 @@ EOF
   pass "a readable backlog keeps backing state definite during tool failure"
 }
 
-test_unknown_backing_stays_bounded_after_later_work_appears() {
+test_repost_preserves_unknown_add_time_backing() {
   local home fakebin out
   home=$(make_home unreadable-backlog)
   printf '%s\n' 'backlog contents unavailable to the queue reader' > "$home/data/backlog.md"
@@ -534,6 +534,17 @@ SH
 - unknown-backing-question - Work filed after the captain card
 EOF
   rm -f "$fakebin/awk"
+  PATH="$fakebin:$PATH" run_q "$home" add \
+    --id unknown-backing-question \
+    --question "Updated urgent question after work appeared?" >/dev/null
+  jq -e '
+    .records[0].id == "unknown-backing-question"
+    and .records[0].state == "open"
+    and .records[0].question == "Updated urgent question after work appeared?"
+    and .records[0].backlog_backed == null
+    and .records[0].asked_at == "2026-08-20T18:00:00Z"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "repost changed unknown add-time backing or its expiry anchor"
   out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
   assert_contains "$out" "parked: [id=unknown-backing-question] expired-unknown-backing" \
     "later same-id work must not turn unknown add-time backing into backed"
@@ -546,7 +557,7 @@ EOF
     and .records[0].asked_at == "2026-08-20T18:00:00Z"
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "unknown add-time backing or its expiry anchor changed during reconcile"
-  pass "unknown add-time backing stays bounded after later work appears"
+  pass "repost preserves unknown add-time backing and bounded expiry"
 }
 
 test_later_done_item_does_not_resolve_an_unbacked_card() {
@@ -1002,7 +1013,7 @@ test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
 test_backed_card_does_not_expire
 test_backlog_fallback_avoids_unknown_state
-test_unknown_backing_stays_bounded_after_later_work_appears
+test_repost_preserves_unknown_add_time_backing
 test_later_done_item_does_not_resolve_an_unbacked_card
 test_resolved_card_id_cannot_be_reused
 test_verified_live_card_can_be_reposted_with_backing
