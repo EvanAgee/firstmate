@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/fm-api.test.sh - localhost API front door: health, bind, config, lifecycle,
-# the fleet snapshot read, write token, captain notes, worker relays, decision answers, and rung toggles.
+# the fleet snapshot read, write token, captain replies, captain notes, worker relays, decision answers, and rung toggles.
 #
 # Speaks real HTTP against a throwaway firstmate home. Does not read the live
 # home and does not inspect server source.
@@ -626,6 +626,37 @@ EOF
   pass "a clarifying question-back stays a captain note and does not close a hold"
 }
 
+test_captain_reply_requires_generation_and_persists_it() {
+  local home port token resp record queue
+  home=$(fm_test_api_home api-captain-reply)
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"id":"sample-decision","answer":"approve"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] \
+    || fail "captain reply without generation status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  HTTP_BODY='{"id":"sample-decision","generation":7,"answer":"approve"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "generation-bound captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  record=$(tail -n 1 "$home/state/captain-replies.jsonl")
+  [ "$(json_query "$record" 'd.id')" = sample-decision ] \
+    || fail "persisted captain reply lost its id: $record"
+  [ "$(json_query "$record" 'd.generation')" = 7 ] \
+    || fail "persisted captain reply lost its generation: $record"
+  [ "$(json_query "$record" 'd.answer')" = approve ] \
+    || fail "persisted captain reply lost its answer: $record"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  printf '%s\n' "$queue" | grep -F 'check: captain-reply' >/dev/null \
+    || fail "captain reply did not queue its wake: $queue"
+  fm_test_api_stop "$home"
+  pass "captain replies require and persist their card generation"
+}
+
 # A crew-dispatch config with one class rig (two rungs, both on) and a default
 # ladder (two rungs). Used by the rung-toggle tests below.
 write_rung_fixture() {  # <home>
@@ -1223,6 +1254,7 @@ test_captain_note_with_token_lands_in_wake_queue
 test_captain_note_accepts_a_backlog_only_hold
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
+test_captain_reply_requires_generation_and_persists_it
 test_worker_relay_without_token_is_unauthorized
 test_worker_relay_with_token_lands_in_wake_queue
 test_worker_relay_unknown_task_is_not_found

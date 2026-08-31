@@ -74,6 +74,7 @@ test_captain_queue_serves_open_named_cards() {
     {
       "id": "fm-memory-path",
       "num": 3,
+      "generation": 4,
       "question": "Keep trimming memory, or adopt a vault?",
       "context": "The research recommends staying with trim.",
       "commands": [],
@@ -105,6 +106,8 @@ EOF
     fail "wanted 1 open card and no worker leak: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].id')" = fm-memory-path ] || \
     fail "queue id: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].generation')" = 4 ] || \
+    fail "queue generation: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options.length')" = 3 ] || \
     fail "queue options: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options[0]')" = "Stay with trim (recommended)" ] || \
@@ -133,6 +136,7 @@ test_captain_queue_serves_parked_cards_separately() {
     {
       "id": "expired-choice",
       "num": 4,
+      "generation": 3,
       "question": "Approve the old release?",
       "context": "No backlog item tracked this question.",
       "commands": ["deploy-old"],
@@ -159,6 +163,8 @@ EOF
     || fail "parked captain card id missing: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].status')" = parked ] \
     || fail "parked captain card status missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].generation')" = 3 ] \
+    || fail "parked captain card generation missing: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedReason')" = expired-unbacked ] \
     || fail "parked captain card reason missing: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedNote')" = "Expired after 7 days without a backing backlog item" ] \

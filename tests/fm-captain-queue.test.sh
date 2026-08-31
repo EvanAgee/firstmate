@@ -25,10 +25,15 @@ run_q() {  # <home> <args...>
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$NOW" "$Q" "$@"
 }
 
-append_reply() {  # <home> <id> <answer>
-  local home=$1
-  jq -nc --arg id "$2" --arg answer "$3" --arg at "$NOW" \
-    '{id: $id, answer: $answer, at: $at}' >> "$home/state/captain-replies.jsonl"
+append_reply() {  # <home> <id> <answer> [generation]
+  local home=$1 generation=${4:-}
+  if [ -z "$generation" ]; then
+    generation=$(jq -r --arg id "$2" \
+      '[.records[]? | select(.id == $id) | .generation] | first // 1' \
+      "$home/data/captain-queue.json")
+  fi
+  jq -nc --arg id "$2" --arg answer "$3" --arg at "$NOW" --argjson generation "$generation" \
+    '{id: $id, generation: $generation, answer: $answer, at: $at}' >> "$home/state/captain-replies.jsonl"
 }
 
 active_ids() {  # <home>
@@ -84,6 +89,8 @@ test_add_uses_the_supplied_id() {
     || fail "card id was not the supplied hold identity"
   [ "$(jq -r '.records[0].state' "$home/data/captain-queue.json")" = open ] \
     || fail "new card should be open"
+  [ "$(jq -r '.records[0].generation' "$home/data/captain-queue.json")" = 1 ] \
+    || fail "new card should start at generation 1"
   pass "add writes a card under the supplied hold identity"
 }
 
@@ -634,6 +641,7 @@ EOF
     and .records[0].context == "The same open work needs another decision."
     and .records[0].asked_at == $now
     and .records[0].backlog_backed == true
+    and .records[0].generation == 2
     and (.records[0] | has("answer") | not)
     and (.records[0] | has("resolved_at") | not)
   ' "$home/data/captain-queue.json" >/dev/null \
@@ -701,12 +709,74 @@ test_repeat_answer_after_crash_advances_cursor() {
   pass "a replay of an already-resolved answer advances the cursor without dropping it"
 }
 
+test_reopened_card_skips_a_crash_replay_from_its_prior_generation() {
+  local home out
+  home=$(make_home reopened-crash-replay)
+  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  append_reply "$home" card-a "first answer"
+  run_q "$home" reconcile >/dev/null
+  printf '0\n' > "$home/state/captain-replies.cursor"
+  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "stale: [id=card-a] [generation=1] first answer" \
+    "the prior generation replay should be surfaced as stale"
+  [ "$(cursor_value "$home")" = 1 ] \
+    || fail "stale replay should advance the cursor, got $(cursor_value "$home")"
+  jq -e '
+    .records[0].id == "card-a"
+    and .records[0].state == "open"
+    and .records[0].generation == 2
+    and .records[0].question == "Second question?"
+    and (.records[0] | has("answer") | not)
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "crash replay changed the reopened question"
+  pass "a reopened card skips a crash replay from its prior generation"
+}
+
+test_reopened_card_skips_a_delayed_stale_reply_without_blocking() {
+  local home out
+  home=$(make_home reopened-delayed-reply)
+  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  append_reply "$home" card-a "first answer"
+  run_q "$home" reconcile >/dev/null
+  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  append_reply "$home" card-a "late first answer" 1
+  append_reply "$home" card-a "second answer" 2
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "stale: [id=card-a] [generation=1] late first answer" \
+    "the delayed prior-generation reply should be surfaced as stale"
+  assert_contains "$out" "handled: [id=card-a] second answer" \
+    "the current reply should not stay blocked behind a stale reply"
+  [ "$(cursor_value "$home")" = 3 ] \
+    || fail "cursor should advance past stale and current replies, got $(cursor_value "$home")"
+  [ "$(resolved_answer "$home" card-a)" = "second answer" ] \
+    || fail "the stale reply replaced the current generation answer"
+  pass "a delayed stale reply cannot block or settle a reopened card"
+}
+
+test_replacing_an_open_ask_rotates_its_generation() {
+  local home out
+  home=$(make_home replaced-open-ask)
+  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  append_reply "$home" card-a "answer from first render" 1
+  run_q "$home" add --id card-a --question "Replacement question?" >/dev/null
+  append_reply "$home" card-a "replacement answer" 2
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "stale: [id=card-a] [generation=1] answer from first render" \
+    "the replaced ask should reject its earlier rendered reply"
+  assert_contains "$out" "handled: [id=card-a] replacement answer" \
+    "the replacement ask should accept its own reply"
+  [ "$(resolved_answer "$home" card-a)" = "replacement answer" ] \
+    || fail "the replaced open ask accepted an earlier generation"
+  pass "replacing an open ask rotates its generation"
+}
+
 test_partial_last_line_without_newline_is_handled() {
   local home out json
   home=$(make_home partial-last)
   run_q "$home" add --id hold-1 --question "A?" >/dev/null
   json=$(jq -nc --arg id hold-1 --arg answer yes --arg at "$NOW" \
-    '{id: $id, answer: $answer, at: $at}')
+    '{id: $id, generation: 1, answer: $answer, at: $at}')
   printf '%s' "$json" > "$home/state/captain-replies.jsonl"
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=hold-1] yes" \
@@ -1033,6 +1103,9 @@ test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
 test_repeat_answer_after_crash_advances_cursor
+test_reopened_card_skips_a_crash_replay_from_its_prior_generation
+test_reopened_card_skips_a_delayed_stale_reply_without_blocking
+test_replacing_an_open_ask_rotates_its_generation
 test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
 test_backed_card_does_not_expire

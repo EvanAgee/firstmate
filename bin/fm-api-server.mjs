@@ -19,15 +19,19 @@
 //   Unknown id: JSON 404 { ok: false, error: "task not found" }.
 //   bin/fm-api-task-detail.mjs owns the exact success JSON contract.
 // GET /captain-queue
-//   { ok, updatedAt, items: [{ id, num, question, context, commands,
+//   { ok, updatedAt, items: [{ id, num, generation, question, context, commands,
 //   options, recommended, askedAt, status, project }],
-//   parked: [{ id, num, question, context, commands, options, recommended,
+//   parked: [{ id, num, generation, question, context, commands, options, recommended,
 //   askedAt, status, project, parkedAt, parkedReason, parkedNote }] }
 //   Captain-queue.json cards firstmate escalated to the captain. Open cards
 //   have named options already validated. Parked cards remain visible even
 //   when their historical options do not meet the active-card contract.
 //   A worker needs-decision is not a source. Empty home or missing file:
 //   items and parked are [].
+// POST /captain-queue/reply requires the token; body
+//   { id, generation, answer }. Generation is the positive integer served on
+//   that card. Appends { id, generation, answer, at } to
+//   state/captain-replies.jsonl and queues a captain-reply wake.
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }
@@ -101,6 +105,7 @@ const NOTE_KIND = "away-supervisor";
 const TASK_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 // The same key charset fm-send.sh accepts for --resolve-key.
 const DECISION_KEY = /^[A-Za-z0-9._-]{1,128}$/;
+const CARD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENDED_VERBS = new Set(["done", "closed", "cancelled"]);
 
 const EVENT_QUIET_MS = 100;
@@ -363,6 +368,48 @@ function parseTaskText(raw) {
   return taskTextFields(parseJsonObject(raw));
 }
 
+function parseCaptainReply(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof body.id !== "string" || !CARD_ID.test(body.id)) {
+    const error = new Error("invalid id");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof body.generation !== "number" || !Number.isInteger(body.generation) || body.generation < 1) {
+    const error = new Error("invalid generation");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof body.answer !== "string" || !body.answer.trim()) {
+    const error = new Error("missing answer");
+    error.status = 400;
+    throw error;
+  }
+  if (/[\r\n\u2028\u2029]/.test(body.answer)) {
+    const error = new Error("answer must be one line");
+    error.status = 400;
+    throw error;
+  }
+  if (body.answer.length > MAX_NOTE_TEXT) {
+    const error = new Error("answer too long");
+    error.status = 400;
+    throw error;
+  }
+  return { id: body.id, generation: body.generation, answer: body.answer };
+}
+
 function runCommand(command, args, options = {}) {
   const { stdin, env, timeoutMs = 10000 } = options;
   return new Promise((resolve, reject) => {
@@ -423,6 +470,47 @@ async function enqueueCheckWake(home, stateDir, key, payload) {
     },
   });
   if (result.code !== 0) throw new Error("wake append failed");
+}
+
+async function queueCaptainReply(home, stateDir, reply) {
+  const state = stateDir || path.join(home, "state");
+  const file = path.join(state, "captain-replies.jsonl");
+  fs.mkdirSync(state, { recursive: true });
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) throw new Error("reply log is a symlink");
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+  const record = { ...reply, at: new Date().toISOString() };
+  fs.appendFileSync(file, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "a" });
+  const key = `captain-reply:${reply.id}:${reply.generation}:${crypto.randomBytes(8).toString("hex")}`;
+  await enqueueCheckWake(home, state, key, "check: captain-reply");
+}
+
+function handleCaptainReply(req, res, home, options) {
+  if (req.method !== "POST") {
+    req.resume();
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
+  if (!writeAuthorized(req, options.tokenFile)) {
+    req.resume();
+    json(res, 401, { ok: false, error: "unauthorized" });
+    return;
+  }
+  readBody(req, MAX_BODY_BYTES)
+    .then(parseCaptainReply)
+    .then((reply) => queueCaptainReply(home, options.stateDir, reply))
+    .then(() => json(res, 200, { ok: true }))
+    .catch((error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      const status = error && error.status ? error.status : 500;
+      const message = status === 500 ? "failed" : error.message;
+      json(res, status, { ok: false, error: message });
+    });
 }
 
 async function queueCaptainNote(home, stateDir, note) {
@@ -843,6 +931,7 @@ function handleReadRoute(req, res, home, stateDir, pathname, task) {
 function handleWriteRoute(req, res, home, options, pathname) {
   const routes = {
     "/captain-notes": () => handleCaptainNote(req, res, home, options),
+    "/captain-queue/reply": () => handleCaptainReply(req, res, home, options),
     "/workers/relay": () => handleWorkerRelay(req, res, home, options),
     "/decisions/answer": () => handleDecisionAnswer(req, res, home, options),
     "/rigs/rung": () => handleRungToggle(req, res, home, options),

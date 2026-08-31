@@ -179,6 +179,10 @@ function asCaptainCard(raw, expectedState = "open") {
     options.find((label) => typeof label === "string" && RECOMMENDED_MARK.test(label)) || "";
   if (expectedState === "open" && captainCardOptionsError(options)) return null;
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
+  const generation =
+    typeof raw.generation === "number" && Number.isInteger(raw.generation) && raw.generation > 0
+      ? raw.generation
+      : 1;
   const askedAt = textField(raw.asked_at) || textField(raw.askedAt);
   const commands = Array.isArray(raw.commands)
     ? raw.commands
@@ -188,6 +192,7 @@ function asCaptainCard(raw, expectedState = "open") {
   const card = {
     id,
     num,
+    generation,
     question,
     context: typeof raw.context === "string" ? raw.context : "",
     commands,
