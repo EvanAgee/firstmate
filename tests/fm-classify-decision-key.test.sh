@@ -122,11 +122,12 @@ test_two_colon_form_decisions_stay_distinct() {
   pass "two colon-form keyed decisions never collapse into one shared bucket"
 }
 
-test_mid_note_prose_mention_is_not_a_stated_key() {
+test_multiple_mid_note_keys_are_not_guessed() {
   local dir
   dir=$(case_dir prose)
-  # Only a token at the head of the note states a key; a summary merely
-  # mentioning "[key=x]" deeper in must neither open nor close that key.
+  # Two interior canonical tokens are ambiguous. Keep the historical default
+  # record instead of choosing one key and letting an answer close the wrong
+  # decision.
   printf 'needs-decision: pick a [key=red] or [key=blue] theme\n' > "$dir/t.status"
   assert_fold "$dir/t.status" \
     "$(printf 'default\tneeds-decision\tpick a [key=red] or [key=blue] theme\n')" \
@@ -137,7 +138,7 @@ test_mid_note_prose_mention_is_not_a_stated_key() {
   assert_fold "$dir/t.status" \
     "$(printf 'default\tneeds-decision\tpick a [key=red] or [key=blue] theme\nred\tneeds-decision\twhich shade\n')" \
     "prose mention leaves the open set untouched"
-  pass "a [key=x] mentioned mid-note is prose, never an opened or closed key"
+  pass "multiple [key=x] tokens inside a note stay ambiguous instead of choosing a key"
 }
 
 test_malformed_stated_key_never_collapses_to_default() {
@@ -268,20 +269,54 @@ test_bare_bracket_token_is_a_stated_key() {
   pass "a bare [slug] token states the key in the documented and closing forms"
 }
 
-test_existing_prose_mentions_keep_folding_to_default_like_before() {
+test_unique_canonical_mid_note_key_is_stated() {
   local dir
-  dir=$(case_dir unchanged-prose)
-  # The tail position must not widen the surface for mid-note mentions: an
-  # interior [key=X] remains prose, and a corr-tagged line with no key token
-  # still folds to default.
-  printf 'needs-decision: explain what [key=blue] means in the report\n' > "$dir/t.status"
+  dir=$(case_dir unique-mid-note)
+  printf '%s\n' \
+    'needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels' \
+    > "$dir/t.status"
   assert_fold "$dir/t.status" \
-    "$(printf 'default\tneeds-decision\texplain what [key=blue] means in the report\n')" \
-    "mid-note key mention stays prose"
-  pass "mid-note [key=X] prose and corr-tagged lines keep their historical folding"
+    "$(printf '169-noun-and-grade-labels\tneeds-decision\tfix-review found 2 new ask-user findings: choose the noun and grade labels\n')" \
+    "unique canonical mid-note key"
+  pass "the pto-export-window-ui mid-sentence key opens under its stated key"
 }
 
-test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded() {
+test_blocked_unique_mid_note_key_is_stated() {
+  local dir
+  dir=$(case_dir blocked-unique-mid-note)
+  printf 'blocked: deploy review failed [key=deploy-token]: waiting for a fresh token\n' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'deploy-token\tblocked\tdeploy review failed: waiting for a fresh token\n')" \
+    "blocked unique canonical mid-note key"
+  pass "a blocked line accepts one canonical key inside its note"
+}
+
+test_v5_cursor_holding_default_for_mid_sentence_key_is_rebuilt() {
+  local dir f cf ident size expected got
+  dir=$(case_dir stale-v5-mid-sentence)
+  f="$dir/t.status"
+  cf=$(_fm_open_decisions_cursor_path "$f")
+  printf '%s\n' \
+    'needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels' \
+    > "$f"
+  ident=$(_fm_open_decisions_file_ident "$f")
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted v5 cursor"
+  size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
+  {
+    printf 'version=5\n'
+    printf 'offset=%s\n' "$size"
+    printf 'ident=%s\n' "$ident"
+    printf 'default\tneeds-decision\tfix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels\n'
+  } > "$cf"
+  expected=$(printf '169-noun-and-grade-labels\tneeds-decision\tfix-review found 2 new ask-user findings: choose the noun and grade labels\n')
+  got=$(status_open_decisions_incremental "$f")
+  [ "$got" = "$expected" ] \
+    || fail "stale v5 cursor was kept: got '$got' want '$expected'"
+  pass "a v5 cursor holding the pto-export-window-ui ghost is rebuilt from its status log"
+}
+
+test_v4_cursor_holding_default_for_trailing_key_is_discarded() {
   local dir f cf ident size expected got
   dir=$(case_dir stale-v4-cursor)
   f="$dir/t.status"
@@ -304,7 +339,7 @@ test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded() {
   got=$(status_open_decisions_incremental "$f")
   [ "$got" = "$expected" ] \
     || fail "stale v4 cursor was kept: got '$got' want '$expected'"
-  pass "an old same-version cursor holding default for a trailing-key line is discarded after the fold-version bump"
+  pass "a v4 cursor holding default for a trailing-key line is discarded after the fold-version bump"
 }
 
 test_incremental_agrees_with_full_fold_across_appends() {
@@ -335,15 +370,17 @@ test_bare_keyless_line_still_folds_to_default
 test_resolution_closes_across_positions
 test_blocked_is_position_tolerant_like_needs_decision
 test_two_colon_form_decisions_stay_distinct
-test_mid_note_prose_mention_is_not_a_stated_key
+test_multiple_mid_note_keys_are_not_guessed
 test_malformed_stated_key_never_collapses_to_default
 test_status_line_verb_strips_every_bracket_tag_before_colon
 test_corr_and_key_tags_open_and_close_under_the_stated_key
 test_corr_only_tag_opens_as_default_like_a_bare_line
 test_key_only_before_colon_still_opens_no_regression
 test_blocked_and_resolved_are_tag_order_independent
-test_old_same_version_cursor_holding_default_for_trailing_key_is_discarded
+test_v5_cursor_holding_default_for_mid_sentence_key_is_rebuilt
+test_v4_cursor_holding_default_for_trailing_key_is_discarded
 test_incremental_agrees_with_full_fold_across_appends
 test_trailing_note_token_is_a_stated_key
 test_bare_bracket_token_is_a_stated_key
-test_existing_prose_mentions_keep_folding_to_default_like_before
+test_unique_canonical_mid_note_key_is_stated
+test_blocked_unique_mid_note_key_is_stated

@@ -197,6 +197,35 @@ test_colon_first_key_position_is_answerable() {
   pass "fm-send --resolve-key: a colon-first stated key is open under that key and answerable"
 }
 
+# The 2026-08-31 pto-export-window-ui incident put the key after a review
+# summary instead of at the start or end of the note. The fold treated that
+# opener as unkeyed, so the answerer's exact --resolve-key request refused and
+# later keyed resolution lines could not close the decision.
+test_mid_sentence_key_position_is_answerable() {
+  local dir fb log home rc out
+  dir="$TMP_ROOT/mid-sentence"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home mid-sentence)
+  fm_write_meta "$home/state/pto-export-window-ui.meta" \
+    "window=sess:fm-pto-export-window-ui" "kind=ship"
+  printf '%s\n' \
+    'needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels' \
+    > "$home/state/pto-export-window-ui.status"
+
+  run_send "$fb" "$home" "$log" pto-export-window-ui \
+    --resolve-key 169-noun-and-grade-labels "use the revised labels"; rc=$?
+  expect_code 0 "$rc" "answering the pto-export-window-ui mid-sentence key should succeed"
+  grep -F 'resolved [key=169-noun-and-grade-labels]: answered: use the revised labels' \
+    "$home/state/pto-export-window-ui.status" >/dev/null \
+    || fail "the closing resolved line is missing:"$'\n'"$(cat "$home/state/pto-export-window-ui.status")"
+
+  out=$(drain_out "$home")
+  if printf '%s' "$out" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "the answered mid-sentence decision still lists as open: $out"
+  fi
+  pass "fm-send --resolve-key: the pto-export-window-ui mid-sentence key is answerable"
+}
+
 test_answer_starts_work_never_orphans() {
   local dir fb log home rc out
   dir="$TMP_ROOT/starts-work"; mkdir -p "$dir"
@@ -499,6 +528,7 @@ test_flag_misuse_refuses() {
 test_answer_send_closes_open_decision
 test_answer_close_is_self_announced
 test_colon_first_key_position_is_answerable
+test_mid_sentence_key_position_is_answerable
 test_answer_starts_work_never_orphans
 test_routine_steer_never_closes
 test_not_open_key_refuses_before_send
