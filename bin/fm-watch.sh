@@ -976,6 +976,11 @@ while :; do
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
             "$provider" "$url" "$host" "$path" "$number" || exit 1
           out=$FM_CHECK_RESULT
+          if [ -z "$out" ] && [ "$provider" = github ]; then
+            run_check_capture "$SCRIPT_DIR/fm-pr-review-chase.sh" --validated \
+              "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" || exit 1
+            out=$FM_CHECK_RESULT
+          fi
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
           run_check_capture "$custom_snapshot" || exit 1

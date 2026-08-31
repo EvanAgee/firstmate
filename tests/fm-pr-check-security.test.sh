@@ -2731,7 +2731,11 @@ test_teardown_removes_poll_artifacts() {
   printf 'check\n' > "$dir/home/state/task-a.check.sh"
   printf 'data\n' > "$dir/home/state/task-a.pr-poll"
   printf 'registration\n' > "$dir/home/state/task-a.pr-poll-registration"
+  printf 'fm-pr-review-chase-v2\n%s\n%s\n0\n0\n0\n-\n' \
+    0123456789abcdef0123456789abcdef01234567 1788192000 \
+    > "$dir/home/state/task-a.pr-review-chase"
   printf 'trust\n' > "$dir/home/state/task-a.check-trust"
+  chmod 0600 "$dir/home/state/task-a.pr-review-chase"
   mkdir -p "$dir/home/state/.pr-check-quarantine"
   chmod 0700 "$dir/home/state/.pr-check-quarantine"
   printf 'legacy\n' > "$dir/home/state/.pr-check-quarantine/task-a.check.abc123"
@@ -2749,6 +2753,7 @@ SH
   [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "teardown left the runnable check"
   [ ! -e "$dir/home/state/task-a.pr-poll" ] || fail "teardown left the sidecar"
   [ ! -e "$dir/home/state/task-a.pr-poll-registration" ] || fail "teardown left the PR poll registration"
+  [ ! -e "$dir/home/state/task-a.pr-review-chase" ] || fail "teardown left the review chase state"
   [ ! -e "$dir/home/state/task-a.check-trust" ] || fail "teardown left the custom check registration"
   ! find "$dir/home/state/.pr-check-quarantine" -name 'task-a.*' -print 2>/dev/null | grep . >/dev/null \
     || fail "teardown left task quarantine artifacts"
@@ -2811,7 +2816,7 @@ SH
   [ "$(cat "$dir/home/state/.pr-check-quarantine/!noncanonical.check.abc123")" = 'noncanonical evidence' ] \
     || fail "teardown removed noncanonical quarantine evidence"
 
-  for artifact in check.sh pr-poll; do
+  for artifact in check.sh pr-poll pr-review-chase; do
     dir=$(make_case "teardown-final-directory-${artifact//./-}")
     fakebin="$dir/fakebin"
     fm_write_meta "$dir/home/state/task-a.meta" \
