@@ -26,8 +26,8 @@
 # a closed decision-hold are the same check: `tasks-axi show <id>` against this
 # home's backlog reports state done. Cards whose item is still open, absent, or
 # unreadable stay. Auto-clear prints `cleared:` lines, not `handled:`; those
-# are not dashboard answers to act on. A missing backlog file or tasks-axi
-# skips the sweep rather than guessing.
+# are not dashboard answers to act on. A readable backlog is checked directly
+# when tasks-axi cannot answer.
 # `add` records whether a card has a backing backlog item. An unbacked card
 # expires after UNBACKED_CARD_EXPIRY_DAYS (7) days. Reconcile moves expired
 # cards from `items` to `parked` without dropping their original content.
@@ -204,7 +204,7 @@ write_cursor() {  # <n>
 }
 
 cmd_add() {
-  local id="" question="" context="" project="" asked_at=""
+  local id="" question="" context="" project="" asked_at="" add_stamp
   local -a options=() commands=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -255,17 +255,28 @@ cmd_add() {
   [ -n "$id" ] || die 2 "add requires --id"
   id_ok "$id" || die 2 "id must be a hold identity slug"
   [ -n "$question" ] || die 2 "add requires --question"
-  [ -n "$asked_at" ] || asked_at=$(now_stamp)
+  add_stamp=$(now_stamp)
+  [ -n "$asked_at" ] || asked_at=$add_stamp
   asked_at=$(normalize_iso_stamp "$asked_at")
   [ -n "$asked_at" ] || die 2 "add --asked-at must be an ISO timestamp with a timezone"
+  jq -ne --arg asked "$asked_at" --arg added "$add_stamp" \
+    '($asked | fromdateiso8601) <= ($added | fromdateiso8601)' >/dev/null \
+    || die 2 "add --asked-at cannot be later than the add time"
 
   local queue options_json commands_json next_num item backlog_backed
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
-  if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.parked[]; .id == $id)' >/dev/null; then
+  if printf '%s\n' "$queue" | jq -e --arg id "$id" '
+      any(.parked[]; .id == $id)
+      or any(.resolved[];
+        .id == $id
+        and (has("parked_at") or has("parked_reason") or has("parked_note"))
+      )
+    ' >/dev/null; then
     die 1 "card already parked: $id"
   fi
-  backlog_backed=$(backlog_backing_state "$id")
+  backlog_backed=$(backlog_backing_state "$id") \
+    || die 1 "cannot determine backlog backing for $id"
   if [ "${#options[@]}" -gt 0 ]; then
     options_json=$(json_array "${options[@]}")
   else
@@ -393,6 +404,14 @@ cmd_park() {
   if ! printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.items[]; .id == $id)' >/dev/null; then
     die 1 "active card not found: $id"
   fi
+  if ! printf '%s\n' "$queue" | jq -e --arg id "$id" '
+      any(.items[];
+        .id == $id
+        and ((has("backlog_backed") | not) or .backlog_backed == false)
+      )
+    ' >/dev/null; then
+    die 1 "manual park requires an unbacked or legacy card: $id"
+  fi
   stamp=$(now_stamp)
   queue=$(apply_parked "$queue" "$id" "$stamp" "manual" "$note") \
     || die 1 "failed to park $id"
@@ -401,20 +420,64 @@ cmd_park() {
   printf 'parked: [id=%s] manual\n' "$id"
 }
 
-# Print true when the backlog contains <id>, false when absence is verified,
-# or null when the lookup could not answer.
+# Print the backlog state for <id>, or absent when no item exists.
+backlog_item_state() {  # <id>
+  local id=$1 show state
+  [ -n "$id" ] || return 1
+  [ -f "$DATA/backlog.md" ] || { printf 'absent\n'; return 0; }
+  [ -r "$DATA/backlog.md" ] || return 1
+  if command -v tasks-axi >/dev/null 2>&1; then
+    if show=$(tasks-axi show "$id" --file "$DATA/backlog.md" 2>&1); then
+      state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p' | head -1)
+      if [ -n "$state" ]; then
+        printf '%s\n' "$state"
+        return 0
+      fi
+    elif printf '%s\n' "$show" | grep -qx 'code: NOT_FOUND'; then
+      printf 'absent\n'
+      return 0
+    fi
+  fi
+  awk -v wanted="$id" '
+    function heading_state(line, heading) {
+      heading = line
+      sub(/^##[[:space:]]+/, "", heading)
+      sub(/[[:space:]]+$/, "", heading)
+      if (heading == "Done") return "done"
+      if (heading == "In flight") return "in_flight"
+      if (heading == "Queued") return "queued"
+      return ""
+    }
+    function row_id(line, separator, candidate) {
+      sub(/^[-*][[:space:]]+/, "", line)
+      sub(/^\[[ xX]\][[:space:]]+/, "", line)
+      separator = index(line, " - ")
+      if (separator == 0) return ""
+      candidate = substr(line, 1, separator - 1)
+      if (candidate ~ /^\*\*[^*]+\*\*$/) {
+        candidate = substr(candidate, 3, length(candidate) - 4)
+      }
+      return candidate
+    }
+    /^##[[:space:]]+/ { section = heading_state($0); next }
+    /^[-*][[:space:]]+/ && row_id($0) == wanted {
+      if (section == "done") print "done"
+      else if (section == "") print "present"
+      else print section
+      found = 1
+      exit
+    }
+    END { if (!found) print "absent" }
+  ' "$DATA/backlog.md"
+}
+
 backlog_backing_state() {  # <id>
-  local id=$1 show
-  [ -n "$id" ] || { printf 'null\n'; return 0; }
-  [ -f "$DATA/backlog.md" ] || { printf 'false\n'; return 0; }
-  [ -r "$DATA/backlog.md" ] || { printf 'null\n'; return 0; }
-  command -v tasks-axi >/dev/null 2>&1 || { printf 'null\n'; return 0; }
-  if show=$(tasks-axi show "$id" --file "$DATA/backlog.md" 2>&1); then
-    printf 'true\n'
-  elif printf '%s\n' "$show" | grep -qx 'code: NOT_FOUND'; then
+  local state
+  state=$(backlog_item_state "$1") || return 1
+  if [ "$state" = absent ]; then
     printf 'false\n'
   else
-    printf 'null\n'
+    printf 'true\n'
   fi
 }
 
@@ -447,12 +510,8 @@ apply_handled() {  # <queue-json> <id> <answer> <stamp> -> new queue on stdout
 # True when this home's backlog records <id> as done. Absent, unreadable, or
 # still-open items return false so a card cannot clear on a guess.
 backlog_item_done() {  # <id>
-  local id=$1 show state
-  [ -n "$id" ] || return 1
-  [ -f "$DATA/backlog.md" ] || return 1
-  command -v tasks-axi >/dev/null 2>&1 || return 1
-  show=$(tasks-axi show "$id" --file "$DATA/backlog.md" 2>/dev/null) || return 1
-  state=$(printf '%s\n' "$show" | sed -n 's/^  state: //p' | head -1)
+  local state
+  state=$(backlog_item_state "$1") || return 1
   [ "$state" = "done" ]
 }
 
@@ -460,10 +519,13 @@ backlog_item_done() {  # <id>
 # Mutates the caller's `queue`. Prints `cleared:` lines, never `handled:`.
 clear_closed_cards() {
   local id stamp ids
-  ids=$(printf '%s\n' "$queue" | jq -r '.items[]? | select(.backlog_backed == true) | .id // empty') || return 0
+  ids=$(printf '%s\n' "$queue" | jq -r '
+    .items[]?
+    | select(.backlog_backed == true or (has("backlog_backed") | not))
+    | .id // empty
+  ') || return 0
   [ -n "$ids" ] || return 0
   [ -f "$DATA/backlog.md" ] || return 0
-  command -v tasks-axi >/dev/null 2>&1 || return 0
   while IFS= read -r id || [ -n "$id" ]; do
     [ -n "$id" ] || continue
     backlog_item_done "$id" || continue
@@ -484,8 +546,8 @@ refresh_unknown_backing_states() {
   [ -n "$ids" ] || return 0
   while IFS= read -r id || [ -n "$id" ]; do
     [ -n "$id" ] || continue
-    state=$(backlog_backing_state "$id")
-    [ "$state" != null ] || continue
+    state=$(backlog_backing_state "$id") \
+      || die 1 "cannot determine backlog backing for $id"
     queue=$(printf '%s\n' "$queue" | jq -c \
       --arg id "$id" --argjson state "$state" '
         .items = [.items[] | if .id == $id then .backlog_backed = $state else . end]

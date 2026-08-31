@@ -145,7 +145,16 @@ test_asked_at_is_normalized_or_rejected() {
   assert_contains "$out" "add --asked-at must be an ISO timestamp with a timezone" \
     "malformed asked_at should explain the accepted timestamp contract"
   [ -z "$(active_ids "$home")" ] || fail "malformed asked_at wrote an active card"
-  pass "asked_at accepts normalized offsets and rejects invalid calendar times"
+  rc=0
+  out=$(run_q "$home" add \
+    --id future-time-question \
+    --question "Future timestamp?" \
+    --asked-at 2026-08-27T18:00:01Z 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "future asked_at should exit 2, got $rc"
+  assert_contains "$out" "add --asked-at cannot be later than the add time" \
+    "future asked_at should explain the add-time boundary"
+  [ -z "$(active_ids "$home")" ] || fail "future asked_at wrote an active card"
+  pass "asked_at normalizes offsets and rejects invalid or future times"
 }
 
 test_expiry_preserves_card_and_is_idempotent() {
@@ -253,7 +262,51 @@ test_legacy_card_waits_for_verified_migration() {
   [ "$(active_ids "$home")" = legacy-question ] \
     || fail "legacy card moved without human verification"
   [ -z "$(parked_ids "$home")" ] || fail "legacy card was automatically parked"
-  pass "a legacy card without recorded backing state waits for human-verified migration"
+  out=$(run_q "$home" park --id legacy-question --note "Verified legacy migration")
+  assert_contains "$out" "parked: [id=legacy-question] manual" \
+    "manual verification should allow a legacy migration candidate to park"
+  [ "$(parked_ids "$home")" = legacy-question ] \
+    || fail "manual verification did not park the legacy migration candidate"
+  pass "a legacy card waits for human verification and then allows manual migration"
+}
+
+test_manual_park_rejects_backed_and_unknown_cards() {
+  local home id out rc
+  home=$(make_home manual-park-guards)
+  jq -n '{
+    updated_at: "2026-08-27T18:00:00Z",
+    items: [
+      {
+        id: "backed-card",
+        num: 1,
+        question: "Backed?",
+        asked_at: "2026-08-26T18:00:00Z",
+        backlog_backed: true,
+        status: "open"
+      },
+      {
+        id: "unknown-card",
+        num: 2,
+        question: "Unknown?",
+        asked_at: "2026-08-26T18:00:00Z",
+        backlog_backed: null,
+        status: "open"
+      }
+    ],
+    resolved: [],
+    parked: []
+  }' > "$home/data/captain-queue.json"
+  for id in backed-card unknown-card; do
+    rc=0
+    out=$(run_q "$home" park --id "$id" --note "Must stay active" 2>&1) || rc=$?
+    [ "$rc" -eq 1 ] || fail "manual park of $id should exit 1, got $rc"
+    assert_contains "$out" "manual park requires an unbacked or legacy card: $id" \
+      "manual park should explain why $id cannot move"
+  done
+  [ "$(active_ids "$home" | sort | tr '\n' ' ')" = "backed-card unknown-card " ] \
+    || fail "refused manual park changed the active cards"
+  [ -z "$(parked_ids "$home")" ] || fail "refused manual park created parked history"
+  pass "manual park accepts only verified unbacked or legacy cards"
 }
 
 test_backed_card_does_not_expire() {
@@ -279,53 +332,38 @@ test_backed_card_does_not_expire() {
   pass "a backed card records its backing state and never expires while its work stays open"
 }
 
-test_unknown_backing_is_retried_without_misclassification() {
+test_backlog_fallback_avoids_unknown_state() {
   local home fakebin out
-  home=$(make_home unknown-backing)
-  seed_backlog "$home"
+  home=$(make_home backlog-fallback)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] fallback-backed-question - Keep the backed work open (repo: sample) (kind: captain)
+
+## Queued
+
+## Done
+EOF
   fakebin=$(fm_fakebin "$home")
-  cat > "$fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-case "${FAKE_TASKS_MODE:-fail}" in
-  found)
-    printf '%s\n' 'task:' '  id: uncertain-backed-question' '  state: queued'
-    ;;
-  missing)
-    printf '%s\n' 'error: "Task not found"' 'code: NOT_FOUND' >&2
-    exit 1
-    ;;
-  *)
-    printf '%s\n' 'temporary backlog read failure' >&2
-    exit 1
-    ;;
-esac
-SH
-  chmod +x "$fakebin/tasks-axi"
-  PATH="$fakebin:$PATH" FAKE_TASKS_MODE=fail run_q "$home" add \
-    --id uncertain-backed-question \
+  make_failing_tasks_axi "$fakebin"
+  PATH="$fakebin:$PATH" run_q "$home" add \
+    --id fallback-backed-question \
     --question "Keep waiting?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
-  [ "$(jq -r '.items[0].backlog_backed' "$home/data/captain-queue.json")" = null ] \
-    || fail "a failed lookup was recorded as verified absence"
-  out=$(PATH="$fakebin:$PATH" FAKE_TASKS_MODE=found run_q "$home" reconcile)
-  [ -z "$out" ] || fail "a recovered backed card should remain silent: $out"
-  [ "$(jq -r '.items[0].backlog_backed' "$home/data/captain-queue.json")" = true ] \
-    || fail "reconcile did not retry and record the recovered backing item"
-  [ "$(active_ids "$home")" = uncertain-backed-question ] \
-    || fail "a temporary lookup failure caused a backed card to expire"
-
-  home=$(make_home unknown-unbacked)
-  seed_backlog "$home"
-  fakebin=$(fm_fakebin "$home")
-  cp "$TMP_ROOT/unknown-backing/fakebin/tasks-axi" "$fakebin/tasks-axi"
-  PATH="$fakebin:$PATH" FAKE_TASKS_MODE=fail run_q "$home" add \
-    --id uncertain-unbacked-question \
+  PATH="$fakebin:$PATH" run_q "$home" add \
+    --id fallback-unbacked-question \
     --question "Urgent unbacked question?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
-  out=$(PATH="$fakebin:$PATH" FAKE_TASKS_MODE=missing run_q "$home" reconcile)
-  assert_contains "$out" "parked: [id=uncertain-unbacked-question] expired-unbacked" \
-    "verified absence after a retry should allow an urgent unbacked card to expire"
-  pass "temporary backlog failures stay unknown until reconcile verifies the result"
+  jq -e '
+    any(.items[]; .id == "fallback-backed-question" and .backlog_backed == true)
+    and any(.items[]; .id == "fallback-unbacked-question" and .backlog_backed == false)
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "the readable backlog fallback did not record definite backing states"
+  out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=fallback-unbacked-question] expired-unbacked" \
+    "the fallback-classified unbacked card should expire"
+  [ "$(active_ids "$home")" = fallback-backed-question ] \
+    || fail "the fallback-classified backed card did not remain active"
+  pass "a readable backlog keeps backing state definite during tool failure"
 }
 
 test_later_done_item_does_not_resolve_an_unbacked_card() {
@@ -500,6 +538,15 @@ backlog_done() {  # <home> <id>
   tasks-axi "done" "$2" --file "$1/data/backlog.md" >/dev/null
 }
 
+make_failing_tasks_axi() {  # <fakebin>
+  cat > "$1/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'temporary backlog read failure' >&2
+exit 1
+SH
+  chmod +x "$1/tasks-axi"
+}
+
 test_verified_live_card_can_be_reposted_with_backing() {
   local home out
   if ! have_tasks_axi; then
@@ -571,6 +618,40 @@ test_done_backlog_item_clears_card_without_a_reply() {
   out=$(run_q "$home" reconcile)
   [ -z "$out" ] || fail "caught-up auto-clear should be silent, got: $out"
   pass "a card auto-clears when its backlog item is marked done"
+}
+
+test_legacy_backed_done_card_still_clears() {
+  local home fakebin out
+  home=$(make_home legacy-done)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+
+## Done
+- [x] legacy-done-card - Completed legacy work (repo: sample) (kind: captain)
+EOF
+  jq -n '{
+    updated_at: "2026-08-20T18:00:00Z",
+    items: [{
+      id: "legacy-done-card",
+      num: 1,
+      question: "Legacy completed question?",
+      asked_at: "2026-08-20T18:00:00Z",
+      status: "open"
+    }],
+    resolved: [],
+    parked: []
+  }' > "$home/data/captain-queue.json"
+  fakebin=$(fm_fakebin "$home")
+  make_failing_tasks_axi "$fakebin"
+  out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
+  assert_contains "$out" "cleared: [id=legacy-done-card] backlog-done" \
+    "verified done work should retire a legacy card without a backing marker"
+  [ -z "$(active_ids "$home")" ] || fail "legacy done card stayed active"
+  [ "$(resolved_answer "$home" legacy-done-card)" = backlog-done ] \
+    || fail "legacy done card did not record its retirement"
+  pass "legacy backed cards still retire when their work is done"
 }
 
 test_only_done_cards_auto_clear() {
@@ -687,7 +768,15 @@ test_parked_reply_resolves_and_preserves_history() {
       and (.parked_note | length > 0)
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "resolved card lost its parked history"
-  pass "an answer resolves a parked card without losing its parked history"
+  rc=0
+  out=$(run_q "$home" add --id parked-card --question "Ask again" 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "re-adding an answered parked card should exit 1, got $rc"
+  assert_contains "$out" "card already parked: parked-card" \
+    "answered parked history should block resurrection"
+  [ -z "$(active_ids "$home")" ] || fail "answered parked card was resurrected"
+  [ "$(jq '[.resolved[] | select(.id == "parked-card")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
+    || fail "refused re-add changed resolved parked history"
+  pass "an answered parked card stays resolved and cannot be resurrected"
 }
 
 test_add_uses_the_supplied_id
@@ -698,6 +787,7 @@ test_asked_at_is_normalized_or_rejected
 test_expiry_preserves_card_and_is_idempotent
 test_manual_park_supports_verified_migration
 test_legacy_card_waits_for_verified_migration
+test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
@@ -705,10 +795,11 @@ test_repeat_answer_after_crash_advances_cursor
 test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
 test_backed_card_does_not_expire
-test_unknown_backing_is_retried_without_misclassification
+test_backlog_fallback_avoids_unknown_state
 test_later_done_item_does_not_resolve_an_unbacked_card
 test_verified_live_card_can_be_reposted_with_backing
 test_done_backlog_item_clears_card_without_a_reply
+test_legacy_backed_done_card_still_clears
 test_only_done_cards_auto_clear
 test_dashboard_reply_after_auto_clear_does_not_orphan
 test_dashboard_reply_still_clears_when_backlog_item_is_open
