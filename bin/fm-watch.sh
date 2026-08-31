@@ -637,6 +637,7 @@ run_check() {
 
 FM_ACTIVE_CHECK_PID=
 FM_ACTIVE_CHECK_PGID=
+FM_ACTIVE_META_LOCK=
 FM_CHECK_OUTPUT=
 FM_CHECK_RESULT=
 FM_CHECK_SIGNAL_PENDING=
@@ -874,6 +875,7 @@ watcher_cleanup() {
   fm_active_check_stop || cleanup_status=1
   fm_check_output_cleanup
   fm_custom_check_snapshot_cleanup
+  [ -z "$FM_ACTIVE_META_LOCK" ] || fm_lock_release "$FM_ACTIVE_META_LOCK"
   if [ "$owns_lock" -eq 1 ] \
     && ! fm_recovery_transition "$WATCHER_DOWNTIME_MARKER" "$transition" "$WATCH_LOCK" downtime; then
     echo "watcher: recovery state could not be persisted; retaining stale lock evidence" >&2
@@ -1022,6 +1024,15 @@ while :; do
         fi
       else
         id=$(basename "$c" .check.sh)
+        meta_lock=$(fm_meta_lock_path "$STATE/$id.meta") || {
+          rejected_checks="$rejected_checks $c"
+          continue
+        }
+        # PR poll files are published before pr= as the transaction's final
+        # marker. Defer while that transaction owns the task metadata lock so
+        # the files cannot be mistaken for an unauthenticated custom check.
+        fm_lock_try_acquire "$meta_lock" || continue
+        FM_ACTIVE_META_LOCK=$meta_lock
         if fm_pr_poll_snapshot_capture "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
           is_pr_poll=1
           provider=$FM_PR_POLL_SNAPSHOT_PROVIDER
@@ -1029,6 +1040,8 @@ while :; do
           host=$FM_PR_POLL_SNAPSHOT_HOST
           path=$FM_PR_POLL_SNAPSHOT_PATH
           number=$FM_PR_POLL_SNAPSHOT_NUMBER
+          fm_lock_release "$meta_lock"
+          FM_ACTIVE_META_LOCK=
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
             "$provider" "$url" "$host" "$path" "$number" || exit 1
           out=$FM_CHECK_RESULT
@@ -1037,15 +1050,19 @@ while :; do
               "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" || exit 1
             out=$FM_CHECK_RESULT
           fi
-        elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
-          custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
-          run_check_capture "$custom_snapshot" || exit 1
-          out=$FM_CHECK_RESULT
-          fm_custom_check_snapshot_cleanup
         else
-          fm_custom_check_snapshot_cleanup
-          rejected_checks="$rejected_checks $c"
-          continue
+          fm_lock_release "$meta_lock"
+          FM_ACTIVE_META_LOCK=
+          if fm_custom_check_snapshot_prepare "$STATE" "$id"; then
+            custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
+            run_check_capture "$custom_snapshot" || exit 1
+            out=$FM_CHECK_RESULT
+            fm_custom_check_snapshot_cleanup
+          else
+            fm_custom_check_snapshot_cleanup
+            rejected_checks="$rejected_checks $c"
+            continue
+          fi
         fi
       fi
       if [ -n "$out" ]; then
