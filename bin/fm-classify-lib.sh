@@ -272,7 +272,7 @@ _fm_key_raw_tail() {  # <status-line> -> raw slug
 # Requiring one complete token leaves prose with multiple key examples
 # unclassified instead of choosing one arbitrarily.
 _fm_key_raw_anywhere() {  # <status-line> -> raw slug
-  local note rest k token before after
+  local note scan rest k token before after valid='' valid_count=0 invalid=''
   case "$1" in
     *:*) note=${1#*:} ;;
     *) return 1 ;;
@@ -281,16 +281,30 @@ _fm_key_raw_anywhere() {  # <status-line> -> raw slug
     *\[key=*\]*) ;;
     *) return 1 ;;
   esac
-  rest=${note#*\[key=}
-  k=${rest%%\]*}
-  token="[key=$k]"
-  before=${note%%"$token"*}
-  after=${note#*"$token"}
-  case "$before" in ''|*[[:space:]]|*:) ;; *) return 1 ;; esac
-  case "$after" in ''|[[:space:]]*|:*) ;; *) return 1 ;; esac
-  case "$after" in *\[key=*\]*) return 1 ;; esac
-  [ -n "$k" ] || return 1
-  printf '%s' "$k"
+  scan=$note
+  while :; do
+    case "$scan" in *\[key=*\]*) ;; *) break ;; esac
+    rest=${scan#*\[key=}
+    k=${rest%%\]*}
+    token="[key=$k]"
+    before=${scan%%"$token"*}
+    after=${scan#*"$token"}
+    scan=$after
+    case "$before" in ''|*[[:space:]]|*:) ;; *) continue ;; esac
+    case "$after" in ''|[[:space:]]*|:*) ;; *) continue ;; esac
+    if _fm_decision_slug_ok "$k"; then
+      valid=$k
+      valid_count=$((valid_count + 1))
+    elif [ -n "$k" ] && [ -z "$invalid" ]; then
+      invalid=$k
+    fi
+  done
+  if [ "$valid_count" -eq 1 ]; then
+    printf '%s' "$valid"
+    return 0
+  fi
+  [ "$valid_count" -eq 0 ] && [ -n "$invalid" ] || return 1
+  printf '%s' "$invalid"
 }
 # 0 when a stated key slug is well-formed: nonempty, A-Za-z0-9._- only.
 _fm_decision_slug_ok() {  # <slug>
@@ -545,7 +559,7 @@ _fm_open_decisions_cursor_path() {  # <status-file>
   printf '%s/.%s.open-decisions-cursor' "$dir" "${base%.status}"
 }
 
-FM_OPEN_DECISIONS_FOLD_VERSION=6
+FM_OPEN_DECISIONS_FOLD_VERSION=7
 
 # Portable device:inode identity for the rotation/recreation check below.
 _fm_open_decisions_file_ident() {  # <file> -> "dev:inode", empty on I/O failure

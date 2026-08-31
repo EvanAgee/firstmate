@@ -292,6 +292,43 @@ test_blocked_unique_mid_note_key_is_stated() {
   pass "a blocked line accepts one canonical key inside its note"
 }
 
+test_invalid_lookalike_before_valid_mid_note_key_is_ignored() {
+  local dir
+  dir=$(case_dir invalid-before-valid-mid-note)
+  printf '%s\n' \
+    'needs-decision: review mentions [key=bad key] before its finding [key=review-labels]: choose the labels' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'review-labels\tneeds-decision\treview mentions [key=bad key] before its finding: choose the labels\n')" \
+    "invalid lookalike before one valid canonical mid-note key"
+  printf 'resolved [key=review-labels]: labels chosen\n' >> "$dir/t.status"
+  assert_fold "$dir/t.status" "" "valid key after invalid lookalike closes normally"
+  pass "an invalid key lookalike cannot hide the only valid canonical key"
+}
+
+test_v6_cursor_that_skipped_valid_key_is_rebuilt() {
+  local dir f cf ident size expected got
+  dir=$(case_dir stale-v6-invalid-before-valid)
+  f="$dir/t.status"
+  cf=$(_fm_open_decisions_cursor_path "$f")
+  printf '%s\n' \
+    'needs-decision: review mentions [key=bad key] before its finding [key=review-labels]: choose the labels' \
+    > "$f"
+  ident=$(_fm_open_decisions_file_ident "$f")
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted v6 cursor"
+  size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
+  {
+    printf 'version=6\n'
+    printf 'offset=%s\n' "$size"
+    printf 'ident=%s\n' "$ident"
+  } > "$cf"
+  expected=$(printf 'review-labels\tneeds-decision\treview mentions [key=bad key] before its finding: choose the labels\n')
+  got=$(status_open_decisions_incremental "$f")
+  [ "$got" = "$expected" ] \
+    || fail "stale v6 cursor was kept: got '$got' want '$expected'"
+  pass "a v6 cursor that skipped a valid key after a malformed lookalike is rebuilt"
+}
+
 test_v5_cursor_holding_default_for_mid_sentence_key_is_rebuilt() {
   local dir f cf ident size expected got
   dir=$(case_dir stale-v5-mid-sentence)
@@ -384,3 +421,5 @@ test_trailing_note_token_is_a_stated_key
 test_bare_bracket_token_is_a_stated_key
 test_unique_canonical_mid_note_key_is_stated
 test_blocked_unique_mid_note_key_is_stated
+test_invalid_lookalike_before_valid_mid_note_key_is_ignored
+test_v6_cursor_that_skipped_valid_key_is_rebuilt
