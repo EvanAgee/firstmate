@@ -602,6 +602,46 @@ test_class_runtime_override_requires_and_records_captain_reason() {
   pass "a class runtime override requires and records the captain's reason"
 }
 
+test_dispatch_metadata_rejects_line_breaks() {
+  local rec id out status
+  id=$(profile_id profile-dispatch-line-breaks-z16b)
+  rec=$(make_spawn_case profile-dispatch-line-breaks claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class $'builder\nforged=value')
+  status=$?
+  expect_code 1 "$status" "a dispatch class containing LF should fail"
+  assert_contains "$out" "--class cannot contain CR or LF characters" \
+    "spawn did not reject LF in the dispatch class"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class $'builder\rforged=value')
+  status=$?
+  expect_code 1 "$status" "a dispatch class containing CR should fail"
+  assert_contains "$out" "--class cannot contain CR or LF characters" \
+    "spawn did not reject CR in the dispatch class"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness grok --model grok-4 --effort high \
+    --captain-override $'reason\nforged=value')
+  status=$?
+  expect_code 1 "$status" "a captain override containing LF should fail"
+  assert_contains "$out" "--captain-override cannot contain CR or LF characters" \
+    "spawn did not reject LF in the captain override"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness grok --model grok-4 --effort high \
+    --captain-override $'reason\rforged=value')
+  status=$?
+  expect_code 1 "$status" "a captain override containing CR should fail"
+  assert_contains "$out" "--captain-override cannot contain CR or LF characters" \
+    "spawn did not reject CR in the captain override"
+  assert_absent "$HOME_DIR/state/$id.meta" "line-break validation should happen before meta is written"
+  pass "dispatch metadata rejects CR and LF before writing meta"
+}
+
 test_active_dispatch_profile_allows_raw_launch_command() {
   local rec id out status launch
   id=$(profile_id profile-raw-z15)
@@ -1394,6 +1434,7 @@ test_active_dispatch_profile_requires_class_for_scout
 test_class_resolves_pinned_runtime
 test_active_dispatch_profile_refuses_concrete_harness_without_class
 test_class_runtime_override_requires_and_records_captain_reason
+test_dispatch_metadata_rejects_line_breaks
 test_active_dispatch_profile_allows_raw_launch_command
 test_raw_override_with_class_requires_provable_runtime
 test_default_model_forms_match_through_spawn

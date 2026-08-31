@@ -413,6 +413,12 @@ done
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$DISPATCH_CLASS_SET" -eq 0 ] || [ -n "$DISPATCH_CLASS" ] || { echo "error: --class requires a non-empty value" >&2; exit 1; }
 [ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || [ -n "$CAPTAIN_OVERRIDE" ] || { echo "error: --captain-override requires a non-empty value" >&2; exit 1; }
+case "$DISPATCH_CLASS" in
+  *$'\r'*|*$'\n'*) echo "error: --class cannot contain CR or LF characters" >&2; exit 1 ;;
+esac
+case "$CAPTAIN_OVERRIDE" in
+  *$'\r'*|*$'\n'*) echo "error: --captain-override cannot contain CR or LF characters" >&2; exit 1 ;;
+esac
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }

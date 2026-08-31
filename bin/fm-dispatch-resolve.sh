@@ -239,16 +239,7 @@ if [ "$OVERRIDE_HARNESS_SET" -eq 1 ] || [ "$OVERRIDE_MODEL_SET" -eq 1 ] || [ "$O
       MATCH_ENABLED=1
       break
     fi
-  done < <(config_jq -r '
-    def profiles($value):
-      if ($value | type) == "array" then $value
-      elif ($value | type) == "object" then [$value]
-      else []
-      end;
-    ([.rules[]? | profiles(.use)[]?] + [profiles(.default)[]?])[]
-    | [(.harness // ""), (.model // "default"), (.effort // "default"), (if .enabled? == false then "false" else "true" end)]
-    | @tsv
-  ')
+  done < <(profiles_tsv)
   if [ "$MATCH_FOUND" -eq 1 ] && [ "$MATCH_ENABLED" -eq 0 ]; then
     echo "error: captain override selects disabled member harness=$BEST_HARNESS model=$BEST_MODEL effort=$BEST_EFFORT; re-enable it in config/crew-dispatch.json" >&2
     exit 1

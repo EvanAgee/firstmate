@@ -148,6 +148,20 @@ EOF
   pass "the resolver validates runtime support before output"
 }
 
+test_override_ignores_disabled_tuple_outside_resolved_pool() {
+  local home out
+  home=$(make_home override-pool-scope)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}},{"class":"tester","use":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"pi","model":"xai/grok-4.6","effort":"high"}]}],"default":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5.6-sol","effort":"medium"}]}
+EOF
+  out=$($RESOLVER --class builder --home "$home" \
+    --override-harness claude --override-model opus --override-effort high) \
+    || fail "an override matching a disabled tuple outside its pool did not resolve"
+  [ "$out" = "harness=claude model=opus effort=high reason=round-robin" ] \
+    || fail "cross-pool disabled tuple changed the override to '$out'"
+  pass "an override checks disabled members only in its resolved pool"
+}
+
 test_pinned_class
 test_unpinned_class_uses_fewest_live_workers
 test_switched_off_pin_refuses_without_fallback
@@ -157,5 +171,6 @@ test_unknown_class_round_robins_default
 test_round_robin_breaks_ties_by_list_order
 test_pool_without_enabled_member_refuses
 test_unsupported_runtime_refuses_before_output
+test_override_ignores_disabled_tuple_outside_resolved_pool
 
 echo "# all fm-dispatch-resolve tests passed"

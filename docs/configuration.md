@@ -304,7 +304,7 @@ Secondmate spawns do not use classes and continue to resolve through `config/sec
       "class": "builder",
       "when": "<optional human description of this class>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": "<true|false, optional, default true>" }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": true }
       ],
       "pin": { "harness": "<same adapter>", "model": "<same optional model>", "effort": "<same optional effort>" },
       "why": "<optional human rationale>"
