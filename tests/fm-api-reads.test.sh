@@ -136,7 +136,7 @@ test_captain_queue_serves_parked_cards_separately() {
       "question": "Approve the old release?",
       "context": "No backlog item tracked this question.",
       "commands": ["deploy-old"],
-      "options": ["Decline", "Something else", "Approve (recommended)"],
+      "options": [" Decline ", "", "Approve (recommended)", " Something else "],
       "asked_at": "2026-08-20T18:00:00Z",
       "state": "parked",
       "project": "sample",
@@ -163,12 +163,9 @@ EOF
     || fail "parked captain card reason missing: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedNote')" = "Expired after 7 days without a backing backlog item" ] \
     || fail "parked captain card note missing: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].options[0]')" = Decline ] \
-    || fail "parked captain card changed its first stored option: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].options[1]')" = "Something else" ] \
-    || fail "parked captain card moved its stored escape option: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].options[2]')" = "Approve (recommended)" ] \
-    || fail "parked captain card moved its stored recommended option: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].options')" = \
+    '[" Decline ","","Approve (recommended)"," Something else "]' ] \
+    || fail "parked captain card changed its stored option array: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].recommended')" = "Approve (recommended)" ] \
     || fail "parked captain card lost its recommendation: $HTTP_BODY"
   fm_test_api_stop "$home"

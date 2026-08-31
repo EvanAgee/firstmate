@@ -371,6 +371,46 @@ test_legacy_duplicate_id_prefers_visible_state_over_timestamp() {
   pass "legacy duplicate migration prefers visible state over timestamps"
 }
 
+test_legacy_same_state_duplicate_compares_offset_timestamps() {
+  local home
+  home=$(make_home legacy-offset-timestamps)
+  jq -n '{
+    updated_at: "2026-08-26T18:00:00Z",
+    items: [],
+    resolved: [
+      {
+        id: "resolved-twice",
+        num: 1,
+        question: "Older resolved question?",
+        asked_at: "2026-08-20T17:00:00Z",
+        status: "resolved",
+        answer: "Older answer",
+        resolved_at: "2026-08-26T17:00:00Z"
+      },
+      {
+        id: "resolved-twice",
+        num: 1,
+        question: "Newer offset question?",
+        asked_at: "2026-08-20T13:00:00-05:00",
+        status: "resolved",
+        answer: "Newer offset answer",
+        resolved_at: "2026-08-26T13:00:00-05:00"
+      }
+    ],
+    parked: []
+  }' > "$home/data/captain-queue.json"
+  run_q "$home" add --id migration-write --question "Write the migrated queue?" >/dev/null
+  jq -e '
+    [.records[] | select(.id == "resolved-twice")] as $matches
+    | ($matches | length) == 1
+      and $matches[0].question == "Newer offset question?"
+      and $matches[0].answer == "Newer offset answer"
+      and $matches[0].resolved_at == "2026-08-26T13:00:00-05:00"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "legacy migration did not compare signed-offset timestamps chronologically"
+  pass "legacy duplicate migration compares Z and signed-offset timestamps"
+}
+
 test_manual_park_rejects_backed_and_unknown_cards() {
   local home id out rc
   home=$(make_home manual-park-guards)
@@ -940,6 +980,7 @@ test_expiry_preserves_card_and_is_idempotent
 test_manual_park_supports_verified_migration
 test_legacy_card_waits_for_verified_migration
 test_legacy_duplicate_id_prefers_visible_state_over_timestamp
+test_legacy_same_state_duplicate_compares_offset_timestamps
 test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop

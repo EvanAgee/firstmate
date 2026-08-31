@@ -91,7 +91,7 @@ function textField(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function captainCardOptionLabels(options) {
+function normalizedCaptainCardOptionLabels(options) {
   return (Array.isArray(options) ? options : [])
     .filter((raw) => typeof raw === "string")
     .map((raw) => raw.trim())
@@ -99,7 +99,7 @@ function captainCardOptionLabels(options) {
 }
 
 export function normalizeCaptainCardOptions(options) {
-  const labels = captainCardOptionLabels(options);
+  const labels = normalizedCaptainCardOptionLabels(options);
   const markedAt = labels.findIndex((label) => RECOMMENDED_MARK.test(label));
   if (markedAt > 0) {
     const [marked] = labels.splice(markedAt, 1);
@@ -172,8 +172,11 @@ function asCaptainCard(raw, expectedState = "open") {
   const options =
     expectedState === "open"
       ? normalizeCaptainCardOptions(raw.options)
-      : captainCardOptionLabels(raw.options);
-  const recommended = options.find((label) => RECOMMENDED_MARK.test(label)) || "";
+      : Array.isArray(raw.options)
+        ? [...raw.options]
+        : [];
+  const recommended =
+    options.find((label) => typeof label === "string" && RECOMMENDED_MARK.test(label)) || "";
   if (expectedState === "open" && captainCardOptionsError(options)) return null;
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
   const askedAt = textField(raw.asked_at) || textField(raw.askedAt);

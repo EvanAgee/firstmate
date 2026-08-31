@@ -73,6 +73,24 @@ QUEUE_LOCK_HELD=0
 LOCK_LIB_LOADED=0
 UNBACKED_CARD_EXPIRY_DAYS=7
 UNBACKED_CARD_EXPIRY_SECONDS=$((UNBACKED_CARD_EXPIRY_DAYS * 24 * 60 * 60))
+ISO_EPOCH_JQ='
+def fm_iso_epoch:
+  . as $stamp
+  | (($stamp | fromdateiso8601?) as $epoch
+      | select($epoch != null and ($epoch | todateiso8601) == $stamp)
+      | $epoch)
+    //
+    (($stamp | capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<sign>[+-])(?<hours>[0-9]{2}):(?<minutes>[0-9]{2})$")?) as $parts
+      | select($parts != null)
+      | ($parts.hours | tonumber) as $hours
+      | ($parts.minutes | tonumber) as $minutes
+      | select($hours <= 23 and $minutes <= 59)
+      | ($parts.base + "Z" | fromdateiso8601?) as $local
+      | select($local != null and ($local | todateiso8601) == ($parts.base + "Z"))
+      | (($hours * 60 + $minutes) * 60) as $offset
+      | ($local + (if $parts.sign == "+" then -$offset else $offset end)))
+    // empty;
+'
 
 usage() {
   awk '
@@ -131,22 +149,8 @@ now_stamp() {
 }
 
 normalize_iso_stamp() {  # <stamp>
-  jq -nr --arg stamp "$1" '
-    def canonical_z:
-      ($stamp | fromdateiso8601?) as $epoch
-      | select($epoch != null and ($epoch | todateiso8601) == $stamp)
-      | ($epoch | todateiso8601);
-    def canonical_offset:
-      ($stamp | capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<sign>[+-])(?<hours>[0-9]{2}):(?<minutes>[0-9]{2})$")?) as $parts
-      | select($parts != null)
-      | ($parts.hours | tonumber) as $hours
-      | ($parts.minutes | tonumber) as $minutes
-      | select($hours <= 23 and $minutes <= 59)
-      | ($parts.base + "Z" | fromdateiso8601?) as $local
-      | select($local != null and ($local | todateiso8601) == ($parts.base + "Z"))
-      | (($hours * 60 + $minutes) * 60) as $offset
-      | ($local + (if $parts.sign == "+" then -$offset else $offset end) | todateiso8601);
-    canonical_z // canonical_offset // empty
+  jq -nr --arg stamp "$1" "$ISO_EPOCH_JQ"'
+    $stamp | fm_iso_epoch | todateiso8601
   '
 }
 
@@ -173,7 +177,7 @@ atomic_write() {  # <dest>  (stdin is the new contents)
 
 read_queue() {
   if [ -f "$QUEUE" ]; then
-    jq -c '
+    jq -c "$ISO_EPOCH_JQ"'
       def objects: map(select(type == "object"));
       def with_state($state): . + {state: $state} | del(.status);
       def valid_state: . == "open" or . == "parked" or . == "resolved";
@@ -183,7 +187,7 @@ read_queue() {
         elif .state == "parked" then (.parked_at // .asked_at)
         else .asked_at
         end)
-        | if type == "string" then fromdateiso8601? // -1 else -1 end;
+        | if type == "string" then fm_iso_epoch // -1 else -1 end;
       def legacy_state_rank:
         if .state == "parked" then 2
         elif .state == "open" then 1
