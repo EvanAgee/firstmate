@@ -20,10 +20,12 @@
 //   bin/fm-api-task-detail.mjs owns the exact success JSON contract.
 // GET /captain-queue
 //   { ok, updatedAt, items: [{ id, num, question, context, commands,
-//   options, recommended, askedAt, status, project }] }
-//   Captain-queue.json cards firstmate escalated to the captain, open only,
-//   with named options already validated. A worker needs-decision is not a
-//   source. Empty home or missing file: items is [].
+//   options, recommended, askedAt, status, project }], parked: [...] }
+//   Captain-queue.json cards firstmate escalated to the captain. Open cards
+//   have named options already validated. Parked cards remain visible even
+//   when their historical options do not meet the active-card contract.
+//   A worker needs-decision is not a source. Empty home or missing file:
+//   items and parked are [].
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }

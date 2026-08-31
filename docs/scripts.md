@@ -27,7 +27,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-backlog-handoff.sh`  | Validate and delegate queued backlog-item moves into a secondmate home               |
 | `fm-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
 | `fm-decision-hold.sh`    | Create, verify, complete, defer, close, and repair durable captain-held decisions |
-| `fm-captain-queue.sh`    | Write fleet-board captain cards, reconcile dashboard answers onto them by id, and retire cards whose backing backlog item is done |
+| `fm-captain-queue.sh`    | Write fleet-board captain cards, reconcile answers, expire unbacked cards into parked, and retire backed cards whose work is done |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`, opt-in `--matt-flow`), scout, secondmate-charter, and Herdr-lab briefs   |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |

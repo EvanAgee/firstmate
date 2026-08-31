@@ -149,9 +149,8 @@ function asCaptainCard(raw, resolvedIds, expectedStatus = "open") {
   const status = textField(raw.status).toLowerCase() || "open";
   if (status !== expectedStatus) return null;
   const options = normalizeCaptainCardOptions(raw.options);
-  if (captainCardOptionsError(options)) return null;
-  const recommended = options.find((label) => RECOMMENDED_MARK.test(label));
-  if (!recommended) return null;
+  const recommended = options.find((label) => RECOMMENDED_MARK.test(label)) || "";
+  if (expectedStatus === "open" && captainCardOptionsError(options)) return null;
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
   const askedAt = textField(raw.asked_at) || textField(raw.askedAt);
   const commands = Array.isArray(raw.commands)

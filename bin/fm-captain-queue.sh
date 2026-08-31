@@ -112,11 +112,35 @@ release_queue_lock() {
 trap release_queue_lock EXIT
 
 now_stamp() {
+  local stamp
   if [ -n "${FM_CAPTAIN_QUEUE_NOW:-}" ]; then
-    printf '%s\n' "$FM_CAPTAIN_QUEUE_NOW"
+    stamp=$(normalize_iso_stamp "$FM_CAPTAIN_QUEUE_NOW")
+    [ -n "$stamp" ] \
+      || die 2 "FM_CAPTAIN_QUEUE_NOW must be an ISO timestamp with a timezone"
+    printf '%s\n' "$stamp"
   else
     date -u +%Y-%m-%dT%H:%M:%SZ
   fi
+}
+
+normalize_iso_stamp() {  # <stamp>
+  jq -nr --arg stamp "$1" '
+    def canonical_z:
+      ($stamp | fromdateiso8601?) as $epoch
+      | select($epoch != null and ($epoch | todateiso8601) == $stamp)
+      | ($epoch | todateiso8601);
+    def canonical_offset:
+      ($stamp | capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<sign>[+-])(?<hours>[0-9]{2}):(?<minutes>[0-9]{2})$")?) as $parts
+      | select($parts != null)
+      | ($parts.hours | tonumber) as $hours
+      | ($parts.minutes | tonumber) as $minutes
+      | select($hours <= 23 and $minutes <= 59)
+      | ($parts.base + "Z" | fromdateiso8601?) as $local
+      | select($local != null and ($local | todateiso8601) == ($parts.base + "Z"))
+      | (($hours * 60 + $minutes) * 60) as $offset
+      | ($local + (if $parts.sign == "+" then -$offset else $offset end) | todateiso8601);
+    canonical_z // canonical_offset // empty
+  '
 }
 
 id_ok() {
@@ -232,16 +256,16 @@ cmd_add() {
   id_ok "$id" || die 2 "id must be a hold identity slug"
   [ -n "$question" ] || die 2 "add requires --question"
   [ -n "$asked_at" ] || asked_at=$(now_stamp)
+  asked_at=$(normalize_iso_stamp "$asked_at")
+  [ -n "$asked_at" ] || die 2 "add --asked-at must be an ISO timestamp with a timezone"
 
-  local queue options_json commands_json next_num item backlog_backed=false
+  local queue options_json commands_json next_num item backlog_backed
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
   if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.parked[]; .id == $id)' >/dev/null; then
     die 1 "card already parked: $id"
   fi
-  if backlog_item_exists "$id"; then
-    backlog_backed=true
-  fi
+  backlog_backed=$(backlog_backing_state "$id")
   if [ "${#options[@]}" -gt 0 ]; then
     options_json=$(json_array "${options[@]}")
   else
@@ -279,7 +303,22 @@ cmd_add() {
   queue=$(printf '%s\n' "$queue" | jq -c --arg id "$id" --argjson item "$item" '
     if any(.items[]; .id == $id) then
       .items = [.items[] | if .id == $id then
-        $item + {num: .num}
+        if has("backlog_backed") and
+            ((.backlog_backed | type) == "boolean" or .backlog_backed == null) then
+          $item + {
+            num: .num,
+            asked_at: (.asked_at // $item.asked_at),
+            backlog_backed: (
+              if (.backlog_backed | type) == "boolean" then
+                .backlog_backed
+              else
+                $item.backlog_backed
+              end
+            )
+          }
+        else
+          $item + {num: .num}
+        end
       else . end]
     else
       .items += [$item]
@@ -362,16 +401,24 @@ cmd_park() {
   printf 'parked: [id=%s] manual\n' "$id"
 }
 
-# True when this home's backlog contains <id>, regardless of task state.
-backlog_item_exists() {  # <id>
-  local id=$1
-  [ -n "$id" ] || return 1
-  [ -f "$DATA/backlog.md" ] || return 1
-  command -v tasks-axi >/dev/null 2>&1 || return 1
-  tasks-axi show "$id" --file "$DATA/backlog.md" >/dev/null 2>&1
+# Print true when the backlog contains <id>, false when absence is verified,
+# or null when the lookup could not answer.
+backlog_backing_state() {  # <id>
+  local id=$1 show
+  [ -n "$id" ] || { printf 'null\n'; return 0; }
+  [ -f "$DATA/backlog.md" ] || { printf 'false\n'; return 0; }
+  [ -r "$DATA/backlog.md" ] || { printf 'null\n'; return 0; }
+  command -v tasks-axi >/dev/null 2>&1 || { printf 'null\n'; return 0; }
+  if show=$(tasks-axi show "$id" --file "$DATA/backlog.md" 2>&1); then
+    printf 'true\n'
+  elif printf '%s\n' "$show" | grep -qx 'code: NOT_FOUND'; then
+    printf 'false\n'
+  else
+    printf 'null\n'
+  fi
 }
 
-# Apply one matched reply: move the active card into resolved, keep the answer.
+# Apply one matched reply: move the active or parked card into resolved.
 apply_handled() {  # <queue-json> <id> <answer> <stamp> -> new queue on stdout
   local queue=$1 id=$2 answer=$3 stamp=$4
   printf '%s\n' "$queue" | jq -c \
@@ -379,9 +426,10 @@ apply_handled() {  # <queue-json> <id> <answer> <stamp> -> new queue on stdout
     --arg answer "$answer" \
     --arg stamp "$stamp" '
       . as $q
-      | ($q.items | map(select(.id == $id)) | .[0]) as $card
+      | (($q.items + ($q.parked // [])) | map(select(.id == $id)) | .[0]) as $card
       | $q
       | .items = (.items | map(select(.id != $id)))
+      | .parked = ((.parked // []) | map(select(.id != $id)))
       | .resolved = (
           (.resolved // [])
           + [
@@ -412,7 +460,7 @@ backlog_item_done() {  # <id>
 # Mutates the caller's `queue`. Prints `cleared:` lines, never `handled:`.
 clear_closed_cards() {
   local id stamp ids
-  ids=$(printf '%s\n' "$queue" | jq -r '.items[]?.id // empty') || return 0
+  ids=$(printf '%s\n' "$queue" | jq -r '.items[]? | select(.backlog_backed == true) | .id // empty') || return 0
   [ -n "$ids" ] || return 0
   [ -f "$DATA/backlog.md" ] || return 0
   command -v tasks-axi >/dev/null 2>&1 || return 0
@@ -426,6 +474,29 @@ clear_closed_cards() {
   done <<EOF
 $ids
 EOF
+}
+
+refresh_unknown_backing_states() {
+  local id ids state changed=0
+  ids=$(printf '%s\n' "$queue" | jq -r '
+    .items[]? | select(has("backlog_backed") and .backlog_backed == null) | .id // empty
+  ') || return 0
+  [ -n "$ids" ] || return 0
+  while IFS= read -r id || [ -n "$id" ]; do
+    [ -n "$id" ] || continue
+    state=$(backlog_backing_state "$id")
+    [ "$state" != null ] || continue
+    queue=$(printf '%s\n' "$queue" | jq -c \
+      --arg id "$id" --argjson state "$state" '
+        .items = [.items[] | if .id == $id then .backlog_backed = $state else . end]
+      ') || die 1 "failed to record backlog backing for $id"
+    changed=1
+  done <<EOF
+$ids
+EOF
+  if [ "$changed" -eq 1 ]; then
+    printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+  fi
 }
 
 # Move active cards created without a backlog item to parked after seven days.
@@ -483,7 +554,8 @@ cmd_reconcile() {
       fi
       id=$(printf '%s\n' "$line" | jq -r '.id')
       answer=$(printf '%s\n' "$line" | jq -r '.answer')
-      if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.items[]; .id == $id)' >/dev/null; then
+      if printf '%s\n' "$queue" | jq -e --arg id "$id" \
+          'any(.items[]; .id == $id) or any(.parked[]; .id == $id)' >/dev/null; then
         stamp=$(now_stamp)
         queue=$(apply_handled "$queue" "$id" "$answer" "$stamp") || die 1 "failed to resolve $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
@@ -506,6 +578,7 @@ cmd_reconcile() {
     done < "$REPLIES"
   fi
 
+  refresh_unknown_backing_states
   clear_closed_cards
   park_expired_cards
   if [ "$orphan" -eq 1 ]; then

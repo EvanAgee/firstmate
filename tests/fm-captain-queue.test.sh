@@ -102,6 +102,52 @@ test_unbacked_card_stays_active_before_expiry() {
   pass "an unbacked card stays active until the seven-day expiry boundary"
 }
 
+test_reposting_preserves_the_expiry_anchor() {
+  local home out
+  home=$(make_home repost-expiry)
+  run_q "$home" add \
+    --id reposted-unbacked-question \
+    --question "Original question" \
+    --asked-at 2026-08-20T18:00:00Z >/dev/null
+  run_q "$home" add \
+    --id reposted-unbacked-question \
+    --question "Updated question" >/dev/null
+  jq -e '
+    .items[0].asked_at == "2026-08-20T18:00:00Z"
+    and .items[0].backlog_backed == false
+    and .items[0].question == "Updated question"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "reposting changed the card's original expiry metadata"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=reposted-unbacked-question] expired-unbacked" \
+    "reposting must not reset the seven-day expiry window"
+  pass "reposting updates the card body without resetting its expiry clock"
+}
+
+test_asked_at_is_normalized_or_rejected() {
+  local home out rc
+  home=$(make_home asked-at-validation)
+  run_q "$home" add \
+    --id offset-question \
+    --question "Offset timestamp?" \
+    --asked-at 2026-08-20T13:00:00-05:00 >/dev/null
+  [ "$(jq -r '.items[0].asked_at' "$home/data/captain-queue.json")" = 2026-08-20T18:00:00Z ] \
+    || fail "numeric-offset asked_at was not normalized to UTC"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=offset-question] expired-unbacked" \
+    "a normalized offset timestamp should expire at the same instant"
+  rc=0
+  out=$(run_q "$home" add \
+    --id malformed-time-question \
+    --question "Malformed timestamp?" \
+    --asked-at 2026-02-30T18:00:00Z 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "malformed asked_at should exit 2, got $rc"
+  assert_contains "$out" "add --asked-at must be an ISO timestamp with a timezone" \
+    "malformed asked_at should explain the accepted timestamp contract"
+  [ -z "$(active_ids "$home")" ] || fail "malformed asked_at wrote an active card"
+  pass "asked_at accepts normalized offsets and rejects invalid calendar times"
+}
+
 test_expiry_preserves_card_and_is_idempotent() {
   local home out
   home=$(make_home expiry-body)
@@ -231,6 +277,79 @@ test_backed_card_does_not_expire() {
     || fail "open backed card expired"
   [ -z "$(parked_ids "$home")" ] || fail "open backed card moved to parked"
   pass "a backed card records its backing state and never expires while its work stays open"
+}
+
+test_unknown_backing_is_retried_without_misclassification() {
+  local home fakebin out
+  home=$(make_home unknown-backing)
+  seed_backlog "$home"
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+case "${FAKE_TASKS_MODE:-fail}" in
+  found)
+    printf '%s\n' 'task:' '  id: uncertain-backed-question' '  state: queued'
+    ;;
+  missing)
+    printf '%s\n' 'error: "Task not found"' 'code: NOT_FOUND' >&2
+    exit 1
+    ;;
+  *)
+    printf '%s\n' 'temporary backlog read failure' >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fakebin/tasks-axi"
+  PATH="$fakebin:$PATH" FAKE_TASKS_MODE=fail run_q "$home" add \
+    --id uncertain-backed-question \
+    --question "Keep waiting?" \
+    --asked-at 2026-08-01T18:00:00Z >/dev/null
+  [ "$(jq -r '.items[0].backlog_backed' "$home/data/captain-queue.json")" = null ] \
+    || fail "a failed lookup was recorded as verified absence"
+  out=$(PATH="$fakebin:$PATH" FAKE_TASKS_MODE=found run_q "$home" reconcile)
+  [ -z "$out" ] || fail "a recovered backed card should remain silent: $out"
+  [ "$(jq -r '.items[0].backlog_backed' "$home/data/captain-queue.json")" = true ] \
+    || fail "reconcile did not retry and record the recovered backing item"
+  [ "$(active_ids "$home")" = uncertain-backed-question ] \
+    || fail "a temporary lookup failure caused a backed card to expire"
+
+  home=$(make_home unknown-unbacked)
+  seed_backlog "$home"
+  fakebin=$(fm_fakebin "$home")
+  cp "$TMP_ROOT/unknown-backing/fakebin/tasks-axi" "$fakebin/tasks-axi"
+  PATH="$fakebin:$PATH" FAKE_TASKS_MODE=fail run_q "$home" add \
+    --id uncertain-unbacked-question \
+    --question "Urgent unbacked question?" \
+    --asked-at 2026-08-01T18:00:00Z >/dev/null
+  out=$(PATH="$fakebin:$PATH" FAKE_TASKS_MODE=missing run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=uncertain-unbacked-question] expired-unbacked" \
+    "verified absence after a retry should allow an urgent unbacked card to expire"
+  pass "temporary backlog failures stay unknown until reconcile verifies the result"
+}
+
+test_later_done_item_does_not_resolve_an_unbacked_card() {
+  local home out
+  if ! have_tasks_axi; then
+    echo "skip: tasks-axi not found (unbacked same-id done item)"
+    return 0
+  fi
+  home=$(make_home unbacked-id-collision)
+  run_q "$home" add \
+    --id later-colliding-work \
+    --question "Still unanswered?" \
+    --asked-at 2026-08-01T18:00:00Z >/dev/null
+  seed_backlog "$home"
+  backlog_add "$home" later-colliding-work "Later work with the same id"
+  backlog_done "$home" later-colliding-work
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=later-colliding-work] expired-unbacked" \
+    "the card's creation-time backing state should control its transition"
+  assert_not_contains "$out" "cleared:" \
+    "later same-id work must not mark an unanswered card resolved"
+  [ "$(jq '.resolved | length' "$home/data/captain-queue.json")" -eq 0 ] \
+    || fail "later same-id work moved the unbacked card to resolved"
+  pass "later same-id work cannot resolve an originally unbacked card"
 }
 
 test_matched_reply_removes_the_card_and_keeps_the_answer() {
@@ -539,9 +658,43 @@ test_dashboard_reply_still_clears_when_backlog_item_is_open() {
   pass "a dashboard reply still clears an open-item card and keeps the answer"
 }
 
+test_parked_reply_resolves_and_preserves_history() {
+  local home out rc
+  home=$(make_home parked-reply)
+  run_q "$home" add \
+    --id parked-card \
+    --question "Old unanswered question?" \
+    --asked-at 2026-08-01T18:00:00Z >/dev/null
+  run_q "$home" reconcile >/dev/null
+  run_q "$home" add --id later-card --question "Later question?" >/dev/null
+  append_reply "$home" parked-card "Answer after parking"
+  append_reply "$home" later-card "Later answer"
+  rc=0
+  out=$(run_q "$home" reconcile) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a parked answer should reconcile, got $rc"
+  assert_contains "$out" "handled: [id=parked-card] Answer after parking" \
+    "a parked card should accept its answer"
+  assert_contains "$out" "handled: [id=later-card] Later answer" \
+    "a parked answer must not block later replies"
+  [ "$(cursor_value "$home")" = 2 ] || fail "cursor did not advance past both replies"
+  [ -z "$(parked_ids "$home")" ] || fail "answered parked card stayed parked"
+  jq -e '
+    .resolved[]
+    | select(.id == "parked-card")
+    | .answer == "Answer after parking"
+      and .parked_reason == "expired-unbacked"
+      and (.parked_at | length > 0)
+      and (.parked_note | length > 0)
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "resolved card lost its parked history"
+  pass "an answer resolves a parked card without losing its parked history"
+}
+
 test_add_uses_the_supplied_id
 test_unbacked_card_expires_to_parked
 test_unbacked_card_stays_active_before_expiry
+test_reposting_preserves_the_expiry_anchor
+test_asked_at_is_normalized_or_rejected
 test_expiry_preserves_card_and_is_idempotent
 test_manual_park_supports_verified_migration
 test_legacy_card_waits_for_verified_migration
@@ -552,10 +705,13 @@ test_repeat_answer_after_crash_advances_cursor
 test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
 test_backed_card_does_not_expire
+test_unknown_backing_is_retried_without_misclassification
+test_later_done_item_does_not_resolve_an_unbacked_card
 test_verified_live_card_can_be_reposted_with_backing
 test_done_backlog_item_clears_card_without_a_reply
 test_only_done_cards_auto_clear
 test_dashboard_reply_after_auto_clear_does_not_orphan
 test_dashboard_reply_still_clears_when_backlog_item_is_open
+test_parked_reply_resolves_and_preserves_history
 
 echo "# fm-captain-queue.test.sh: all assertions passed"

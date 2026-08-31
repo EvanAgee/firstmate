@@ -170,6 +170,42 @@ EOF
   pass "captain queue serves parked cards separately from active cards"
 }
 
+test_captain_queue_keeps_parked_cards_without_active_options() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-parked-no-options)
+  write_queue "$home" <<'EOF'
+{
+  "items": [],
+  "resolved": [],
+  "parked": [
+    {
+      "id": "parked-without-options",
+      "question": "Historical unanswered question?",
+      "options": [],
+      "asked_at": "2026-08-20T18:00:00Z",
+      "status": "parked",
+      "parked_at": "2026-08-27T18:00:00Z",
+      "parked_reason": "expired-unbacked"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "parked no-options queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked.length')" = 1 ] \
+    || fail "parked card without active options disappeared: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].id')" = parked-without-options ] \
+    || fail "parked no-options card id missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].options.length')" = 0 ] \
+    || fail "parked no-options card changed its historical options: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].recommended')" = "" ] \
+    || fail "parked no-options card should have an empty recommendation: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue keeps parked cards that lack active-card options"
+}
+
 test_captain_queue_rejects_bad_options() {
   local home port resp
   home=$(fm_test_api_home api-queue-bad-options)
@@ -697,6 +733,7 @@ test_empty_home_queue_is_empty
 test_captain_queue_ignores_worker_needs_decision
 test_captain_queue_serves_open_named_cards
 test_captain_queue_serves_parked_cards_separately
+test_captain_queue_keeps_parked_cards_without_active_options
 test_captain_queue_rejects_bad_options
 test_captain_queue_moves_recommended_first
 test_captain_attention_hold_present_worker_absent
