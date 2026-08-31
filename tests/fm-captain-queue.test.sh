@@ -317,7 +317,7 @@ test_legacy_card_waits_for_verified_migration() {
   pass "a legacy card waits for human verification and then allows manual migration"
 }
 
-test_legacy_duplicate_id_keeps_the_most_recent_record() {
+test_legacy_duplicate_id_prefers_visible_state_over_timestamp() {
   local home out
   home=$(make_home legacy-duplicate-id)
   jq -n '{
@@ -329,7 +329,7 @@ test_legacy_duplicate_id_keeps_the_most_recent_record() {
       context: "This is the card the board was showing.",
       commands: ["run-current"],
       options: ["Current choice", "Something else"],
-      asked_at: "2026-08-27T17:00:00Z",
+      asked_at: "2026-08-21T18:00:00Z",
       backlog_backed: false,
       status: "open",
       project: "sample"
@@ -352,7 +352,7 @@ test_legacy_duplicate_id_keeps_the_most_recent_record() {
   append_reply "$home" reused-legacy-card "Current answer"
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=reused-legacy-card] Current answer" \
-    "legacy duplicate migration should keep the current board card answerable"
+    "legacy duplicate migration should prefer the visible card despite its older asked-at"
   jq -e '
     has("records")
     and (has("items") | not)
@@ -367,8 +367,8 @@ test_legacy_duplicate_id_keeps_the_most_recent_record() {
     and .records[0].options == ["Current choice", "Something else"]
     and .records[0].answer == "Current answer"
   ' "$home/data/captain-queue.json" >/dev/null \
-    || fail "legacy duplicate migration did not retain only the most recent record"
-  pass "legacy duplicate migration keeps the most recently touched card"
+    || fail "legacy duplicate migration did not retain the visible card"
+  pass "legacy duplicate migration prefers visible state over timestamps"
 }
 
 test_manual_park_rejects_backed_and_unknown_cards() {
@@ -939,7 +939,7 @@ test_asked_at_is_normalized_or_rejected
 test_expiry_preserves_card_and_is_idempotent
 test_manual_park_supports_verified_migration
 test_legacy_card_waits_for_verified_migration
-test_legacy_duplicate_id_keeps_the_most_recent_record
+test_legacy_duplicate_id_prefers_visible_state_over_timestamp
 test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop

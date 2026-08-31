@@ -12,7 +12,8 @@
 # Captain-queue.json persists each card once in `records`. Each record's
 # `state` is `open`, `parked`, or `resolved`; readers derive their views from
 # that field. The writer accepts the legacy items/resolved/parked shape and
-# keeps the most recently touched same-id legacy row before its next write.
+# keeps active or parked same-id rows ahead of resolved history.
+# Same-state duplicates use their newest state timestamp and stable tie-breaks.
 # The next successful write emits the canonical records shape.
 # `add` upserts one active card under that id.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
@@ -177,12 +178,13 @@ read_queue() {
       def with_state($state): . + {state: $state} | del(.status);
       def valid_state: . == "open" or . == "parked" or . == "resolved";
       def valid_id: (.id | type) == "string" and (.id | length) > 0;
-      def touched_epoch:
-        [.resolved_at, .parked_at, .asked_at]
-        | map(select(type == "string") | fromdateiso8601?)
-        | map(select(. != null))
-        | max // -1;
-      def visible_state_rank:
+      def state_touch_epoch:
+        (if .state == "resolved" then (.resolved_at // .parked_at // .asked_at)
+        elif .state == "parked" then (.parked_at // .asked_at)
+        else .asked_at
+        end)
+        | if type == "string" then fromdateiso8601? // -1 else -1 end;
+      def legacy_state_rank:
         if .state == "parked" then 2
         elif .state == "open" then 1
         else 0
@@ -194,8 +196,8 @@ read_queue() {
             | sort_by(.id)
             | group_by(.id)
             | map(max_by([
-                touched_epoch,
-                visible_state_rank,
+                legacy_state_rank,
+                state_touch_epoch,
                 (.num // 0),
                 (.__fm_legacy_order // 0)
               ])))
