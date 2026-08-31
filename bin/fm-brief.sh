@@ -410,6 +410,8 @@ Two firstmate-specific rules layer on top of that guidance:
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
 - After every Review gate returns findings, load \`$FM_ROOT/.agents/skills/review-loop-stop/SKILL.md\` and follow it before another fix response.
+  Its resolved Firstmate code root is \`$FM_ROOT\`.
+  Use \`$FM_ROOT/bin/fm-review-loop-stop.sh\` for every record and resolve call.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF

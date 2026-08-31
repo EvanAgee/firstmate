@@ -11,13 +11,14 @@ metadata:
 
 Use this after every no-mistakes Review gate that returns findings, including a gate resumed after firstmate answers an ask-user finding.
 Run it before sending another `axi respond --action fix`.
+The brief that loaded this skill gives the resolved absolute Firstmate code root.
+Use that root for every helper call below, never the current project worktree.
 
 ## Define the clusters
 
 A cluster is the smallest stable owner of the repeated problem.
 Use the exact file as the default key, such as `file:src/lib/serve/exec-bridge.ts`.
 Use `module:<directory>:<invariant>` when findings cross files but describe one broken invariant owned by that module.
-Use `family:<reviewer-label>` only when the reviewer supplies a stable family label across files.
 
 Keep the key unchanged while later rounds patch another edge of the same owner or invariant.
 A different exact file, module owner, or invariant is a new cluster and starts its own count.
@@ -35,7 +36,7 @@ For each Review gate with findings:
 4. Run the Firstmate code root's helper once with every cluster:
 
 ```sh
-bin/fm-review-loop-stop.sh record <task-id> \
+"<firstmate-code-root>/bin/fm-review-loop-stop.sh" record <task-id> \
   --run <run-id> \
   --head <reviewed-head> \
   --changed '<what this round changed>' \
@@ -59,10 +60,11 @@ End the turn so firstmate can choose one of the report's two paths.
 When firstmate sends an exact decision, record it before following the supplied no-mistakes response command:
 
 ```sh
-bin/fm-review-loop-stop.sh resolve <task-id> --run <run-id> --decision root
+"<firstmate-code-root>/bin/fm-review-loop-stop.sh" resolve <task-id> --run <run-id> --decision root
 ```
 
 Use `--decision bank` for an explicit bank-the-remainder choice.
 The helper records the choice but never chooses the gate action.
 For a root fix, it starts a fresh cluster count so three more repeated rounds can surface again.
-For a bank choice, follow only the exact gate action firstmate authorized.
+For a bank choice, it archives the surfaced stop and starts a fresh count so later Review gates can record new clusters.
+Follow only the exact gate action firstmate authorized.

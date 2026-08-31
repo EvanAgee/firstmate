@@ -28,8 +28,8 @@
 # another event. The status key plus the saved state close the crash window: a
 # retry repairs a missing event but never duplicates one already appended.
 #
-# resolve records only a decision already supplied by firstmate. root starts a
-# fresh count for the same run. bank keeps the stop closed. This command never
+# resolve records only a decision already supplied by firstmate. Both choices
+# archive the stop and start a fresh count for the same run. This command never
 # chooses a path or drives no-mistakes itself.
 set -eu
 
@@ -38,6 +38,9 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 LOOP_DIR="$STATE/review-loops"
+
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 
 usage() {
   awk '
@@ -83,18 +86,19 @@ atomic_write() { # <path> <content>
 lock_task() { # <task-id>
   LOCK_DIR="$LOOP_DIR/$1.lock"
   mkdir -p "$LOOP_DIR"
-  mkdir "$LOCK_DIR" 2>/dev/null || die "review-loop state is busy for task $1"
-  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+  fm_lock_try_acquire "$LOCK_DIR" || die "review-loop state is busy for task $1"
+  trap 'fm_lock_release "$LOCK_DIR" 2>/dev/null || true' EXIT
 }
 
 status_key() { # <run-id> <generation>
   printf 'review-loop-%s-%s' "$1" "$2"
 }
 
-surface_status() { # <task-id> <key> <cluster> <threshold> <report>
-  local task=$1 key=$2 cluster=$3 threshold=$4 report=$5 status line
+surface_status() { # <task-id> <key> <clusters-json> <threshold> <report>
+  local task=$1 key=$2 clusters=$3 threshold=$4 report=$5 status line cluster_list
   status="$STATE/$task.status"
-  line="needs-decision [key=$key]: review cluster '$cluster' reached $threshold rounds; choose fix at root or bank the remainder; report=$report"
+  cluster_list=$(printf '%s' "$clusters" | jq -r 'map("\u0027" + . + "\u0027") | join(", ")')
+  line="needs-decision [key=$key]: review clusters $cluster_list reached $threshold rounds; choose fix at root or bank the remainder; report=$report"
   if [ -f "$status" ] && grep -Fqx "$line" "$status"; then
     return 0
   fi
@@ -102,25 +106,27 @@ surface_status() { # <task-id> <key> <cluster> <threshold> <report>
   printf '%s\n' "$line" >> "$status"
 }
 
-write_report() { # <path> <state-json> <cluster>
-  local path=$1 state_json=$2 cluster=$3 threshold run rounds tmp
+write_report() { # <path> <state-json> <clusters-json>
+  local path=$1 state_json=$2 clusters=$3 threshold run details tmp
   threshold=$(printf '%s' "$state_json" | jq -r '.threshold')
   run=$(printf '%s' "$state_json" | jq -r '.run')
-  rounds=$(printf '%s' "$state_json" | jq -r \
-    --arg cluster "$cluster" --argjson threshold "$threshold" '
-      [ .rounds | reverse[]
-        | select(.clusters | index($cluster) != null) ][0:$threshold]
-      | reverse[]
-      | "- Round \(.round) reviewed `\(.head)`: \(.changed)"
+  details=$(printf '%s' "$state_json" | jq -r \
+    --argjson clusters "$clusters" --argjson threshold "$threshold" '
+      $clusters[] as $cluster
+      | "### `\($cluster)`\n\n" +
+        ([ .rounds | reverse[]
+           | select(.clusters | index($cluster) != null) ][0:$threshold]
+         | reverse
+         | map("- Round \(.round) reviewed `\(.head)`: \(.changed)")
+         | join("\n"))
     ')
   tmp=$(mktemp "$LOOP_DIR/.review-report.XXXXXX") || return 1
   {
-    printf '# Repeated review cluster\n\n'
+    printf '# Repeated review clusters\n\n'
     printf "Run: \`%s\`\n" "$run"
-    printf "Cluster: \`%s\`\n" "$cluster"
     printf 'Threshold: %s consecutive review rounds\n\n' "$threshold"
-    printf '## What each round changed\n\n'
-    printf '%s\n' "$rounds"
+    printf '## What each cluster returned against\n\n'
+    printf '%s\n' "$details"
     printf '\n## Decision\n\n'
     printf -- '- Fix at root. Repair the owning design before another review round.\n'
     printf -- '- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.\n'
@@ -132,7 +138,7 @@ write_report() { # <path> <state-json> <cluster>
 record_round() { # <task-id> <args...>
   local task=$1 run='' head='' changed='' requested_threshold=${FM_REVIEW_LOOP_THRESHOLD:-}
   local clusters='[]' state_file state_json threshold existing_run existing_threshold
-  local new_state trigger generation key report round_count
+  local new_state triggers generation key report round_count
   shift
   command -v jq >/dev/null 2>&1 || die "jq is required"
   while [ "$#" -gt 0 ]; do
@@ -206,10 +212,10 @@ record_round() { # <task-id> <args...>
   if [ "$(printf '%s' "$state_json" | jq -r '.surfaced != null')" = true ]; then
     generation=$(printf '%s' "$state_json" | jq -r '.generation')
     key=$(status_key "$run" "$generation")
-    trigger=$(printf '%s' "$state_json" | jq -r '.surfaced.cluster')
+    triggers=$(printf '%s' "$state_json" | jq -c '.surfaced.clusters')
     report=$(printf '%s' "$state_json" | jq -r '.surfaced.report')
-    surface_status "$task" "$key" "$trigger" "$threshold" "$report"
-    printf 'stop: review cluster %s already surfaced in %s\n' "$trigger" "$report"
+    surface_status "$task" "$key" "$triggers" "$threshold" "$report"
+    printf 'stop: review clusters already surfaced in %s\n' "$report"
     exit 20
   fi
 
@@ -224,7 +230,7 @@ record_round() { # <task-id> <args...>
       .rounds += [{round: ((.rounds | length) + 1), head: $head,
                    changed: $changed, clusters: $clusters}]
     ')
-  trigger=$(printf '%s' "$new_state" | jq -r --argjson threshold "$threshold" '
+  triggers=$(printf '%s' "$new_state" | jq -c --argjson threshold "$threshold" '
     def trailing_count($rounds; $cluster):
       reduce ($rounds | reverse[]) as $round
         ({count: 0, open: true};
@@ -234,12 +240,12 @@ record_round() { # <task-id> <args...>
          else .
          end) | .count;
     .rounds as $rounds
-    | .rounds[-1].clusters[] as $cluster
-    | select(trailing_count($rounds; $cluster) >= $threshold)
-    | $cluster
-  ' | head -1)
+    | [ .rounds[-1].clusters[] as $cluster
+        | select(trailing_count($rounds; $cluster) >= $threshold)
+        | $cluster ]
+  ')
 
-  if [ -z "$trigger" ]; then
+  if [ "$(printf '%s' "$triggers" | jq 'length')" -eq 0 ]; then
     atomic_write "$state_file" "$new_state" || die "could not save review-loop state"
     round_count=$(printf '%s' "$new_state" | jq -r '.rounds | length')
     printf 'continue: review round %s recorded; no cluster reached %s rounds\n' \
@@ -251,12 +257,12 @@ record_round() { # <task-id> <args...>
   key=$(status_key "$run" "$generation")
   report="$LOOP_DIR/$task-$run-$generation.md"
   new_state=$(printf '%s' "$new_state" | jq -c \
-    --arg cluster "$trigger" --arg report "$report" '
-      .surfaced = {cluster: $cluster, report: $report}
+    --argjson clusters "$triggers" --arg report "$report" '
+      .surfaced = {clusters: $clusters, report: $report}
     ')
-  write_report "$report" "$new_state" "$trigger" || die "could not write review-loop report"
+  write_report "$report" "$new_state" "$triggers" || die "could not write review-loop report"
   atomic_write "$state_file" "$new_state" || die "could not save surfaced review-loop state"
-  surface_status "$task" "$key" "$trigger" "$threshold" "$report" ||
+  surface_status "$task" "$key" "$triggers" "$threshold" "$report" ||
     die "could not surface review-loop stop"
   cat "$report"
   printf '\nstop: report=%s\n' "$report"
@@ -295,15 +301,17 @@ resolve_stop() { # <task-id> <args...>
   surfaced=$(printf '%s' "$state_json" | jq -r '.surfaced != null')
   [ "$surfaced" = true ] || die "run $run has no surfaced review-loop stop"
 
-  if [ "$decision" = root ]; then
-    state_json=$(printf '%s' "$state_json" | jq -c '
-      .generation += 1 | .rounds = [] | .surfaced = null | .resolution = null
-    ')
-  else
-    state_json=$(printf '%s' "$state_json" | jq -c '
-      .resolution = {choice: "bank"}
-    ')
-  fi
+  state_json=$(printf '%s' "$state_json" | jq -c --arg decision "$decision" '
+    .resolution = {
+      choice: $decision,
+      generation: .generation,
+      clusters: .surfaced.clusters,
+      report: .surfaced.report
+    }
+    | .generation += 1
+    | .rounds = []
+    | .surfaced = null
+  ')
   atomic_write "$state_file" "$state_json" || die "could not save review-loop resolution"
   printf 'resolved: review-loop stop for %s recorded as %s\n' "$run" "$decision"
 }

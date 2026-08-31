@@ -23,6 +23,17 @@ record() { # <home> <task-id> <run-id> <head> <changed> <cluster> [extra args...
     --changed "$changed" --cluster "$cluster" "$@"
 }
 
+hold_lock() { # <home> <lock> <ready>
+  local home=$1 lock=$2 ready=$3
+  local FM_HOME=$home STATE="$home/state"
+  export FM_HOME STATE
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$ROOT/bin/fm-wake-lib.sh"
+  fm_lock_try_acquire "$lock" || return 1
+  : > "$ready"
+  while :; do sleep 1; done
+}
+
 test_third_round_surfaces_once() {
   local task=sample-loop run=run-a home rc out report
   home=$(make_home tripping "$task")
@@ -119,7 +130,86 @@ test_root_decision_starts_a_fresh_count() {
   pass "review-loop stop: explicit root decision resets the cluster count"
 }
 
+test_simultaneous_clusters_share_one_report() {
+  local task=paired-loop run=run-e home rc out report
+  home=$(make_home simultaneous "$task")
+  record "$home" "$task" "$run" head-a "Changed both owners once." \
+    "file:src/alpha.ts" --cluster "file:src/beta.ts" --threshold 2 >/dev/null
+
+  set +e
+  out=$(record "$home" "$task" "$run" head-b "Changed both owners twice." \
+    "file:src/alpha.ts" --cluster "file:src/beta.ts" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "simultaneous repeated clusters must stop together"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "simultaneous repeated clusters did not write one report"
+  assert_grep "file:src/alpha.ts" "$report" "shared report omitted the first cluster"
+  assert_grep "file:src/beta.ts" "$report" "shared report omitted the second cluster"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 1 ] \
+    || fail "simultaneous repeated clusters surfaced more than one decision event"
+  pass "review-loop stop: simultaneous clusters surface in one report"
+}
+
+test_bank_archives_stop_and_accepts_new_clusters() {
+  local task=bank-loop run=run-f home rc
+  home=$(make_home bank-resolution "$task")
+  record "$home" "$task" "$run" head-a "First alpha fix." \
+    "file:src/alpha.ts" --threshold 2 >/dev/null
+  set +e
+  record "$home" "$task" "$run" head-b "Second alpha fix." \
+    "file:src/alpha.ts" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "alpha should stop at threshold two"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision bank >/dev/null \
+    || fail "bank decision should archive the surfaced stop"
+  record "$home" "$task" "$run" head-c "First beta fix." \
+    "file:src/beta.ts" >/dev/null \
+    || fail "banked alpha stop blocked a new beta round"
+
+  set +e
+  record "$home" "$task" "$run" head-d "Second beta fix." \
+    "file:src/beta.ts" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "beta should get its own stop after banked alpha"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 2 ] \
+    || fail "banked alpha and later beta did not surface once each"
+  pass "review-loop stop: bank archives the stop and starts a fresh count"
+}
+
+test_dead_lock_owner_is_recovered() {
+  local task=stale-lock-loop run=run-g home lock ready holder rc i
+  home=$(make_home stale-lock "$task")
+  lock="$home/state/review-loops/$task.lock"
+  ready="$home/lock-ready"
+  mkdir -p "$(dirname "$lock")"
+  hold_lock "$home" "$lock" "$ready" &
+  holder=$!
+  i=0
+  while [ ! -f "$ready" ] && kill -0 "$holder" 2>/dev/null; do
+    i=$((i + 1))
+    [ "$i" -lt 100 ] || break
+    sleep 0.02
+  done
+  [ -f "$ready" ] || { kill "$holder" 2>/dev/null || true; fail "lock holder did not start"; }
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  set +e
+  record "$home" "$task" "$run" head-a "Recorded after a crashed writer." \
+    "file:src/recovered.ts" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "a dead lock owner must not block later review rounds"
+  pass "review-loop stop: dead lock owners are recovered"
+}
+
 test_third_round_surfaces_once
 test_distinct_areas_do_not_trip
 test_threshold_is_configurable
 test_root_decision_starts_a_fresh_count
+test_simultaneous_clusters_share_one_report
+test_bank_archives_stop_and_accepts_new_clusters
+test_dead_lock_owner_is_recovered
