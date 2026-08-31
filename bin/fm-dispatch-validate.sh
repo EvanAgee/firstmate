@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --file)
       [ $# -ge 2 ] || { echo "error: --file requires a value" >&2; exit 2; }
-      INPUT_MODE=file
+      INPUT_MODE="file"
       INPUT_FILE=$2
       shift 2
       ;;

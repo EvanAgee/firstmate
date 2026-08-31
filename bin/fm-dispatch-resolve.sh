@@ -97,6 +97,7 @@ config_jq() {
   jq "$@" <<< "$NORMALIZED_CONFIG"
 }
 
+# shellcheck disable=SC2016
 MATCH_COUNT=$(config_jq -r --arg class "$DISPATCH_CLASS" '
   [(.rules // [])[]? | select(.class == $class)] | length
 ')
@@ -118,6 +119,7 @@ else
 fi
 
 profiles_tsv() {
+  # shellcheck disable=SC2016
   config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" '
     def profiles($value):
       if ($value | type) == "array" then $value
@@ -135,6 +137,7 @@ profiles_tsv() {
   '
 }
 
+# shellcheck disable=SC2016
 PIN_TSV=$(config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --arg pin "$PIN_KEY" '
   if $kind == "class" then
     [(.rules // [])[]? | select(.class == $class)][0][$pin]

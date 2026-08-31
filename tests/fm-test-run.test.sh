@@ -98,11 +98,14 @@ init_changed_fixture_repo() {
     fm-ask-user-authority.test.sh \
     fm-cd-pretool-check.test.sh \
     fm-daemon.test.sh \
+    fm-dispatch-resolve.test.sh \
     fm-backend-herdr-smoke.test.sh \
+    fm-api.test.sh \
     fm-secondmate-safety.test.sh \
     fm-session-start.test.sh \
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
+    fm-spawn-dispatch-profile.test.sh \
     fm-pr-merge.test.sh \
     fm-omp-harness.test.sh \
     fm-omp-primary.test.sh \
@@ -130,6 +133,7 @@ init_changed_fixture_repo() {
   : >"$repo/bin/fm-pi-compatible-lib.sh"
   : >"$repo/bin/fm-pi-compatible-runtimes"
   : >"$repo/bin/fm-primary-watch-core.ts"
+  : >"$repo/bin/fm-dispatch-runtime-lib.sh"
   : >"$repo/bin/unmapped-source.sh"
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
@@ -214,6 +218,17 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-session-start.test.sh" "OMP identity sources select session ownership coverage"
   git -C "$repo" add bin/fm-omp-process-lib.sh bin/fm-session-lock-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-identity-change
+
+  printf '\n' >>"$repo/bin/fm-dispatch-runtime-lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-dispatch-resolve.test.sh" \
+    "dispatch runtime validation selects resolver coverage"
+  assert_contains "$listed" "tests/fm-spawn-dispatch-profile.test.sh" \
+    "dispatch runtime validation selects spawn coverage"
+  assert_contains "$listed" "tests/fm-api.test.sh" \
+    "dispatch runtime validation selects API and bootstrap coverage"
+  git -C "$repo" add bin/fm-dispatch-runtime-lib.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm dispatch-runtime-change
 
   printf '\n' >>"$repo/.omp/extensions/fm-primary-omp.ts"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)

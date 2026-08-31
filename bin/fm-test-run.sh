@@ -1065,6 +1065,11 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' secondmate
       ;;
+    bin/fm-dispatch-resolve.sh|bin/fm-dispatch-runtime-lib.sh|bin/fm-dispatch-validate.sh)
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' backend-dispatch
+      printf '%s\n' session-bootstrap
+      ;;
     bin/fm-spawn.sh|bin/fm-send.sh|bin/fm-peek.sh|bin/fm-composer*)
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
