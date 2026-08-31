@@ -64,6 +64,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture and PR merge policy from `data/projects.md` |
+| `fm-delivery-record.sh`  | Append one landed task's available delivery timing to the private home ledger |
+| `fm-delivery-backfill.sh` | Backfill recent aos, faapto, and firstmate merged-task timing without duplicating task ids |
 | `fm-merge-local.sh`      | Fast-forward a project's local default branch: an approved `local-only` landing, or a PR-bound task's outage landing while GitHub is unreachable |
 | `fm-outage-sync.sh`      | On GitHub's return, reconcile each outage landing: fast-forward-push local main, dispatch its deferred workflows, escalate on divergence |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |

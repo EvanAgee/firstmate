@@ -32,6 +32,8 @@
 #   (x) a mismatched approval still refuses for an unguarded project
 #   (y) project metadata must contain one nonempty project identity
 #   (z) duplicate captain approval flags refuse before policy lookup
+#   (aa) a successful merge appends its delivery-timing record
+#   (ab) a delivery-ledger failure is logged without failing the merge
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -82,6 +84,11 @@ if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
     *totalCount*) printf '%s\n' "${FM_TEST_THREADS_TOTAL:-0}" ;;
     *) exit 1 ;;
   esac
+  exit 0
+fi
+if [ "${1:-}" = api ] && [ "${2:-}" = GET ]; then
+  printf 'merged_at: "%s"\n' "${FM_TEST_PR_MERGED_AT:-2025-08-25T12:10:00Z}"
+  printf 'pr_opened_at: "%s"\n' "${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}"
   exit 0
 fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
@@ -179,6 +186,8 @@ run_pr_merge() {
   FM_TEST_GH_AXI_API_LOG="$case_dir/gh-axi-api.log" \
   FM_TEST_THREADS_TOTAL="${FM_TEST_THREADS_TOTAL:-0}" \
   FM_TEST_THREADS_UNRESOLVED="${FM_TEST_THREADS_UNRESOLVED:-0}" \
+  FM_TEST_PR_OPENED_AT="${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}" \
+  FM_TEST_PR_MERGED_AT="${FM_TEST_PR_MERGED_AT:-2025-08-25T12:10:00Z}" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -849,6 +858,52 @@ test_allow_flag_after_separator_does_not_bypass() {
   pass "fm-pr-merge does not treat --allow-unresolved-threads after -- as a gate bypass"
 }
 
+test_successful_merge_appends_delivery_record() {
+  local case_dir record
+  case_dir=$(make_case delivery-record)
+  mkdir -p "$case_dir/wt"
+  printf '%s\n' 'spawn_gen=s1756150000.123.456' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" 2121212121212121212121212121212121212121
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/57 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "delivery-record: successful merge failed"
+
+  record=$(cat "$case_dir/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-x1" and
+    .repo == "project" and
+    .pr_url == "https://github.com/example/repo/pull/57" and
+    .dispatched_at == "2025-08-25T19:26:40Z" and
+    .pr_opened_at == "2025-08-25T12:00:00Z" and
+    .merged_at == "2025-08-25T12:10:00Z"
+  ' >/dev/null || fail "delivery-record: merge wrote the wrong record: $record"
+  pass "fm-pr-merge appends delivery timing after a successful merge"
+}
+
+test_delivery_failure_does_not_block_pr_merge() {
+  local case_dir rc
+  case_dir=$(make_case delivery-record-failure)
+  mkdir -p "$case_dir/wt"
+  ln -s /dev/null "$case_dir/data/delivery-log.jsonl"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222221
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/58 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "delivery-record-failure: ledger failure must not fail the merge"
+  grep -qxF 'pr merge 58 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "delivery-record-failure: gh-axi merge did not succeed"
+  assert_grep 'warning: delivery timing was not recorded for task-x1' "$case_dir/stderr" \
+    "delivery-record-failure: ledger failure was not logged"
+  pass "fm-pr-merge logs a ledger failure without changing merge success"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -877,3 +932,5 @@ test_registry_parser_failure_refuses_before_merge
 test_unguarded_project_refuses_mismatched_approval
 test_project_metadata_requires_one_nonempty_identity
 test_duplicate_captain_approval_refuses
+test_successful_merge_appends_delivery_record
+test_delivery_failure_does_not_block_pr_merge

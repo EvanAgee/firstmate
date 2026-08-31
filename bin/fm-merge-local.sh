@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Perform an approved local merge for a ship task: fast-forward the project's
 # default branch to the crewmate's lane branch, entirely on the local machine.
+# After the fast-forward succeeds, available task and no-mistakes timing is
+# appended to the home-local data/delivery-log.jsonl without changing the merge.
 #
 # This is firstmate's merge gate-action (the captain's merge authority applied
 # locally instead of via a GitHub PR). It is the one sanctioned exception to hard
@@ -210,6 +212,19 @@ git -C "$PROJ" merge --ff-only "$BRANCH" >/dev/null
 after_full=$(git -C "$PROJ" rev-parse "$DEFAULT")
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
+LANDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+delivery_repo=$(basename "$PROJ")
+case "$delivery_repo" in
+  ''|.|..|*/*) delivery_repo=project ;;
+esac
+if ! "$SCRIPT_DIR/fm-delivery-record.sh" "$ID" \
+  --repo "$delivery_repo" \
+  --project-path "$PROJ" \
+  --branch "$BRANCH" \
+  --merged-at "$LANDED_AT"; then
+  echo "warning: delivery timing was not recorded for $ID after the local landing" >&2
+fi
 
 # Record the reconciliation ledger entry for an outage landing so the work can be
 # pushed and its deferred GitHub checks dispatched when GitHub returns. Only an
@@ -221,7 +236,7 @@ if [ "$OUTAGE_LANDING" = yes ]; then
   case "$project_name" in
     ''|.|..|*/*) project_name=project ;;
   esac
-  landed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  landed_at=$LANDED_AT
   # Strip any tab or newline from free-text fields so one landing stays one line
   # and the tab-separated field contract cannot be broken by the review ref.
   review_ref=$(printf '%s' "$ADVERSARIAL_REVIEW" | tr '\t\n' '  ')

@@ -3,6 +3,8 @@
 # bin/fm-pr-check.sh, so teardown can verify landed work after squash merges.
 # The full canonical GitHub PR URL is parsed by bin/fm-pr-lib.sh and the derived
 # owner/repository and PR number are passed to gh-axi as separate arguments.
+# After a successful merge, available task and no-mistakes timing is appended to
+# the home-local data/delivery-log.jsonl without changing the merge result.
 #
 # Merge method defaults to --squash when the caller passes none of --squash,
 # --merge, --rebase, or --method after the optional -- separator. Extra args
@@ -246,3 +248,24 @@ if ! caller_has_merge_method "$@"; then
 fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
+
+# The merge already succeeded. Delivery timing is record-only, so an API or
+# ledger failure is reported but never changes that successful result.
+PR_FACTS=$(gh-axi api GET "/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" \
+  --jq '{pr_opened_at:.created_at,merged_at:.merged_at}' 2>/dev/null || true)
+PR_OPENED_AT=$(printf '%s\n' "$PR_FACTS" \
+  | sed -n 's/^pr_opened_at: "\([0-9TZ:.-]*\)"$/\1/p' | head -n 1)
+MERGED_AT=$(printf '%s\n' "$PR_FACTS" \
+  | sed -n 's/^merged_at: "\([0-9TZ:.-]*\)"$/\1/p' | head -n 1)
+
+delivery_args=(
+  "$ID"
+  --repo "$PROJECT"
+  --project-path "$PROJECT_PATH"
+  --pr-url "$URL"
+)
+[ -z "$PR_OPENED_AT" ] || delivery_args+=(--pr-opened-at "$PR_OPENED_AT")
+[ -z "$MERGED_AT" ] || delivery_args+=(--merged-at "$MERGED_AT")
+if ! "$SCRIPT_DIR/fm-delivery-record.sh" "${delivery_args[@]}"; then
+  echo "warning: delivery timing was not recorded for $ID after merging $URL" >&2
+fi
