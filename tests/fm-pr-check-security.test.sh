@@ -2731,8 +2731,9 @@ test_teardown_removes_poll_artifacts() {
   printf 'check\n' > "$dir/home/state/task-a.check.sh"
   printf 'data\n' > "$dir/home/state/task-a.pr-poll"
   printf 'registration\n' > "$dir/home/state/task-a.pr-poll-registration"
-  printf 'fm-pr-review-chase-v1\n%s\n' \
-    0123456789abcdef0123456789abcdef01234567 > "$dir/home/state/task-a.pr-review-chase"
+  printf 'fm-pr-review-chase-v2\n%s\n%s\n0\n0\n0\n-\n' \
+    0123456789abcdef0123456789abcdef01234567 1788192000 \
+    > "$dir/home/state/task-a.pr-review-chase"
   printf 'trust\n' > "$dir/home/state/task-a.check-trust"
   chmod 0600 "$dir/home/state/task-a.pr-review-chase"
   mkdir -p "$dir/home/state/.pr-check-quarantine"
