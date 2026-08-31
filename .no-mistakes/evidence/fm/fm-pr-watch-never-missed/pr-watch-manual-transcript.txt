@@ -1,0 +1,10 @@
+Manual PR announcement verification
+announcement stdout bytes: 0
+recorded metadata: pr=https://github.com/acme/widget/pull/88
+registered poll files:
+  demo-task.check.sh
+  demo-task.pr-poll
+  demo-task.pr-poll-registration
+registration validates against metadata and poll template: yes
+exact retry stdout bytes: 0
+exact retry changed transaction files: no
