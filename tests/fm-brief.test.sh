@@ -248,7 +248,7 @@ test_ship_modes_generate_clean_briefs() {
 # and must not weaken the never-merge prohibition. local-only has no PR, so it
 # stays out.
 test_pr_producing_modes_own_feedback_until_merge() {
-  local home id mode brief
+  local home id mode brief watch_entry
   home="$TMP_ROOT/pr-watch-home"
   mkdir -p "$home/data"
 
@@ -257,12 +257,20 @@ test_pr_producing_modes_own_feedback_until_merge() {
     FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
       || fail "$mode: ship brief failed to scaffold"
     brief="$home/data/$id/brief.md"
+    case "$mode" in
+      no-mistakes)
+        watch_entry='append `done: PR {url} checks green` and enter the PR watch below.'
+        ;;
+      direct-PR)
+        watch_entry='append `done: PR {url}` to the status file and enter the PR watch below.'
+        ;;
+    esac
+    assert_grep "$watch_entry" "$brief" \
+      "$mode: done report did not enter the PR watch"
     assert_grep "Reporting done does not end your ownership of this PR - it stays yours until it merges." "$brief" \
       "$mode: brief did not keep PR ownership past the done report"
-    assert_grep "When new reviewer feedback lands after your done report" "$brief" \
-      "$mode: brief did not require handling feedback that arrives after done"
-    assert_grep "fix and push on your \`fm/$id\` branch, resolve the threads, or reply with a concrete reason a finding is not valid, then re-report status." "$brief" \
-      "$mode: brief lost the fix/resolve/reply-then-report post-done contract"
+    assert_grep "Stay on watch after reporting done. Apply rule 8 to any new reviewer feedback, then re-report status." "$brief" \
+      "$mode: brief did not extend rule 8 past the done report"
     assert_grep "Never merge the PR and never arm auto-merge; the configured merge authority owns that." "$brief" \
       "$mode: post-done watch weakened the never-merge prohibition"
   done
