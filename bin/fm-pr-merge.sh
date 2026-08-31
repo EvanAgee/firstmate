@@ -9,6 +9,8 @@
 # Merge method defaults to --squash when the caller passes none of --squash,
 # --merge, --rebase, or --method after the optional -- separator. Extra args
 # must not include --repo or -R because the repository comes only from the URL.
+# They also must not include --auto because this command records delivery timing
+# only after GitHub confirms the pull request has merged.
 #
 # A project whose data/projects.md bracket list contains the exact
 # captain-merge token requires --captain-approved <pr-url>. The approval URL
@@ -51,7 +53,9 @@ usage() {
     '' \
     '  --captain-approved <pr-url>  Bypass the captain-merge refusal only when this' \
     '                               value exactly matches the canonical PR URL.' \
-    '  --allow-unresolved-threads   Bypass only the review-thread refusal.'
+    '  --allow-unresolved-threads   Bypass only the review-thread refusal.' \
+    '' \
+    'Extra merge arguments must not include --repo, -R, or --auto.'
 }
 
 case "${1:-}" in
