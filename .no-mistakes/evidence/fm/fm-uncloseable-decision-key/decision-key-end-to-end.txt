@@ -1,0 +1,27 @@
+Scenario 1: exact mid-note key, answered through the real fm-send executable
+
+$ FM_STATE_OVERRIDE=<fixture>/state bin/fm-wake-drain.sh
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+pto-export-window-ui [key=169-noun-and-grade-labels] needs-decision: fix-review found 2 new ask-user findings: choose the noun and grade labels
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+$ bin/fm-send.sh pto-export-window-ui --resolve-key 169-noun-and-grade-labels "use the revised labels"
+exit: 0
+transport received: use the revised labels
+
+append-only status log after the answer:
+     1	needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels
+     2	resolved [key=169-noun-and-grade-labels]: answered: use the revised labels
+
+open decisions after the answer:
+(none)
+
+Scenario 2: old persisted cursor rebuilds without rewriting status history
+
+planted cursor version: version=5
+folded open decision after rebuild:
+169-noun-and-grade-labels	needs-decision	fix-review found 2 new ask-user findings: choose the noun and grade labels
+rebuilt cursor version: version=9
+status history SHA-256 before: 3ec8b13292aac8c77c71e1fce5b5e15c5176290b0be3654acb115cf8a66cbedd
+status history SHA-256 after:  3ec8b13292aac8c77c71e1fce5b5e15c5176290b0be3654acb115cf8a66cbedd
+status history unchanged: yes

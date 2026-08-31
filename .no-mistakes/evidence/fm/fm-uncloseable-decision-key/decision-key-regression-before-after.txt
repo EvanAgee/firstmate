@@ -1,0 +1,5 @@
+Exact regression fixture folded by the base commit:
+default	needs-decision	fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels
+
+The same fixture folded by the target commit:
+169-noun-and-grade-labels	needs-decision	fix-review found 2 new ask-user findings: choose the noun and grade labels
