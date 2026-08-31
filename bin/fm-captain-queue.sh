@@ -16,9 +16,10 @@
 # Same-state duplicates use their newest state timestamp and stable tie-breaks.
 # The next successful write emits the canonical records shape.
 # `add` upserts an open card or reopens a resolved card without parked history.
-# Open-card reposts preserve their generation, original asked-at, and backing
-# classification, including the missing classification on legacy records.
-# Reopening a resolved card increments its generation.
+# Idempotent open-card retries with the same ask fields preserve generation;
+# changing an ask field increments it. Both preserve the original asked-at and
+# backing classification, including the missing classification on legacy
+# records. Reopening a resolved card also increments its generation.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
 # It reads every new reply line past the cursor, matches by id and generation,
 # changes a matched card's state to `resolved` (answer preserved), and advances

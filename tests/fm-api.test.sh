@@ -657,6 +657,46 @@ test_captain_reply_requires_generation_and_persists_it() {
   pass "captain replies require and persist their card generation"
 }
 
+test_captain_reply_appends_after_newline_less_record_and_reconciles() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (captain reply reconcile)"; return 0; }
+
+  local home port token resp out now
+  home=$(fm_test_api_home api-captain-reply-newline)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id first-newline-less-reply --question "First answer?" >/dev/null
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id second-api-reply --question "Second answer?" >/dev/null
+  printf '%s' \
+    '{"id":"first-newline-less-reply","generation":1,"answer":"first","at":"2026-08-31T18:00:00Z"}' \
+    > "$home/state/captain-replies.jsonl"
+
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"id":"second-api-reply","generation":1,"answer":"second"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "captain reply append status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "newline-less reply log did not reconcile: $out"
+  assert_contains "$out" "handled: [id=first-newline-less-reply] first" \
+    "reconcile should handle the existing newline-less reply"
+  assert_contains "$out" "handled: [id=second-api-reply] second" \
+    "reconcile should handle the API-appended reply"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 2 ] \
+    || fail "reconcile did not advance past both framed replies"
+  [ "$(jq '[.records[] | select(.state == "resolved")] | length' \
+    "$home/data/captain-queue.json")" = 2 ] \
+    || fail "reconcile did not resolve both framed replies"
+  pass "captain reply append frames and reconciles after a newline-less record"
+}
+
 # A crew-dispatch config with one class rig (two rungs, both on) and a default
 # ladder (two rungs). Used by the rung-toggle tests below.
 write_rung_fixture() {  # <home>
@@ -1255,6 +1295,7 @@ test_captain_note_accepts_a_backlog_only_hold
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
 test_captain_reply_requires_generation_and_persists_it
+test_captain_reply_appends_after_newline_less_record_and_reconciles
 test_worker_relay_without_token_is_unauthorized
 test_worker_relay_with_token_lands_in_wake_queue
 test_worker_relay_unknown_task_is_not_found

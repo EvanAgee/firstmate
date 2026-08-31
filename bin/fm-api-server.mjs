@@ -482,7 +482,22 @@ async function queueCaptainReply(home, stateDir, reply) {
     if (!error || error.code !== "ENOENT") throw error;
   }
   const record = { ...reply, at: new Date().toISOString() };
-  fs.appendFileSync(file, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "a" });
+  let separator = "";
+  let handle;
+  try {
+    handle = fs.openSync(file, "r");
+    const { size } = fs.fstatSync(handle);
+    if (size > 0) {
+      const lastByte = Buffer.allocUnsafe(1);
+      fs.readSync(handle, lastByte, 0, 1, size - 1);
+      if (lastByte[0] !== 0x0a) separator = "\n";
+    }
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  } finally {
+    if (handle !== undefined) fs.closeSync(handle);
+  }
+  fs.appendFileSync(file, `${separator}${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "a" });
   const key = `captain-reply:${reply.id}:${reply.generation}:${crypto.randomBytes(8).toString("hex")}`;
   await enqueueCheckWake(home, state, key, "check: captain-reply");
 }
