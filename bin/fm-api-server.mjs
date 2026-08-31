@@ -73,7 +73,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   blockedListBody,
@@ -88,6 +88,7 @@ import { taskDetailBody } from "./fm-api-task-detail.mjs";
 export const API_VERSION = "1";
 const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SNAPSHOT_SCRIPT = path.join(BIN_DIR, "fm-fleet-snapshot.sh");
+const DISPATCH_VALIDATE_SCRIPT = path.join(BIN_DIR, "fm-dispatch-validate.sh");
 const MAX_BODY_BYTES = 16384;
 // A whole dispatch config can be larger than a one-line write body.
 const MAX_CONFIG_BYTES = 65536;
@@ -574,104 +575,16 @@ function validateDispatchClasses(config) {
   return { classes };
 }
 
-const VERIFIED_DISPATCH_HARNESSES = new Set([
-  "claude",
-  "codex",
-  "opencode",
-  "omp",
-  "pi",
-  "pi-signed",
-  "grok",
-  "kimi",
-  "cursor",
-  "muse",
-]);
-
-const DISPATCH_EFFORTS = {
-  claude: new Set(["low", "medium", "high", "xhigh", "max"]),
-  codex: new Set(["low", "medium", "high", "xhigh"]),
-  grok: new Set(["low", "medium", "high"]),
-  omp: new Set(["low", "medium", "high", "xhigh", "max"]),
-  pi: new Set(["low", "medium", "high", "xhigh", "max"]),
-  "pi-signed": new Set(["low", "medium", "high", "xhigh", "max"]),
-  muse: new Set(["low", "medium", "high", "xhigh", "max"]),
-  opencode: new Set(),
-  kimi: new Set(),
-  cursor: new Set(),
-};
-
-function dispatchProfileError(profile, label, enabledAllowed = true) {
-  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
-    return `${label} must be an object`;
+function validateDispatchConfig(config) {
+  const result = spawnSync(DISPATCH_VALIDATE_SCRIPT, ["--stdin"], {
+    input: JSON.stringify(config),
+    encoding: "utf8",
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    return { error: result.stderr.trim() || "dispatch config validation failed" };
   }
-  if (typeof profile.harness !== "string" || !profile.harness) {
-    return `${label} needs harness`;
-  }
-  for (const field of ["model", "effort"]) {
-    if (field in profile && (typeof profile[field] !== "string" || !profile[field])) {
-      return `${label} ${field} must be a non-empty string when present`;
-    }
-  }
-  if (enabledAllowed && "enabled" in profile && typeof profile.enabled !== "boolean") {
-    return `${label} enabled must be true or false when present`;
-  }
-  for (const field of ["harness", "model", "effort"]) {
-    if (typeof profile[field] === "string" && /\s/.test(profile[field])) {
-      return `runtime values cannot contain whitespace: ${label} ${field}=${JSON.stringify(profile[field])}`;
-    }
-  }
-  if (!VERIFIED_DISPATCH_HARNESSES.has(profile.harness)) {
-    return `unverified harness: ${profile.harness}`;
-  }
-  if (profile.effort && !DISPATCH_EFFORTS[profile.harness].has(profile.effort)) {
-    return `invalid effort: ${profile.harness}:${profile.effort}`;
-  }
-  return null;
-}
-
-function normalizedDispatchTuple(profile) {
-  return {
-    harness: profile.harness,
-    model: profile.model ?? "default",
-    effort: profile.effort ?? null,
-  };
-}
-
-function sameDispatchTuple(left, right) {
-  const a = normalizedDispatchTuple(left);
-  const b = normalizedDispatchTuple(right);
-  return a.harness === b.harness && a.model === b.model && a.effort === b.effort;
-}
-
-function dispatchProfileLabel(profile) {
-  return `${profile.harness}/${profile.model ?? "<default>"}/${profile.effort ?? "<default>"}`;
-}
-
-function dispatchPoolError(value, label, profileLabel = `${label} profile`) {
-  if (!Array.isArray(value) && !(value && typeof value === "object")) {
-    return `${label} must be a profile object or non-empty profile array`;
-  }
-  const profiles = asList(value);
-  if (profiles.length === 0) return `${label} needs at least one profile`;
-  for (const profile of profiles) {
-    const error = dispatchProfileError(profile, profileLabel);
-    if (error) return error;
-  }
-  if (!profiles.some(rungEnabled)) return `${label} needs at least one enabled rung`;
-  return null;
-}
-
-function dispatchPinError(pin, pool, label) {
-  const profileError = dispatchProfileError(pin, label, false);
-  if (profileError) return profileError;
-  const matches = pool.filter((profile) => sameDispatchTuple(profile, pin));
-  if (matches.length === 0) {
-    return `${label} is not a member of its pool: ${dispatchProfileLabel(pin)}`;
-  }
-  if (!matches.some(rungEnabled)) {
-    return `${label} names a switched-off member: ${dispatchProfileLabel(pin)}`;
-  }
-  return null;
+  return { ok: true };
 }
 
 function validRigNames(config, classes) {
@@ -744,12 +657,8 @@ function handleRungToggle(req, res, home, options) {
   handleAuthorizedPost(req, res, options, MAX_BODY_BYTES, (raw) => {
     const toggle = parseRungToggle(raw);
     const { file, config } = readDispatchConfig(home);
-    if (!config || typeof config !== "object" || Array.isArray(config)) {
-      throw httpError(400, "dispatch file is not valid json");
-    }
-    if ("rules" in config && !Array.isArray(config.rules)) {
-      throw httpError(400, "rules must be an array");
-    }
+    const configCheck = validateDispatchConfig(config);
+    if ("error" in configCheck) throw httpError(400, configCheck.error);
     const classCheck = validateDispatchClasses(config);
     if ("error" in classCheck) throw httpError(400, classCheck.error);
     const validRigs = validRigNames(config, classCheck.classes);
@@ -767,54 +676,6 @@ function handleRungToggle(req, res, home, options) {
     writeDispatchConfig(file, next.config);
     return { ok: true, rig: toggle.rig, rung: toggle.rung, enabled: toggle.enabled };
   });
-}
-
-function validateDispatchConfig(config) {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return { error: "config must be a json object" };
-  }
-  // A present but wrong-typed rules or default would be silently skipped below
-  // and then written, so reject it rather than persist a config off-schema.
-  if ("rules" in config && !Array.isArray(config.rules)) {
-    return { error: "rules must be an array" };
-  }
-  if (
-    "default" in config &&
-    !Array.isArray(config.default) &&
-    !(config.default && typeof config.default === "object")
-  ) {
-    return { error: "default must be an array or object" };
-  }
-  const classCheck = validateDispatchClasses(config);
-  if ("error" in classCheck) return classCheck;
-  if (Array.isArray(config.rules)) {
-    for (const rule of config.rules) {
-      if ("select" in rule) {
-        return { error: "select is not supported; use pin or resolver round-robin" };
-      }
-      const poolError = dispatchPoolError(rule.use, rule.class, "use profile");
-      if (poolError) return { error: poolError };
-      if ("pin" in rule) {
-        const pinError = dispatchPinError(rule.pin, asList(rule.use), `pin for ${rule.class}`);
-        if (pinError) return { error: pinError };
-      }
-    }
-  }
-  if ("default" in config) {
-    const poolError = dispatchPoolError(config.default, "default");
-    if (poolError) return { error: poolError };
-  }
-  if ("defaultPin" in config) {
-    const pinError = dispatchPinError(config.defaultPin, asList(config.default), "defaultPin");
-    if (pinError) return { error: pinError };
-  }
-  return { ok: true };
-}
-
-function asList(value) {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object") return [value];
-  return [];
 }
 
 function parseDispatchConfig(raw) {

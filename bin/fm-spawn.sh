@@ -49,9 +49,8 @@
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are profile axes
 #   chosen by firstmate at intake. On --model, the token default means no pin.
-#   They are only threaded into harnesses whose installed CLIs were verified to
-#   support that axis; unsupported axes are omitted from that harness's launch
-#   rather than guessed.
+#   Class dispatch rejects axes the selected harness does not support.
+#   Existing non-class launches keep omitting unsupported axes from the command.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -326,6 +325,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # shellcheck source=bin/fm-issue-guard-lib.sh
 . "$SCRIPT_DIR/fm-issue-guard-lib.sh"
+# shellcheck source=bin/fm-dispatch-runtime-lib.sh
+. "$SCRIPT_DIR/fm-dispatch-runtime-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1836,45 +1837,33 @@ muse_credential_present() {
 model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
-  case "$harness" in
-    claude|codex|opencode|omp|pi|pi-signed|grok|kimi|cursor|muse)
-      printf -- '--model %s ' "$(shell_quote "$model")"
-      ;;
-  esac
+  fm_dispatch_model_supported "$harness" "$model" || return 0
+  printf -- '--model %s ' "$(shell_quote "$model")"
 }
 
 effort_flag_for_harness() {
   local harness=$1 effort=$2
   [ -n "$effort" ] && [ "$effort" != default ] || return 0
+  fm_dispatch_effort_supported "$harness" "$effort" || return 0
   case "$harness" in
-    claude)
-      case "$effort" in
-        low|medium|high|xhigh|max) printf -- '--effort %s ' "$(shell_quote "$effort")" ;;
-      esac
-      ;;
+    claude) printf -- '--effort %s ' "$(shell_quote "$effort")" ;;
     codex)
       # The installed codex config schema uses model_reasoning_effort, and the
       # bundled model catalog advertises low|medium|high|xhigh. Omit max rather
       # than passing an unsupported value.
-      case "$effort" in
-        low|medium|high|xhigh) printf -- '-c %s ' "$(shell_quote "model_reasoning_effort=\"$effort\"")" ;;
-      esac
+      printf -- '-c %s ' "$(shell_quote "model_reasoning_effort=\"$effort\"")"
       ;;
     grok)
       # grok exposes both --effort and --reasoning-effort; firstmate's profile
       # axis is the reasoning knob. As of grok 0.2.99, --reasoning-effort accepts
       # only low|medium|high and rejects both xhigh and max, so omit those rather
       # than passing a known-bad value.
-      case "$effort" in
-        low|medium|high) printf -- '--reasoning-effort %s ' "$(shell_quote "$effort")" ;;
-      esac
+      printf -- '--reasoning-effort %s ' "$(shell_quote "$effort")"
       ;;
     pi|pi-signed|omp)
       # Pi and OMP accept the full shared effort vocabulary, including max,
       # through their separately selected --thinking launch flags.
-      case "$effort" in
-        low|medium|high|xhigh|max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
-      esac
+      printf -- '--thinking %s ' "$(shell_quote "$effort")"
       ;;
     muse)
       # muse 0.1.0-R708.1 --reasoning-effort accepts none|minimal|low|medium|

@@ -53,6 +53,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-remote-readiness-lib.sh` | Shared remote second-mate readiness gate: check and, when needed, repair then re-check through `fm-remote-doctor.sh` |
 | [`fm-project-origin-lib.sh`](../bin/fm-project-origin-lib.sh) | Accepted origin-form owner shared by both remote provisioning boundaries |
 | `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
+| `fm-dispatch-validate.sh` | Validate crew-dispatch configuration and resolved runtime tuples before callers act on them            |
+| `fm-dispatch-runtime-lib.sh` | Define the runtime adapter, model-axis, and effort support used by dispatch validation and launch rendering |
 | `fm-dispatch-resolve.sh` | Resolve a crewmate or scout class to one configured harness, model, and effort tuple                   |
 | `fm-omp-capabilities.sh` | Verify the selected OMP executable's required lifecycle and exact process-ownership surface before a launch |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |

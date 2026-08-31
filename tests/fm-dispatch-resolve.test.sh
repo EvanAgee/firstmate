@@ -62,7 +62,7 @@ EOF
   out=$($RESOLVER --class builder --home "$home" 2>&1)
   status=$?
   expect_code 1 "$status" "a switched-off pin should fail"
-  [ "$out" = "error: pin for 'builder' names a switched-off member" ] \
+  [ "$out" = "error: invalid config/crew-dispatch.json - pin names a switched-off member for builder: codex/gpt-5.6-sol/high" ] \
     || fail "switched-off pin returned '$out'"
   pass "a switched-off class pin refuses without fallback"
 }
@@ -125,9 +125,27 @@ EOF
   out=$($RESOLVER --class unknown --home "$home" 2>&1)
   status=$?
   expect_code 1 "$status" "a pool without an enabled member should fail"
-  [ "$out" = "error: dispatch pool for 'unknown' has no enabled member" ] \
+  [ "$out" = "error: invalid config/crew-dispatch.json - every default rung is turned off" ] \
     || fail "empty enabled pool returned '$out'"
   pass "a pool without an enabled member refuses without fallback"
+}
+
+test_unsupported_runtime_refuses_before_output() {
+  local home out status
+  home=$(make_home unsupported-runtime)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt-5.6-sol","effort":"max"}}]}
+EOF
+  out=$($RESOLVER --class builder --home "$home" 2>&1)
+  status=$?
+  expect_code 1 "$status" "an unsupported configured runtime should fail"
+  assert_contains "$out" "unsupported effort 'max' for class builder use profile 1 harness 'codex'" \
+    "resolver did not name the unsupported configured runtime"
+  assert_contains "$out" "supported efforts: low, medium, high, xhigh, or omit effort" \
+    "resolver did not list the supported correction"
+  assert_not_contains "$out" "harness=codex model=" \
+    "resolver printed a successful runtime after validation failed"
+  pass "the resolver validates runtime support before output"
 }
 
 test_pinned_class
@@ -138,5 +156,6 @@ test_unknown_class_uses_default_pin
 test_unknown_class_round_robins_default
 test_round_robin_breaks_ties_by_list_order
 test_pool_without_enabled_member_refuses
+test_unsupported_runtime_refuses_before_output
 
 echo "# all fm-dispatch-resolve tests passed"

@@ -866,7 +866,7 @@ test_rung_toggle_refuses_disabling_authoritative_pin() {
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 400 ] || fail "pinned rung toggle status $HTTP_CODE, wanted 400: $HTTP_BODY"
-  printf '%s' "$HTTP_BODY" | grep -F 'pin for builder names a switched-off member' >/dev/null \
+  printf '%s' "$HTTP_BODY" | grep -F 'pin names a switched-off member for builder' >/dev/null \
     || fail "pinned rung refusal did not name the invalid pin: $HTTP_BODY"
   after=$(cat "$home/config/crew-dispatch.json")
   [ "$before" = "$after" ] || fail "pinned rung refusal rewrote the config"
@@ -1044,6 +1044,26 @@ test_rig_config_refuses_runtime_whitespace() {
   pass "API config writes refuse runtime whitespace"
 }
 
+test_rig_config_refuses_unsupported_runtime() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-unsupported-runtime)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt-5.6-sol","effort":"max"}}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "unsupported runtime status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F "unsupported effort 'max' for class builder use profile 1 harness 'codex'" >/dev/null \
+    || fail "unsupported runtime error did not name the field and value: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "unsupported runtime refusal rewrote the file"
+  fm_test_api_stop "$home"
+  pass "API config writes use canonical runtime validation"
+}
+
 test_rig_config_refuses_invalid_pin() {
   local home port token resp before after
   home=$(fm_test_api_home api-config-invalid-pin)
@@ -1056,7 +1076,7 @@ test_rig_config_refuses_invalid_pin() {
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 400 ] || fail "invalid pin config status $HTTP_CODE, wanted 400: $HTTP_BODY"
-  printf '%s' "$HTTP_BODY" | grep -F 'pin for builder is not a member of its pool' >/dev/null \
+  printf '%s' "$HTTP_BODY" | grep -F 'pin is not a member of the use pool for builder' >/dev/null \
     || fail "invalid pin config error was not clear: $HTTP_BODY"
   after=$(cat "$home/config/crew-dispatch.json")
   [ "$before" = "$after" ] || fail "invalid pin config rewrote the file"
@@ -1076,7 +1096,7 @@ test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 400 ] || fail "all-off ladder status $HTTP_CODE, wanted 400: $HTTP_BODY"
-  printf '%s' "$HTTP_BODY" | grep -F 'enabled rung' >/dev/null \
+  printf '%s' "$HTTP_BODY" | grep -F 'every rung is turned off for: builder' >/dev/null \
     || fail "all-off ladder error is not clear: $HTTP_BODY"
   after=$(cat "$home/config/crew-dispatch.json")
   [ "$before" = "$after" ] || fail "refused config save still rewrote the config"
@@ -1220,6 +1240,7 @@ test_rig_config_without_token_is_unauthorized
 test_rig_config_with_token_writes_config
 test_rig_config_requires_unique_non_reserved_classes
 test_rig_config_refuses_runtime_whitespace
+test_rig_config_refuses_unsupported_runtime
 test_rig_config_refuses_invalid_pin
 test_rig_config_refuses_a_ladder_with_no_enabled_rung
 test_rig_config_without_default_is_accepted

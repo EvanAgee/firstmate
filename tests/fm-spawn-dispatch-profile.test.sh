@@ -678,6 +678,27 @@ test_runtime_whitespace_refuses_before_launch() {
   pass "runtime whitespace is refused before launch"
 }
 
+test_class_override_refuses_unsupported_runtime() {
+  local rec id out status
+  id=$(profile_id profile-unsupported-override-z15f)
+  rec=$(make_spawn_case profile-unsupported-override claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness codex --model gpt-5 --effort max \
+    --captain-override "captain requested an unsupported proof")
+  status=$?
+  expect_code 1 "$status" "an unsupported class override should fail"
+  assert_contains "$out" "unsupported effort 'max' for captain override for class 'builder' harness 'codex'" \
+    "class override refusal did not name the unsupported runtime"
+  assert_contains "$out" "supported efforts: low, medium, high, xhigh, or omit effort" \
+    "class override refusal did not list the supported correction"
+  [ ! -s "$LAUNCH_LOG" ] || fail "unsupported class override typed a launch command"
+  assert_absent "$HOME_DIR/state/$id.meta" "unsupported class override wrote metadata"
+  pass "class overrides validate runtime support before launch"
+}
+
 test_claude_threads_model_and_effort() {
   local rec id out status launch
   id=$(profile_id profile-claude-z2)
@@ -1377,6 +1398,7 @@ test_active_dispatch_profile_allows_raw_launch_command
 test_raw_override_with_class_requires_provable_runtime
 test_default_model_forms_match_through_spawn
 test_runtime_whitespace_refuses_before_launch
+test_class_override_refuses_unsupported_runtime
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort
 test_codex_omits_invalid_max_effort

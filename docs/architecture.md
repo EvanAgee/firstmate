@@ -201,10 +201,11 @@ The intake and authority contract in `AGENTS.md` owns when separate scout resear
 Crewmate and scout dispatch can stay on the static crewmate harness resolved by `config/crew-harness`, or it can use class pools from local `config/crew-dispatch.json`.
 Firstmate names a class at intake and passes `--class` to `fm-spawn.sh`.
 The spawn script delegates deterministic pin, live-worker count, and default selection to `bin/fm-dispatch-resolve.sh` under the schema in [`docs/configuration.md`](configuration.md#crew-dispatch-profiles-configcrew-dispatchjson).
+Bootstrap, resolver output, API writes, and class overrides pass through `bin/fm-dispatch-validate.sh`, which reads adapter support from `bin/fm-dispatch-runtime-lib.sh`.
 The session-start bootstrap step keeps valid dispatch configuration silent unless verbose facts are enabled and surfaces a concise invalid-config line when validation fails.
 When the file exists, `fm-spawn.sh` refuses fresh crewmate and scout launches without a class, except for the raw launch-command escape hatch.
 Secondmate launches are exempt because they resolve the secondmate harness and any optional secondmate model or effort tokens instead.
-Unsupported effort values are still recorded in task meta when passed to `fm-spawn.sh`, but the launch template omits any effort flag that the selected harness does not accept.
+Outside class dispatch, unsupported effort values are still recorded in task meta when passed to `fm-spawn.sh`, but the launch template omits any effort flag that the selected harness does not accept.
 That keeps spawn launch compatible across claude, codex, opencode, omp, pi, pi-signed, grok, kimi, cursor, and muse while preserving the requested profile for later audit.
 
 ## Optional secondmates

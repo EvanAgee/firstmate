@@ -999,137 +999,7 @@ crew_dispatch_validate() {
     echo "MISSING: jq (install: $(install_cmd jq))"
     return 0
   fi
-  if ! jq -e . "$file" >/dev/null 2>&1; then
-    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON"
-    return 0
-  fi
-  err=$(jq -r '
-    def verified($h): ["claude","codex","opencode","omp","pi","pi-signed","grok","kimi","cursor","muse"] | index($h);
-    def effort_ok($h; $e):
-      if $e == null then true
-      elif ($e | type) != "string" then false
-      elif $h == "claude" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "codex" then (["low","medium","high","xhigh"] | index($e))
-      elif $h == "grok" then (["low","medium","high"] | index($e))
-      elif $h == "omp" or $h == "pi" or $h == "pi-signed" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "muse" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "opencode" or $h == "kimi" or $h == "cursor" then false
-      else true
-      end;
-    def profiles($value):
-      if ($value | type) == "array" then $value
-      elif ($value | type) == "object" then [$value]
-      else []
-      end;
-    def configured_profiles:
-      ([(.rules // [])[]? | profiles(.use?)[]?]
-        + (if has("default") then [profiles(.default)[]?] else [] end));
-    def malformed_optional_fields($items):
-      ($items | any(has("model") and (((.model | type) != "string") or (.model | length) == 0)))
-      or ($items | any(has("effort") and (((.effort | type) != "string") or (.effort | length) == 0)));
-    def malformed_enabled($items):
-      ($items | any(has("enabled") and ((.enabled | type) != "boolean")));
-    def whitespace_error($label; $items):
-      [$items[]? as $item
-        | ["harness", "model", "effort"][] as $field
-        | select(($item | type) == "object"
-          and ($item | has($field))
-          and (($item[$field] | type) == "string")
-          and ($item[$field] | test("\\s")))
-        | "\($label) \($field)=\($item[$field] | @json)"][0] // null;
-    def rung_enabled($p):
-      if ($p | has("enabled")) then $p.enabled else true end;
-    def enabled_profiles($items):
-      [$items[] | select(rung_enabled(.))];
-    def same_tuple($left; $right):
-      {harness: $left.harness, model: ($left.model // "default"), effort: ($left.effort // null)}
-      == {harness: $right.harness, model: ($right.model // "default"), effort: ($right.effort // null)};
-    def profile_label($profile):
-      "\($profile.harness)/\($profile.model // "<default>")/\($profile.effort // "<default>")";
-    def rule_pins_outside_pools:
-      [(.rules // [])[]?
-        | select(has("pin"))
-        | . as $rule
-        | select([profiles($rule.use)[]? | select(same_tuple(.; $rule.pin))] | length == 0)];
-    def switched_off_rule_pins:
-      [(.rules // [])[]?
-        | select(has("pin"))
-        | . as $rule
-        | select([profiles($rule.use)[]?
-          | select(same_tuple(.; $rule.pin) and rung_enabled(.))] | length == 0)];
-    def default_pin_outside_pool:
-      . as $config
-      | has("defaultPin")
-      and ([profiles($config.default)[]? | select(same_tuple(.; $config.defaultPin))] | length == 0);
-    def switched_off_default_pin:
-      . as $config
-      | has("defaultPin")
-      and ([profiles($config.default)[]?
-        | select(same_tuple(.; $config.defaultPin) and rung_enabled(.))] | length == 0);
-    def bad_efforts:
-      configured_profiles
-      | map({h: .harness, e: .effort})
-      | map(select(.e != null))
-      | map(select((.h | type) == "string" and verified(.h)))
-      | map(select(. as $p | effort_ok($p.h; $p.e) | not))
-      | map("\(.h):\(.e)")
-      | unique;
-    (whitespace_error("use profile"; [(.rules // [])[]? | profiles(.use?)[]?])
-      // whitespace_error("rule pin"; [(.rules // [])[]? | select(has("pin")) | .pin])
-      // whitespace_error("default profile"; [profiles(.default // [])[]?])
-      // whitespace_error("defaultPin"; [select(has("defaultPin")) | .defaultPin])) as $runtime_whitespace
-    | if type != "object" then "top-level value must be an object"
-    elif has("rules") and (.rules | type) != "array" then "rules must be an array"
-    elif [(.rules // [])[]? | select(type != "object")] | length > 0 then "each rule must be an object"
-    elif [(.rules // [])[]? | select((.class? | type) != "string" or (.class | length) == 0)] | length > 0 then "each rule needs non-empty class"
-    elif [(.rules // [])[]? | select(.class == "__default__")] | length > 0 then "dispatch class __default__ is reserved for the default pool"
-    elif ([(.rules // [])[]? | .class] | length) != ([ (.rules // [])[]? | .class ] | unique | length) then
-      "dispatch class must be unique: "
-      + ([.rules[]?.class] | group_by(.) | map(select(length > 1) | .[0]) | join(", "))
-    elif $runtime_whitespace != null then "runtime values cannot contain whitespace: " + $runtime_whitespace
-    elif [(.rules // [])[]? | select((.use? | type) != "object" and (.use? | type) != "array")] | length > 0 then "each rule needs use"
-    elif [(.rules // [])[]? | select((.use? | type) == "array" and (.use | length) == 0)] | length > 0 then "each rule needs at least one use profile"
-    elif [(.rules // [])[]? | profiles(.use?)[]? | select(type != "object")] | length > 0 then "each use profile must be an object"
-    elif [(.rules // [])[]? | profiles(.use?)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "each use profile needs harness"
-    elif malformed_optional_fields([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile model and effort must be non-empty strings when present"
-    elif malformed_enabled([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile enabled must be true or false when present"
-    elif [(.rules // [])[]? | select(has("pin") and ((.pin | type) != "object"))] | length > 0 then "rule pin must be a profile object"
-    elif [(.rules // [])[]? | select(has("pin")) | .pin | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "rule pin needs harness"
-    elif malformed_optional_fields([(.rules // [])[]? | select(has("pin")) | .pin]) then "rule pin model and effort must be non-empty strings when present"
-    elif (rule_pins_outside_pools | length) > 0 then
-      "pin is not a member of the use pool for "
-      + ([rule_pins_outside_pools[] | "\(.class): \(profile_label(.pin))"] | join("; "))
-    elif (switched_off_rule_pins | length) > 0 then
-      "pin names a switched-off member for "
-      + ([switched_off_rule_pins[] | "\(.class): \(profile_label(.pin))"] | join("; "))
-    elif [(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0)] | length > 0 then
-      "every rung is turned off for: " + ([(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0) | .class] | join("; "))
-    elif [(.rules // [])[]? | select(has("select"))] | length > 0 then "select is not supported; use pin or resolver round-robin"
-    elif has("default") and ((.default | type) != "object" and (.default | type) != "array") then "default must be a profile object or non-empty profile array"
-    elif has("default") and ((.default | type) == "array" and (.default | length) == 0) then "default needs at least one profile"
-    elif has("default") and ([profiles(.default)[]? | select(type != "object")] | length) > 0 then "each default profile must be an object"
-    elif has("default") and ([profiles(.default)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length) > 0 then "each default profile needs harness"
-    elif has("default") and malformed_optional_fields([profiles(.default)[]?]) then "default profile model and effort must be non-empty strings when present"
-    elif has("default") and malformed_enabled([profiles(.default)[]?]) then "default profile enabled must be true or false when present"
-    elif has("defaultPin") and ((.defaultPin | type) != "object") then "defaultPin must be a profile object"
-    elif has("defaultPin") and ((.defaultPin.harness? | type) != "string" or (.defaultPin.harness | length) == 0) then "defaultPin needs harness"
-    elif has("defaultPin") and malformed_optional_fields([.defaultPin]) then "defaultPin model and effort must be non-empty strings when present"
-    elif default_pin_outside_pool then "defaultPin is not a member of the default pool: " + profile_label(.defaultPin)
-    elif switched_off_default_pin then "defaultPin names a switched-off member: " + profile_label(.defaultPin)
-    elif has("default") and ((enabled_profiles([profiles(.default)[]?]) | length) == 0) then "every default rung is turned off"
-    else
-      (configured_profiles
-        | map(.harness)
-        | map(select(. != null))
-        | map(select(. as $h | verified($h) | not))
-        | unique) as $bad_harnesses
-      | if ($bad_harnesses | length) > 0 then "unverified harness: " + ($bad_harnesses | join(", "))
-        elif (bad_efforts | length) > 0 then "invalid effort: " + (bad_efforts | join(", "))
-        else empty
-        end
-    end
-  ' "$file" 2>/dev/null || true)
-  if [ -n "$err" ]; then
+  if ! err=$("$SCRIPT_DIR/fm-dispatch-validate.sh" --file "$file" 2>&1); then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
     return 0
   fi
@@ -1154,7 +1024,6 @@ crew_dispatch_validate() {
   ' "$file"
   fi
 }
-
 startup_memory_budget_setup() {
   # Primary bootstrap owns default publication. A secondmate is deliberately
   # passive here because its setting must converge from the primary through the

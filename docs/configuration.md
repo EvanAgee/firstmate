@@ -353,9 +353,10 @@ Omit `--class` to use the raw launch-command escape hatch.
 `--relaunch` keeps its existing behavior.
 A batch uses one shared `--class`, and each task resolves in sequence so the earlier task's metadata participates in the next count.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
-When the file exists, bootstrap validates it with `jq`.
+`bin/fm-dispatch-validate.sh` is the single executable validation boundary used by bootstrap, the resolver, and API writes.
+It uses the adapter support definitions in `bin/fm-dispatch-runtime-lib.sh` before any caller reads or acts on the config.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, a missing or duplicate class, an empty or malformed pool, an invalid pin, whitespace in a runtime value, an unverified harness, a non-boolean `enabled`, an all-off pool, or an unsupported effort is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+Malformed JSON, a non-object top level, a missing or duplicate class, an empty or malformed pool, an invalid pin, whitespace in a runtime value, an unsupported runtime setting, a non-boolean `enabled`, or an all-off pool is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
 Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 `GET /rigs` returns each rule's `class`, human name, pool, and pin, plus top-level `defaultPin` raw so the board can label and display the configured pools.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
@@ -377,7 +378,7 @@ Backend tool availability uses the adapter's own executable resolver, so bootstr
 An unknown resolved backend emits `BACKEND_INVALID` and blocks dispatch instead of silently dropping its dependency delta or falling back to tmux.
 Orca provides both the task worktree and terminal endpoint (see "Runtime backend" above), so `backend=orca` requires only `orca` on top of the universal toolchain and skips both `treehouse` and every other backend's session CLI.
 A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the `treehouse` durable-lease upgrade check runs only for the backends that actually use treehouse.
-Bootstrap uses the universal `jq` installation to validate `config/crew-dispatch.json` when that file exists.
+The crew-dispatch validator uses the universal `jq` installation when `config/crew-dispatch.json` exists.
 When Relay is opted in, bootstrap also requires `curl` before arming the relay poll shim.
 `tasks-axi` is a required bootstrap tool in every profile, the same class as `lavish-axi`.
 An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.

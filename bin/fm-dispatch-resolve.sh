@@ -82,37 +82,24 @@ command -v jq >/dev/null 2>&1 || {
   echo "error: jq is required to resolve crew dispatch" >&2
   exit 1
 }
-jq -e . "$CONFIG_FILE" >/dev/null 2>&1 || {
-  echo "error: config/crew-dispatch.json is malformed" >&2
+VALIDATION_ERROR=
+VALIDATOR_ARGS=(--file "$CONFIG_FILE" --normalized)
+if [ "$OVERRIDE_HARNESS_SET" -eq 1 ] || [ "$OVERRIDE_MODEL_SET" -eq 1 ] || [ "$OVERRIDE_EFFORT_SET" -eq 1 ]; then
+  VALIDATOR_ARGS+=(--allow-disabled-pin)
+fi
+if ! NORMALIZED_CONFIG=$("$SCRIPT_DIR/fm-dispatch-validate.sh" "${VALIDATOR_ARGS[@]}" 2>&1); then
+  VALIDATION_ERROR=$NORMALIZED_CONFIG
+  echo "error: invalid config/crew-dispatch.json - $VALIDATION_ERROR" >&2
   exit 1
-}
-RUNTIME_WHITESPACE_ERROR=$(jq -r '
-  def profiles($value):
-    if ($value | type) == "array" then $value
-    elif ($value | type) == "object" then [$value]
-    else []
-    end;
-  def whitespace_error($label; $items):
-    [$items[]? as $item
-      | ["harness", "model", "effort"][] as $field
-      | select(($item | type) == "object"
-        and ($item | has($field))
-        and (($item[$field] | type) == "string")
-        and ($item[$field] | test("\\s")))
-      | "\($label) \($field)=\($item[$field] | @json)"][0] // null;
-  (whitespace_error("use profile"; [(.rules // [])[]? | profiles(.use?)[]?])
-    // whitespace_error("rule pin"; [(.rules // [])[]? | select(has("pin")) | .pin])
-    // whitespace_error("default profile"; [profiles(.default // [])[]?])
-    // whitespace_error("defaultPin"; [select(has("defaultPin")) | .defaultPin])) // empty
-' "$CONFIG_FILE")
-[ -z "$RUNTIME_WHITESPACE_ERROR" ] || {
-  echo "error: config/crew-dispatch.json runtime values cannot contain whitespace: $RUNTIME_WHITESPACE_ERROR" >&2
-  exit 1
+fi
+
+config_jq() {
+  jq "$@" <<< "$NORMALIZED_CONFIG"
 }
 
-MATCH_COUNT=$(jq -r --arg class "$DISPATCH_CLASS" '
+MATCH_COUNT=$(config_jq -r --arg class "$DISPATCH_CLASS" '
   [(.rules // [])[]? | select(.class == $class)] | length
-' "$CONFIG_FILE")
+')
 if [ "$MATCH_COUNT" -gt 1 ]; then
   echo "error: dispatch class '$DISPATCH_CLASS' appears more than once" >&2
   exit 1
@@ -131,7 +118,7 @@ else
 fi
 
 profiles_tsv() {
-  jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" '
+  config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" '
     def profiles($value):
       if ($value | type) == "array" then $value
       elif ($value | type) == "object" then [$value]
@@ -145,17 +132,17 @@ profiles_tsv() {
     | profiles(.)[]?
     | [(.harness // ""), (.model // "default"), (.effort // "default"), (if .enabled? == false then "false" else "true" end)]
     | @tsv
-  ' "$CONFIG_FILE"
+  '
 }
 
-PIN_TSV=$(jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --arg pin "$PIN_KEY" '
+PIN_TSV=$(config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --arg pin "$PIN_KEY" '
   if $kind == "class" then
     [(.rules // [])[]? | select(.class == $class)][0][$pin]
   else
     .[$pin]
   end
   | if type == "object" then [(.harness // ""), (.model // "default"), (.effort // "default")] | @tsv else "" end
-' "$CONFIG_FILE")
+')
 
 if [ -n "$PIN_TSV" ]; then
   SELECT_REASON=$PIN_REASON
@@ -240,6 +227,9 @@ fi
 [ "$OVERRIDE_EFFORT_SET" -eq 0 ] || BEST_EFFORT=$OVERRIDE_EFFORT
 
 if [ "$OVERRIDE_HARNESS_SET" -eq 1 ] || [ "$OVERRIDE_MODEL_SET" -eq 1 ] || [ "$OVERRIDE_EFFORT_SET" -eq 1 ]; then
+  "$SCRIPT_DIR/fm-dispatch-validate.sh" --runtime \
+    "$BEST_HARNESS" "$BEST_MODEL" "$BEST_EFFORT" \
+    --label "captain override for class '$DISPATCH_CLASS'" || exit 1
   MATCH_FOUND=0
   MATCH_ENABLED=0
   while IFS=$'\t' read -r harness model effort enabled; do
@@ -249,7 +239,7 @@ if [ "$OVERRIDE_HARNESS_SET" -eq 1 ] || [ "$OVERRIDE_MODEL_SET" -eq 1 ] || [ "$O
       MATCH_ENABLED=1
       break
     fi
-  done < <(jq -r '
+  done < <(config_jq -r '
     def profiles($value):
       if ($value | type) == "array" then $value
       elif ($value | type) == "object" then [$value]
@@ -258,7 +248,7 @@ if [ "$OVERRIDE_HARNESS_SET" -eq 1 ] || [ "$OVERRIDE_MODEL_SET" -eq 1 ] || [ "$O
     ([.rules[]? | profiles(.use)[]?] + [profiles(.default)[]?])[]
     | [(.harness // ""), (.model // "default"), (.effort // "default"), (if .enabled? == false then "false" else "true" end)]
     | @tsv
-  ' "$CONFIG_FILE")
+  ')
   if [ "$MATCH_FOUND" -eq 1 ] && [ "$MATCH_ENABLED" -eq 0 ]; then
     echo "error: captain override selects disabled member harness=$BEST_HARNESS model=$BEST_MODEL effort=$BEST_EFFORT; re-enable it in config/crew-dispatch.json" >&2
     exit 1
