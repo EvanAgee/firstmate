@@ -513,6 +513,24 @@ scan_signals() {
   return 0
 }
 
+# Arm a PR URL from a changed worker status before that signal is surfaced.
+# The branch sweep below remains the backstop when the announcing line is missed
+# or does not contain one canonical URL.
+autoarm_status_announcements() {  # <changed signal paths...>
+  local file task line
+  for file in "$@"; do
+    case "$file" in
+      "$STATE"/*.status) ;;
+      *) continue ;;
+    esac
+    task=$(basename "$file" .status)
+    line=$(last_status_line "$file")
+    [ -n "$line" ] || continue
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      run_check "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" >/dev/null || true
+  done
+}
+
 # Deliver a durably queued process-event result to firstmate. Publication is
 # owned by bin/fm-procevent.sh - by the runner at capture time and by reconcile's
 # re-announcement - so this decides only whether a queued check record has been
@@ -840,6 +858,7 @@ FM_WATCH_DELIVERY_IDENTITY=$(fm_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
+[ -e "$STATE/.last-pr-autoarm" ] || touch "$STATE/.last-pr-autoarm"
 
 # A merged poll may have queued its terminal wake and then lost the process
 # between receipt publication and fixed-path removal.
@@ -1032,6 +1051,11 @@ while :; do
     done <<EOF
 $pending
 EOF
+    # The worker's PR-ready line is the fastest certain source. Arm it before
+    # yielding the signal to firstmate, while the branch sweep above covers any
+    # missed or malformed announcement on its next slow-check cycle.
+    # shellcheck disable=SC2086 # Paths come from validated task ids and are intentionally expanded.
+    autoarm_status_announcements $files
     reason="signal:$files"
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
@@ -1241,6 +1265,22 @@ EOF
       fi
     fi
   done < <(recorded_windows)
+
+  # The missing-watch sweep shares the slow-check cadence but runs only after
+  # existing signals and stale-task checks have had first refusal. Its own
+  # marker keeps an earlier actionable wake from postponing the next attempt.
+  if [ "$(age_of "$STATE/.last-pr-autoarm")" -ge "$CHECK_INTERVAL" ] \
+    && [ -x "$SCRIPT_DIR/fm-pr-autoarm.sh" ]; then
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      run_check_capture "$SCRIPT_DIR/fm-pr-autoarm.sh" sweep || exit 1
+    out=$FM_CHECK_RESULT
+    touch "$STATE/.last-pr-autoarm"
+    if [ -n "$out" ]; then
+      reason="check: pr-autoarm: $out"
+      fm_wake_append check pr-autoarm "$reason" || exit 1
+      wake "$reason"
+    fi
+  fi
 
   # Heartbeat: the watcher runs a cheap fleet-scan at a regular cadence no matter
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive
