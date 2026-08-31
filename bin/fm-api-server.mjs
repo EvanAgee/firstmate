@@ -31,13 +31,11 @@
 // POST /captain-queue/reply requires the token; body
 //   { id, generation, answer }. Generation is the positive integer served on
 //   that card. Unknown cards and generations newer than the persisted card are
-//   refused. Real prior generations remain valid stale replies. The server
-//   serializes each reply log and appends an identical id, generation, and
-//   answer only once. `at` is the server receipt time. For conflicting answers,
-//   reconcile uses the latest receipt time and then log order, retaining and
-//   reporting every earlier answer as superseded. A conflict received after
-//   resolution may supersede the recorded answer. Every accepted request queues
-//   a captain-reply wake, including a retry after an earlier wake failure.
+//   refused. Real prior generations remain valid stale replies. The stored line
+//   is { id, generation, answer, at }, where `at` is the server receipt time.
+//   The server serializes each reply log, stores an identical reply once, and
+//   queues a wake for every accepted request. bin/fm-captain-queue.sh owns reply
+//   ranking, reconciliation, and delivery behavior.
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }

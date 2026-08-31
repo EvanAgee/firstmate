@@ -229,6 +229,40 @@ test_legacy_offset_asked_at_expires() {
   pass "a signed-offset legacy asked-at reaches bounded expiry"
 }
 
+test_fractional_legacy_asked_at_expires() {
+  local home out
+  home=$(make_home legacy-fractional-expiry)
+  jq -n '{
+    updated_at: "2026-08-20T18:00:00Z",
+    records: [{
+      id: "fractional-z-expiry",
+      num: 1,
+      generation: 1,
+      question: "Fractional UTC legacy question?",
+      asked_at: "2026-08-20T17:59:59.500Z",
+      backlog_backed: false,
+      state: "open"
+    }, {
+      id: "fractional-offset-expiry",
+      num: 2,
+      generation: 1,
+      question: "Fractional offset legacy question?",
+      asked_at: "2026-08-20T12:59:59.500-05:00",
+      backlog_backed: false,
+      state: "open"
+    }]
+  }' > "$home/data/captain-queue.json"
+
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=fractional-z-expiry] expired-unbacked" \
+    "a fractional UTC legacy timestamp should expire"
+  assert_contains "$out" "parked: [id=fractional-offset-expiry] expired-unbacked" \
+    "a fractional numeric-offset legacy timestamp should expire"
+  [ "$(parked_ids "$home")" = $'fractional-z-expiry\nfractional-offset-expiry' ] \
+    || fail "fractional legacy timestamps did not reach bounded expiry"
+  pass "fractional UTC and offset legacy asked-at values reach bounded expiry"
+}
+
 test_expiry_preserves_card_and_is_idempotent() {
   local home out
   home=$(make_home expiry-body)
@@ -720,6 +754,41 @@ test_orphan_stops_before_a_later_match() {
   pass "an orphan stops reconcile before any later matching reply"
 }
 
+test_conflict_ranking_sees_winner_after_orphan() {
+  local home out rc
+  home=$(make_home conflict-after-orphan)
+  run_q "$home" add --id card-a --question "A?" >/dev/null
+  jq -nc \
+    --arg id card-a \
+    --arg answer "older answer" \
+    --arg at 2026-08-27T17:59:58Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  append_reply "$home" missing-card "orphan answer"
+  jq -nc \
+    --arg id card-a \
+    --arg answer "newer answer" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+
+  rc=0
+  out=$(run_q "$home" reconcile) || rc=$?
+  [ "$rc" -eq 1 ] || fail "orphan-separated conflict should exit 1, got $rc"
+  assert_contains "$out" \
+    "superseded: [id=card-a] [generation=1] [winner-line=3] older answer" \
+    "the orphan must not hide the later winning answer"
+  assert_not_contains "$out" "handled: [id=card-a] older answer" \
+    "the earlier losing answer must not be delivered"
+  assert_contains "$out" "orphan: [id=missing-card] orphan answer" \
+    "the orphan should still stop cursor progress"
+  [ "$(cursor_value "$home")" = 1 ] \
+    || fail "cursor should stop before the orphan, got $(cursor_value "$home")"
+  [ "$(active_ids "$home")" = card-a ] \
+    || fail "the winner after the orphan should remain pending"
+  pass "conflict ranking sees a later winner without crossing an orphan"
+}
+
 test_conflicting_replies_rank_timestamp_then_log_order() {
   local home out handled_count
   home=$(make_home conflicting-replies)
@@ -832,6 +901,165 @@ test_conflicting_reply_crash_replay_delivers_only_the_winner() {
   [ "$(jq '.pending_reply_deliveries | length' "$queue_file")" = 0 ] \
     || fail "conflicting crash replay left pending delivery evidence"
   pass "conflicting crash replay delivers only its persisted winner"
+}
+
+test_stale_conflict_preserves_pending_delivery() {
+  local home out queue_file next_file
+  home=$(make_home stale-conflict-delivery)
+  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  jq -nc \
+    --arg id card-a \
+    --arg answer "persisted answer" \
+    --arg at 2026-08-27T17:59:59Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  queue_file="$home/data/captain-queue.json"
+  next_file="$home/data/captain-queue.next"
+  jq --arg stamp "$NOW" '
+    .records[0] += {
+      state: "resolved",
+      answer: "persisted answer",
+      resolved_at: $stamp
+    }
+    | .pending_reply_deliveries = [{
+        line: 1,
+        id: "card-a",
+        generation: 1,
+        answer: "persisted answer",
+        kind: "handled"
+      }]
+  ' "$queue_file" > "$next_file"
+  mv "$next_file" "$queue_file"
+  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  jq -nc \
+    --arg id card-a \
+    --arg answer "later stale answer" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=card-a] persisted answer" \
+    "the persisted answer should survive a later stale conflict"
+  assert_contains "$out" "stale: [id=card-a] [generation=1] later stale answer" \
+    "the later prior-generation conflict should remain stale"
+  assert_not_contains "$out" "handled: [id=card-a] later stale answer" \
+    "the stale conflict must not replace the pending delivery"
+  [ "$(cursor_value "$home")" = 2 ] \
+    || fail "stale conflict should advance through both lines"
+  jq -e '
+    .records[0].state == "open"
+    and .records[0].generation == 2
+    and .records[0].question == "Second question?"
+    and (.pending_reply_deliveries | length) == 0
+  ' "$queue_file" >/dev/null \
+    || fail "stale conflict changed the reopened card or retained delivered evidence"
+  pass "a stale conflict cannot erase a persisted prior-generation delivery"
+}
+
+test_pending_group_winner_is_not_superseding() {
+  local home out queue_file next_file
+  home=$(make_home pending-group-winner)
+  run_q "$home" add --id card-a --question "Choose?" >/dev/null
+  jq -nc \
+    --arg id card-a \
+    --arg answer "persisted before delivery" \
+    --arg at 2026-08-27T17:59:59Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  jq -nc \
+    --arg id card-a \
+    --arg answer "newer pending winner" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  queue_file="$home/data/captain-queue.json"
+  next_file="$home/data/captain-queue.next"
+  jq --arg stamp "$NOW" '
+    .records[0] += {
+      state: "resolved",
+      answer: "persisted before delivery",
+      resolved_at: $stamp
+    }
+    | .pending_reply_deliveries = [{
+        line: 1,
+        id: "card-a",
+        generation: 1,
+        answer: "persisted before delivery",
+        kind: "handled"
+      }]
+  ' "$queue_file" > "$next_file"
+  mv "$next_file" "$queue_file"
+
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" \
+    "superseded: [id=card-a] [generation=1] [winner-line=2] persisted before delivery" \
+    "the persisted loser should remain superseded evidence"
+  assert_contains "$out" "handled: [id=card-a] newer pending winner" \
+    "the pending group winner should be delivered"
+  assert_not_contains "$out" "superseding: [id=card-a]" \
+    "an answer that was only persisted must not count as previously delivered"
+  [ "$(resolved_answer "$home" card-a)" = "newer pending winner" ] \
+    || fail "the pending group winner was not persisted"
+  jq -e '
+    .delivered_reply_winners == [{
+      line: 2,
+      id: "card-a",
+      generation: 1,
+      answer: "newer pending winner",
+      kind: "handled"
+    }]
+  ' "$queue_file" >/dev/null \
+    || fail "the pending group winner was not recorded as the first delivery"
+  pass "a newer pending-group winner does not claim to supersede an unseen answer"
+}
+
+test_superseding_delivery_replay_keeps_marker() {
+  local home out queue_file next_file
+  home=$(make_home superseding-replay)
+  run_q "$home" add --id card-a --question "Choose?" >/dev/null
+  jq -nc \
+    --arg id card-a \
+    --arg answer "first answer" \
+    --arg at 2026-08-27T17:59:59Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  jq -nc \
+    --arg id card-a \
+    --arg answer "replacement answer" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  printf '1\n' > "$home/state/captain-replies.cursor"
+  queue_file="$home/data/captain-queue.json"
+  next_file="$home/data/captain-queue.next"
+  jq --arg stamp "$NOW" '
+    .records[0] += {
+      state: "resolved",
+      answer: "replacement answer",
+      resolved_at: $stamp
+    }
+    | .pending_reply_deliveries = [{
+        line: 2,
+        id: "card-a",
+        generation: 1,
+        answer: "replacement answer",
+        kind: "superseding"
+      }]
+  ' "$queue_file" > "$next_file"
+  mv "$next_file" "$queue_file"
+
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" \
+    "superseding: [id=card-a] [generation=1] replacement answer" \
+    "a replayed superseding delivery should keep its marker"
+  assert_contains "$out" "handled: [id=card-a] replacement answer" \
+    "a replayed superseding delivery should still be handled"
+  [ "$(cursor_value "$home")" = 2 ] \
+    || fail "superseding replay should advance the cursor"
+  [ "$(jq '.pending_reply_deliveries | length' "$queue_file")" = 0 ] \
+    || fail "superseding replay left pending delivery evidence"
+  pass "a superseding delivery keeps its marker across crash replay"
 }
 
 test_repeat_answer_after_crash_advances_cursor() {
@@ -1201,7 +1429,65 @@ test_dashboard_reply_after_auto_clear_does_not_orphan() {
   [ "$(resolved_answer "$home" card-c)" = backlog-done ] \
     || fail "late dashboard answer overwrote the stored backlog-done resolve"
   [ -z "$(active_ids "$home")" ] || fail "later card stayed on the board: $(active_ids "$home")"
-  pass "a late dashboard reply after auto-clear prints handled, keeps backlog-done, and does not block later replies"
+  append_reply "$home" card-c "Do the other thing"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" \
+    "superseding: [id=card-c] [generation=1] Do the other thing" \
+    "a later conflict after a handled auto-clear reply should be marked superseding"
+  assert_contains "$out" "handled: [id=card-c] Do the other thing" \
+    "the later conflict should still be delivered"
+  [ "$(resolved_answer "$home" card-c)" = backlog-done ] \
+    || fail "superseding dashboard answer overwrote the stored backlog-done resolve"
+  pass "auto-cleared cards distinguish first replies from later superseding answers"
+}
+
+test_backlog_done_winner_after_orphan_is_not_superseding() {
+  local home out rc queue_file next_file
+  home=$(make_home backlog-done-orphan-conflict)
+  run_q "$home" add --id card-c --question "Ship?" >/dev/null
+  queue_file="$home/data/captain-queue.json"
+  next_file="$home/data/captain-queue.next"
+  jq --arg stamp "$NOW" '
+    .records[0] += {
+      state: "resolved",
+      answer: "backlog-done",
+      resolved_at: $stamp
+    }
+  ' "$queue_file" > "$next_file"
+  mv "$next_file" "$queue_file"
+  jq -nc \
+    --arg id card-c \
+    --arg answer "older unseen answer" \
+    --arg at 2026-08-27T17:59:58Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  append_reply "$home" missing-card "orphan answer"
+  jq -nc \
+    --arg id card-c \
+    --arg answer "newer answer after orphan" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+
+  rc=0
+  out=$(run_q "$home" reconcile) || rc=$?
+  [ "$rc" -eq 1 ] || fail "orphan-separated backlog conflict should exit 1, got $rc"
+  assert_contains "$out" \
+    "superseded: [id=card-c] [generation=1] [winner-line=3] older unseen answer" \
+    "the earlier backlog-done reply should be marked superseded"
+  assert_not_contains "$out" "handled: [id=card-c]" \
+    "the earlier backlog-done reply must not be delivered"
+  run_q "$home" add --id missing-card --question "Recovered orphan?" >/dev/null
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=missing-card] orphan answer" \
+    "the recovered orphan should advance"
+  assert_contains "$out" "handled: [id=card-c] newer answer after orphan" \
+    "the backlog-done winner should be delivered after the orphan"
+  assert_not_contains "$out" "superseding: [id=card-c]" \
+    "a superseded but unseen answer must not trigger a superseding marker"
+  [ "$(resolved_answer "$home" card-c)" = backlog-done ] \
+    || fail "the backlog-done marker was overwritten"
+  pass "a backlog-done winner after an orphan does not supersede an unseen answer"
 }
 
 test_dashboard_reply_still_clears_when_backlog_item_is_open() {
@@ -1275,6 +1561,7 @@ test_unbacked_card_stays_active_before_expiry
 test_reposting_preserves_the_expiry_anchor
 test_asked_at_is_normalized_or_rejected
 test_legacy_offset_asked_at_expires
+test_fractional_legacy_asked_at_expires
 test_expiry_preserves_card_and_is_idempotent
 test_manual_park_defers_a_fresh_unbacked_card
 test_legacy_card_waits_for_verified_migration
@@ -1284,8 +1571,12 @@ test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
+test_conflict_ranking_sees_winner_after_orphan
 test_conflicting_replies_rank_timestamp_then_log_order
 test_conflicting_reply_crash_replay_delivers_only_the_winner
+test_stale_conflict_preserves_pending_delivery
+test_pending_group_winner_is_not_superseding
+test_superseding_delivery_replay_keeps_marker
 test_repeat_answer_after_crash_advances_cursor
 test_reopened_card_skips_a_completed_reply_replay
 test_reopened_card_delivers_a_reply_persisted_before_crash
@@ -1303,6 +1594,7 @@ test_done_backlog_item_clears_card_without_a_reply
 test_legacy_missing_backing_ignores_done_collision_and_expires
 test_only_done_cards_auto_clear
 test_dashboard_reply_after_auto_clear_does_not_orphan
+test_backlog_done_winner_after_orphan_is_not_superseding
 test_dashboard_reply_still_clears_when_backlog_item_is_open
 test_parked_reply_resolves_and_preserves_history
 
