@@ -4,10 +4,10 @@
 # Usage: fm-pr-autoarm.sh sweep
 #        fm-pr-autoarm.sh announce <task-id> <status-line>
 #
-# sweep inspects every ordinary task metadata file without pr=, resolves the
-# exact upstream branch from its recorded worktree, and asks that branch's forge
-# for at most two open PRs. One match is armed through fm-pr-check.sh, no matches
-# and forge errors stay silent, and local ambiguity prints one wake line.
+# sweep resumes through ordinary task metadata without pr=, resolves the exact
+# upstream branch from each recorded worktree, and checks that branch's forge.
+# One exact match is armed through fm-pr-check.sh, no matches and forge errors
+# stay silent, and local ambiguity prints one wake line.
 # announce extracts one canonical GitHub PR or GitLab MR URL from the supplied
 # status line and arms it through the same path. Existing pr= metadata is always
 # left alone.
@@ -19,6 +19,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 PR_CHECK_BIN="${FM_PR_CHECK_BIN:-$SCRIPT_DIR/fm-pr-check.sh}"
 LOOKUP_TIMEOUT=${FM_PR_AUTOARM_LOOKUP_TIMEOUT:-2}
+SWEEP_BUDGET=${FM_PR_AUTOARM_SWEEP_BUDGET:-20}
+SWEEP_CURSOR="$STATE/.pr-autoarm-sweep-cursor"
 
 # shellcheck source=bin/fm-pr-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-pr-lib.sh"
@@ -27,6 +29,9 @@ LOOKUP_TIMEOUT=${FM_PR_AUTOARM_LOOKUP_TIMEOUT:-2}
 
 case "$LOOKUP_TIMEOUT" in
   ''|*[!0-9]*|0) LOOKUP_TIMEOUT=2 ;;
+esac
+case "$SWEEP_BUDGET" in
+  ''|*[!0-9]*|0) SWEEP_BUDGET=20 ;;
 esac
 
 FM_PR_AUTOARM_PROVIDER=
@@ -96,30 +101,75 @@ fm_pr_autoarm_remote_parse() {
 }
 
 fm_pr_autoarm_lookup() {
-  local provider=$1 host=$2 path=$3 branch=$4 output url count=0
+  local provider=$1 host=$2 path=$3 branch=$4 output raw url head_path head_branch extra count=0 owner encoded_path
   FM_PR_AUTOARM_URL=
   FM_PR_AUTOARM_COUNT=0
   case "$provider" in
     github)
       command -v gh >/dev/null 2>&1 || return 2
+      owner=${path%%/*}
       output=$(fm_run_timed "$LOOKUP_TIMEOUT" env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
-        gh pr list --repo "$path" --head "$branch" --state open --limit 2 \
-        --json url --jq '.[].url' 2>/dev/null </dev/null) || return 2
+        gh api --method GET "repos/$path/pulls" \
+        -f state=open -f "head=$owner:$branch" -f per_page=2 \
+        --jq '.[] | [.html_url, .head.repo.full_name, .head.ref] | @tsv' \
+        2>/dev/null </dev/null) || return 2
       ;;
     gitlab)
-      command -v glab >/dev/null 2>&1 || return 2
-      output=$(fm_run_timed "$LOOKUP_TIMEOUT" glab mr list \
-        --repo "https://$host/$path" --source-branch "$branch" \
-        --per-page 2 --output json --jq '.[].web_url' 2>/dev/null </dev/null) || return 2
+      command -v glab >/dev/null 2>&1 && command -v perl >/dev/null 2>&1 || return 2
+      encoded_path=${path//\//%2F}
+      raw=$(fm_run_timed "$LOOKUP_TIMEOUT" glab api --hostname "$host" --paginate \
+        --method GET "projects/$encoded_path/merge_requests" \
+        --raw-field state=opened --raw-field "source_branch=$branch" \
+        --raw-field per_page=100 2>/dev/null </dev/null) || return 2
+      # shellcheck disable=SC2016
+      output=$(printf '%s' "$raw" | perl -MJSON::PP -e '
+        local $/;
+        my $text = <STDIN>;
+        my $branch = shift;
+        my $json = JSON::PP->new;
+        while ($text =~ /\S/) {
+          $text =~ s/^\s+//;
+          my ($page, $used) = $json->decode_prefix($text);
+          die "invalid page" unless ref($page) eq "ARRAY" && $used;
+          substr($text, 0, $used, "");
+          for my $mr (@$page) {
+            die "invalid merge request" unless ref($mr) eq "HASH"
+              && defined($mr->{web_url})
+              && defined($mr->{source_branch})
+              && defined($mr->{source_project_id})
+              && defined($mr->{target_project_id});
+            next unless $mr->{source_branch} eq $branch;
+            next unless "$mr->{source_project_id}" eq "$mr->{target_project_id}";
+            print "$mr->{web_url}\n";
+          }
+        }
+      ' "$branch") || return 2
       ;;
     *) return 3 ;;
   esac
-  while IFS= read -r url || [ -n "$url" ]; do
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    url=$raw
+    head_path=
+    head_branch=
+    extra=
+    if [ "$provider" = github ]; then
+      IFS=$'\t' read -r url head_path head_branch extra <<< "$raw"
+      [ -n "$url" ] && [ -n "$head_path" ] && [ -n "$head_branch" ] \
+        && [ -z "$extra" ] || return 2
+      [ "$(printf '%s' "$head_path" | tr '[:upper:]' '[:lower:]')" \
+        = "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" ] || return 2
+      [ "$head_branch" = "$branch" ] || return 2
+    fi
     [ -n "$url" ] || continue
-    fm_pr_url_parse "$url" || return 3
-    [ "$FM_PR_PROVIDER" = "$provider" ] || return 3
-    [ "$FM_PR_HOST" = "$host" ] || return 3
-    [ "$FM_PR_PATH" = "$path" ] || return 3
+    fm_pr_url_parse "$url" || return 2
+    [ "$FM_PR_PROVIDER" = "$provider" ] || return 2
+    [ "$FM_PR_HOST" = "$host" ] || return 2
+    if [ "$provider" = github ]; then
+      [ "$(printf '%s' "$FM_PR_PATH" | tr '[:upper:]' '[:lower:]')" \
+        = "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" ] || return 2
+    else
+      [ "$FM_PR_PATH" = "$path" ] || return 2
+    fi
     count=$((count + 1))
     [ "$count" -ne 1 ] || FM_PR_AUTOARM_URL=$FM_PR_URL
   done <<EOF
@@ -130,7 +180,17 @@ EOF
 
 fm_pr_autoarm_arm() {
   local task=$1 url=$2
-  "$PR_CHECK_BIN" "$task" "$url" >/dev/null 2>&1
+  "$PR_CHECK_BIN" --only-if-unarmed "$task" "$url" >/dev/null 2>&1
+}
+
+fm_pr_autoarm_cursor_write() {
+  local task=$1 tmp
+  tmp=$(umask 077; mktemp "$STATE/.pr-autoarm-sweep.XXXXXX") || return 1
+  if ! printf '%s\n' "$task" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! mv -f -- "$tmp" "$SWEEP_CURSOR"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 fm_pr_autoarm_sweep_one() {
@@ -186,11 +246,7 @@ fm_pr_autoarm_sweep_one() {
     "$FM_PR_AUTOARM_PATH" "$branch" || lookup_rc=$?
   case "$lookup_rc" in
     0) ;;
-    2) return 0 ;;
-    *)
-      fm_pr_autoarm_note "$task" "forge returned an unreadable PR list"
-      return 0
-      ;;
+    *) return 0 ;;
   esac
   case "$FM_PR_AUTOARM_COUNT" in
     0) return 0 ;;
@@ -205,12 +261,40 @@ fm_pr_autoarm_sweep_one() {
 }
 
 fm_pr_autoarm_sweep() {
-  local meta
+  local meta task cursor='' resume=1 started=$SECONDS processed=0 last_task='' exhausted=0
   [ -d "$STATE" ] && [ ! -L "$STATE" ] || return 0
+  if [ -f "$SWEEP_CURSOR" ] && [ ! -L "$SWEEP_CURSOR" ]; then
+    cursor=$(sed -n '1p' "$SWEEP_CURSOR" 2>/dev/null || true)
+    fm_pr_task_id_valid "$cursor" || cursor=
+  fi
+  if [ -n "$cursor" ] && { [ -e "$STATE/$cursor.meta" ] || [ -L "$STATE/$cursor.meta" ]; }; then
+    resume=0
+  fi
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || [ -L "$meta" ] || continue
-    fm_pr_autoarm_sweep_one "$meta"
+    last_task=$(basename "$meta" .meta)
   done
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || [ -L "$meta" ] || continue
+    task=$(basename "$meta" .meta)
+    if [ "$resume" -eq 0 ]; then
+      [ "$task" != "$cursor" ] || resume=1
+      continue
+    fi
+    if ! fm_pr_autoarm_cursor_write "$task"; then
+      fm_pr_autoarm_note "$task" "could not save sweep progress"
+      exhausted=1
+      break
+    fi
+    fm_pr_autoarm_sweep_one "$meta"
+    processed=$((processed + 1))
+    if [ "$processed" -gt 0 ] && [ $((SECONDS - started)) -ge "$SWEEP_BUDGET" ] \
+      && [ "$task" != "$last_task" ]; then
+      exhausted=1
+      break
+    fi
+  done
+  [ "$exhausted" -eq 1 ] || rm -f -- "$SWEEP_CURSOR"
   [ -z "$FM_PR_AUTOARM_AMBIGUITIES" ] \
     || printf 'pr-autoarm: %s\n' "$FM_PR_AUTOARM_AMBIGUITIES"
 }
@@ -221,6 +305,7 @@ fm_pr_autoarm_announce() {
   meta="$STATE/$task.meta"
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
   fm_pr_autoarm_meta_has_pr "$meta" && return 0
+  [ "$(fm_pr_autoarm_meta_field "$meta" kind)" != secondmate ] || return 0
   while IFS= read -r candidate || [ -n "$candidate" ]; do
     [ -n "$candidate" ] || continue
     while :; do
@@ -237,7 +322,7 @@ fm_pr_autoarm_announce() {
     fi
   done < <(printf '%s\n' "$line" | grep -Eo 'https://[^[:space:]]+' || true)
   [ "$count" -eq 1 ] || return 0
-  fm_pr_autoarm_meta_has_pr "$meta" || fm_pr_autoarm_arm "$task" "$url" || true
+  fm_pr_autoarm_arm "$task" "$url"
 }
 
 case "${1:-}" in

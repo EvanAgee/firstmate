@@ -513,21 +513,51 @@ scan_signals() {
   return 0
 }
 
-# Arm a PR URL from a changed worker status before that signal is surfaced.
-# The branch sweep below remains the backstop when the announcing line is missed
-# or does not contain one canonical URL.
+# Arm PR URLs from every complete status line appended since the prior scan.
+# The separate cursor advances only after the announcement helper accepts a
+# line, so an interrupted or failed arm is retried on the next status change.
+autoarm_status_cursor_write() {  # <cursor> <inode> <offset>
+  local cursor=$1 inode=$2 offset=$3 tmp
+  tmp=$(umask 077; mktemp "$STATE/.pr-autoarm-status.XXXXXX") || return 1
+  if ! printf '%s %s\n' "$inode" "$offset" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! mv -f -- "$tmp" "$cursor"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
 autoarm_status_announcements() {  # <changed signal paths...>
-  local file task line
+  local file task line sig size inode ignored cursor cursor_inode offset extra line_bytes
   for file in "$@"; do
     case "$file" in
       "$STATE"/*.status) ;;
       *) continue ;;
     esac
     task=$(basename "$file" .status)
-    line=$(last_status_line "$file")
-    [ -n "$line" ] || continue
-    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-      run_check "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" >/dev/null || true
+    fm_pr_task_id_valid "$task" || continue
+    sig=$(fm_wake_signal_sig "$file") || continue
+    IFS=: read -r size inode ignored <<< "$sig"
+    case "$size:$inode" in *[!0-9:]*) continue ;; esac
+    cursor="$STATE/.pr-autoarm-status-$task.cursor"
+    cursor_inode=
+    offset=0
+    extra=
+    if [ -f "$cursor" ] && [ ! -L "$cursor" ]; then
+      read -r cursor_inode offset extra < "$cursor" || true
+      case "$offset" in ''|*[!0-9]*) offset=0 ;; esac
+      [ -z "$extra" ] && [ "$cursor_inode" = "$inode" ] && [ "$offset" -le "$size" ] \
+        || offset=0
+    fi
+    LC_ALL=C tail -c "+$((offset + 1))" "$file" 2>/dev/null | while IFS= read -r line; do
+      if ! (FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        run_check_process "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" \
+        >/dev/null 2>&1); then
+        break
+      fi
+      line_bytes=$(LC_ALL=C printf '%s' "$line" | wc -c | tr -d ' ')
+      offset=$((offset + line_bytes + 1))
+      autoarm_status_cursor_write "$cursor" "$inode" "$offset" || break
+    done
   done
 }
 
