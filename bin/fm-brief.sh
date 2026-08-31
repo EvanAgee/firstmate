@@ -363,15 +363,16 @@ fi
 # "Delivery contract: mode=<mode>" line that bin/fm-spawn.sh checks against its own
 # explicit --mode before launching.
 #
-# PR_WATCH is shared by both PR-producing modes. Rule 8 owns how feedback is
-# handled; this block extends when that duty applies. Local-only has no PR.
+# PR_WATCH owns the shared timing for both PR-producing modes. Each mode adds
+# its own feedback path. Local-only has no PR.
 IFS= read -r -d '' PR_WATCH <<EOF || true
 
 Reporting done does not end your ownership of this PR - it stays yours until it merges.
-Stay on watch after reporting done. Apply rule 8 to any new reviewer feedback, then re-report status.
-Never merge the PR and never arm auto-merge; the configured merge authority owns that.
+Stay on watch after reporting done.
+After addressing new reviewer feedback, re-report status.
 EOF
 PR_WATCH=${PR_WATCH%$'\n'}
+PR_WATCH_GUARD='Never merge the PR and never arm auto-merge; the configured merge authority owns that.'
 case "$MODE" in
   direct-PR)
     SETUP2=""
@@ -384,6 +385,8 @@ The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and enter the PR watch below.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 $PR_WATCH
+Apply rule 8 directly to late reviewer feedback: fix and push on your \`fm/$ID\` branch, resolve the threads, or reply with a concrete reason a finding is not valid.
+$PR_WATCH_GUARD
 EOF
     ;;
   local-only)
@@ -427,6 +430,10 @@ Two firstmate-specific rules layer on top of that guidance:
 After /no-mistakes reports CI green (the CI-ready return point), append \`done: PR {url} checks green\` and enter the PR watch below.
 Do not wait for no-mistakes to keep monitoring in the background.
 $PR_WATCH
+Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.
+If a gate is waiting, respond there and let the pipeline handle the finding.
+If the monitor has ended, rerun /no-mistakes.
+$PR_WATCH_GUARD
 EOF
     ;;
 esac

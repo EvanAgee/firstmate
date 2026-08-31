@@ -244,11 +244,11 @@ test_ship_modes_generate_clean_briefs() {
 
 # The worker that opens a PR owns its review feedback until the PR merges,
 # including feedback that arrives AFTER the done report (a late review-bot pass,
-# a human thread, a requested change). This must reach both PR-producing modes
-# and must not weaken the never-merge prohibition. local-only has no PR, so it
-# stays out.
+# a human thread, a requested change). Both PR-producing modes share the watch
+# timing but use their own feedback path. Neither path may weaken the
+# never-merge prohibition. local-only has no PR, so it stays out.
 test_pr_producing_modes_own_feedback_until_merge() {
-  local home id mode brief watch_entry
+  local home id mode brief watch_entry expected_action forbidden_action
   home="$TMP_ROOT/pr-watch-home"
   mkdir -p "$home/data"
 
@@ -260,17 +260,31 @@ test_pr_producing_modes_own_feedback_until_merge() {
     case "$mode" in
       no-mistakes)
         watch_entry='append `done: PR {url} checks green` and enter the PR watch below.'
+        expected_action='Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.'
+        forbidden_action='fix and push on your `fm/'"$id"'` branch'
         ;;
       direct-PR)
         watch_entry='append `done: PR {url}` to the status file and enter the PR watch below.'
+        expected_action='Apply rule 8 directly to late reviewer feedback: fix and push on your `fm/'"$id"'` branch'
+        forbidden_action='Drive late reviewer feedback back through no-mistakes'
         ;;
     esac
     assert_grep "$watch_entry" "$brief" \
       "$mode: done report did not enter the PR watch"
     assert_grep "Reporting done does not end your ownership of this PR - it stays yours until it merges." "$brief" \
       "$mode: brief did not keep PR ownership past the done report"
-    assert_grep "Stay on watch after reporting done. Apply rule 8 to any new reviewer feedback, then re-report status." "$brief" \
-      "$mode: brief did not extend rule 8 past the done report"
+    assert_grep "$expected_action" "$brief" \
+      "$mode: brief did not use its own late-feedback path"
+    assert_no_grep "$forbidden_action" "$brief" \
+      "$mode: brief included the other mode's late-feedback path"
+    assert_grep "After addressing new reviewer feedback, re-report status." "$brief" \
+      "$mode: brief did not require a fresh status report after late feedback"
+    if [ "$mode" = no-mistakes ]; then
+      assert_grep "If a gate is waiting, respond there and let the pipeline handle the finding." "$brief" \
+        "$mode: active monitor did not route late feedback through its gate"
+      assert_grep "If the monitor has ended, rerun /no-mistakes." "$brief" \
+        "$mode: ended monitor did not restart the pipeline for late feedback"
+    fi
     assert_grep "Never merge the PR and never arm auto-merge; the configured merge authority owns that." "$brief" \
       "$mode: post-done watch weakened the never-merge prohibition"
   done
