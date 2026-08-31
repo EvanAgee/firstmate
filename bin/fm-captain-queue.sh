@@ -15,7 +15,9 @@
 # keeps active or parked same-id rows ahead of resolved history.
 # Same-state duplicates use their newest state timestamp and stable tie-breaks.
 # The next successful write emits the canonical records shape.
-# `add` upserts one active card under that id.
+# `add` upserts an open card or reopens a resolved card without parked history.
+# Open-card reposts preserve their original asked-at and backing classification,
+# including the missing classification on legacy records.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
 # It reads every new reply line past the cursor, matches by id, changes a
 # matched card's state to `resolved` (answer preserved), and advances the
@@ -37,7 +39,8 @@
 # `add` records backlog_backed as true, false, or null when the backlog cannot
 # be read. False and null records expire after UNBACKED_CARD_EXPIRY_DAYS (7)
 # days without dropping their content.
-# `park` marks one human-verified active card as `parked` with a required note.
+# `park` defers a confirmed-unbacked card at any age, or migrates a
+# human-verified legacy card, with a required note.
 # Repeating it is a no-op for parked cards and resolved cards with parked history.
 # Add, park, and reconcile take one home-scoped lock at
 # state/.captain-queue.lock for the whole read-modify-write, then release it.
@@ -335,10 +338,6 @@ cmd_add() {
     ' >/dev/null; then
     die 1 "card already parked: $id"
   fi
-  if printf '%s\n' "$queue" | jq -e --arg id "$id" \
-      'any(.records[]; .id == $id and .state == "resolved")' >/dev/null; then
-    die 1 "card already resolved: $id"
-  fi
   backlog_backed=$(add_time_backlog_backing_state "$id")
   if [ "${#options[@]}" -gt 0 ]; then
     options_json=$(json_array "${options[@]}")
@@ -375,19 +374,25 @@ cmd_add() {
       project: $project
     }')
   queue=$(printf '%s\n' "$queue" | jq -c --arg id "$id" --argjson item "$item" '
-    if any(.records[]; .id == $id and .state == "open") then
-      .records = [.records[] | if .id == $id and .state == "open" then
-        if has("backlog_backed") and
-            ((.backlog_backed | type) == "boolean" or .backlog_backed == null) then
-          $item + {
-            num: .num,
-            asked_at: (.asked_at // $item.asked_at),
-            backlog_backed: .backlog_backed
-          }
-        else
+    if any(.records[]; .id == $id and (.state == "open" or .state == "resolved")) then
+      .records = [.records[] |
+        if .id == $id and .state == "open" then
+          . as $existing
+          | $item + {
+              num: $existing.num,
+              asked_at: ($existing.asked_at // $item.asked_at)
+            }
+          | if ($existing | has("backlog_backed")) then
+              .backlog_backed = $existing.backlog_backed
+            else
+              del(.backlog_backed)
+            end
+        elif .id == $id and .state == "resolved" then
           $item + {num: .num}
+        else
+          .
         end
-      else . end]
+      ]
     else
       .records += [$item]
     end

@@ -230,34 +230,34 @@ test_expiry_preserves_card_and_is_idempotent() {
   pass "expiry preserves the full card in parked and never re-parks or resurrects it"
 }
 
-test_manual_park_supports_verified_migration() {
+test_manual_park_defers_a_fresh_unbacked_card() {
   local home out rc
   home=$(make_home manual-park)
   run_q "$home" add \
     --id settled-existing-question \
     --question "Proceed with cutover?" \
     --context "The cutover has since completed." \
-    --asked-at 2026-08-26T18:00:00Z \
+    --asked-at "$NOW" \
     --option "Proceed" \
     --option "Wait" >/dev/null
   out=$(run_q "$home" park \
     --id settled-existing-question \
     --note "Verified settled on 2026-08-27")
   assert_contains "$out" "parked: [id=settled-existing-question] manual" \
-    "manual park should report the migrated card"
-  [ -z "$(active_ids "$home")" ] || fail "manual park left the migrated card active"
-  jq -e '
+    "manual park should report the deferred card"
+  [ -z "$(active_ids "$home")" ] || fail "manual park left the deferred card active"
+  jq -e --arg now "$NOW" '
     (.records | length) == 1
     and .records[0].state == "parked"
     and .records[0].id == "settled-existing-question"
     and .records[0].question == "Proceed with cutover?"
     and .records[0].context == "The cutover has since completed."
-    and .records[0].asked_at == "2026-08-26T18:00:00Z"
+    and .records[0].asked_at == $now
     and .records[0].options == ["Proceed", "Wait"]
     and .records[0].parked_reason == "manual"
     and .records[0].parked_note == "Verified settled on 2026-08-27"
   ' "$home/data/captain-queue.json" >/dev/null \
-    || fail "manual park did not preserve the verified card and migration note"
+    || fail "manual park did not preserve the fresh card and deferral note"
   out=$(run_q "$home" park \
     --id settled-existing-question \
     --note "Verified settled on 2026-08-27")
@@ -273,7 +273,7 @@ test_manual_park_supports_verified_migration() {
   [ -z "$(active_ids "$home")" ] || fail "add resurrected a parked card"
   [ "$(jq '[.records[] | select(.state == "parked")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
     || fail "refused add changed the parked card"
-  pass "manual park supports a repeat-safe human-verified migration with a note"
+  pass "manual park defers a fresh unbacked card and repeats safely"
 }
 
 test_legacy_card_waits_for_verified_migration() {
@@ -605,21 +605,40 @@ test_matched_reply_removes_the_card_and_keeps_the_answer() {
   pass "a matched reply removes the card, keeps the answer, and advances the cursor one line"
 }
 
-test_resolved_card_id_cannot_be_reused() {
-  local home out rc
+test_resolved_card_id_reopens_without_parked_history() {
+  local home fakebin out
   home=$(make_home resolved-id-reuse)
-  run_q "$home" add --id resolved-card --question "First question?" >/dev/null
+  cat > "$home/data/backlog.md" <<'EOF'
+## Queued
+- resolved-card - Work remains open while questions change
+EOF
+  fakebin=$(fm_fakebin "$home")
+  make_failing_tasks_axi "$fakebin"
+  PATH="$fakebin:$PATH" run_q "$home" add \
+    --id resolved-card \
+    --question "First question?" \
+    --asked-at 2026-08-26T18:00:00Z >/dev/null
   append_reply "$home" resolved-card "First answer"
-  run_q "$home" reconcile >/dev/null
-  rc=0
-  out=$(run_q "$home" add --id resolved-card --question "Second question?" 2>&1) || rc=$?
-  [ "$rc" -eq 1 ] || fail "reusing a resolved card id should exit 1, got $rc"
-  assert_contains "$out" "card already resolved: resolved-card" \
-    "resolved card reuse should explain the identity conflict"
-  [ -z "$(active_ids "$home")" ] || fail "resolved card id reuse created an active card"
-  [ "$(resolved_answer "$home" resolved-card)" = "First answer" ] \
-    || fail "resolved card id reuse changed its history"
-  pass "a resolved card id cannot be reused"
+  PATH="$fakebin:$PATH" run_q "$home" reconcile >/dev/null
+  out=$(PATH="$fakebin:$PATH" run_q "$home" add \
+    --id resolved-card \
+    --question "Second question?" \
+    --context "The same open work needs another decision.")
+  assert_contains "$out" "added: resolved-card" \
+    "the deterministic hold id should reopen after its earlier answer"
+  jq -e --arg now "$NOW" '
+    (.records | length) == 1
+    and .records[0].id == "resolved-card"
+    and .records[0].state == "open"
+    and .records[0].question == "Second question?"
+    and .records[0].context == "The same open work needs another decision."
+    and .records[0].asked_at == $now
+    and .records[0].backlog_backed == true
+    and (.records[0] | has("answer") | not)
+    and (.records[0] | has("resolved_at") | not)
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "resolved card did not reopen as the new backed question"
+  pass "a resolved deterministic card id reopens without parked history"
 }
 
 test_orphan_reply_does_not_advance_or_drop() {
@@ -758,14 +777,9 @@ SH
   chmod +x "$1/tasks-axi"
 }
 
-test_verified_live_card_can_be_reposted_with_backing() {
-  local home out
-  if ! have_tasks_axi; then
-    echo "skip: tasks-axi not found (verified live-card migration)"
-    return 0
-  fi
+test_legacy_repost_preserves_migration_eligibility() {
+  local home fakebin out
   home=$(make_home live-migration)
-  seed_backlog "$home"
   jq -n '{
     updated_at: "2026-08-20T18:00:00Z",
     items: [{
@@ -781,26 +795,36 @@ test_verified_live_card_can_be_reposted_with_backing() {
     }],
     resolved: []
   }' > "$home/data/captain-queue.json"
-  backlog_add "$home" legacy-live-question "Track the verified live question"
-  run_q "$home" add \
+  cat > "$home/data/backlog.md" <<'EOF'
+## Queued
+- legacy-live-question - Work filed after the legacy card
+EOF
+  fakebin=$(fm_fakebin "$home")
+  make_failing_tasks_axi "$fakebin"
+  PATH="$fakebin:$PATH" run_q "$home" add \
     --id legacy-live-question \
-    --question "Verified live question" \
+    --question "Updated legacy question" \
     --asked-at "$NOW" >/dev/null
-  jq -e --arg now "$NOW" '
+  jq -e '
     (.records | length) == 1
     and .records[0].state == "open"
     and .records[0].id == "legacy-live-question"
     and .records[0].num == 7
-    and .records[0].question == "Verified live question"
-    and .records[0].asked_at == $now
-    and .records[0].backlog_backed == true
+    and .records[0].question == "Updated legacy question"
+    and .records[0].asked_at == "2026-08-20T18:00:00Z"
+    and (.records[0] | has("backlog_backed") | not)
   ' "$home/data/captain-queue.json" >/dev/null \
-    || fail "re-post did not attach the verified live card to its new backlog item"
-  out=$(run_q "$home" reconcile)
-  [ -z "$out" ] || fail "verified backed re-post should stay active: $out"
+    || fail "ordinary repost changed the legacy card's migration state or expiry anchor"
+  out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
+  [ -z "$out" ] || fail "legacy repost should still await human migration: $out"
   [ "$(active_ids "$home")" = legacy-live-question ] \
-    || fail "verified backed re-post left the active queue"
-  pass "a verified live legacy card can be re-posted after its backing work is filed"
+    || fail "legacy repost disappeared before human migration"
+  out=$(PATH="$fakebin:$PATH" run_q "$home" park \
+    --id legacy-live-question \
+    --note "Verified legacy deferral")
+  assert_contains "$out" "parked: [id=legacy-live-question] manual" \
+    "human verification should still migrate the reposted legacy card"
+  pass "legacy repost preserves its anchor and migration eligibility"
 }
 
 test_done_backlog_item_clears_card_without_a_reply() {
@@ -1000,7 +1024,7 @@ test_unbacked_card_stays_active_before_expiry
 test_reposting_preserves_the_expiry_anchor
 test_asked_at_is_normalized_or_rejected
 test_expiry_preserves_card_and_is_idempotent
-test_manual_park_supports_verified_migration
+test_manual_park_defers_a_fresh_unbacked_card
 test_legacy_card_waits_for_verified_migration
 test_legacy_duplicate_id_prefers_visible_state_over_timestamp
 test_legacy_same_state_duplicate_compares_offset_timestamps
@@ -1015,8 +1039,8 @@ test_backed_card_does_not_expire
 test_backlog_fallback_avoids_unknown_state
 test_repost_preserves_unknown_add_time_backing
 test_later_done_item_does_not_resolve_an_unbacked_card
-test_resolved_card_id_cannot_be_reused
-test_verified_live_card_can_be_reposted_with_backing
+test_resolved_card_id_reopens_without_parked_history
+test_legacy_repost_preserves_migration_eligibility
 test_done_backlog_item_clears_card_without_a_reply
 test_legacy_backed_done_card_still_clears
 test_only_done_cards_auto_clear
