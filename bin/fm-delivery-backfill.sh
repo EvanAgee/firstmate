@@ -50,7 +50,7 @@ fi
 ledger_has_task() {
   local ledger=$1 task_id=$2
   [ -f "$ledger" ] && [ ! -L "$ledger" ] || return 1
-  jq -Rse --arg task_id "$task_id" '
+  jq -Rs -e --arg task_id "$task_id" '
     split("\n")
     | map(fromjson? | select(.task_id == $task_id))
     | length > 0
@@ -59,6 +59,9 @@ ledger_has_task() {
 
 decode_gh_rows() {
   local response=$1 count payload
+  if [ "$response" = '[]' ]; then
+    return 0
+  fi
   count=${response%%]:*}
   count=${count#[}
   case "$count" in
@@ -78,9 +81,9 @@ LEDGER="$DATA/delivery-log.jsonl"
 FAILED=0
 while IFS='|' read -r REPO SLUG PROJECT_PATH; do
   [ -n "$REPO" ] || continue
-  if ! RESPONSE=$(gh-axi api GET \
-    "/repos/$SLUG/pulls?state=closed&sort=updated&direction=desc&per_page=$LIMIT" \
-    --jq '[.[] | select(.merged_at != null) | [.number,.head.ref,.created_at,.merged_at,.html_url] | @tsv]'); then
+  if ! RESPONSE=$(gh-axi api POST /graphql \
+    --field query="{ search(type: ISSUE, query: \"repo:$SLUG is:pr is:merged sort:updated-desc\", first: $LIMIT) { nodes { ... on PullRequest { number headRefName createdAt mergedAt url } } } }" \
+    --jq '[.data.search.nodes[] | select(.mergedAt != null) | [.number,.headRefName,.createdAt,.mergedAt,.url] | @tsv]'); then
     echo "warning: could not read recent merged pull requests for $SLUG" >&2
     FAILED=1
     continue

@@ -164,7 +164,39 @@ test_partial_record_uses_null_for_unknown_facts() {
   pass "delivery record keeps every unavailable timing fact as JSON null"
 }
 
-test_backfill_is_idempotent() {
+test_sqlite_failure_warns_and_records_partial_timing() {
+  local home db ledger record rc
+  home="$TMP_ROOT/sqlite-failure/home"
+  db="$home/broken.sqlite"
+  ledger="$home/data/delivery-log.jsonl"
+  mkdir -p "$home"
+  printf '%s\n' 'not a sqlite database' > "$db"
+
+  set +e
+  FM_HOME="$home" FM_DELIVERY_DB="$db" \
+    "$RECORD" task-with-broken-history --repo widget \
+      > "$home/stdout" 2> "$home/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "sqlite-failure: timing lookup failure must not block the record"
+  assert_grep 'warning: could not read no-mistakes timing for task-with-broken-history' \
+    "$home/stderr" \
+    "sqlite-failure: timing lookup failure was not reported"
+  record=$(cat "$ledger")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-with-broken-history" and
+    .no_mistakes_started_at == null and
+    .review_rounds == null and
+    .active_fix_minutes == null and
+    .test_minutes == null and
+    .document_minutes == null and
+    .parked_ms == null
+  ' >/dev/null || fail "sqlite-failure: partial timing record has the wrong values: $record"
+  pass "delivery record reports a SQLite failure and keeps partial timing"
+}
+
+test_backfill_uses_merged_limit_and_is_idempotent() {
   local home project db ledger fakebin record
   home="$TMP_ROOT/backfill/home"
   project="$home/projects/aos"
@@ -175,20 +207,24 @@ test_backfill_is_idempotent() {
   make_database "$db" "$project"
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
-case "${3:-}" in
-  /repos/SuperDuperIT/aos/*)
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+case "$*" in
+  *'repo:SuperDuperIT/aos is:pr is:merged sort:updated-desc'*'first: 10'*)
     printf '%s\n' '[1]: "88\tfm/task-one\t2025-08-25T12:00:00Z\t2025-08-25T12:10:00Z\thttps://github.com/example/widget/pull/88"'
     ;;
-  *)
-    printf '%s\n' '[0]:'
+  *'is:pr is:merged sort:updated-desc'*'first: 10'*)
+    printf '%s\n' '[]'
     ;;
+  *) exit 1 ;;
 esac
 SH
   chmod +x "$fakebin/gh-axi"
 
-  FM_HOME="$home" FM_DELIVERY_DB="$db" PATH="$fakebin:$PATH" \
+  FM_HOME="$home" FM_DELIVERY_DB="$db" FM_TEST_GH_AXI_LOG="$home/gh-axi.log" \
+    PATH="$fakebin:$PATH" \
     "$BACKFILL" --limit 10 || fail "first delivery backfill failed"
-  FM_HOME="$home" FM_DELIVERY_DB="$db" PATH="$fakebin:$PATH" \
+  FM_HOME="$home" FM_DELIVERY_DB="$db" FM_TEST_GH_AXI_LOG="$home/gh-axi.log" \
+    PATH="$fakebin:$PATH" \
     "$BACKFILL" --limit 10 || fail "repeated delivery backfill failed"
 
   [ "$(wc -l < "$ledger" | tr -d ' ')" = 1 ] \
@@ -201,10 +237,13 @@ SH
     .no_mistakes_started_at == "2025-08-25T19:28:20Z" and
     (.review_rounds | length) == 2
   ' >/dev/null || fail "backfill record has the wrong values: $record"
-  pass "delivery backfill adds recent merged history once per task"
+  [ "$(wc -l < "$home/gh-axi.log" | tr -d ' ')" = 6 ] \
+    || fail "backfill did not query each repository on both runs"
+  pass "delivery backfill limits merged pull requests and remains idempotent"
 }
 
 test_record_shape_and_append
 test_repeated_task_is_not_duplicated
 test_partial_record_uses_null_for_unknown_facts
-test_backfill_is_idempotent
+test_sqlite_failure_warns_and_records_partial_timing
+test_backfill_uses_merged_limit_and_is_idempotent

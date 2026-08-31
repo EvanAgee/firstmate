@@ -212,7 +212,11 @@ git -C "$PROJ" merge --ff-only "$BRANCH" >/dev/null
 after_full=$(git -C "$PROJ" rev-parse "$DEFAULT")
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
-LANDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+LANDED_AT=
+if ! LANDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ); then
+  echo "warning: could not determine the local landing timestamp for $ID" >&2
+  LANDED_AT=
+fi
 
 delivery_repo=$(basename "$PROJ")
 case "$delivery_repo" in

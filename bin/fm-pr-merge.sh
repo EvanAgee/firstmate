@@ -120,6 +120,14 @@ caller_has_merge_method() {
   return 1
 }
 
+caller_uses_auto_merge() {
+  local arg
+  for arg in "$@"; do
+    [ "$arg" = --auto ] && return 0
+  done
+  return 1
+}
+
 reject_repo_overrides() {
   local arg
   for arg in "$@"; do
@@ -246,17 +254,59 @@ merge_args=()
 if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
 fi
+auto_merge=0
+if caller_uses_auto_merge "$@"; then
+  auto_merge=1
+fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
 
-# The merge already succeeded. Delivery timing is record-only, so an API or
-# ledger failure is reported but never changes that successful result.
-PR_FACTS=$(gh-axi api GET "/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" \
-  --jq '{pr_opened_at:.created_at,merged_at:.merged_at}' 2>/dev/null || true)
-PR_OPENED_AT=$(printf '%s\n' "$PR_FACTS" \
-  | sed -n 's/^pr_opened_at: "\([0-9TZ:.-]*\)"$/\1/p' | head -n 1)
-MERGED_AT=$(printf '%s\n' "$PR_FACTS" \
-  | sed -n 's/^merged_at: "\([0-9TZ:.-]*\)"$/\1/p' | head -n 1)
+# The merge command accepted the request. Delivery timing is record-only, so an
+# API or ledger failure never changes that result.
+PR_FACTS=
+PR_MERGED=
+PR_OPENED_AT=
+MERGED_AT=
+PR_LOOKUP_OK=1
+if ! PR_FACTS=$(gh-axi api GET "/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" \
+  --jq '[.merged,.created_at,(.merged_at // "")] | @tsv'); then
+  echo "warning: could not read pull request timestamps for $URL" >&2
+  PR_LOOKUP_OK=0
+elif [[ "$PR_FACTS" == *$'\n'* ]]; then
+  echo "warning: could not parse pull request timestamps for $URL" >&2
+  PR_LOOKUP_OK=0
+else
+  IFS=$'\t' read -r PR_MERGED PR_OPENED_AT MERGED_AT PR_EXTRA <<< "$PR_FACTS"
+  case "$PR_MERGED" in
+    true|false) ;;
+    *) PR_LOOKUP_OK=0 ;;
+  esac
+  case "$PR_OPENED_AT" in
+    ????-??-??T??:??:??Z) ;;
+    *) PR_OPENED_AT=; PR_LOOKUP_OK=0 ;;
+  esac
+  if [ -n "$MERGED_AT" ]; then
+    case "$MERGED_AT" in
+      ????-??-??T??:??:??Z) ;;
+      *) MERGED_AT=; PR_LOOKUP_OK=0 ;;
+    esac
+  fi
+  if [ -n "${PR_EXTRA:-}" ] || { [ "$PR_MERGED" = true ] && [ -z "$MERGED_AT" ]; }; then
+    PR_LOOKUP_OK=0
+  fi
+  if [ "$PR_LOOKUP_OK" -eq 0 ]; then
+    echo "warning: could not parse pull request timestamps for $URL" >&2
+  fi
+fi
+
+if [ "$PR_MERGED" = false ]; then
+  echo "warning: $URL is not merged; delivery timing was deferred until it lands" >&2
+  exit 0
+fi
+if [ "$auto_merge" -eq 1 ] && { [ "$PR_LOOKUP_OK" -eq 0 ] || [ "$PR_MERGED" != true ]; }; then
+  echo "warning: could not confirm that $URL landed; delivery timing was deferred" >&2
+  exit 0
+fi
 
 delivery_args=(
   "$ID"

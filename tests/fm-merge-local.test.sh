@@ -250,6 +250,37 @@ test_delivery_failure_does_not_block_local_landing() {
   pass "fm-merge-local logs a ledger failure without changing landing success"
 }
 
+test_timestamp_failure_does_not_block_local_landing() {
+  local state proj lane fakebin record rc
+  state="$TMP_ROOT/timestamp-failure/state"
+  fakebin="$TMP_ROOT/timestamp-failure/fakebin"
+  mkdir -p "$state" "$fakebin"
+  IFS=$(printf '\t') read -r proj lane < <(make_project_ff timestamp-failure fm/ttime)
+  fm_write_meta "$state/ttime.meta" "project=$proj" "mode=local-only"
+  cat > "$fakebin/date" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/date"
+
+  set +e
+  PATH="$fakebin:$PATH" run_merge "$state" ttime \
+    > "$TMP_ROOT/timestamp-failure/out" 2> "$TMP_ROOT/timestamp-failure/err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "timestamp-failure: timestamp failure must not fail the local landing"
+  git -C "$proj" merge-base --is-ancestor "$lane" main \
+    || fail "timestamp-failure: lane did not land on main"
+  assert_grep 'warning: could not determine the local landing timestamp for ttime' \
+    "$TMP_ROOT/timestamp-failure/err" \
+    "timestamp-failure: timestamp failure was not reported"
+  record=$(cat "$TMP_ROOT/timestamp-failure/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '.task_id == "ttime" and .merged_at == null' >/dev/null \
+    || fail "timestamp-failure: local landing did not preserve a partial record: $record"
+  pass "fm-merge-local reports timestamp failure without changing landing success"
+}
+
 test_pr_bound_refused_without_outage_flag
 test_pr_bound_accepted_during_outage_records_ledger
 test_diverged_branch_escalates_not_forces
@@ -257,3 +288,4 @@ test_local_only_lands_without_outage_ledger
 test_yolo_on_auto_land_refused_without_review
 test_yolo_off_lands_without_review_gate
 test_delivery_failure_does_not_block_local_landing
+test_timestamp_failure_does_not_block_local_landing

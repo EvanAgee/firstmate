@@ -33,7 +33,9 @@
 #   (y) project metadata must contain one nonempty project identity
 #   (z) duplicate captain approval flags refuse before policy lookup
 #   (aa) a successful merge appends its delivery-timing record
-#   (ab) a delivery-ledger failure is logged without failing the merge
+#   (ab) pull request timestamp failures are logged without failing the merge
+#   (ac) auto-merge does not record a task until the pull request lands
+#   (ad) a delivery-ledger failure is logged without failing the merge
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -87,8 +89,18 @@ if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
   exit 0
 fi
 if [ "${1:-}" = api ] && [ "${2:-}" = GET ]; then
-  printf 'merged_at: "%s"\n' "${FM_TEST_PR_MERGED_AT:-2025-08-25T12:10:00Z}"
-  printf 'pr_opened_at: "%s"\n' "${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}"
+  if [ "${FM_TEST_PR_LOOKUP_FAIL:-0}" -eq 1 ]; then
+    echo 'error: pull request lookup failed' >&2
+    exit 1
+  fi
+  if [ "${FM_TEST_PR_FACTS_GARBLED:-0}" -eq 1 ]; then
+    printf '%s\n' 'unreadable pull request facts'
+    exit 0
+  fi
+  printf '%s\t%s\t%s\n' \
+    "${FM_TEST_PR_MERGED:-true}" \
+    "${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}" \
+    "${FM_TEST_PR_MERGED_AT-2025-08-25T12:10:00Z}"
   exit 0
 fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
@@ -187,7 +199,10 @@ run_pr_merge() {
   FM_TEST_THREADS_TOTAL="${FM_TEST_THREADS_TOTAL:-0}" \
   FM_TEST_THREADS_UNRESOLVED="${FM_TEST_THREADS_UNRESOLVED:-0}" \
   FM_TEST_PR_OPENED_AT="${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}" \
-  FM_TEST_PR_MERGED_AT="${FM_TEST_PR_MERGED_AT:-2025-08-25T12:10:00Z}" \
+  FM_TEST_PR_MERGED_AT="${FM_TEST_PR_MERGED_AT-2025-08-25T12:10:00Z}" \
+  FM_TEST_PR_MERGED="${FM_TEST_PR_MERGED:-true}" \
+  FM_TEST_PR_LOOKUP_FAIL="${FM_TEST_PR_LOOKUP_FAIL:-0}" \
+  FM_TEST_PR_FACTS_GARBLED="${FM_TEST_PR_FACTS_GARBLED:-0}" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -882,6 +897,81 @@ test_successful_merge_appends_delivery_record() {
   pass "fm-pr-merge appends delivery timing after a successful merge"
 }
 
+test_timestamp_lookup_failure_warns_and_records_partial_timing() {
+  local case_dir record rc
+  case_dir=$(make_case timestamp-lookup-failure)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222220
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_PR_LOOKUP_FAIL=1 \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/58 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "timestamp-lookup-failure: lookup failure must not fail the merge"
+  assert_grep 'warning: could not read pull request timestamps' "$case_dir/stderr" \
+    "timestamp-lookup-failure: lookup failure was not reported"
+  record=$(cat "$case_dir/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-x1" and
+    .pr_opened_at == null and
+    .merged_at == null
+  ' >/dev/null || fail "timestamp-lookup-failure: partial record has the wrong values: $record"
+  pass "fm-pr-merge reports timestamp lookup failure and records partial timing"
+}
+
+test_timestamp_parse_failure_warns_and_records_partial_timing() {
+  local case_dir record rc
+  case_dir=$(make_case timestamp-parse-failure)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222222
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_PR_FACTS_GARBLED=1 \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/59 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "timestamp-parse-failure: parse failure must not fail the merge"
+  assert_grep 'warning: could not parse pull request timestamps' "$case_dir/stderr" \
+    "timestamp-parse-failure: parse failure was not reported"
+  record=$(cat "$case_dir/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-x1" and
+    .pr_opened_at == null and
+    .merged_at == null
+  ' >/dev/null || fail "timestamp-parse-failure: partial record has the wrong values: $record"
+  pass "fm-pr-merge reports timestamp parse failure and records partial timing"
+}
+
+test_auto_merge_waits_for_pull_request_to_land() {
+  local case_dir rc
+  case_dir=$(make_case auto-merge-pending)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222223
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_PR_MERGED=false FM_TEST_PR_MERGED_AT= \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/60 --auto \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "auto-merge-pending: enabling auto-merge should remain successful"
+  assert_absent "$case_dir/data/delivery-log.jsonl" \
+    "auto-merge-pending: an unlanded task was recorded"
+  assert_grep 'is not merged; delivery timing was deferred until it lands' \
+    "$case_dir/stderr" \
+    "auto-merge-pending: deferred timing was not reported"
+  pass "fm-pr-merge waits for auto-merge to land before recording delivery timing"
+}
+
 test_delivery_failure_does_not_block_pr_merge() {
   local case_dir rc
   case_dir=$(make_case delivery-record-failure)
@@ -933,4 +1023,7 @@ test_unguarded_project_refuses_mismatched_approval
 test_project_metadata_requires_one_nonempty_identity
 test_duplicate_captain_approval_refuses
 test_successful_merge_appends_delivery_record
+test_timestamp_lookup_failure_warns_and_records_partial_timing
+test_timestamp_parse_failure_warns_and_records_partial_timing
+test_auto_merge_waits_for_pull_request_to_land
 test_delivery_failure_does_not_block_pr_merge

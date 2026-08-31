@@ -131,11 +131,14 @@ sql_quote() {
 }
 
 NM_JSON=
+NM_LOOKUP_ATTEMPTED=0
+NM_LOOKUP_FAILED=0
 if [ -f "$NO_MISTAKES_DB" ] && [ ! -L "$NO_MISTAKES_DB" ]; then
+  NM_LOOKUP_ATTEMPTED=1
   PROJECT_SQL=$(sql_quote "$PROJECT_PATH")
   BRANCH_SQL=$(sql_quote "$BRANCH")
   PR_URL_SQL=$(sql_quote "$PR_URL")
-  NM_JSON=$(sqlite3 -readonly -noheader "$NO_MISTAKES_DB" <<SQL 2>/dev/null || true
+  if ! NM_JSON=$(sqlite3 -readonly -noheader "$NO_MISTAKES_DB" <<SQL
 WITH matching AS (
   SELECT r.id, r.created_at, r.parked_ms
   FROM runs r
@@ -180,10 +183,17 @@ SELECT json_object(
   'parked_ms', (SELECT sum(parked_ms) FROM matching)
 );
 SQL
-)
+  ); then
+    echo "warning: could not read no-mistakes timing for $ID" >&2
+    NM_JSON=
+    NM_LOOKUP_FAILED=1
+  fi
 fi
 
 if ! printf '%s' "$NM_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  if [ "$NM_LOOKUP_ATTEMPTED" -eq 1 ] && [ "$NM_LOOKUP_FAILED" -eq 0 ]; then
+    echo "warning: could not parse no-mistakes timing for $ID" >&2
+  fi
   NM_JSON='{
     "no_mistakes_started_at": null,
     "review_rounds": null,
@@ -230,7 +240,7 @@ if [ -L "$LEDGER" ]; then
   echo "error: delivery ledger must not be a symlink" >&2
   exit 1
 fi
-if [ -f "$LEDGER" ] && jq -Rse --arg task_id "$ID" '
+if [ -f "$LEDGER" ] && jq -Rs -e --arg task_id "$ID" '
   split("\n")
   | map(fromjson? | select(.task_id == $task_id))
   | length > 0
