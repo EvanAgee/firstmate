@@ -12,7 +12,8 @@
 # Captain-queue.json persists each card once in `records`. Each record's
 # `state` is `open`, `parked`, or `resolved`; readers derive their views from
 # that field. The writer accepts the legacy items/resolved/parked shape and
-# emits the canonical records shape on its next successful write.
+# keeps the most recently touched same-id legacy row before its next write.
+# The next successful write emits the canonical records shape.
 # `add` upserts one active card under that id.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
 # It reads every new reply line past the cursor, matches by id, changes a
@@ -36,6 +37,7 @@
 # be read. Reconcile retries null records. False and still-null records expire
 # after UNBACKED_CARD_EXPIRY_DAYS (7) days without dropping their content.
 # `park` marks one human-verified active card as `parked` with a required note.
+# Repeating it is a no-op for parked cards and resolved cards with parked history.
 # Add, park, and reconcile take one home-scoped lock at
 # state/.captain-queue.lock for the whole read-modify-write, then release it.
 #
@@ -174,6 +176,32 @@ read_queue() {
       def objects: map(select(type == "object"));
       def with_state($state): . + {state: $state} | del(.status);
       def valid_state: . == "open" or . == "parked" or . == "resolved";
+      def valid_id: (.id | type) == "string" and (.id | length) > 0;
+      def touched_epoch:
+        [.resolved_at, .parked_at, .asked_at]
+        | map(select(type == "string") | fromdateiso8601?)
+        | map(select(. != null))
+        | max // -1;
+      def visible_state_rank:
+        if .state == "parked" then 2
+        elif .state == "open" then 1
+        else 0
+        end;
+      def latest_legacy_records:
+        . as $records
+        | (($records
+            | map(select(valid_id))
+            | sort_by(.id)
+            | group_by(.id)
+            | map(max_by([
+                touched_epoch,
+                visible_state_rank,
+                (.num // 0),
+                (.__fm_legacy_order // 0)
+              ])))
+          + ($records | map(select(valid_id | not))))
+        | sort_by([.num // 0, .id // ""])
+        | map(del(.__fm_legacy_order));
       if type != "object" then
         error("captain-queue.json is not an object")
       else
@@ -188,9 +216,12 @@ read_queue() {
             ))
           end
         else
-          (((.items // []) | objects | map(with_state("open")))
-          + ((.parked // []) | objects | map(with_state("parked")))
-          + ((.resolved // []) | objects | map(with_state("resolved"))))
+          ((((.resolved // []) | objects | map(with_state("resolved")))
+          + ((.items // []) | objects | map(with_state("open")))
+          + ((.parked // []) | objects | map(with_state("parked"))))
+          | to_entries
+          | map(.value + {__fm_legacy_order: .key})
+          | latest_legacy_records)
         end) as $records
         | ([$records[] | .id | select(type == "string" and length > 0)]
           | group_by(.) | map(select(length > 1)) | .[0][0] // "") as $duplicate

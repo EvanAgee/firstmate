@@ -20,7 +20,9 @@
 //   bin/fm-api-task-detail.mjs owns the exact success JSON contract.
 // GET /captain-queue
 //   { ok, updatedAt, items: [{ id, num, question, context, commands,
-//   options, recommended, askedAt, status, project }], parked: [...] }
+//   options, recommended, askedAt, status, project }],
+//   parked: [{ id, num, question, context, commands, options, recommended,
+//   askedAt, status, project, parkedAt, parkedReason, parkedNote }] }
 //   Captain-queue.json cards firstmate escalated to the captain. Open cards
 //   have named options already validated. Parked cards remain visible even
 //   when their historical options do not meet the active-card contract.

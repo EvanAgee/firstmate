@@ -91,11 +91,15 @@ function textField(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function normalizeCaptainCardOptions(options) {
-  const labels = (Array.isArray(options) ? options : [])
+function captainCardOptionLabels(options) {
+  return (Array.isArray(options) ? options : [])
     .filter((raw) => typeof raw === "string")
     .map((raw) => raw.trim())
     .filter(Boolean);
+}
+
+export function normalizeCaptainCardOptions(options) {
+  const labels = captainCardOptionLabels(options);
   const markedAt = labels.findIndex((label) => RECOMMENDED_MARK.test(label));
   if (markedAt > 0) {
     const [marked] = labels.splice(markedAt, 1);
@@ -165,7 +169,10 @@ function asCaptainCard(raw, expectedState = "open") {
   if (!id || !question) return null;
   const state = textField(raw.state).toLowerCase();
   if (state !== expectedState) return null;
-  const options = normalizeCaptainCardOptions(raw.options);
+  const options =
+    expectedState === "open"
+      ? normalizeCaptainCardOptions(raw.options)
+      : captainCardOptionLabels(raw.options);
   const recommended = options.find((label) => RECOMMENDED_MARK.test(label)) || "";
   if (expectedState === "open" && captainCardOptionsError(options)) return null;
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;

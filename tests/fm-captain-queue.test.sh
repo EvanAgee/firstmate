@@ -317,6 +317,60 @@ test_legacy_card_waits_for_verified_migration() {
   pass "a legacy card waits for human verification and then allows manual migration"
 }
 
+test_legacy_duplicate_id_keeps_the_most_recent_record() {
+  local home out
+  home=$(make_home legacy-duplicate-id)
+  jq -n '{
+    updated_at: "2026-08-27T17:00:00Z",
+    items: [{
+      id: "reused-legacy-card",
+      num: 1,
+      question: "Current board question?",
+      context: "This is the card the board was showing.",
+      commands: ["run-current"],
+      options: ["Current choice", "Something else"],
+      asked_at: "2026-08-27T17:00:00Z",
+      backlog_backed: false,
+      status: "open",
+      project: "sample"
+    }],
+    resolved: [{
+      id: "reused-legacy-card",
+      num: 1,
+      question: "Older answered question?",
+      context: "This record predates the current board card.",
+      commands: ["run-old"],
+      options: ["Old choice", "Something else"],
+      asked_at: "2026-08-20T18:00:00Z",
+      status: "resolved",
+      answer: "Old answer",
+      resolved_at: "2026-08-26T18:00:00Z",
+      project: "sample"
+    }],
+    parked: []
+  }' > "$home/data/captain-queue.json"
+  append_reply "$home" reused-legacy-card "Current answer"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=reused-legacy-card] Current answer" \
+    "legacy duplicate migration should keep the current board card answerable"
+  jq -e '
+    has("records")
+    and (has("items") | not)
+    and (has("resolved") | not)
+    and (has("parked") | not)
+    and (.records | length) == 1
+    and .records[0].id == "reused-legacy-card"
+    and .records[0].state == "resolved"
+    and .records[0].question == "Current board question?"
+    and .records[0].context == "This is the card the board was showing."
+    and .records[0].commands == ["run-current"]
+    and .records[0].options == ["Current choice", "Something else"]
+    and .records[0].answer == "Current answer"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "legacy duplicate migration did not retain only the most recent record"
+  pass "legacy duplicate migration keeps the most recently touched card"
+}
+
 test_manual_park_rejects_backed_and_unknown_cards() {
   local home id out rc
   home=$(make_home manual-park-guards)
@@ -885,6 +939,7 @@ test_asked_at_is_normalized_or_rejected
 test_expiry_preserves_card_and_is_idempotent
 test_manual_park_supports_verified_migration
 test_legacy_card_waits_for_verified_migration
+test_legacy_duplicate_id_keeps_the_most_recent_record
 test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
