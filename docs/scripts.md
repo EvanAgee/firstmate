@@ -122,6 +122,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-github-health.sh`    | Probe GitHub reachability, own the `state/.github-down` flag, and report each down/up transition once |
 | `fm-pr-check-migrate.sh` | Quarantine older task polls without execution and rebuild only canonical polls       |
 | `fm-pr-check.sh`         | Record validated `pr=` and `pr_head=` values, then atomically arm a static merge poll |
+| `fm-pr-autoarm.sh`       | Arm PR watches from worker announcements or exact worktree upstream branches          |
 | `fm-pr-merge.sh`         | Enforce captain approval and review-thread checks, record PR metadata, then merge a task's canonical full GitHub URL |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |

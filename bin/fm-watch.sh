@@ -145,6 +145,9 @@ FM_ANCHOR_INTERVAL=${FM_ANCHOR_INTERVAL:-$HEARTBEAT_MAX}
 case "$FM_ANCHOR_INTERVAL" in ''|*[!0-9]*) FM_ANCHOR_INTERVAL=$HEARTBEAT_MAX ;; esac
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
+AUTOARM_ANNOUNCE_TIMEOUT=${FM_PR_AUTOARM_ANNOUNCE_TIMEOUT:-3}
+case "$AUTOARM_ANNOUNCE_TIMEOUT" in ''|*[!0-9]*|0) AUTOARM_ANNOUNCE_TIMEOUT=3 ;; esac
+[ "$AUTOARM_ANNOUNCE_TIMEOUT" -le 5 ] || AUTOARM_ANNOUNCE_TIMEOUT=5
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
@@ -513,6 +516,58 @@ scan_signals() {
   return 0
 }
 
+# Arm PR URLs from every complete status line appended since the prior scan.
+# The separate cursor advances only after the announcement helper accepts a
+# line, so an interrupted or failed arm is retried on the next watcher cycle.
+autoarm_status_cursor_write() {  # <cursor> <inode> <offset>
+  local cursor=$1 inode=$2 offset=$3 tmp
+  tmp=$(umask 077; mktemp "$STATE/.pr-autoarm-status.XXXXXX") || return 1
+  if ! printf '%s %s\n' "$inode" "$offset" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! mv -f -- "$tmp" "$cursor"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+autoarm_status_announcements() {  # <changed signal paths...>
+  local file task line sig size inode cursor cursor_inode offset extra line_bytes deadline remaining
+  deadline=$((SECONDS + AUTOARM_ANNOUNCE_TIMEOUT))
+  for file in "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || break
+    case "$file" in
+      "$STATE"/*.status) ;;
+      *) continue ;;
+    esac
+    task=$(basename "$file" .status)
+    fm_pr_task_id_valid "$task" || continue
+    sig=$(fm_wake_signal_sig "$file") || continue
+    IFS=: read -r size inode _ <<< "$sig"
+    case "$size:$inode" in *[!0-9:]*) continue ;; esac
+    cursor="$STATE/.pr-autoarm-status-$task.cursor"
+    cursor_inode=
+    offset=0
+    extra=
+    if [ -f "$cursor" ] && [ ! -L "$cursor" ]; then
+      read -r cursor_inode offset extra < "$cursor" || true
+      case "$offset" in ''|*[!0-9]*) offset=0 ;; esac
+      [ -z "$extra" ] && [ "$cursor_inode" = "$inode" ] && [ "$offset" -le "$size" ] \
+        || offset=0
+    fi
+    LC_ALL=C tail -c "+$((offset + 1))" "$file" 2>/dev/null | while IFS= read -r line; do
+      remaining=$((deadline - SECONDS))
+      [ "$remaining" -gt 0 ] || break
+      if ! (FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        run_check_process "$remaining" "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" \
+        >/dev/null 2>&1); then
+        break
+      fi
+      line_bytes=$(LC_ALL=C printf '%s' "$line" | wc -c | tr -d ' ')
+      offset=$((offset + line_bytes + 1))
+      autoarm_status_cursor_write "$cursor" "$inode" "$offset" || break
+    done
+  done
+}
+
 # Deliver a durably queued process-event result to firstmate. Publication is
 # owned by bin/fm-procevent.sh - by the runner at capture time and by reconcile's
 # re-announcement - so this decides only whether a queued check record has been
@@ -563,25 +618,26 @@ procevent_surface_queued() {
   wake "$reason"
 }
 
-run_check_process() {
-  local c=$1
-  shift
+run_check_process() {  # <timeout> <command> [args...]
+  local check_timeout=$1 c=$2
+  shift 2
   if [ "${FM_CHECK_FORCE_FALLBACK:-0}" != 1 ] && command -v timeout >/dev/null 2>&1; then
-    exec timeout "$CHECK_TIMEOUT" bash "$c" "$@"
+    exec timeout "$check_timeout" bash "$c" "$@"
   elif [ "${FM_CHECK_FORCE_FALLBACK:-0}" != 1 ] && command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout "$CHECK_TIMEOUT" bash "$c" "$@"
+    exec gtimeout "$check_timeout" bash "$c" "$@"
   else
     # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$CHECK_TIMEOUT" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
+    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$check_timeout" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
   fi
 }
 
 run_check() {
-  ( run_check_process "$@" ) 2>/dev/null || true
+  ( run_check_process "$CHECK_TIMEOUT" "$@" ) 2>/dev/null || true
 }
 
 FM_ACTIVE_CHECK_PID=
 FM_ACTIVE_CHECK_PGID=
+FM_ACTIVE_META_LOCK=
 FM_CHECK_OUTPUT=
 FM_CHECK_RESULT=
 FM_CHECK_SIGNAL_PENDING=
@@ -625,7 +681,7 @@ run_check_capture() {
   FM_CHECK_SIGNAL_PENDING=
   trap 'FM_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
-  ( FM_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
   FM_ACTIVE_CHECK_PID=$!
   FM_ACTIVE_CHECK_PGID=$FM_ACTIVE_CHECK_PID
   set +m
@@ -819,6 +875,7 @@ watcher_cleanup() {
   fm_active_check_stop || cleanup_status=1
   fm_check_output_cleanup
   fm_custom_check_snapshot_cleanup
+  [ -z "$FM_ACTIVE_META_LOCK" ] || fm_lock_release "$FM_ACTIVE_META_LOCK"
   if [ "$owns_lock" -eq 1 ] \
     && ! fm_recovery_transition "$WATCHER_DOWNTIME_MARKER" "$transition" "$WATCH_LOCK" downtime; then
     echo "watcher: recovery state could not be persisted; retaining stale lock evidence" >&2
@@ -840,6 +897,7 @@ FM_WATCH_DELIVERY_IDENTITY=$(fm_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
+[ -e "$STATE/.last-pr-autoarm" ] || touch "$STATE/.last-pr-autoarm"
 
 # A merged poll may have queued its terminal wake and then lost the process
 # between receipt publication and fixed-path removal.
@@ -966,6 +1024,15 @@ while :; do
         fi
       else
         id=$(basename "$c" .check.sh)
+        meta_lock=$(fm_meta_lock_path "$STATE/$id.meta") || {
+          rejected_checks="$rejected_checks $c"
+          continue
+        }
+        # PR poll files are published before pr= as the transaction's final
+        # marker. Defer while that transaction owns the task metadata lock so
+        # the files cannot be mistaken for an unauthenticated custom check.
+        fm_lock_try_acquire "$meta_lock" || continue
+        FM_ACTIVE_META_LOCK=$meta_lock
         if fm_pr_poll_snapshot_capture "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
           is_pr_poll=1
           provider=$FM_PR_POLL_SNAPSHOT_PROVIDER
@@ -973,6 +1040,8 @@ while :; do
           host=$FM_PR_POLL_SNAPSHOT_HOST
           path=$FM_PR_POLL_SNAPSHOT_PATH
           number=$FM_PR_POLL_SNAPSHOT_NUMBER
+          fm_lock_release "$meta_lock"
+          FM_ACTIVE_META_LOCK=
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
             "$provider" "$url" "$host" "$path" "$number" || exit 1
           out=$FM_CHECK_RESULT
@@ -981,15 +1050,19 @@ while :; do
               "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" || exit 1
             out=$FM_CHECK_RESULT
           fi
-        elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
-          custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
-          run_check_capture "$custom_snapshot" || exit 1
-          out=$FM_CHECK_RESULT
-          fm_custom_check_snapshot_cleanup
         else
-          fm_custom_check_snapshot_cleanup
-          rejected_checks="$rejected_checks $c"
-          continue
+          fm_lock_release "$meta_lock"
+          FM_ACTIVE_META_LOCK=
+          if fm_custom_check_snapshot_prepare "$STATE" "$id"; then
+            custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
+            run_check_capture "$custom_snapshot" || exit 1
+            out=$FM_CHECK_RESULT
+            fm_custom_check_snapshot_cleanup
+          else
+            fm_custom_check_snapshot_cleanup
+            rejected_checks="$rejected_checks $c"
+            continue
+          fi
         fi
       fi
       if [ -n "$out" ]; then
@@ -1032,6 +1105,8 @@ while :; do
     done <<EOF
 $pending
 EOF
+    # shellcheck disable=SC2086 # Paths come from validated task ids and are intentionally expanded.
+    autoarm_status_announcements $files
     reason="signal:$files"
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
@@ -1241,6 +1316,23 @@ EOF
       fi
     fi
   done < <(recorded_windows)
+
+  autoarm_status_announcements "$STATE"/*.status
+
+  # The missing-watch sweep shares the slow-check cadence but runs only after
+  # existing signals and stale-task checks have had first refusal. Its own
+  # marker keeps an earlier actionable wake from postponing the next attempt.
+  if [ "$(age_of "$STATE/.last-pr-autoarm")" -ge "$CHECK_INTERVAL" ] \
+    && [ -x "$SCRIPT_DIR/fm-pr-autoarm.sh" ]; then
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      run_check_capture "$SCRIPT_DIR/fm-pr-autoarm.sh" sweep || exit 1
+    out=$FM_CHECK_RESULT
+    touch "$STATE/.last-pr-autoarm"
+    if [ -n "$out" ]; then
+      reason="check: pr-autoarm: $(printf '%s' "$out" | tr '\n' ';')"
+      wake "$reason"
+    fi
+  fi
 
   # Heartbeat: the watcher runs a cheap fleet-scan at a regular cadence no matter
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive
