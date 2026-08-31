@@ -1,0 +1,41 @@
+Firstmate workflow concurrency test evidence
+Date: 2026-08-31
+Base: 494c72d039a3161b6a2985ba94d99171f88a8789
+Target: df3c8592d35671a2d38ee3b4a8b96a67fa7eae3f
+
+Base config check
+Command: bash tests/fm-workflow-concurrency.test.sh <base-workflows>
+
+not ok - CI has no concurrency policy
+exit_status=1
+
+Target config check
+Command: bash tests/fm-workflow-concurrency.test.sh .github/workflows <base-workflows>
+
+ok - standard workflow triggers, permissions, and jobs are unchanged
+ok - specialized, deployment, release, and manual workflows are unchanged
+scenario                  | resolved concurrency group
+--------------------------+---------------------------
+older CI run for PR 73    | CI-73
+newer CI run for PR 73    | CI-73
+CI run for separate PR 74 | CI-74
+Unslop run for PR 73      | Unslop-73
+CI push run 2001          | CI-2001
+CI push run 2002          | CI-2002
+ok - standard validation concurrency resolves to the intended cancellation boundaries
+
+Focused repository runner
+Command: bin/fm-test-run.sh tests/fm-workflow-concurrency.test.sh
+
+FM_TEST_BEGIN 2026-08-31T14:39:42Z tests/fm-workflow-concurrency.test.sh family=pure-contract-unit expected_gate_skip=none
+scenario                  | resolved concurrency group
+--------------------------+---------------------------
+older CI run for PR 73    | CI-73
+newer CI run for PR 73    | CI-73
+CI run for separate PR 74 | CI-74
+Unslop run for PR 73      | Unslop-73
+CI push run 2001          | CI-2001
+CI push run 2002          | CI-2002
+ok - standard validation concurrency resolves to the intended cancellation boundaries
+FM_TEST_END 2026-08-31T14:39:43Z tests/fm-workflow-concurrency.test.sh exit=0 duration_ms=901 gate_skip=false
+

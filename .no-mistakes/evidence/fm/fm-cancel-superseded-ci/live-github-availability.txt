@@ -1,0 +1,22 @@
+Live GitHub evidence availability
+Date: 2026-08-31
+Repository: kunchenguid/firstmate
+Branch: fm/fm-cancel-superseded-ci
+Target: df3c8592d35671a2d38ee3b4a8b96a67fa7eae3f
+
+Command: gh-axi pr list --head fm/fm-cancel-superseded-ci --state all --limit 20
+
+count: 0
+pull_requests: []
+
+Command: gh-axi run list --commit df3c8592d35671a2d38ee3b4a8b96a67fa7eae3f --limit 20
+
+count: 0
+runs: []
+
+Command: gh-axi run list --branch fm/fm-cancel-superseded-ci --limit 20
+
+count: 0
+runs: []
+
+The branch has no pull request or Actions run yet, so GitHub cannot show a cancelled superseded run during this pre-PR test phase.
