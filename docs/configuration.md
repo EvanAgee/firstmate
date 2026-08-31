@@ -318,6 +318,7 @@ Secondmate spawns do not use classes and continue to resolve through `config/sec
 ```
 
 Every rule requires a non-empty, unique `class`, a non-empty human `when` description, and a non-empty `use` pool.
+The class `__default__` is reserved for the default pool's API identity.
 The usual classes are `researcher`, `builder`, `designer`, and `tester`.
 The resolver treats `when`, `why`, and top-level `note` as human notes and never uses them for selection.
 Both `use` and top-level `default` accept one profile object or a non-empty array of profiles.
@@ -343,6 +344,7 @@ An empty enabled pool is an error with no fallback.
 With `--class`, `fm-spawn.sh` records `dispatch_class` and the resolver's `dispatch_reason` in task metadata.
 The reasons are `pin`, `round-robin`, `default-pin`, and `default`.
 Passing `--harness`, `--model`, or `--effort` with `--class` requires `--captain-override "<reason>"`, which records `dispatch_override`.
+The resolver applies those override axes before it checks disabled members, so an enabled override outranks a disabled class pin while an override that names a disabled member is refused.
 Without `--class`, an active dispatch file makes a fresh crewmate or scout spawn fail even when a concrete harness was passed.
 The raw launch-command escape hatch and `--relaunch` keep their existing behavior.
 A batch uses one shared `--class`, and each task resolves in sequence so the earlier task's metadata participates in the next count.
@@ -608,8 +610,8 @@ An unknown task returns 404.
 A worker relay never closes a durable captain decision.
 `POST /decisions/answer` accepts JSON `{"task":"<id>","key":"<key>","text":"<one line>"}` and queues an answer for firstmate on the same wake queue, encoded as operational input.
 Firstmate closes an active durable captain decision with `bin/fm-send.sh --resolve-key` on its next supervision turn.
-`POST /rigs/rung` accepts JSON `{"rig":"<when line or default>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
-`rig` is the rule's `when` line, or `default` for the fallback ladder, the same name `GET /rigs` already serves.
+`POST /rigs/rung` accepts JSON `{"rig":"<class or __default__>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
+`rig` is the rule's unique `class`, or `__default__` for the fallback ladder, matching the `class` value `GET /rigs` serves.
 `rung` is that ladder's index, because harness and model can repeat.
 A change that would turn off a ladder's last enabled rung is refused with 400.
 `GET /rigs/config` returns the exact `config/crew-dispatch.json` as `{"ok":true,"config":<object>}`, so an editor can read the whole file (every field `GET /rigs` drops, such as each rule's `why`), change it, and save it back.

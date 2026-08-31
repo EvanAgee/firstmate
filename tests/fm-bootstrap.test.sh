@@ -1218,6 +1218,7 @@ test_crew_dispatch_validation() {
   done <<'ROWS'
 malformed dispatch config is flagged^{"rules":[^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON
 missing dispatch class is flagged^{"rules":[{"class":"","when":"builder","use":{"harness":"codex"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs non-empty class
+reserved default dispatch class is flagged^{"rules":[{"class":"__default__","when":"builder","use":{"harness":"codex"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - dispatch class __default__ is reserved for the default pool
 duplicate dispatch class is flagged^{"rules":[{"class":"builder","when":"one","use":{"harness":"codex"}},{"class":"builder","when":"two","use":{"harness":"pi"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - dispatch class must be unique: builder
 unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: spaceship
 unsupported codex max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max

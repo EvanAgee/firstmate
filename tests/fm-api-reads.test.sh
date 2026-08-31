@@ -314,7 +314,7 @@ EOF
     fail "switched-off rung should be off: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].name')" = default ] || \
     fail "default rig name: $HTTP_BODY"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].class')" = default ] || \
+  [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].class')" = __default__ ] || \
     fail "default rig class: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].rungs[0].harness')" = pi ] || \
     fail "default rung harness: $HTTP_BODY"

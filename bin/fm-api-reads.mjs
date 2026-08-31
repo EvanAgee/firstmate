@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCAN_TIMEOUT_MS = 5000;
 const TASKS_AXI_TIMEOUT_MS = 10000;
+export const DEFAULT_RIG_CLASS = "__default__";
 
 function classifyEnv() {
   const env = { ...process.env };
@@ -256,7 +257,7 @@ export function assembleRigs(data) {
   }
   const fallback = asRungs(data.default);
   if (fallback.length > 0) {
-    rigs.push({ name: "default", class: "default", rungs: fallback, pin: null });
+    rigs.push({ name: "default", class: DEFAULT_RIG_CLASS, rungs: fallback, pin: null });
   }
   return rigs;
 }

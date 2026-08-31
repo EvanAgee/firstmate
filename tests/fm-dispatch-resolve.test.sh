@@ -67,6 +67,18 @@ EOF
   pass "a switched-off class pin refuses without fallback"
 }
 
+test_pin_accepts_an_enabled_duplicate_tuple() {
+  local home out
+  home=$(make_home duplicate-pin)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"builder","when":"Builder work.","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}],"default":{"harness":"claude"}}
+EOF
+  out=$($RESOLVER --class builder --home "$home") || fail "pin with an enabled duplicate did not resolve"
+  [ "$out" = "harness=codex model=gpt-5.6-sol effort=high reason=pin" ] \
+    || fail "pin with an enabled duplicate resolved to '$out'"
+  pass "a pin accepts an enabled duplicate exact tuple"
+}
+
 test_unknown_class_uses_default_pin() {
   local home out
   home=$(make_home default-pin)
@@ -121,6 +133,7 @@ EOF
 test_pinned_class
 test_unpinned_class_uses_fewest_live_workers
 test_switched_off_pin_refuses_without_fallback
+test_pin_accepts_an_enabled_duplicate_tuple
 test_unknown_class_uses_default_pin
 test_unknown_class_round_robins_default
 test_round_robin_breaks_ties_by_list_order

@@ -57,7 +57,7 @@
 //   close the active durable decision. Unknown task: 404. Bad body: 400.
 // POST /rigs/rung requires the token; body { rig, rung, enabled }. Sets a
 //   rung's enabled state in config/crew-dispatch.json, where rig is the rule's
-//   `when` line or "default" and rung is its index. A change that would turn
+//   `class` or "__default__" and rung is its index. A change that would turn
 //   off a ladder's last enabled rung is refused 400. Unknown rig/rung: 404.
 // GET /rigs/config returns the exact dispatch config file as { ok, config }, so
 //   the routing editor edits the whole file and loses no field GET /rigs drops
@@ -78,6 +78,7 @@ import {
   blockedListBody,
   captainHoldsBody,
   captainQueueBody,
+  DEFAULT_RIG_CLASS,
   enrichFleetTasks,
   rigsBody,
 } from "./fm-api-reads.mjs";
@@ -529,12 +530,12 @@ function parseRungToggle(raw) {
   return { rig, rung, enabled };
 }
 
-// The list of rung objects for one ladder: the fallback ("default") is the
-// top-level `default`, every other rig is the `use` of the rule whose `when`
+// The list of rung objects for one ladder: the fallback ("__default__") is the
+// top-level `default`, every other rig is the `use` of the rule whose `class`
 // matches. A single-object `use` counts as a one-rung list. Returns null when
 // the named rig is not in the config.
 function ladderList(config, rig) {
-  if (rig === "default") {
+  if (rig === DEFAULT_RIG_CLASS) {
     if (Array.isArray(config.default)) return config.default;
     if (config.default && typeof config.default === "object") return [config.default];
     return null;
@@ -542,7 +543,7 @@ function ladderList(config, rig) {
   if (!Array.isArray(config.rules)) return null;
   for (const rule of config.rules) {
     if (!rule || typeof rule !== "object") continue;
-    if (rule.when !== rig) continue;
+    if (rule.class !== rig) continue;
     if (Array.isArray(rule.use)) return rule.use;
     if (rule.use && typeof rule.use === "object") return [rule.use];
     return [];
@@ -584,11 +585,11 @@ function applyRungToggle(config, toggle) {
   if (list === null) return { error: "rig not found" };
   const next = setRungEnabled(list, toggle.rung, toggle.enabled);
   if ("error" in next) return next;
-  if (toggle.rig === "default") {
+  if (toggle.rig === DEFAULT_RIG_CLASS) {
     return { config: { ...config, default: next.list } };
   }
   const rules = config.rules.map((rule) => {
-    if (!rule || typeof rule !== "object" || rule.when !== toggle.rig) return rule;
+    if (!rule || typeof rule !== "object" || rule.class !== toggle.rig) return rule;
     return { ...rule, use: next.list };
   });
   return { config: { ...config, rules } };

@@ -1072,6 +1072,7 @@ crew_dispatch_validate() {
     elif has("rules") and (.rules | type) != "array" then "rules must be an array"
     elif [(.rules // [])[]? | select(type != "object")] | length > 0 then "each rule must be an object"
     elif [(.rules // [])[]? | select((.class? | type) != "string" or (.class | length) == 0)] | length > 0 then "each rule needs non-empty class"
+    elif [(.rules // [])[]? | select(.class == "__default__")] | length > 0 then "dispatch class __default__ is reserved for the default pool"
     elif ([(.rules // [])[]? | .class] | length) != ([ (.rules // [])[]? | .class ] | unique | length) then
       "dispatch class must be unique: "
       + ([.rules[]?.class] | group_by(.) | map(select(length > 1) | .[0]) | join(", "))

@@ -233,6 +233,12 @@ enable_dispatch_profile_with_switched_off_rung() {
     > "$home/config/crew-dispatch.json"
 }
 
+enable_dispatch_profile_with_switched_off_pin() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"class":"builder","when":"big feature","use":[{"harness":"codex","model":"gpt-5","effort":"high","enabled":false},{"harness":"grok","model":"grok-4","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+    > "$home/config/crew-dispatch.json"
+}
+
 make_seeded_secondmate_home() {
   local home=$1 id=$2
   mkdir -p "$home/bin" "$home/data"
@@ -1341,10 +1347,32 @@ test_switched_off_rung_is_refused() {
     --captain-override "captain selected the disabled tuple for this proof")
   status=$?
   expect_code 1 "$status" "a spawn naming a switched-off rung should be refused"
-  assert_contains "$out" "that rung is switched off in config/crew-dispatch.json" \
-    "spawn did not explain the switched-off rung"
+  assert_contains "$out" "captain override selects disabled member harness=claude model=opus effort=high" \
+    "spawn did not name the disabled member"
+  assert_contains "$out" "re-enable it in config/crew-dispatch.json" \
+    "spawn did not explain how to re-enable the member"
   assert_absent "$HOME_DIR/state/$id.meta" "switched-off refusal should happen before meta is written"
   pass "a switched-off crew-dispatch rung refuses the spawn"
+}
+
+test_enabled_override_precedes_switched_off_pin() {
+  local rec id out status
+  id=$(profile_id profile-override-pin-off-z40b)
+  rec=$(make_spawn_case override-pin-off claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_switched_off_pin "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness grok --model grok-4 --effort high \
+    --captain-override "captain selected the enabled member")
+  status=$?
+  expect_code 0 "$status" "an enabled captain override should precede a switched-off class pin"
+  assert_contains "$out" "spawned $id harness=grok" "enabled captain override did not launch"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" grok grok-4 high
+  assert_meta_dispatch "$HOME_DIR/state/$id.meta" builder pin
+  assert_grep "dispatch_override=captain selected the enabled member" "$HOME_DIR/state/$id.meta" \
+    "meta missing the captain override reason"
+  pass "an enabled captain override precedes a switched-off class pin"
 }
 
 test_enabled_sibling_rung_still_spawns() {
@@ -1404,6 +1432,7 @@ test_switched_off_rung_does_not_block_secondmate_launch() {
 }
 
 test_switched_off_rung_is_refused
+test_enabled_override_precedes_switched_off_pin
 test_enabled_sibling_rung_still_spawns
 test_off_ladder_profile_is_not_refused_by_the_switch
 test_switched_off_rung_does_not_block_secondmate_launch

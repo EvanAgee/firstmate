@@ -651,6 +651,34 @@ write_rung_fixture() {  # <home>
 EOF
 }
 
+write_duplicate_note_rung_fixture() {  # <home>
+  local home=$1
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [
+    {
+      "class": "builder",
+      "when": "Work",
+      "use": [
+        { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
+        { "harness": "claude", "model": "opus", "effort": "high" }
+      ]
+    },
+    {
+      "class": "reviewer",
+      "when": "Work",
+      "use": [
+        { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" },
+        { "harness": "grok", "model": "grok-4", "effort": "high" }
+      ]
+    }
+  ],
+  "default": [{ "harness": "codex" }]
+}
+EOF
+}
+
 test_worker_relay_without_token_is_unauthorized() {
   local home port resp queue
   home=$(fm_test_api_home api-relay-no-token)
@@ -770,7 +798,7 @@ test_rung_toggle_without_token_is_unauthorized() {
   write_rung_fixture "$home"
   before=$(cat "$home/config/crew-dispatch.json")
   port=$(fm_test_api_start "$home")
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":false}' \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
@@ -786,7 +814,7 @@ test_rung_toggle_with_token_flips_enabled() {
   write_rung_fixture "$home"
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":false}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
@@ -794,7 +822,7 @@ test_rung_toggle_with_token_flips_enabled() {
   [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String(c.rules[0].use[1].enabled))' \
       "$home/config/crew-dispatch.json")" = false ] \
     || fail "rung 1 was not turned off in the config"
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":true}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":true}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
@@ -813,13 +841,13 @@ test_rung_toggle_refuses_last_enabled_rung() {
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
   # Turn off rung 0 first so rung 1 is the last one on.
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":0,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":0,"enabled":false}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 200 ] || fail "turning off rung 0 status $HTTP_CODE, wanted 200: $HTTP_BODY"
   before=$(cat "$home/config/crew-dispatch.json")
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":false}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
@@ -830,6 +858,25 @@ test_rung_toggle_refuses_last_enabled_rung() {
   [ "$before" = "$after" ] || fail "refused last-rung toggle still rewrote the config"
   fm_test_api_stop "$home"
   pass "a toggle that would turn off a ladder's last rung is refused with a clear error"
+}
+
+test_rung_toggle_uses_class_when_notes_repeat() {
+  local home port token resp states
+  home=$(fm_test_api_home api-rung-duplicate-note)
+  write_duplicate_note_rung_fixture "$home"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"reviewer","rung":1,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "class-addressed rung toggle status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  states=$(node -e 'const c=require(process.argv[1]);process.stdout.write(JSON.stringify(c.rules.map(r => r.use.map(x => x.enabled))))' \
+    "$home/config/crew-dispatch.json")
+  [ "$states" = '[[null,null],[null,false]]' ] \
+    || fail "class-addressed toggle changed the wrong rule: $states"
+  fm_test_api_stop "$home"
+  pass "rung toggles use class identity when human notes repeat"
 }
 
 test_rig_config_without_token_is_unauthorized() {
@@ -1017,6 +1064,7 @@ test_decision_answer_unknown_task_is_not_found
 test_rung_toggle_without_token_is_unauthorized
 test_rung_toggle_with_token_flips_enabled
 test_rung_toggle_refuses_last_enabled_rung
+test_rung_toggle_uses_class_when_notes_repeat
 test_rig_config_without_token_is_unauthorized
 test_rig_config_with_token_writes_config
 test_rig_config_refuses_a_ladder_with_no_enabled_rung

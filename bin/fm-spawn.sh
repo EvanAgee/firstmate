@@ -1283,7 +1283,15 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
       echo "error: a positional harness cannot accompany --class; use --harness with --captain-override <reason>" >&2
       exit 1
     fi
-    DISPATCH_RESULT=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" --class "$DISPATCH_CLASS" --home "$FM_HOME") || exit 1
+    DISPATCH_ARGS=(--class "$DISPATCH_CLASS" --home "$FM_HOME")
+    if [ "$CAPTAIN_OVERRIDE_SET" -eq 1 ]; then
+      if [ "$HARNESS_SET" -eq 1 ]; then
+        case "$HARNESS_ARG" in *' '*) : ;; *) DISPATCH_ARGS+=(--override-harness "$HARNESS_ARG") ;; esac
+      fi
+      [ "$MODEL_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-model "${MODEL:-default}")
+      [ "$EFFORT_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-effort "$EFFORT")
+    fi
+    DISPATCH_RESULT=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" "${DISPATCH_ARGS[@]}") || exit 1
     DISPATCH_HARNESS=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^harness=\([^ ]*\) model=.*/\1/p')
     DISPATCH_MODEL=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* model=\([^ ]*\) effort=.*/\1/p')
     DISPATCH_EFFORT=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* effort=\([^ ]*\) reason=.*/\1/p')
