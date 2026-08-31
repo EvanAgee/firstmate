@@ -196,6 +196,38 @@ test_sqlite_failure_warns_and_records_partial_timing() {
   pass "delivery record reports a SQLite failure and keeps partial timing"
 }
 
+test_dispatch_conversion_failure_warns_and_records_null() {
+  local home fakebin ledger record rc
+  home="$TMP_ROOT/dispatch-conversion-failure/home"
+  fakebin="$home/fakebin"
+  ledger="$home/data/delivery-log.jsonl"
+  mkdir -p "$home/state" "$fakebin"
+  fm_write_meta "$home/state/task-with-bad-dispatch.meta" \
+    'spawn_gen=s1756150000.123.456'
+  cat > "$fakebin/date" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/date"
+
+  set +e
+  FM_HOME="$home" FM_DELIVERY_DB="$home/missing-state.sqlite" PATH="$fakebin:$PATH" \
+    "$RECORD" task-with-bad-dispatch --repo widget \
+      > "$home/stdout" 2> "$home/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "dispatch-conversion-failure: conversion failure must keep a partial record"
+  assert_grep 'warning: could not convert dispatch timestamp for task-with-bad-dispatch' \
+    "$home/stderr" \
+    "dispatch-conversion-failure: conversion failure was not reported"
+  record=$(cat "$ledger")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-with-bad-dispatch" and .dispatched_at == null
+  ' >/dev/null || fail "dispatch-conversion-failure: record did not preserve a null timestamp: $record"
+  pass "delivery record reports dispatch conversion failure and records null"
+}
+
 test_backfill_uses_merged_limit_and_is_idempotent() {
   local home project db ledger fakebin record
   home="$TMP_ROOT/backfill/home"
@@ -246,4 +278,5 @@ test_record_shape_and_append
 test_repeated_task_is_not_duplicated
 test_partial_record_uses_null_for_unknown_facts
 test_sqlite_failure_warns_and_records_partial_timing
+test_dispatch_conversion_failure_warns_and_records_null
 test_backfill_uses_merged_limit_and_is_idempotent

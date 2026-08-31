@@ -34,7 +34,7 @@
 #   (z) duplicate captain approval flags refuse before policy lookup
 #   (aa) a successful merge appends its delivery-timing record
 #   (ab) pull request timestamp failures are logged without failing the merge
-#   (ac) auto-merge does not record a task until the pull request lands
+#   (ac) auto-merge is rejected before changing pull request state
 #   (ad) a delivery-ledger failure is logged without failing the merge
 set -u
 
@@ -97,10 +97,13 @@ if [ "${1:-}" = api ] && [ "${2:-}" = GET ]; then
     printf '%s\n' 'unreadable pull request facts'
     exit 0
   fi
-  printf '%s\t%s\t%s\n' \
-    "${FM_TEST_PR_MERGED:-true}" \
-    "${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}" \
-    "${FM_TEST_PR_MERGED_AT-2025-08-25T12:10:00Z}"
+  printf 'merged: %s\n' "${FM_TEST_PR_MERGED:-true}"
+  if [ -n "${FM_TEST_PR_MERGED_AT:-}" ]; then
+    printf 'merged_at: "%s"\n' "$FM_TEST_PR_MERGED_AT"
+  else
+    printf '%s\n' 'merged_at: null'
+  fi
+  printf 'pr_opened_at: "%s"\n' "${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}"
   exit 0
 fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
@@ -949,27 +952,28 @@ test_timestamp_parse_failure_warns_and_records_partial_timing() {
   pass "fm-pr-merge reports timestamp parse failure and records partial timing"
 }
 
-test_auto_merge_waits_for_pull_request_to_land() {
+test_auto_merge_is_rejected_before_merge() {
   local case_dir rc
-  case_dir=$(make_case auto-merge-pending)
+  case_dir=$(make_case auto-merge-rejected)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" 2222222222222222222222222222222222222223
   : > "$case_dir/gh-axi.log"
 
   set +e
-  FM_TEST_PR_MERGED=false FM_TEST_PR_MERGED_AT= \
-    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/60 --auto \
-      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/60 --auto \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
-  expect_code 0 "$rc" "auto-merge-pending: enabling auto-merge should remain successful"
+  expect_code 2 "$rc" "auto-merge-rejected: auto-merge should be unsupported"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "auto-merge-rejected: gh-axi changed pull request state"
   assert_absent "$case_dir/data/delivery-log.jsonl" \
-    "auto-merge-pending: an unlanded task was recorded"
-  assert_grep 'is not merged; delivery timing was deferred until it lands' \
+    "auto-merge-rejected: an unlanded task was recorded"
+  assert_grep '--auto is unsupported because delivery timing requires a completed merge' \
     "$case_dir/stderr" \
-    "auto-merge-pending: deferred timing was not reported"
-  pass "fm-pr-merge waits for auto-merge to land before recording delivery timing"
+    "auto-merge-rejected: refusal did not explain the completed-merge requirement"
+  pass "fm-pr-merge rejects auto-merge before changing pull request state"
 }
 
 test_delivery_failure_does_not_block_pr_merge() {
@@ -1025,5 +1029,5 @@ test_duplicate_captain_approval_refuses
 test_successful_merge_appends_delivery_record
 test_timestamp_lookup_failure_warns_and_records_partial_timing
 test_timestamp_parse_failure_warns_and_records_partial_timing
-test_auto_merge_waits_for_pull_request_to_land
+test_auto_merge_is_rejected_before_merge
 test_delivery_failure_does_not_block_pr_merge

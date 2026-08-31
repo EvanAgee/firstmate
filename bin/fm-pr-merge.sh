@@ -189,6 +189,10 @@ require_resolved_threads() {
 }
 
 reject_repo_overrides "$@" || exit 1
+if caller_uses_auto_merge "$@"; then
+  echo "error: --auto is unsupported because delivery timing requires a completed merge" >&2
+  exit 2
+fi
 
 # Task-derived paths are constructed only after the canonical ID validation.
 META="$STATE/$ID.meta"
@@ -254,10 +258,6 @@ merge_args=()
 if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
 fi
-auto_merge=0
-if caller_uses_auto_merge "$@"; then
-  auto_merge=1
-fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
 
@@ -267,16 +267,17 @@ PR_FACTS=
 PR_MERGED=
 PR_OPENED_AT=
 MERGED_AT=
+MERGED_VALUE=
 PR_LOOKUP_OK=1
 if ! PR_FACTS=$(gh-axi api GET "/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" \
-  --jq '[.merged,.created_at,(.merged_at // "")] | @tsv'); then
+  --jq '{merged:.merged,pr_opened_at:.created_at,merged_at:.merged_at}'); then
   echo "warning: could not read pull request timestamps for $URL" >&2
   PR_LOOKUP_OK=0
-elif [[ "$PR_FACTS" == *$'\n'* ]]; then
-  echo "warning: could not parse pull request timestamps for $URL" >&2
-  PR_LOOKUP_OK=0
 else
-  IFS=$'\t' read -r PR_MERGED PR_OPENED_AT MERGED_AT PR_EXTRA <<< "$PR_FACTS"
+  PR_MERGED=$(printf '%s\n' "$PR_FACTS" | sed -n 's/^merged: //p')
+  PR_OPENED_AT=$(printf '%s\n' "$PR_FACTS" \
+    | sed -n 's/^pr_opened_at: "\([^"]*\)"$/\1/p')
+  MERGED_VALUE=$(printf '%s\n' "$PR_FACTS" | sed -n 's/^merged_at: //p')
   case "$PR_MERGED" in
     true|false) ;;
     *) PR_LOOKUP_OK=0 ;;
@@ -285,27 +286,20 @@ else
     ????-??-??T??:??:??Z) ;;
     *) PR_OPENED_AT=; PR_LOOKUP_OK=0 ;;
   esac
-  if [ -n "$MERGED_AT" ]; then
-    case "$MERGED_AT" in
-      ????-??-??T??:??:??Z) ;;
-      *) MERGED_AT=; PR_LOOKUP_OK=0 ;;
-    esac
-  fi
-  if [ -n "${PR_EXTRA:-}" ] || { [ "$PR_MERGED" = true ] && [ -z "$MERGED_AT" ]; }; then
-    PR_LOOKUP_OK=0
-  fi
+  case "$MERGED_VALUE" in
+    null) MERGED_AT= ;;
+    '"'????-??-??T??:??:??Z'"') MERGED_AT=${MERGED_VALUE#\"}; MERGED_AT=${MERGED_AT%\"} ;;
+    *) MERGED_AT=; PR_LOOKUP_OK=0 ;;
+  esac
+  [ "$PR_MERGED" != true ] || [ -n "$MERGED_AT" ] || PR_LOOKUP_OK=0
   if [ "$PR_LOOKUP_OK" -eq 0 ]; then
     echo "warning: could not parse pull request timestamps for $URL" >&2
   fi
 fi
 
 if [ "$PR_MERGED" = false ]; then
-  echo "warning: $URL is not merged; delivery timing was deferred until it lands" >&2
-  exit 0
-fi
-if [ "$auto_merge" -eq 1 ] && { [ "$PR_LOOKUP_OK" -eq 0 ] || [ "$PR_MERGED" != true ]; }; then
-  echo "warning: could not confirm that $URL landed; delivery timing was deferred" >&2
-  exit 0
+  echo "error: $URL is not merged after the merge command completed" >&2
+  exit 1
 fi
 
 delivery_args=(

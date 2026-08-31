@@ -251,12 +251,14 @@ test_delivery_failure_does_not_block_local_landing() {
 }
 
 test_timestamp_failure_does_not_block_local_landing() {
-  local state proj lane fakebin record rc
+  local state proj lane fakebin record ledger rc
+  local landed_at task_id ledger_project ledger_branch before after deferred review
   state="$TMP_ROOT/timestamp-failure/state"
   fakebin="$TMP_ROOT/timestamp-failure/fakebin"
   mkdir -p "$state" "$fakebin"
   IFS=$(printf '\t') read -r proj lane < <(make_project_ff timestamp-failure fm/ttime)
-  fm_write_meta "$state/ttime.meta" "project=$proj" "mode=local-only"
+  fm_write_meta "$state/ttime.meta" "project=$proj" "mode=no-mistakes" "yolo=off"
+  touch "$state/.github-down"
   cat > "$fakebin/date" <<'SH'
 #!/usr/bin/env bash
 exit 1
@@ -278,7 +280,18 @@ SH
   record=$(cat "$TMP_ROOT/timestamp-failure/data/delivery-log.jsonl")
   printf '%s\n' "$record" | jq -e '.task_id == "ttime" and .merged_at == null' >/dev/null \
     || fail "timestamp-failure: local landing did not preserve a partial record: $record"
-  pass "fm-merge-local reports timestamp failure without changing landing success"
+  ledger="$state/outage-landings/proj.log"
+  assert_present "$ledger" "timestamp-failure: outage landing ledger was not written"
+  IFS=$(printf '\t') read -r \
+    landed_at task_id ledger_project ledger_branch before after deferred review < "$ledger"
+  [ "$landed_at" = unknown ] \
+    || fail "timestamp-failure: outage ledger lacks its unavailable timestamp marker"
+  [ "$task_id" = ttime ] && [ "$ledger_project" = "$proj" ] \
+    && [ "$ledger_branch" = "$lane" ] && [ -n "$before" ] \
+    && [ "$after" = "$(git -C "$proj" rev-parse main)" ] \
+    && [ -z "$deferred" ] && [ -z "$review" ] \
+    || fail "timestamp-failure: outage ledger fields shifted after the missing timestamp"
+  pass "fm-merge-local preserves outage ledger fields after timestamp failure"
 }
 
 test_pr_bound_refused_without_outage_flag

@@ -120,7 +120,10 @@ if [ -f "$META" ] && [ ! -L "$META" ]; then
     if [ "${#SPAWN_EPOCH}" -eq 13 ]; then
       SPAWN_EPOCH=$((SPAWN_EPOCH / 1000))
     fi
-    DISPATCHED_AT=$(epoch_to_iso "$SPAWN_EPOCH" || true)
+    if ! DISPATCHED_AT=$(epoch_to_iso "$SPAWN_EPOCH"); then
+      echo "warning: could not convert dispatch timestamp for $ID" >&2
+      DISPATCHED_AT=
+    fi
   fi
 fi
 

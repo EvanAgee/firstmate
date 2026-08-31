@@ -240,7 +240,7 @@ if [ "$OUTAGE_LANDING" = yes ]; then
   case "$project_name" in
     ''|.|..|*/*) project_name=project ;;
   esac
-  landed_at=$LANDED_AT
+  landed_at=${LANDED_AT:-unknown}
   # Strip any tab or newline from free-text fields so one landing stays one line
   # and the tab-separated field contract cannot be broken by the review ref.
   review_ref=$(printf '%s' "$ADVERSARIAL_REVIEW" | tr '\t\n' '  ')
