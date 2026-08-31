@@ -252,6 +252,12 @@ fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 [ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "the active job did not complete after the readiness probe"
 assert_present "$ACTIVE_SIDE_EFFECT" "the active job was interrupted by the concurrent readiness check"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the active readiness job could not be reaped"
+touch -t 200001010000 "$STATE_ROOT/worker.ready"
+for _ in $(seq 1 40); do
+  fm_remote_job_probe "$ACCOUNT_HOME" && break
+  sleep 0.05
+done
+fm_remote_job_probe "$ACCOUNT_HOME" || fail "the worker did not return to its serving loop after the active job"
 pass "active jobs keep the worker ready for concurrent requests"
 
 OLD_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
