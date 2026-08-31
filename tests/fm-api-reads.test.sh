@@ -117,6 +117,59 @@ EOF
   pass "captain queue serves an open named card and hides a resolved one"
 }
 
+test_captain_queue_serves_parked_cards_separately() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-parked)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-31T18:00:00Z",
+  "items": [
+    {
+      "id": "active-choice",
+      "question": "Keep waiting?",
+      "options": ["Keep waiting (recommended)", "Stop"],
+      "status": "open"
+    }
+  ],
+  "resolved": [],
+  "parked": [
+    {
+      "id": "expired-choice",
+      "num": 4,
+      "question": "Approve the old release?",
+      "context": "No backlog item tracked this question.",
+      "commands": ["deploy-old"],
+      "options": ["Approve (recommended)", "Decline"],
+      "asked_at": "2026-08-20T18:00:00Z",
+      "status": "parked",
+      "project": "sample",
+      "parked_at": "2026-08-27T18:00:00Z",
+      "parked_reason": "expired-unbacked",
+      "parked_note": "Expired after 7 days without a backing backlog item"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "parked queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] \
+    || fail "active captain queue changed when parked cards were present: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked.length')" = 1 ] \
+    || fail "parked captain card was not exposed separately: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].id')" = expired-choice ] \
+    || fail "parked captain card id missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].status')" = parked ] \
+    || fail "parked captain card status missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedReason')" = expired-unbacked ] \
+    || fail "parked captain card reason missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedNote')" = "Expired after 7 days without a backing backlog item" ] \
+    || fail "parked captain card note missing: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue serves parked cards separately from active cards"
+}
+
 test_captain_queue_rejects_bad_options() {
   local home port resp
   home=$(fm_test_api_home api-queue-bad-options)
@@ -643,6 +696,7 @@ EOF
 test_empty_home_queue_is_empty
 test_captain_queue_ignores_worker_needs_decision
 test_captain_queue_serves_open_named_cards
+test_captain_queue_serves_parked_cards_separately
 test_captain_queue_rejects_bad_options
 test_captain_queue_moves_recommended_first
 test_captain_attention_hold_present_worker_absent

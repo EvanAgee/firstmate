@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-captain-queue.sh - fleet-board captain cards, dashboard-answer reconcile, and done-item auto-retire.
+# fm-captain-queue.sh - fleet-board captain cards, answer reconcile, expiry, and auto-retire.
 #
 # The dashboard posts each answer as one JSON line on state/captain-replies.jsonl
 # with the card's own id, and wakes firstmate through the home-local
@@ -28,19 +28,24 @@
 # unreadable stay. Auto-clear prints `cleared:` lines, not `handled:`; those
 # are not dashboard answers to act on. A missing backlog file or tasks-axi
 # skips the sweep rather than guessing.
-# add and reconcile take one home-scoped lock at state/.captain-queue.lock for
-# the whole queue-and-cursor read-modify-write, then release it.
+# `add` records whether a card has a backing backlog item. An unbacked card
+# expires after UNBACKED_CARD_EXPIRY_DAYS (7) days. Reconcile moves expired
+# cards from `items` to `parked` without dropping their original content.
+# `park` moves one human-verified active card to `parked` with a required note.
+# Add, park, and reconcile take one home-scoped lock at
+# state/.captain-queue.lock for the whole read-modify-write, then release it.
 #
 # Usage:
 #   fm-captain-queue.sh add --id <id> --question <text> \
 #     [--context <text>] [--project <name>] [--asked-at <iso>] \
 #     [--option <text>]... [--command <text>]...
+#   fm-captain-queue.sh park --id <id> --note <text>
 #   fm-captain-queue.sh reconcile
 #   fm-captain-queue.sh -h|--help
 #
 # Environment:
 #   FM_HOME / FM_ROOT_OVERRIDE / FM_DATA_OVERRIDE / FM_STATE_OVERRIDE
-#   FM_CAPTAIN_QUEUE_NOW   optional ISO stamp for updated_at / asked_at / resolved_at
+#   FM_CAPTAIN_QUEUE_NOW   optional ISO stamp for updated_at / asked_at / resolved_at / parked_at
 #
 # Requires jq.
 # Exit 0 on success (including an empty reconcile).
@@ -59,6 +64,8 @@ CURSOR_FILE="$STATE/captain-replies.cursor"
 QUEUE_LOCK="$STATE/.captain-queue.lock"
 QUEUE_LOCK_HELD=0
 LOCK_LIB_LOADED=0
+UNBACKED_CARD_EXPIRY_DAYS=7
+UNBACKED_CARD_EXPIRY_SECONDS=$((UNBACKED_CARD_EXPIRY_DAYS * 24 * 60 * 60))
 
 usage() {
   awk '
@@ -140,14 +147,15 @@ read_queue() {
         {
           updated_at: (.updated_at // ""),
           items: ((.items // []) | map(select(type == "object"))),
-          resolved: ((.resolved // []) | map(select(type == "object")))
+          resolved: ((.resolved // []) | map(select(type == "object"))),
+          parked: ((.parked // []) | map(select(type == "object")))
         }
       else
         error("captain-queue.json is not an object")
       end
     ' "$QUEUE"
   else
-    printf '%s\n' '{"updated_at":"","items":[],"resolved":[]}'
+    printf '%s\n' '{"updated_at":"","items":[],"resolved":[],"parked":[]}'
   fi
 }
 
@@ -225,9 +233,15 @@ cmd_add() {
   [ -n "$question" ] || die 2 "add requires --question"
   [ -n "$asked_at" ] || asked_at=$(now_stamp)
 
-  local queue options_json commands_json next_num item
+  local queue options_json commands_json next_num item backlog_backed=false
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
+  if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.parked[]; .id == $id)' >/dev/null; then
+    die 1 "card already parked: $id"
+  fi
+  if backlog_item_exists "$id"; then
+    backlog_backed=true
+  fi
   if [ "${#options[@]}" -gt 0 ]; then
     options_json=$(json_array "${options[@]}")
   else
@@ -247,6 +261,7 @@ cmd_add() {
     --arg project "$project" \
     --arg asked_at "$asked_at" \
     --argjson num "$next_num" \
+    --argjson backlog_backed "$backlog_backed" \
     --argjson options "$options_json" \
     --argjson commands "$commands_json" \
     '{
@@ -257,6 +272,7 @@ cmd_add() {
       commands: $commands,
       options: $options,
       asked_at: $asked_at,
+      backlog_backed: $backlog_backed,
       status: "open",
       project: $project
     }')
@@ -272,6 +288,87 @@ cmd_add() {
   printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
   release_queue_lock
   printf 'added: %s\n' "$id"
+}
+
+# Apply one park transition while preserving the complete active card.
+apply_parked() {  # <queue-json> <id> <stamp> <reason> <note> -> new queue on stdout
+  local queue=$1 id=$2 stamp=$3 reason=$4 note=$5
+  printf '%s\n' "$queue" | jq -c \
+    --arg id "$id" \
+    --arg stamp "$stamp" \
+    --arg reason "$reason" \
+    --arg note "$note" '
+      . as $q
+      | ($q.items | map(select(.id == $id)) | .[0]) as $card
+      | $q
+      | .items = (.items | map(select(.id != $id)))
+      | .parked = (
+          (.parked // [])
+          + [
+            $card
+            + {
+                status: "parked",
+                parked_at: $stamp,
+                parked_reason: $reason,
+                parked_note: $note
+              }
+          ]
+        )
+    '
+}
+
+cmd_park() {
+  local id="" note="" queue stamp
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --id)
+        [ "$#" -ge 2 ] || die 2 "park --id needs a value"
+        id=$2
+        shift 2
+        ;;
+      --note)
+        [ "$#" -ge 2 ] || die 2 "park --note needs a value"
+        note=$2
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die 2 "unknown park flag: $1"
+        ;;
+    esac
+  done
+  [ -n "$id" ] || die 2 "park requires --id"
+  id_ok "$id" || die 2 "id must be a hold identity slug"
+  [ -n "$note" ] || die 2 "park requires --note"
+
+  acquire_queue_lock
+  queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
+  if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.parked[]; .id == $id)' >/dev/null; then
+    release_queue_lock
+    printf 'parked: [id=%s] already-parked\n' "$id"
+    return 0
+  fi
+  if ! printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.items[]; .id == $id)' >/dev/null; then
+    die 1 "active card not found: $id"
+  fi
+  stamp=$(now_stamp)
+  queue=$(apply_parked "$queue" "$id" "$stamp" "manual" "$note") \
+    || die 1 "failed to park $id"
+  printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+  release_queue_lock
+  printf 'parked: [id=%s] manual\n' "$id"
+}
+
+# True when this home's backlog contains <id>, regardless of task state.
+backlog_item_exists() {  # <id>
+  local id=$1
+  [ -n "$id" ] || return 1
+  [ -f "$DATA/backlog.md" ] || return 1
+  command -v tasks-axi >/dev/null 2>&1 || return 1
+  tasks-axi show "$id" --file "$DATA/backlog.md" >/dev/null 2>&1
 }
 
 # Apply one matched reply: move the active card into resolved, keep the answer.
@@ -331,6 +428,35 @@ $ids
 EOF
 }
 
+# Move active cards created without a backlog item to parked after seven days.
+# A missing or malformed timestamp stays active rather than expiring on a guess.
+park_expired_cards() {
+  local id stamp ids
+  stamp=$(now_stamp)
+  ids=$(printf '%s\n' "$queue" | jq -r '.items[]? | select(.backlog_backed == false) | .id // empty') || return 0
+  [ -n "$ids" ] || return 0
+  while IFS= read -r id || [ -n "$id" ]; do
+    [ -n "$id" ] || continue
+    if ! printf '%s\n' "$queue" | jq -e \
+        --arg id "$id" \
+        --arg stamp "$stamp" \
+        --argjson expiry "$UNBACKED_CARD_EXPIRY_SECONDS" '
+          ($stamp | fromdateiso8601?) as $now
+          | (.items[] | select(.id == $id) | .asked_at | fromdateiso8601?) as $asked
+          | $now != null and $asked != null and ($now - $asked >= $expiry)
+        ' >/dev/null; then
+      continue
+    fi
+    queue=$(apply_parked "$queue" "$id" "$stamp" "expired-unbacked" \
+      "Expired after $UNBACKED_CARD_EXPIRY_DAYS days without a backing backlog item") \
+      || die 1 "failed to park $id"
+    printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+    printf 'parked: [id=%s] expired-unbacked\n' "$id"
+  done <<EOF
+$ids
+EOF
+}
+
 cmd_reconcile() {
   local cursor queue line n id answer stamp
   local orphan=0 orphan_id="" orphan_answer=""
@@ -381,6 +507,7 @@ cmd_reconcile() {
   fi
 
   clear_closed_cards
+  park_expired_cards
   if [ "$orphan" -eq 1 ]; then
     printf 'orphan: [id=%s] %s\n' "$orphan_id" "$orphan_answer"
     exit 1
@@ -399,6 +526,11 @@ main() {
       need_jq
       shift
       cmd_add "$@"
+      ;;
+    park)
+      need_jq
+      shift
+      cmd_park "$@"
       ;;
     reconcile)
       need_jq

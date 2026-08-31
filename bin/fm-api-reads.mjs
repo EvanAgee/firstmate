@@ -140,14 +140,14 @@ export function captainCardOptionsError(options) {
   return null;
 }
 
-function asCaptainCard(raw, resolvedIds) {
+function asCaptainCard(raw, resolvedIds, expectedStatus = "open") {
   if (!raw || typeof raw !== "object") return null;
   const id = textField(raw.id);
   const question = textField(raw.question);
   if (!id || !question) return null;
   if (resolvedIds.has(id)) return null;
   const status = textField(raw.status).toLowerCase() || "open";
-  if (status !== "open") return null;
+  if (status !== expectedStatus) return null;
   const options = normalizeCaptainCardOptions(raw.options);
   if (captainCardOptionsError(options)) return null;
   const recommended = options.find((label) => RECOMMENDED_MARK.test(label));
@@ -159,7 +159,7 @@ function asCaptainCard(raw, resolvedIds) {
         .filter((command) => typeof command === "string" && command.trim())
         .map((command) => command.trim())
     : [];
-  return {
+  const card = {
     id,
     num,
     question,
@@ -168,13 +168,22 @@ function asCaptainCard(raw, resolvedIds) {
     options,
     recommended,
     askedAt,
-    status: "open",
+    status: expectedStatus,
     project: textField(raw.project),
   };
+  if (expectedStatus === "parked") {
+    return {
+      ...card,
+      parkedAt: textField(raw.parked_at) || textField(raw.parkedAt),
+      parkedReason: textField(raw.parked_reason) || textField(raw.parkedReason),
+      parkedNote: textField(raw.parked_note) || textField(raw.parkedNote),
+    };
+  }
+  return card;
 }
 
 function emptyCaptainQueue() {
-  return { ok: true, updatedAt: "", items: [] };
+  return { ok: true, updatedAt: "", items: [], parked: [] };
 }
 
 export function captainQueueBody(home) {
@@ -208,10 +217,15 @@ export function captainQueueBody(home) {
     .map((row) => asCaptainCard(row, resolvedIds))
     .filter((card) => card !== null)
     .sort((a, b) => a.num - b.num || a.id.localeCompare(b.id));
+  const parked = (Array.isArray(data.parked) ? data.parked : [])
+    .map((row) => asCaptainCard(row, resolvedIds, "parked"))
+    .filter((card) => card !== null)
+    .sort((a, b) => a.num - b.num || a.id.localeCompare(b.id));
   return {
     ok: true,
     updatedAt: textField(data.updated_at) || textField(data.updatedAt),
     items,
+    parked,
   };
 }
 
