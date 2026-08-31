@@ -9,11 +9,15 @@
 # (`bin/fm-decision-hold.sh id <origin> <key>`) when one exists, or the backlog
 # captain-hold id otherwise. Do not invent a shorter second id.
 #
+# Captain-queue.json persists each card once in `records`. Each record's
+# `state` is `open`, `parked`, or `resolved`; readers derive their views from
+# that field. The writer accepts the legacy items/resolved/parked shape and
+# emits the canonical records shape on its next successful write.
 # `add` upserts one active card under that id.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
-# It reads every new reply line past the cursor, matches by id, moves a matched
-# card out of the active `items` set into `resolved` (answer preserved), and
-# advances the cursor past that line. Removing the card is not doing the work:
+# It reads every new reply line past the cursor, matches by id, changes a
+# matched card's state to `resolved` (answer preserved), and advances the
+# cursor past that line. Resolving the card is not doing the work:
 # each `handled:` line is the answer firstmate still has to act on. An
 # `orphan:` line matches no card; the cursor stays before it so the answer
 # cannot be skipped. Reconcile never advances past an answer that was neither
@@ -28,10 +32,10 @@
 # unreadable stay. Auto-clear prints `cleared:` lines, not `handled:`; those
 # are not dashboard answers to act on. A readable backlog is checked directly
 # when tasks-axi cannot answer.
-# `add` records whether a card has a backing backlog item. An unbacked card
-# expires after UNBACKED_CARD_EXPIRY_DAYS (7) days. Reconcile moves expired
-# cards from `items` to `parked` without dropping their original content.
-# `park` moves one human-verified active card to `parked` with a required note.
+# `add` records backlog_backed as true, false, or null when the backlog cannot
+# be read. Reconcile retries null records. False and still-null records expire
+# after UNBACKED_CARD_EXPIRY_DAYS (7) days without dropping their content.
+# `park` marks one human-verified active card as `parked` with a required note.
 # Add, park, and reconcile take one home-scoped lock at
 # state/.captain-queue.lock for the whole read-modify-write, then release it.
 #
@@ -167,26 +171,45 @@ atomic_write() {  # <dest>  (stdin is the new contents)
 read_queue() {
   if [ -f "$QUEUE" ]; then
     jq -c '
-      if type == "object" then
-        {
-          updated_at: (.updated_at // ""),
-          items: ((.items // []) | map(select(type == "object"))),
-          resolved: ((.resolved // []) | map(select(type == "object"))),
-          parked: ((.parked // []) | map(select(type == "object")))
-        }
-      else
+      def objects: map(select(type == "object"));
+      def with_state($state): . + {state: $state} | del(.status);
+      def valid_state: . == "open" or . == "parked" or . == "resolved";
+      if type != "object" then
         error("captain-queue.json is not an object")
+      else
+        (if has("records") then
+          if (.records | type) != "array" then
+            error("captain-queue.json records is not an array")
+          else
+            (.records | objects | map(
+              if (.state | valid_state) then del(.status)
+              else error("captain-queue.json record has an invalid state")
+              end
+            ))
+          end
+        else
+          (((.items // []) | objects | map(with_state("open")))
+          + ((.parked // []) | objects | map(with_state("parked")))
+          + ((.resolved // []) | objects | map(with_state("resolved"))))
+        end) as $records
+        | ([$records[] | .id | select(type == "string" and length > 0)]
+          | group_by(.) | map(select(length > 1)) | .[0][0] // "") as $duplicate
+        | if $duplicate != "" then
+            error("captain-queue.json has duplicate card id: " + $duplicate)
+          else
+            {updated_at: (.updated_at // ""), records: $records}
+          end
       end
     ' "$QUEUE"
   else
-    printf '%s\n' '{"updated_at":"","items":[],"resolved":[],"parked":[]}'
+    printf '%s\n' '{"updated_at":"","records":[]}'
   fi
 }
 
 write_queue() {  # stdin: queue object
   local stamp json
   stamp=$(now_stamp)
-  json=$(jq -c --arg stamp "$stamp" '.updated_at = $stamp') || return 1
+  json=$(jq -c --arg stamp "$stamp" '{updated_at: $stamp, records: (.records // [])}') || return 1
   printf '%s\n' "$json" | jq '.' | atomic_write "$QUEUE"
 }
 
@@ -267,16 +290,19 @@ cmd_add() {
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
   if printf '%s\n' "$queue" | jq -e --arg id "$id" '
-      any(.parked[]; .id == $id)
-      or any(.resolved[];
+      any(.records[];
         .id == $id
-        and (has("parked_at") or has("parked_reason") or has("parked_note"))
+        and (.state == "parked"
+          or (has("parked_at") or has("parked_reason") or has("parked_note")))
       )
     ' >/dev/null; then
     die 1 "card already parked: $id"
   fi
-  backlog_backed=$(backlog_backing_state "$id") \
-    || die 1 "cannot determine backlog backing for $id"
+  if printf '%s\n' "$queue" | jq -e --arg id "$id" \
+      'any(.records[]; .id == $id and .state == "resolved")' >/dev/null; then
+    die 1 "card already resolved: $id"
+  fi
+  backlog_backed=$(backlog_backing_state "$id")
   if [ "${#options[@]}" -gt 0 ]; then
     options_json=$(json_array "${options[@]}")
   else
@@ -287,7 +313,7 @@ cmd_add() {
   else
     commands_json=$(json_array)
   fi
-  next_num=$(printf '%s\n' "$queue" | jq -r '.items | map(.num) | max // 0')
+  next_num=$(printf '%s\n' "$queue" | jq -r '.records | map(.num) | max // 0')
   next_num=$((next_num + 1))
   item=$(jq -nc \
     --arg id "$id" \
@@ -308,12 +334,12 @@ cmd_add() {
       options: $options,
       asked_at: $asked_at,
       backlog_backed: $backlog_backed,
-      status: "open",
+      state: "open",
       project: $project
     }')
   queue=$(printf '%s\n' "$queue" | jq -c --arg id "$id" --argjson item "$item" '
-    if any(.items[]; .id == $id) then
-      .items = [.items[] | if .id == $id then
+    if any(.records[]; .id == $id and .state == "open") then
+      .records = [.records[] | if .id == $id and .state == "open" then
         if has("backlog_backed") and
             ((.backlog_backed | type) == "boolean" or .backlog_backed == null) then
           $item + {
@@ -332,7 +358,7 @@ cmd_add() {
         end
       else . end]
     else
-      .items += [$item]
+      .records += [$item]
     end
   ')
   printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
@@ -348,22 +374,16 @@ apply_parked() {  # <queue-json> <id> <stamp> <reason> <note> -> new queue on st
     --arg stamp "$stamp" \
     --arg reason "$reason" \
     --arg note "$note" '
-      . as $q
-      | ($q.items | map(select(.id == $id)) | .[0]) as $card
-      | $q
-      | .items = (.items | map(select(.id != $id)))
-      | .parked = (
-          (.parked // [])
-          + [
-            $card
-            + {
-                status: "parked",
-                parked_at: $stamp,
-                parked_reason: $reason,
-                parked_note: $note
-              }
-          ]
-        )
+      .records = [.records[] |
+        if .id == $id and .state == "open" then
+          . + {
+            state: "parked",
+            parked_at: $stamp,
+            parked_reason: $reason,
+            parked_note: $note
+          }
+        else . end
+      ]
     '
 }
 
@@ -396,17 +416,26 @@ cmd_park() {
 
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
-  if printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.parked[]; .id == $id)' >/dev/null; then
+  if printf '%s\n' "$queue" | jq -e --arg id "$id" '
+      any(.records[];
+        .id == $id
+        and (.state == "parked"
+          or (.state == "resolved"
+            and (has("parked_at") or has("parked_reason") or has("parked_note"))))
+      )
+    ' >/dev/null; then
     release_queue_lock
     printf 'parked: [id=%s] already-parked\n' "$id"
     return 0
   fi
-  if ! printf '%s\n' "$queue" | jq -e --arg id "$id" 'any(.items[]; .id == $id)' >/dev/null; then
+  if ! printf '%s\n' "$queue" | jq -e --arg id "$id" \
+      'any(.records[]; .id == $id and .state == "open")' >/dev/null; then
     die 1 "active card not found: $id"
   fi
   if ! printf '%s\n' "$queue" | jq -e --arg id "$id" '
-      any(.items[];
+      any(.records[];
         .id == $id
+        and .state == "open"
         and ((has("backlog_backed") | not) or .backlog_backed == false)
       )
     ' >/dev/null; then
@@ -473,7 +502,7 @@ backlog_item_state() {  # <id>
 
 backlog_backing_state() {  # <id>
   local state
-  state=$(backlog_item_state "$1") || return 1
+  state=$(backlog_item_state "$1") || { printf 'null\n'; return 0; }
   if [ "$state" = absent ]; then
     printf 'false\n'
   else
@@ -481,29 +510,22 @@ backlog_backing_state() {  # <id>
   fi
 }
 
-# Apply one matched reply: move the active or parked card into resolved.
+# Apply one matched reply to an active or parked card.
 apply_handled() {  # <queue-json> <id> <answer> <stamp> -> new queue on stdout
   local queue=$1 id=$2 answer=$3 stamp=$4
   printf '%s\n' "$queue" | jq -c \
     --arg id "$id" \
     --arg answer "$answer" \
     --arg stamp "$stamp" '
-      . as $q
-      | (($q.items + ($q.parked // [])) | map(select(.id == $id)) | .[0]) as $card
-      | $q
-      | .items = (.items | map(select(.id != $id)))
-      | .parked = ((.parked // []) | map(select(.id != $id)))
-      | .resolved = (
-          (.resolved // [])
-          + [
-            $card
-            + {
-                status: "resolved",
-                answer: $answer,
-                resolved_at: $stamp
-              }
-          ]
-        )
+      .records = [.records[] |
+        if .id == $id and (.state == "open" or .state == "parked") then
+          . + {
+            state: "resolved",
+            answer: $answer,
+            resolved_at: $stamp
+          }
+        else . end
+      ]
     '
 }
 
@@ -520,7 +542,8 @@ backlog_item_done() {  # <id>
 clear_closed_cards() {
   local id stamp ids
   ids=$(printf '%s\n' "$queue" | jq -r '
-    .items[]?
+    .records[]?
+    | select(.state == "open")
     | select(.backlog_backed == true or (has("backlog_backed") | not))
     | .id // empty
   ') || return 0
@@ -541,16 +564,20 @@ EOF
 refresh_unknown_backing_states() {
   local id ids state changed=0
   ids=$(printf '%s\n' "$queue" | jq -r '
-    .items[]? | select(has("backlog_backed") and .backlog_backed == null) | .id // empty
+    .records[]?
+    | select(.state == "open" and has("backlog_backed") and .backlog_backed == null)
+    | .id // empty
   ') || return 0
   [ -n "$ids" ] || return 0
   while IFS= read -r id || [ -n "$id" ]; do
     [ -n "$id" ] || continue
-    state=$(backlog_backing_state "$id") \
-      || die 1 "cannot determine backlog backing for $id"
+    state=$(backlog_backing_state "$id")
+    [ "$state" != null ] || continue
     queue=$(printf '%s\n' "$queue" | jq -c \
       --arg id "$id" --argjson state "$state" '
-        .items = [.items[] | if .id == $id then .backlog_backed = $state else . end]
+        .records = [.records[] |
+          if .id == $id and .state == "open" then .backlog_backed = $state else . end
+        ]
       ') || die 1 "failed to record backlog backing for $id"
     changed=1
   done <<EOF
@@ -564,9 +591,14 @@ EOF
 # Move active cards created without a backlog item to parked after seven days.
 # A missing or malformed timestamp stays active rather than expiring on a guess.
 park_expired_cards() {
-  local id stamp ids
+  local id stamp ids backing reason note
   stamp=$(now_stamp)
-  ids=$(printf '%s\n' "$queue" | jq -r '.items[]? | select(.backlog_backed == false) | .id // empty') || return 0
+  ids=$(printf '%s\n' "$queue" | jq -r '
+    .records[]?
+    | select(.state == "open" and has("backlog_backed"))
+    | select(.backlog_backed == false or .backlog_backed == null)
+    | .id // empty
+  ') || return 0
   [ -n "$ids" ] || return 0
   while IFS= read -r id || [ -n "$id" ]; do
     [ -n "$id" ] || continue
@@ -575,16 +607,24 @@ park_expired_cards() {
         --arg stamp "$stamp" \
         --argjson expiry "$UNBACKED_CARD_EXPIRY_SECONDS" '
           ($stamp | fromdateiso8601?) as $now
-          | (.items[] | select(.id == $id) | .asked_at | fromdateiso8601?) as $asked
+          | (.records[] | select(.id == $id and .state == "open") | .asked_at | fromdateiso8601?) as $asked
           | $now != null and $asked != null and ($now - $asked >= $expiry)
         ' >/dev/null; then
       continue
     fi
-    queue=$(apply_parked "$queue" "$id" "$stamp" "expired-unbacked" \
-      "Expired after $UNBACKED_CARD_EXPIRY_DAYS days without a backing backlog item") \
+    backing=$(printf '%s\n' "$queue" | jq -r --arg id "$id" \
+      '.records[] | select(.id == $id and .state == "open") | .backlog_backed')
+    if [ "$backing" = false ]; then
+      reason=expired-unbacked
+      note="Expired after $UNBACKED_CARD_EXPIRY_DAYS days without a backing backlog item"
+    else
+      reason=expired-unknown-backing
+      note="Expired after $UNBACKED_CARD_EXPIRY_DAYS days while backlog backing could not be verified"
+    fi
+    queue=$(apply_parked "$queue" "$id" "$stamp" "$reason" "$note") \
       || die 1 "failed to park $id"
     printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
-    printf 'parked: [id=%s] expired-unbacked\n' "$id"
+    printf 'parked: [id=%s] %s\n' "$id" "$reason"
   done <<EOF
 $ids
 EOF
@@ -617,7 +657,7 @@ cmd_reconcile() {
       id=$(printf '%s\n' "$line" | jq -r '.id')
       answer=$(printf '%s\n' "$line" | jq -r '.answer')
       if printf '%s\n' "$queue" | jq -e --arg id "$id" \
-          'any(.items[]; .id == $id) or any(.parked[]; .id == $id)' >/dev/null; then
+          'any(.records[]; .id == $id and (.state == "open" or .state == "parked"))' >/dev/null; then
         stamp=$(now_stamp)
         queue=$(apply_handled "$queue" "$id" "$answer" "$stamp") || die 1 "failed to resolve $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
@@ -625,7 +665,10 @@ cmd_reconcile() {
         cursor=$n
         printf 'handled: [id=%s] %s\n' "$id" "$answer"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --arg answer "$answer" \
-          'any(.resolved[]; .id == $id and (.answer == $answer or .answer == "backlog-done"))' >/dev/null; then
+          'any(.records[];
+            .id == $id and .state == "resolved"
+            and (.answer == $answer or .answer == "backlog-done")
+          )' >/dev/null; then
         # Crash window: the card already moved, the cursor did not. Same answer
         # means this line was applied; advance without dropping a new answer.
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"

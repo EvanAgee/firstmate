@@ -140,17 +140,34 @@ export function captainCardOptionsError(options) {
   return null;
 }
 
-function asCaptainCard(raw, resolvedIds, expectedStatus = "open") {
+function captainQueueRecords(data) {
+  const states = new Set(["open", "parked", "resolved"]);
+  const normalize = (raw, fallbackState = "") => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const state = (textField(raw.state) || textField(raw.status) || fallbackState).toLowerCase();
+    if (!states.has(state)) return null;
+    return { ...raw, state };
+  };
+  if (Array.isArray(data.records)) {
+    return data.records.map((row) => normalize(row)).filter((row) => row !== null);
+  }
+  return [
+    ...(Array.isArray(data.items) ? data.items.map((row) => normalize(row, "open")) : []),
+    ...(Array.isArray(data.parked) ? data.parked.map((row) => normalize(row, "parked")) : []),
+    ...(Array.isArray(data.resolved) ? data.resolved.map((row) => normalize(row, "resolved")) : []),
+  ].filter((row) => row !== null);
+}
+
+function asCaptainCard(raw, expectedState = "open") {
   if (!raw || typeof raw !== "object") return null;
   const id = textField(raw.id);
   const question = textField(raw.question);
   if (!id || !question) return null;
-  if (resolvedIds.has(id)) return null;
-  const status = textField(raw.status).toLowerCase() || "open";
-  if (status !== expectedStatus) return null;
+  const state = textField(raw.state).toLowerCase();
+  if (state !== expectedState) return null;
   const options = normalizeCaptainCardOptions(raw.options);
   const recommended = options.find((label) => RECOMMENDED_MARK.test(label)) || "";
-  if (expectedStatus === "open" && captainCardOptionsError(options)) return null;
+  if (expectedState === "open" && captainCardOptionsError(options)) return null;
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
   const askedAt = textField(raw.asked_at) || textField(raw.askedAt);
   const commands = Array.isArray(raw.commands)
@@ -167,10 +184,10 @@ function asCaptainCard(raw, resolvedIds, expectedStatus = "open") {
     options,
     recommended,
     askedAt,
-    status: expectedStatus,
+    status: expectedState,
     project: textField(raw.project),
   };
-  if (expectedStatus === "parked") {
+  if (expectedState === "parked") {
     return {
       ...card,
       parkedAt: textField(raw.parked_at) || textField(raw.parkedAt),
@@ -207,17 +224,13 @@ export function captainQueueBody(home) {
     return emptyCaptainQueue();
   }
   if (!data || typeof data !== "object" || Array.isArray(data)) return emptyCaptainQueue();
-  const resolvedIds = new Set(
-    (Array.isArray(data.resolved) ? data.resolved : [])
-      .map((row) => (row && typeof row.id === "string" ? row.id.trim() : ""))
-      .filter(Boolean),
-  );
-  const items = (Array.isArray(data.items) ? data.items : [])
-    .map((row) => asCaptainCard(row, resolvedIds))
+  const records = captainQueueRecords(data);
+  const items = records
+    .map((row) => asCaptainCard(row))
     .filter((card) => card !== null)
     .sort((a, b) => a.num - b.num || a.id.localeCompare(b.id));
-  const parked = (Array.isArray(data.parked) ? data.parked : [])
-    .map((row) => asCaptainCard(row, resolvedIds, "parked"))
+  const parked = records
+    .map((row) => asCaptainCard(row, "parked"))
     .filter((card) => card !== null)
     .sort((a, b) => a.num - b.num || a.id.localeCompare(b.id));
   return {

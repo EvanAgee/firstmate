@@ -32,16 +32,34 @@ append_reply() {  # <home> <id> <answer>
 }
 
 active_ids() {  # <home>
-  jq -r '.items[]?.id' "$1/data/captain-queue.json" 2>/dev/null || true
+  jq -r '
+    if has("records") then .records[]? | select(.state == "open")
+    else .items[]? | select((.status // "open") == "open")
+    end
+    | .id
+  ' \
+    "$1/data/captain-queue.json" 2>/dev/null || true
 }
 
 resolved_answer() {  # <home> <id>
-  jq -r --arg id "$2" '.resolved[] | select(.id == $id) | .answer' \
+  jq -r --arg id "$2" '
+    if has("records") then .records[]? | select(.state == "resolved")
+    else .resolved[]?
+    end
+    | select(.id == $id)
+    | .answer
+  ' \
     "$1/data/captain-queue.json"
 }
 
 parked_ids() {  # <home>
-  jq -r '.parked[]?.id' "$1/data/captain-queue.json" 2>/dev/null || true
+  jq -r '
+    if has("records") then .records[]? | select(.state == "parked")
+    else .parked[]?
+    end
+    | .id
+  ' \
+    "$1/data/captain-queue.json" 2>/dev/null || true
 }
 
 cursor_value() {  # <home>
@@ -61,12 +79,32 @@ test_add_uses_the_supplied_id() {
     --option "Yes" --option "No" \
     --project sample)
   assert_contains "$out" "added: sample-origin-decision-prod-gate" "add should echo the id"
-  [ "$(jq -r '.items[0].id' "$home/data/captain-queue.json")" = \
+  [ "$(jq -r '.records[0].id' "$home/data/captain-queue.json")" = \
     sample-origin-decision-prod-gate ] \
     || fail "card id was not the supplied hold identity"
-  [ "$(jq -r '.items[0].status' "$home/data/captain-queue.json")" = open ] \
+  [ "$(jq -r '.records[0].state' "$home/data/captain-queue.json")" = open ] \
     || fail "new card should be open"
   pass "add writes a card under the supplied hold identity"
+}
+
+test_writer_persists_one_canonical_record_per_card() {
+  local home
+  home=$(make_home canonical-records)
+  run_q "$home" add --id canonical-card --question "Original question?" >/dev/null
+  run_q "$home" add --id canonical-card --question "Updated question?" >/dev/null
+  jq -e '
+    has("records")
+    and (has("items") | not)
+    and (has("resolved") | not)
+    and (has("parked") | not)
+    and (.records | length) == 1
+    and .records[0].id == "canonical-card"
+    and .records[0].state == "open"
+    and (.records[0] | has("status") | not)
+    and .records[0].question == "Updated question?"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "writer did not persist one canonical record for the card"
+  pass "the writer persists one canonical record per card"
 }
 
 test_unbacked_card_expires_to_parked() {
@@ -76,7 +114,7 @@ test_unbacked_card_expires_to_parked() {
     --id urgent-unbacked-question \
     --question "Approve the emergency change?" \
     --asked-at 2026-08-20T18:00:00Z >/dev/null
-  [ "$(jq -r '.items[0].backlog_backed' "$home/data/captain-queue.json")" = false ] \
+  [ "$(jq -r '.records[0].backlog_backed' "$home/data/captain-queue.json")" = false ] \
     || fail "unbacked card did not record its creation-time backing state"
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "parked: [id=urgent-unbacked-question] expired-unbacked" \
@@ -113,9 +151,9 @@ test_reposting_preserves_the_expiry_anchor() {
     --id reposted-unbacked-question \
     --question "Updated question" >/dev/null
   jq -e '
-    .items[0].asked_at == "2026-08-20T18:00:00Z"
-    and .items[0].backlog_backed == false
-    and .items[0].question == "Updated question"
+    .records[0].asked_at == "2026-08-20T18:00:00Z"
+    and .records[0].backlog_backed == false
+    and .records[0].question == "Updated question"
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "reposting changed the card's original expiry metadata"
   out=$(run_q "$home" reconcile)
@@ -131,7 +169,7 @@ test_asked_at_is_normalized_or_rejected() {
     --id offset-question \
     --question "Offset timestamp?" \
     --asked-at 2026-08-20T13:00:00-05:00 >/dev/null
-  [ "$(jq -r '.items[0].asked_at' "$home/data/captain-queue.json")" = 2026-08-20T18:00:00Z ] \
+  [ "$(jq -r '.records[0].asked_at' "$home/data/captain-queue.json")" = 2026-08-20T18:00:00Z ] \
     || fail "numeric-offset asked_at was not normalized to UTC"
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "parked: [id=offset-question] expired-unbacked" \
@@ -172,23 +210,21 @@ test_expiry_preserves_card_and_is_idempotent() {
     --command "deploy-b" >/dev/null
   run_q "$home" reconcile >/dev/null
   jq -e '
-    (.items | length) == 0
-    and (.resolved | length) == 0
-    and (.parked | length) == 1
-    and .parked[0].id == "full-unbacked-question"
-    and .parked[0].question == "Which release should ship?"
-    and .parked[0].context == "Production is waiting."
-    and .parked[0].project == "sample"
-    and .parked[0].asked_at == "2026-08-20T17:59:59Z"
-    and .parked[0].options == ["Ship A", "Ship B"]
-    and .parked[0].commands == ["deploy-a", "deploy-b"]
-    and .parked[0].status == "parked"
-    and .parked[0].parked_reason == "expired-unbacked"
+    (.records | length) == 1
+    and .records[0].id == "full-unbacked-question"
+    and .records[0].question == "Which release should ship?"
+    and .records[0].context == "Production is waiting."
+    and .records[0].project == "sample"
+    and .records[0].asked_at == "2026-08-20T17:59:59Z"
+    and .records[0].options == ["Ship A", "Ship B"]
+    and .records[0].commands == ["deploy-a", "deploy-b"]
+    and .records[0].state == "parked"
+    and .records[0].parked_reason == "expired-unbacked"
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "expiry did not preserve the card body in a distinct parked group"
   out=$(run_q "$home" reconcile)
   [ -z "$out" ] || fail "reconcile mentioned an already parked card: $out"
-  [ "$(jq '.parked | length' "$home/data/captain-queue.json")" -eq 1 ] \
+  [ "$(jq '[.records[] | select(.state == "parked")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
     || fail "reconcile re-parked an already parked card"
   [ -z "$(active_ids "$home")" ] || fail "reconcile resurrected an already parked card"
   pass "expiry preserves the full card in parked and never re-parks or resurrects it"
@@ -211,14 +247,15 @@ test_manual_park_supports_verified_migration() {
     "manual park should report the migrated card"
   [ -z "$(active_ids "$home")" ] || fail "manual park left the migrated card active"
   jq -e '
-    (.parked | length) == 1
-    and .parked[0].id == "settled-existing-question"
-    and .parked[0].question == "Proceed with cutover?"
-    and .parked[0].context == "The cutover has since completed."
-    and .parked[0].asked_at == "2026-08-26T18:00:00Z"
-    and .parked[0].options == ["Proceed", "Wait"]
-    and .parked[0].parked_reason == "manual"
-    and .parked[0].parked_note == "Verified settled on 2026-08-27"
+    (.records | length) == 1
+    and .records[0].state == "parked"
+    and .records[0].id == "settled-existing-question"
+    and .records[0].question == "Proceed with cutover?"
+    and .records[0].context == "The cutover has since completed."
+    and .records[0].asked_at == "2026-08-26T18:00:00Z"
+    and .records[0].options == ["Proceed", "Wait"]
+    and .records[0].parked_reason == "manual"
+    and .records[0].parked_note == "Verified settled on 2026-08-27"
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "manual park did not preserve the verified card and migration note"
   out=$(run_q "$home" park \
@@ -226,7 +263,7 @@ test_manual_park_supports_verified_migration() {
     --note "Verified settled on 2026-08-27")
   assert_contains "$out" "parked: [id=settled-existing-question] already-parked" \
     "repeating manual park should report an idempotent no-op"
-  [ "$(jq '.parked | length' "$home/data/captain-queue.json")" -eq 1 ] \
+  [ "$(jq '[.records[] | select(.state == "parked")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
     || fail "repeating manual park duplicated the card"
   rc=0
   run_q "$home" add \
@@ -234,7 +271,7 @@ test_manual_park_supports_verified_migration() {
     --question "Ask this again" >/dev/null 2>&1 || rc=$?
   [ "$rc" -eq 1 ] || fail "add should refuse to resurrect a parked card, got $rc"
   [ -z "$(active_ids "$home")" ] || fail "add resurrected a parked card"
-  [ "$(jq '.parked | length' "$home/data/captain-queue.json")" -eq 1 ] \
+  [ "$(jq '[.records[] | select(.state == "parked")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
     || fail "refused add changed the parked card"
   pass "manual park supports a repeat-safe human-verified migration with a note"
 }
@@ -267,6 +304,16 @@ test_legacy_card_waits_for_verified_migration() {
     "manual verification should allow a legacy migration candidate to park"
   [ "$(parked_ids "$home")" = legacy-question ] \
     || fail "manual verification did not park the legacy migration candidate"
+  jq -e '
+    has("records")
+    and (has("items") | not)
+    and (has("resolved") | not)
+    and (has("parked") | not)
+    and (.records | length) == 1
+    and .records[0].id == "legacy-question"
+    and .records[0].state == "parked"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "successful legacy transition did not write the canonical queue shape"
   pass "a legacy card waits for human verification and then allows manual migration"
 }
 
@@ -322,7 +369,7 @@ test_backed_card_does_not_expire() {
     --id long-running-choice \
     --question "Keep waiting?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
-  [ "$(jq -r '.items[0].backlog_backed' "$home/data/captain-queue.json")" = true ] \
+  [ "$(jq -r '.records[0].backlog_backed' "$home/data/captain-queue.json")" = true ] \
     || fail "backed card did not record its creation-time backing state"
   out=$(run_q "$home" reconcile)
   [ -z "$out" ] || fail "open backed card should not produce reconcile output: $out"
@@ -354,8 +401,8 @@ EOF
     --question "Urgent unbacked question?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
   jq -e '
-    any(.items[]; .id == "fallback-backed-question" and .backlog_backed == true)
-    and any(.items[]; .id == "fallback-unbacked-question" and .backlog_backed == false)
+    any(.records[]; .id == "fallback-backed-question" and .backlog_backed == true)
+    and any(.records[]; .id == "fallback-unbacked-question" and .backlog_backed == false)
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "the readable backlog fallback did not record definite backing states"
   out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
@@ -364,6 +411,36 @@ EOF
   [ "$(active_ids "$home")" = fallback-backed-question ] \
     || fail "the fallback-classified backed card did not remain active"
   pass "a readable backlog keeps backing state definite during tool failure"
+}
+
+test_unreadable_backlog_allows_a_bounded_unknown_card() {
+  local home fakebin out
+  home=$(make_home unreadable-backlog)
+  printf '%s\n' 'backlog contents unavailable to the queue reader' > "$home/data/backlog.md"
+  fakebin=$(fm_fakebin "$home")
+  make_failing_tasks_axi "$fakebin"
+  cat > "$fakebin/awk" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/awk"
+  PATH="$fakebin:$PATH" run_q "$home" add \
+    --id unknown-backing-question \
+    --question "Urgent question while backlog reads fail?" \
+    --asked-at 2026-08-20T18:00:00Z >/dev/null \
+    || fail "an unreadable backlog refused an urgent card"
+  jq -e '
+    .records[0].id == "unknown-backing-question"
+    and .records[0].state == "open"
+    and .records[0].backlog_backed == null
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "unreadable backlog did not record unknown backing"
+  out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
+  assert_contains "$out" "parked: [id=unknown-backing-question] expired-unknown-backing" \
+    "an unknown card should stop asking at the seven-day boundary"
+  [ "$(parked_ids "$home")" = unknown-backing-question ] \
+    || fail "unknown card stayed active after its bounded window"
+  pass "an unreadable backlog allows an urgent card with bounded unknown backing"
 }
 
 test_later_done_item_does_not_resolve_an_unbacked_card() {
@@ -385,7 +462,7 @@ test_later_done_item_does_not_resolve_an_unbacked_card() {
     "the card's creation-time backing state should control its transition"
   assert_not_contains "$out" "cleared:" \
     "later same-id work must not mark an unanswered card resolved"
-  [ "$(jq '.resolved | length' "$home/data/captain-queue.json")" -eq 0 ] \
+  [ "$(jq '[.records[] | select(.state == "resolved")] | length' "$home/data/captain-queue.json")" -eq 0 ] \
     || fail "later same-id work moved the unbacked card to resolved"
   pass "later same-id work cannot resolve an originally unbacked card"
 }
@@ -409,6 +486,23 @@ test_matched_reply_removes_the_card_and_keeps_the_answer() {
   [ -z "$out" ] || fail "caught-up reconcile should be silent, got: $out"
   [ "$(cursor_value "$home")" = 1 ] || fail "caught-up reconcile moved the cursor"
   pass "a matched reply removes the card, keeps the answer, and advances the cursor one line"
+}
+
+test_resolved_card_id_cannot_be_reused() {
+  local home out rc
+  home=$(make_home resolved-id-reuse)
+  run_q "$home" add --id resolved-card --question "First question?" >/dev/null
+  append_reply "$home" resolved-card "First answer"
+  run_q "$home" reconcile >/dev/null
+  rc=0
+  out=$(run_q "$home" add --id resolved-card --question "Second question?" 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "reusing a resolved card id should exit 1, got $rc"
+  assert_contains "$out" "card already resolved: resolved-card" \
+    "resolved card reuse should explain the identity conflict"
+  [ -z "$(active_ids "$home")" ] || fail "resolved card id reuse created an active card"
+  [ "$(resolved_answer "$home" resolved-card)" = "First answer" ] \
+    || fail "resolved card id reuse changed its history"
+  pass "a resolved card id cannot be reused"
 }
 
 test_orphan_reply_does_not_advance_or_drop() {
@@ -576,13 +670,13 @@ test_verified_live_card_can_be_reposted_with_backing() {
     --question "Verified live question" \
     --asked-at "$NOW" >/dev/null
   jq -e --arg now "$NOW" '
-    (.items | length) == 1
-    and .items[0].id == "legacy-live-question"
-    and .items[0].num == 7
-    and .items[0].question == "Verified live question"
-    and .items[0].asked_at == $now
-    and .items[0].backlog_backed == true
-    and (.parked | length) == 0
+    (.records | length) == 1
+    and .records[0].state == "open"
+    and .records[0].id == "legacy-live-question"
+    and .records[0].num == 7
+    and .records[0].question == "Verified live question"
+    and .records[0].asked_at == $now
+    and .records[0].backlog_backed == true
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "re-post did not attach the verified live card to its new backlog item"
   out=$(run_q "$home" reconcile)
@@ -760,26 +854,30 @@ test_parked_reply_resolves_and_preserves_history() {
   [ "$(cursor_value "$home")" = 2 ] || fail "cursor did not advance past both replies"
   [ -z "$(parked_ids "$home")" ] || fail "answered parked card stayed parked"
   jq -e '
-    .resolved[]
-    | select(.id == "parked-card")
+    .records[]
+    | select(.id == "parked-card" and .state == "resolved")
     | .answer == "Answer after parking"
       and .parked_reason == "expired-unbacked"
       and (.parked_at | length > 0)
       and (.parked_note | length > 0)
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "resolved card lost its parked history"
+  out=$(run_q "$home" park --id parked-card --note "Verified settled after answer")
+  assert_contains "$out" "parked: [id=parked-card] already-parked" \
+    "repeating park after an answer should remain an idempotent no-op"
   rc=0
   out=$(run_q "$home" add --id parked-card --question "Ask again" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "re-adding an answered parked card should exit 1, got $rc"
   assert_contains "$out" "card already parked: parked-card" \
     "answered parked history should block resurrection"
   [ -z "$(active_ids "$home")" ] || fail "answered parked card was resurrected"
-  [ "$(jq '[.resolved[] | select(.id == "parked-card")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
+  [ "$(jq '[.records[] | select(.id == "parked-card" and .state == "resolved")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
     || fail "refused re-add changed resolved parked history"
   pass "an answered parked card stays resolved and cannot be resurrected"
 }
 
 test_add_uses_the_supplied_id
+test_writer_persists_one_canonical_record_per_card
 test_unbacked_card_expires_to_parked
 test_unbacked_card_stays_active_before_expiry
 test_reposting_preserves_the_expiry_anchor
@@ -796,7 +894,9 @@ test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards
 test_backed_card_does_not_expire
 test_backlog_fallback_avoids_unknown_state
+test_unreadable_backlog_allows_a_bounded_unknown_card
 test_later_done_item_does_not_resolve_an_unbacked_card
+test_resolved_card_id_cannot_be_reused
 test_verified_live_card_can_be_reposted_with_backing
 test_done_backlog_item_clears_card_without_a_reply
 test_legacy_backed_done_card_still_clears

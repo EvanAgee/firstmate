@@ -70,7 +70,7 @@ test_captain_queue_serves_open_named_cards() {
   write_queue "$home" <<'EOF'
 {
   "updated_at": "2026-08-27T16:00:00Z",
-  "items": [
+  "records": [
     {
       "id": "fm-memory-path",
       "num": 3,
@@ -83,7 +83,7 @@ test_captain_queue_serves_open_named_cards() {
         "Something else"
       ],
       "asked_at": "2026-08-26T20:45:00Z",
-      "status": "open",
+      "state": "open",
       "project": "firstmate"
     },
     {
@@ -91,7 +91,7 @@ test_captain_queue_serves_open_named_cards() {
       "num": 1,
       "question": "Already answered",
       "options": ["Yes, ship it (recommended)", "Hold"],
-      "status": "resolved",
+      "state": "resolved",
       "project": "firstmate"
     }
   ]
@@ -123,16 +123,13 @@ test_captain_queue_serves_parked_cards_separately() {
   write_queue "$home" <<'EOF'
 {
   "updated_at": "2026-08-31T18:00:00Z",
-  "items": [
+  "records": [
     {
       "id": "active-choice",
       "question": "Keep waiting?",
       "options": ["Keep waiting (recommended)", "Stop"],
-      "status": "open"
-    }
-  ],
-  "resolved": [],
-  "parked": [
+      "state": "open"
+    },
     {
       "id": "expired-choice",
       "num": 4,
@@ -141,7 +138,7 @@ test_captain_queue_serves_parked_cards_separately() {
       "commands": ["deploy-old"],
       "options": ["Approve (recommended)", "Decline"],
       "asked_at": "2026-08-20T18:00:00Z",
-      "status": "parked",
+      "state": "parked",
       "project": "sample",
       "parked_at": "2026-08-27T18:00:00Z",
       "parked_reason": "expired-unbacked",
@@ -175,15 +172,13 @@ test_captain_queue_keeps_parked_cards_without_active_options() {
   home=$(fm_test_api_home api-queue-parked-no-options)
   write_queue "$home" <<'EOF'
 {
-  "items": [],
-  "resolved": [],
-  "parked": [
+  "records": [
     {
       "id": "parked-without-options",
       "question": "Historical unanswered question?",
       "options": [],
       "asked_at": "2026-08-20T18:00:00Z",
-      "status": "parked",
+      "state": "parked",
       "parked_at": "2026-08-27T18:00:00Z",
       "parked_reason": "expired-unbacked"
     }
