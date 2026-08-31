@@ -35,8 +35,8 @@
 # are not dashboard answers to act on. A readable backlog is checked directly
 # when tasks-axi cannot answer.
 # `add` records backlog_backed as true, false, or null when the backlog cannot
-# be read. Reconcile retries null records. False and still-null records expire
-# after UNBACKED_CARD_EXPIRY_DAYS (7) days without dropping their content.
+# be read. False and null records expire after UNBACKED_CARD_EXPIRY_DAYS (7)
+# days without dropping their content.
 # `park` marks one human-verified active card as `parked` with a required note.
 # Repeating it is a no-op for parked cards and resolved cards with parked history.
 # Add, park, and reconcile take one home-scoped lock at
@@ -339,7 +339,7 @@ cmd_add() {
       'any(.records[]; .id == $id and .state == "resolved")' >/dev/null; then
     die 1 "card already resolved: $id"
   fi
-  backlog_backed=$(backlog_backing_state "$id")
+  backlog_backed=$(add_time_backlog_backing_state "$id")
   if [ "${#options[@]}" -gt 0 ]; then
     options_json=$(json_array "${options[@]}")
   else
@@ -537,7 +537,7 @@ backlog_item_state() {  # <id>
   ' "$DATA/backlog.md"
 }
 
-backlog_backing_state() {  # <id>
+add_time_backlog_backing_state() {  # <id>
   local state
   state=$(backlog_item_state "$1") || { printf 'null\n'; return 0; }
   if [ "$state" = absent ]; then
@@ -596,33 +596,6 @@ clear_closed_cards() {
   done <<EOF
 $ids
 EOF
-}
-
-refresh_unknown_backing_states() {
-  local id ids state changed=0
-  ids=$(printf '%s\n' "$queue" | jq -r '
-    .records[]?
-    | select(.state == "open" and has("backlog_backed") and .backlog_backed == null)
-    | .id // empty
-  ') || return 0
-  [ -n "$ids" ] || return 0
-  while IFS= read -r id || [ -n "$id" ]; do
-    [ -n "$id" ] || continue
-    state=$(backlog_backing_state "$id")
-    [ "$state" != null ] || continue
-    queue=$(printf '%s\n' "$queue" | jq -c \
-      --arg id "$id" --argjson state "$state" '
-        .records = [.records[] |
-          if .id == $id and .state == "open" then .backlog_backed = $state else . end
-        ]
-      ') || die 1 "failed to record backlog backing for $id"
-    changed=1
-  done <<EOF
-$ids
-EOF
-  if [ "$changed" -eq 1 ]; then
-    printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
-  fi
 }
 
 # Move active cards created without a backlog item to parked after seven days.
@@ -720,7 +693,6 @@ cmd_reconcile() {
     done < "$REPLIES"
   fi
 
-  refresh_unknown_backing_states
   clear_closed_cards
   park_expired_cards
   if [ "$orphan" -eq 1 ]; then
