@@ -182,6 +182,7 @@ status_is_paused_or_captain_held() {  # <status-line>
 # tokens strictly inside every other verb's note are also prose. Valid positions
 # resolve in order before-colon, note-head, note-tail, unique canonical token;
 # a malformed earlier candidate cannot hide a later valid one.
+# Whitespace, punctuation, or the end of the note may follow a canonical token.
 # A line with no token in its allowed positions uses the key "default", preserving
 # the historical one-open-decision-per-task behavior (a bare "resolved:" closes
 # "default"). The folds skip a line when every stated candidate is malformed.
@@ -269,15 +270,17 @@ _fm_key_raw_tail() {  # <status-line> -> raw slug
   case "$tail" in *\[*) return 1 ;; esac
   printf '%s' "$tail"
 }
-# Raw slug from the only valid canonical key token inside the note.
+# Raw slug and note offset from the only valid canonical key token inside the note.
 # Returns 2 for multiple valid tokens and 3 when every complete token is
 # malformed, so callers can distinguish ambiguity from rejection.
-_fm_key_raw_anywhere() {  # <status-line> -> raw slug
-  local note scan rest k token before after valid='' valid_count=0 invalid=''
+_fm_key_raw_anywhere() {  # <status-line> -> "<slug>\t<note-offset>"
+  local note scan rest k token before after token_offset consumed=0
+  local valid='' valid_offset='' valid_count=0 invalid=''
   case "$1" in
     *:*) note=${1#*:} ;;
     *) return 1 ;;
   esac
+  note=${note#"${note%%[![:space:]]*}"}
   case "$note" in
     *\[key=*\]*) ;;
     *) return 1 ;;
@@ -290,18 +293,21 @@ _fm_key_raw_anywhere() {  # <status-line> -> raw slug
     token="[key=$k]"
     before=${scan%%"$token"*}
     after=${scan#*"$token"}
+    token_offset=$((consumed + ${#before}))
+    consumed=$((token_offset + ${#token}))
     scan=$after
     case "$before" in ''|*[[:space:]]|*:) ;; *) continue ;; esac
-    case "$after" in ''|[[:space:]]*|:*) ;; *) continue ;; esac
+    case "$after" in ''|[[:space:]]*|[[:punct:]]*) ;; *) continue ;; esac
     if _fm_decision_slug_ok "$k"; then
       valid=$k
+      valid_offset=$token_offset
       valid_count=$((valid_count + 1))
     elif [ -n "$k" ] && [ -z "$invalid" ]; then
       invalid=$k
     fi
   done
   if [ "$valid_count" -eq 1 ]; then
-    printf '%s' "$valid"
+    printf '%s\t%s' "$valid" "$valid_offset"
     return 0
   fi
   [ "$valid_count" -gt 1 ] && return 2
@@ -315,7 +321,7 @@ _fm_decision_slug_ok() {  # <slug>
     *) return 0 ;;
   esac
 }
-_fm_decision_key_candidate() {  # <status-line> -> "<position>\t<key>"
+_fm_decision_key_candidate() {  # <status-line> -> "<position>\t<key>[\t<note-offset>]"
   local line=$1 verb k rc invalid=0
   if k=$(_fm_key_raw_before "$line"); then
     if _fm_decision_slug_ok "$k"; then
@@ -356,7 +362,7 @@ _fm_decision_key_candidate() {  # <status-line> -> "<position>\t<key>"
 }
 
 status_line_note() {  # <status-line> -> text after the first colon, trimmed
-  local n candidate position tail token before after
+  local n candidate position details offset after_offset tail token before after
   case "$1" in
     *:*) n=${1#*:}; n=${n#"${n%%[![:space:]]*}"} ;;
     *) printf '%s' "$1"; return 0 ;;
@@ -375,9 +381,12 @@ status_line_note() {  # <status-line> -> text after the first colon, trimmed
       n=${n%"${n##*[![:space:]]}"}
       ;;
     interior)
-      token="[key=${candidate#*$'\t'}]"
-      before=${n%%"$token"*}
-      after=${n#*"$token"}
+      details=${candidate#*$'\t'}
+      token="[key=${details%%$'\t'*}]"
+      offset=${details#*$'\t'}
+      after_offset=$((offset + ${#token}))
+      before=${n:0:offset}
+      after=${n:after_offset}
       before=${before%"${before##*[![:space:]]}"}
       after=${after#"${after%%[![:space:]]*}"}
       case "$after" in
@@ -389,6 +398,9 @@ status_line_note() {  # <status-line> -> text after the first colon, trimmed
           else
             n="$before$after"
           fi
+          ;;
+        [[:punct:]]*)
+          n="$before$after"
           ;;
         *)
           if [ -n "$before" ] && [ -n "$after" ]; then
@@ -405,7 +417,8 @@ status_line_note() {  # <status-line> -> text after the first colon, trimmed
 _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
   local candidate
   candidate=$(_fm_decision_key_candidate "$1") || return 1
-  printf '%s' "${candidate#*$'\t'}"
+  candidate=${candidate#*$'\t'}
+  printf '%s' "${candidate%%$'\t'*}"
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
@@ -597,7 +610,7 @@ _fm_open_decisions_cursor_path() {  # <status-file>
   printf '%s/.%s.open-decisions-cursor' "$dir" "${base%.status}"
 }
 
-FM_OPEN_DECISIONS_FOLD_VERSION=8
+FM_OPEN_DECISIONS_FOLD_VERSION=9
 
 # Portable device:inode identity for the rotation/recreation check below.
 _fm_open_decisions_file_ident() {  # <file> -> "dev:inode", empty on I/O failure

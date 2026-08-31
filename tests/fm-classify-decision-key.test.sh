@@ -128,17 +128,29 @@ test_multiple_mid_note_keys_are_not_guessed() {
   # Two interior canonical tokens are ambiguous. Keep the historical default
   # record instead of choosing one key and letting an answer close the wrong
   # decision.
-  printf 'needs-decision: pick a [key=red] or [key=blue] theme\n' > "$dir/t.status"
+  printf 'needs-decision: should docs mention [key=red] or [key=blue]?\n' > "$dir/t.status"
   assert_fold "$dir/t.status" \
-    "$(printf 'default\tneeds-decision\tpick a [key=red] or [key=blue] theme\n')" \
-    "mid-note prose mention"
+    "$(printf 'default\tneeds-decision\tshould docs mention [key=red] or [key=blue]?\n')" \
+    "punctuated mid-note prose mention"
 
   printf 'needs-decision [key=red]: which shade\n' >> "$dir/t.status"
   printf 'working: still thinking about [key=red] here\n' >> "$dir/t.status"
   assert_fold "$dir/t.status" \
-    "$(printf 'default\tneeds-decision\tpick a [key=red] or [key=blue] theme\nred\tneeds-decision\twhich shade\n')" \
+    "$(printf 'default\tneeds-decision\tshould docs mention [key=red] or [key=blue]?\nred\tneeds-decision\twhich shade\n')" \
     "prose mention leaves the open set untouched"
-  pass "multiple [key=x] tokens inside a note stay ambiguous instead of choosing a key"
+  pass "punctuation after a complete key preserves multiple-key ambiguity"
+}
+
+test_interior_cleanup_removes_the_accepted_occurrence() {
+  local dir
+  dir=$(case_dir accepted-occurrence)
+  printf '%s\n' \
+    'needs-decision: compare x[key=route] prose, then choose [key=route]: A or B' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'route\tneeds-decision\tcompare x[key=route] prose, then choose: A or B\n')" \
+    "accepted interior key occurrence"
+  pass "note cleanup removes the accepted key occurrence and keeps its lookalike"
 }
 
 test_malformed_positional_key_does_not_hide_valid_mid_note_key() {
@@ -359,6 +371,28 @@ test_v7_cursor_that_skipped_valid_key_is_rebuilt() {
   pass "a v7 cursor that skipped a valid key after a malformed head is rebuilt"
 }
 
+test_v8_cursor_that_chose_one_punctuated_key_is_rebuilt() {
+  local dir f cf ident size expected got
+  dir=$(case_dir stale-v8-punctuated-ambiguity)
+  f="$dir/t.status"
+  cf=$(_fm_open_decisions_cursor_path "$f")
+  printf 'needs-decision: should docs mention [key=prose] or [key=example]?\n' > "$f"
+  ident=$(_fm_open_decisions_file_ident "$f")
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted v8 cursor"
+  size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
+  {
+    printf 'version=8\n'
+    printf 'offset=%s\n' "$size"
+    printf 'ident=%s\n' "$ident"
+    printf 'prose\tneeds-decision\tshould docs mention or [key=example]?\n'
+  } > "$cf"
+  expected=$(printf 'default\tneeds-decision\tshould docs mention [key=prose] or [key=example]?\n')
+  got=$(status_open_decisions_incremental "$f")
+  [ "$got" = "$expected" ] \
+    || fail "stale v8 cursor was kept: got '$got' want '$expected'"
+  pass "a v8 cursor that chose one punctuated key is rebuilt"
+}
+
 test_v5_cursor_holding_default_for_mid_sentence_key_is_rebuilt() {
   local dir f cf ident size expected got
   dir=$(case_dir stale-v5-mid-sentence)
@@ -438,6 +472,7 @@ test_resolution_closes_across_positions
 test_blocked_is_position_tolerant_like_needs_decision
 test_two_colon_form_decisions_stay_distinct
 test_multiple_mid_note_keys_are_not_guessed
+test_interior_cleanup_removes_the_accepted_occurrence
 test_malformed_positional_key_does_not_hide_valid_mid_note_key
 test_malformed_head_does_not_break_mid_note_ambiguity
 test_malformed_stated_key_never_collapses_to_default
@@ -455,3 +490,4 @@ test_unique_canonical_mid_note_key_is_stated
 test_blocked_unique_mid_note_key_is_stated
 test_invalid_lookalike_before_valid_mid_note_key_is_ignored
 test_v7_cursor_that_skipped_valid_key_is_rebuilt
+test_v8_cursor_that_chose_one_punctuated_key_is_rebuilt
