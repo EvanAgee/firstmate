@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -eu
+
+case "${1:-} ${2:-}" in
+  'pr view')
+    printf '%s\n' 2222222222222222222222222222222222222222
+    ;;
+esac

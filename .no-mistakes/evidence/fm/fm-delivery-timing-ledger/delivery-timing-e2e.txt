@@ -1,0 +1,24 @@
+DELIVERY LEDGER AFTER APPEND, DUPLICATE RETRY, AND PARTIAL RECORD
+{"task_id":"older-task","repo":"archive"}
+{"task_id":"task-one","repo":"widget","pr_url":"https://github.com/example/widget/pull/88","dispatched_at":"2025-08-25T19:26:40Z","pr_opened_at":"2025-08-25T12:00:00Z","merged_at":"2025-08-25T12:10:00Z","no_mistakes_started_at":"2025-08-25T19:28:20Z","review_rounds":[{"round":1,"minutes":1.0},{"round":2,"minutes":2.0}],"active_fix_minutes":1.5,"test_minutes":3.0,"document_minutes":4.0,"parked_ms":30000}
+{"task_id":"task-partial","repo":"widget","pr_url":null,"dispatched_at":null,"pr_opened_at":null,"merged_at":null,"no_mistakes_started_at":null,"review_rounds":null,"active_fix_minutes":null,"test_minutes":null,"document_minutes":null,"parked_ms":null}
+
+TASK COUNTS
+[{"task_id":"older-task","records":1},{"task_id":"task-one","records":1},{"task_id":"task-partial","records":1}]
+
+COMPLETE TIMING RECORD
+{"task_id":"task-one","repo":"widget","pr_url":"https://github.com/example/widget/pull/88","dispatched_at":"2025-08-25T19:26:40Z","pr_opened_at":"2025-08-25T12:00:00Z","merged_at":"2025-08-25T12:10:00Z","no_mistakes_started_at":"2025-08-25T19:28:20Z","review_rounds":[{"round":1,"minutes":1.0},{"round":2,"minutes":2.0}],"active_fix_minutes":1.5,"test_minutes":3.0,"document_minutes":4.0,"parked_ms":30000}
+
+BACKFILL RUN TWICE
+ledger_lines=1 github_queries=6
+{"task_id":"task-backfill","repo":"aos","pr_url":"https://github.com/SuperDuperIT/aos/pull/91","dispatched_at":null,"pr_opened_at":"2025-08-26T12:00:00Z","merged_at":"2025-08-26T12:10:00Z","no_mistakes_started_at":"2025-08-26T20:01:40Z","review_rounds":[{"round":1,"minutes":1.0}],"active_fix_minutes":0.0,"test_minutes":null,"document_minutes":null,"parked_ms":15000}
+
+PULL REQUEST MERGE WITH UNWRITABLE LEDGER
+exit_code=0
+pr merge 58 --repo example/repo --squash
+warning: delivery timing was not recorded for task-pr-failure after merging https://github.com/example/repo/pull/58
+
+LOCAL FAST-FORWARD WITH UNWRITABLE LEDGER
+exit_code=0 main_before=4d2674bada87a6a3b1f6b5ceed88fb052a92bc59 main_after=9348de1ab9778b6ea2b9e285ae12932653692999
+merged fm/task-local-failure into local main (4d2674b -> 9348de1) in /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-delivery-evidence.tp83xC/local-failure/project
+warning: delivery timing was not recorded for task-local-failure after the local landing

@@ -1,0 +1,3 @@
+{"task_id":"older-task","repo":"archive"}
+{"task_id":"task-one","repo":"widget","pr_url":"https://github.com/example/widget/pull/88","dispatched_at":"2025-08-25T19:26:40Z","pr_opened_at":"2025-08-25T12:00:00Z","merged_at":"2025-08-25T12:10:00Z","no_mistakes_started_at":"2025-08-25T19:28:20Z","review_rounds":[{"round":1,"minutes":1.0},{"round":2,"minutes":2.0}],"active_fix_minutes":1.5,"test_minutes":3.0,"document_minutes":4.0,"parked_ms":30000}
+{"task_id":"task-partial","repo":"widget","pr_url":null,"dispatched_at":null,"pr_opened_at":null,"merged_at":null,"no_mistakes_started_at":null,"review_rounds":null,"active_fix_minutes":null,"test_minutes":null,"document_minutes":null,"parked_ms":null}
