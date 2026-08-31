@@ -436,6 +436,8 @@ if [ "\${1:-}" = list ]; then
   # Two-space indented CSV rows, the shape parseCaptainIdList reads.
   printf '%s\n' '  ready-decision-key-a,captain,queued'
   printf '%s\n' '  blocked-hold,captain,queued'
+  printf '%s\n' '  parked-decision-key-b,captain,queued'
+  printf '%s\n' '  future-decision-key-c,captain,queued'
   printf '%s\n' '  done-hold,captain,done'
   exit 0
 fi
@@ -467,6 +469,37 @@ task:
   hold_kind: captain
   repo: aos
   created: 2026-08-19
+EOF
+      ;;
+    parked-decision-key-b)
+      cat <<'EOF'
+task:
+  id: parked-decision-key-b
+  title: "Revisit the parked choice"
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: "2026-08-20: Captain deferred"
+  hold_kind: parked
+  repo: firstmate
+  created: 2026-08-21
+EOF
+      ;;
+    future-decision-key-c)
+      cat <<'EOF'
+task:
+  id: future-decision-key-c
+  title: "Revisit the dated choice"
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: "2026-08-20: Captain deferred until review"
+  hold_kind: future
+  hold_until: 2099-12-31
+  repo: firstmate
+  created: 2026-08-22
 EOF
       ;;
     done-hold)
@@ -501,8 +534,8 @@ test_captain_holds_returns_open_holds_actionable_first() {
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 200 ] || fail "holds status $HTTP_CODE, wanted 200: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.ok')" = true ] || fail "holds missing ok: $HTTP_BODY"
-  # done-hold is dropped; the two open holds remain.
-  [ "$(fm_test_json "$HTTP_BODY" 'd.holds.length')" = 2 ] || fail "wanted 2 open holds: $HTTP_BODY"
+  # done-hold is dropped; the four open holds remain.
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds.length')" = 4 ] || fail "wanted 4 open holds: $HTTP_BODY"
   # actionable (nothing blocking) sorts before blocked.
   [ "$(fm_test_json "$HTTP_BODY" 'd.holds[0].id')" = ready-decision-key-a ] || \
     fail "actionable hold should sort first: $HTTP_BODY"
@@ -519,8 +552,28 @@ test_captain_holds_returns_open_holds_actionable_first() {
     fail "a plain captain task is not answerable: $HTTP_BODY"
   assert_contains "$(fm_test_json "$HTTP_BODY" 'd.holds[1].blockedBy')" "other-task" \
     "blocked hold carries its blocker: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[2].id')" = parked-decision-key-b ] || \
+    fail "parked hold missing from the response: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[2].hold_kind')" = parked ] || \
+    fail "parked hold kind missing from the response: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[2].actionable')" = false ] || \
+    fail "parked hold remained actionable: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[2].parked')" = true ] || \
+    fail "parked hold was not classified as parked: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[2].answerable')" = false ] || \
+    fail "parked hold remained answerable: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[3].id')" = future-decision-key-c ] || \
+    fail "future hold missing from the response: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[3].hold_kind')" = future ] || \
+    fail "future hold kind missing from the response: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[3].actionable')" = false ] || \
+    fail "future hold remained actionable: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[3].parked')" = true ] || \
+    fail "future hold was not classified as parked: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds[3].answerable')" = false ] || \
+    fail "future hold remained answerable: $HTTP_BODY"
   fm_test_api_stop "$home"
-  pass "captain holds returns open holds, actionable first, done dropped"
+  pass "captain holds retains deferred rows without making them actionable"
 }
 
 test_captain_holds_empty_without_tasks_axi() {
@@ -571,7 +624,7 @@ EOF
     fail "queue served the worker instead of the card: $HTTP_BODY"
   resp=$(fm_test_api_http "$port" /captain-holds GET 8000)
   split_http <<<"$resp"
-  [ "$(fm_test_json "$HTTP_BODY" 'd.holds.length')" = 2 ] || \
+  [ "$(fm_test_json "$HTTP_BODY" 'd.holds.length')" = 4 ] || \
     fail "captain hold missing from /captain-holds: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.holds[0].id')" = ready-decision-key-a ] || \
     fail "actionable hold should still sort first: $HTTP_BODY"

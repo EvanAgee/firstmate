@@ -100,6 +100,12 @@ case "${1:-}" in
     fi
     exit 0
     ;;
+  hold)
+    if [ "${2:-}" = --help ]; then
+      printf '%s\n' '--until YYYY-MM-DD' '--kind captain|external|load|parked|future'
+    fi
+    exit 0
+    ;;
 esac
 exit 0
 SH

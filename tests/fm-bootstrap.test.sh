@@ -11,7 +11,8 @@
 # are table-driven over the inputs that vary: whether `treehouse get --help`
 # advertises --lease, which (if any) tasks-axi version is on PATH, whether
 # tasks-axi update advertises --archive-body, whether its mv help advertises
-# multi-ID moves, whether quota-axi is on PATH, whether chrome-devtools-axi meets its floor,
+# multi-ID moves, whether its hold help advertises parked, future, and dated
+# holds, whether quota-axi is on PATH, whether chrome-devtools-axi meets its floor,
 # whether the local backend config opts out of tasks-axi backlog mutations,
 # which no-mistakes version is on PATH, which gh-axi version is on PATH, and
 # which lavish-axi version is on PATH.
@@ -106,11 +107,16 @@ SH
 }
 
 add_tasks_axi() {
-  local fakebin=$1 version=$2 archive_body=${3:-yes} multi_id=${4:-yes} archive_line mv_usage
+  local fakebin=$1 version=$2 archive_body=${3:-yes} multi_id=${4:-yes}
+  local hold_kinds=${5:-yes} hold_until=${6:-yes} archive_line mv_usage kind_usage until_usage
   archive_line=""
   [ "$archive_body" = yes ] && archive_line='  --archive-body'
   mv_usage='usage: tasks-axi mv <id> [<id>...] --to <path-or-dir>'
   [ "$multi_id" = yes ] || mv_usage='usage: tasks-axi mv <id> --to <path-or-dir>'
+  kind_usage='  --kind captain|external|load|parked|future'
+  [ "$hold_kinds" = yes ] || kind_usage='  --kind captain|external|load'
+  until_usage='  --until YYYY-MM-DD'
+  [ "$hold_until" = yes ] || until_usage=''
   cat > "$fakebin/tasks-axi" <<SH
 #!/usr/bin/env bash
 if [ "\${1:-}" = --version ]; then
@@ -125,6 +131,12 @@ if [ "\${1:-}" = update ] && [ "\${2:-}" = --help ]; then
 fi
 if [ "\${1:-}" = mv ] && [ "\${2:-}" = --help ]; then
   printf '%s\n' '$mv_usage'
+  exit 0
+fi
+if [ "\${1:-}" = hold ] && [ "\${2:-}" = --help ]; then
+  printf '%s\n' 'usage: tasks-axi hold <id> --reason <text> [flags]'
+  printf '%s\n' '$kind_usage'
+  [ -z '$until_usage' ] || printf '%s\n' '$until_usage'
   exit 0
 fi
 exit 0
@@ -437,7 +449,7 @@ ROWS
 }
 
 test_tasks_axi_min_version() {
-  local label version mode case_dir fakebin out missing n archive_body multi_id
+  local label version mode case_dir fakebin out missing n archive_body multi_id hold_kinds hold_until
   missing='MISSING: tasks-axi (install: npm install -g tasks-axi)'
   n=0
   while IFS='^' read -r label version mode; do
@@ -449,6 +461,8 @@ test_tasks_axi_min_version() {
     fakebin=$(make_fake_toolchain "$case_dir")
     archive_body=yes
     multi_id=yes
+    hold_kinds=yes
+    hold_until=yes
     case "$version" in
       *:noarchive)
         archive_body=no
@@ -461,7 +475,19 @@ test_tasks_axi_min_version() {
         version=${version%:nomulti}
         ;;
     esac
-    add_tasks_axi "$fakebin" "$version" "$archive_body" "$multi_id"
+    case "$version" in
+      *:nokinds)
+        hold_kinds=no
+        version=${version%:nokinds}
+        ;;
+    esac
+    case "$version" in
+      *:nounil)
+        hold_until=no
+        version=${version%:nounil}
+        ;;
+    esac
+    add_tasks_axi "$fakebin" "$version" "$archive_body" "$multi_id" "$hold_kinds" "$hold_until"
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
@@ -480,6 +506,8 @@ the patch just below the floor reports an upgrade^0.2.3^missing
 unparseable tasks-axi version reports an upgrade^tasks-axi development build^missing
 tasks-axi at floor without archive-body reports an upgrade^0.2.4:noarchive^missing
 tasks-axi at floor without multi-id reports an upgrade^0.2.4:nomulti^missing
+tasks-axi at floor without deferred hold kinds reports an upgrade^0.2.4:nokinds^missing
+tasks-axi at floor without dated holds reports an upgrade^0.2.4:nounil^missing
 ROWS
   pass "bootstrap enforces tasks-axi minimum version"
 }
@@ -1004,7 +1032,7 @@ SH
   pass "bootstrap: every deferred mutating sweep rechecks fleet-lock ownership"
 }
 
-# The verdict costs three subprocesses, so a caller that already has it can hand
+# The verdict costs four subprocesses, so a caller that already has it can hand
 # it over - but only one hop, and never onward into a spawned agent's
 # environment, where it could outlive a tasks-axi upgrade.
 # assert_timing_record <log> <scope> <name> <detail> <msg>: one bin/fm-timing-lib.sh

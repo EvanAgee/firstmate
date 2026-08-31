@@ -155,6 +155,12 @@ case "${1:-}" in
       exit 0
     fi
     ;;
+  hold)
+    if [ "${2:-}" = --help ]; then
+      printf '%s\n' '--until YYYY-MM-DD' '--kind captain|external|load|parked|future'
+      exit 0
+    fi
+    ;;
   ready)
     require_file "$@"
     printf 'count: %s\n' "$ready_count"
@@ -1569,7 +1575,7 @@ SH
   pass "session start: a read-only session declares its skipped network checks rather than dropping them"
 }
 
-# The compatibility verdict costs three tasks-axi subprocesses and one session
+# The compatibility verdict costs four tasks-axi subprocesses and one session
 # start needs it twice. The digest must pay for it once.
 test_tasks_axi_compatibility_is_probed_once() {
   local rec root home fakebin log probes
@@ -1591,6 +1597,12 @@ EOF
   probes=$(grep -c -- 'update --help' "$log" || true)
   [ "$probes" -eq 1 ] \
     || fail "tasks-axi update --help ran $probes times in one session start: $(cat "$log")"
+  probes=$(grep -c -- 'mv --help' "$log" || true)
+  [ "$probes" -eq 1 ] \
+    || fail "tasks-axi mv --help ran $probes times in one session start: $(cat "$log")"
+  probes=$(grep -c -- 'hold --help' "$log" || true)
+  [ "$probes" -eq 1 ] \
+    || fail "tasks-axi hold --help ran $probes times in one session start: $(cat "$log")"
   assert_grep 'ready --file' "$log" "the backlog listing never ran, so the verdict was not actually reused"
   pass "session start: the tasks-axi compatibility verdict is computed once and reused"
 }

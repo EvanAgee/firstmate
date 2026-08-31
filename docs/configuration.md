@@ -42,7 +42,7 @@ Secondmate handoffs are separate and unconditional: `fm-backlog-handoff.sh` keep
 It moves in-scope `## Queued` items only and refuses `## In flight` and historical `## Done` records, which stay with their home for pruning or archiving.
 Handoff item bodies must use at least two leading spaces, and the helper refuses a selected item with a single-space or tab-indented continuation rather than risk orphaning it.
 Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs firstmate's own hand-editing of its backlog, not this validated helper.
-Compatible means the installed build passes the shared version and feature probe owned by [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), including the atomic multi-ID move required by handoff delegation.
+Compatible means the installed build passes the shared version and feature probe owned by [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), including the atomic multi-ID move required by handoff delegation and the deferred captain holds required by `park`.
 Bootstrap requires compatible `tasks-axi` on every profile; see "Toolchain" below for missing-tool reporting and silent default-backend behavior.
 Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not missing-tool reporting.
 Absent or `tasks-axi` selects the default tasks-axi backend.
@@ -589,12 +589,12 @@ Reads and the event stream do not.
 `POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate on the wake queue, encoded as operational input.
 The task may be a live task or a record in `data/backlog.md`.
 A task that is neither live nor in the backlog returns 404.
-A captain note never closes a parked decision.
+A captain note never closes a durable captain decision.
 `POST /workers/relay` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues `captain-relay to worker <task>: <text>` for firstmate on the same wake queue, encoded as operational input.
 An unknown task returns 404.
-A worker relay never closes a parked decision.
+A worker relay never closes a durable captain decision.
 `POST /decisions/answer` accepts JSON `{"task":"<id>","key":"<key>","text":"<one line>"}` and queues an answer for firstmate on the same wake queue, encoded as operational input.
-Firstmate closes the parked decision with `bin/fm-send.sh --resolve-key` on its next supervision turn.
+Firstmate closes an active durable captain decision with `bin/fm-send.sh --resolve-key` on its next supervision turn.
 `POST /rigs/rung` accepts JSON `{"rig":"<when line or default>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
 `rig` is the rule's `when` line, or `default` for the fallback ladder, the same name `GET /rigs` already serves.
 `rung` is that ladder's index, because harness and model can repeat.
@@ -618,7 +618,7 @@ The watcher refreshes the bounded live pane tail once per supervision cycle, and
 `GET /captain-queue` serves the `data/captain-queue.json` cards firstmate escalated to the captain, not worker `needs-decision` lines.
 `GET /blocked` serves blocked tasks.
 `GET /rigs` serves rig pools plus the dispatch note, pins, and raw crew and secondmate pin lines.
-`GET /captain-holds` serves the open captain-kind decisions from this home's backlog.
+`GET /captain-holds` serves the open captain-kind decisions from this home's backlog, including deferred rows.
 Missing read sources stay empty or null rather than failing the request.
 `bin/fm-api-server.mjs` owns those JSON contracts.
 `GET /events` holds open a server-sent event stream of typed home changes.

@@ -94,6 +94,10 @@
       "target": "docs/calm.md"
     },
     {
+      "source": "docs/decision-hold-lifecycle.md",
+      "target": "docs/verification/decision-hold-lifecycle.md"
+    },
+    {
       "source": "docs/sessionstart-nudge.md",
       "target": "docs/verification/supervision.md"
     },
@@ -573,6 +577,10 @@
     },
     {
       "path": "docs/verification/dispatch-auth.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/decision-hold-lifecycle.md",
       "audience": "maintainer-verification"
     },
     {

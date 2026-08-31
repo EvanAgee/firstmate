@@ -21,8 +21,9 @@ A message from the captain addressed to firstmate about a task. Firstmate decide
 _Avoid_: Worker message, reply to worker
 
 **Parked decision**:
-A question a crewmate escalated that only captain-level authority can answer. Work on it waits until the answer arrives.
-_Avoid_: Hold (the mechanism), question, blocker (a blocker is being stuck; a parked decision is awaiting a choice)
+A captain-level choice the captain explicitly deferred for later.
+It remains open for a later revisit but does not wait for an answer now.
+_Avoid_: Active captain decision, question, blocker
 
 **Wake**:
 A queued signal that makes firstmate look at something on its next supervision turn.
