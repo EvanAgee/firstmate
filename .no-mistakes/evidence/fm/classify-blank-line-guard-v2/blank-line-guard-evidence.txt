@@ -1,0 +1,27 @@
+Bash runtime
+GNU bash, version 3.2.57(1)-release (arm64-apple-darwin26)
+
+Decision fold output with whitespace-only lines
+base: api-shape	needs-decision	pick REST or RPC
+target: api-shape	needs-decision	pick REST or RPC
+identical: yes
+
+Activity fold output with whitespace-only lines
+base: deploy	working	waiting for the canary
+target: deploy	working	waiting for the canary
+identical: yes
+
+Exact guard timing over 20,000 ordinary status lines
+base: global bracket-class substitution
+real 5.30
+user 5.19
+sys 0.06
+target: case glob
+real 0.12
+user 0.11
+sys 0.00
+
+End-to-end wake drain output from target commit
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+demo [key=api-shape] needs-decision: pick REST or RPC
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
