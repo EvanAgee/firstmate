@@ -1276,6 +1276,17 @@ else
 fi
 [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
 
+raw_launch_harness() {
+  local launch=$1 word
+  for word in $launch; do
+    case "$word" in
+      [A-Za-z_]*=*) continue ;;
+      *) basename "$word"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
 DISPATCH_REASON=
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   if [ "$DISPATCH_CLASS_SET" -eq 1 ]; then
@@ -1286,7 +1297,18 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
     DISPATCH_ARGS=(--class "$DISPATCH_CLASS" --home "$FM_HOME")
     if [ "$CAPTAIN_OVERRIDE_SET" -eq 1 ]; then
       if [ "$HARNESS_SET" -eq 1 ]; then
-        case "$HARNESS_ARG" in *' '*) : ;; *) DISPATCH_ARGS+=(--override-harness "$HARNESS_ARG") ;; esac
+        case "$HARNESS_ARG" in
+          *' '*)
+            RAW_OVERRIDE_HARNESS=$(raw_launch_harness "$HARNESS_ARG") || {
+              echo "error: raw launch command has no executable" >&2
+              exit 1
+            }
+            DISPATCH_ARGS+=(--override-harness "$RAW_OVERRIDE_HARNESS")
+            [ "$MODEL_SET" -eq 1 ] || DISPATCH_ARGS+=(--override-model default)
+            [ "$EFFORT_SET" -eq 1 ] || DISPATCH_ARGS+=(--override-effort default)
+            ;;
+          *) DISPATCH_ARGS+=(--override-harness "$HARNESS_ARG") ;;
+        esac
       fi
       [ "$MODEL_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-model "${MODEL:-default}")
       [ "$EFFORT_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-effort "$EFFORT")
@@ -1488,10 +1510,10 @@ launch_template() {
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
-    HARNESS=""
-    for word in $LAUNCH; do
-      case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
-    done
+    HARNESS=$(raw_launch_harness "$LAUNCH") || {
+      echo "error: raw launch command has no executable" >&2
+      exit 1
+    }
     ;;
   '')
     # No explicit harness: resolve from config. A secondmate AGENT launches on the
@@ -1722,7 +1744,7 @@ dispatch_rung_disabled() {
       else [] end;
     def matches($p):
       (($p.harness // "") == $h)
-      and (($p.model // "") == $m)
+      and (($p.model // "default") == (if $m == "" then "default" else $m end))
       and (($p.effort // "") == $e);
     ($cfg[0] // {}) as $c
     | ([($c.rules // [])[]? | profiles(.use?)[]?] + [profiles($c.default // [])[]?])

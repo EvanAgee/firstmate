@@ -879,6 +879,49 @@ test_rung_toggle_uses_class_when_notes_repeat() {
   pass "rung toggles use class identity when human notes repeat"
 }
 
+test_rung_toggle_rejects_unknown_class_with_valid_choices() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-rung-unknown-class)
+  write_duplicate_note_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"designer","rung":0,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 404 ] || fail "unknown class status $HTTP_CODE, wanted 404: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F "valid classes: builder, reviewer, __default__" >/dev/null \
+    || fail "unknown class error did not list configured classes: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "unknown class toggle rewrote the config"
+  fm_test_api_stop "$home"
+  pass "unknown API classes are refused with the configured choices"
+}
+
+test_rung_toggle_refuses_duplicate_config_classes() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-rung-duplicate-class)
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"builder","use":{"harness":"codex"}},{"class":"builder","use":{"harness":"pi"}}]}
+EOF
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"builder","rung":0,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "duplicate class toggle status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'class must be unique: builder' >/dev/null \
+    || fail "duplicate class toggle error was not clear: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "duplicate class toggle rewrote the config"
+  fm_test_api_stop "$home"
+  pass "rung mutations refuse ambiguous configured classes"
+}
+
 test_rig_config_without_token_is_unauthorized() {
   local home port resp before after
   home=$(fm_test_api_home api-config-no-token)
@@ -901,7 +944,7 @@ test_rig_config_with_token_writes_config() {
   write_rung_fixture "$home"
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
-  HTTP_BODY='{"note":"n","rules":[{"class":"builder","when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}]}],"default":[{"harness":"codex","model":"gpt-5.5"}]}' \
+  HTTP_BODY='{"note":"n","rules":[{"class":"builder","use":[{"harness":"claude","model":"opus"}]}],"default":[{"harness":"codex","model":"gpt-5.5"}]}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
@@ -913,7 +956,52 @@ test_rig_config_with_token_writes_config() {
       "$home/config/crew-dispatch.json")" = n ] \
     || fail "config save dropped the note"
   fm_test_api_stop "$home"
-  pass "saving a whole dispatch config with the token writes it"
+  pass "saving a dispatch config without human notes writes it"
+}
+
+test_rig_config_requires_unique_non_reserved_classes() {
+  local home port token resp before after body expected
+  home=$(fm_test_api_home api-config-class-validation)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  while IFS='|' read -r body expected; do
+    HTTP_BODY=$body HTTP_AUTHORIZATION="Bearer $token" \
+      resp=$(fm_test_api_http "$port" /rigs/config POST)
+    split_http <<<"$resp"
+    [ "$HTTP_CODE" = 400 ] || fail "invalid class config status $HTTP_CODE, wanted 400: $HTTP_BODY"
+    printf '%s' "$HTTP_BODY" | grep -F "$expected" >/dev/null \
+      || fail "invalid class error did not contain '$expected': $HTTP_BODY"
+  done <<'ROWS'
+{"rules":[{"use":{"harness":"codex"}}]}|non-empty class
+{"rules":[{"class":"builder","use":{"harness":"codex"}},{"class":"builder","use":{"harness":"pi"}}]}|class must be unique: builder
+{"rules":[{"class":"__default__","use":{"harness":"codex"}}]}|reserved for the default pool
+ROWS
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "invalid class config rewrote the file"
+  fm_test_api_stop "$home"
+  pass "API config writes require unique non-reserved classes"
+}
+
+test_rig_config_refuses_runtime_whitespace() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-whitespace)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt 5"}}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "runtime whitespace status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'use profile model=\"gpt 5\"' >/dev/null \
+    || fail "runtime whitespace error did not name the field and value: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "runtime whitespace refusal rewrote the file"
+  fm_test_api_stop "$home"
+  pass "API config writes refuse runtime whitespace"
 }
 
 test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
@@ -1065,8 +1153,12 @@ test_rung_toggle_without_token_is_unauthorized
 test_rung_toggle_with_token_flips_enabled
 test_rung_toggle_refuses_last_enabled_rung
 test_rung_toggle_uses_class_when_notes_repeat
+test_rung_toggle_rejects_unknown_class_with_valid_choices
+test_rung_toggle_refuses_duplicate_config_classes
 test_rig_config_without_token_is_unauthorized
 test_rig_config_with_token_writes_config
+test_rig_config_requires_unique_non_reserved_classes
+test_rig_config_refuses_runtime_whitespace
 test_rig_config_refuses_a_ladder_with_no_enabled_rung
 test_rig_config_without_default_is_accepted
 test_rig_config_refuses_malformed_present_fields

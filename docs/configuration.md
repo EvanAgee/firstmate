@@ -302,7 +302,7 @@ Secondmate spawns do not use classes and continue to resolve through `config/sec
   "rules": [
     {
       "class": "builder",
-      "when": "<human description of this class>",
+      "when": "<optional human description of this class>",
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": "<true|false, optional, default true>" }
       ],
@@ -317,13 +317,15 @@ Secondmate spawns do not use classes and continue to resolve through `config/sec
 }
 ```
 
-Every rule requires a non-empty, unique `class`, a non-empty human `when` description, and a non-empty `use` pool.
+Every rule requires a non-empty, unique `class` and a non-empty `use` pool.
 The class `__default__` is reserved for the default pool's API identity.
 The usual classes are `researcher`, `builder`, `designer`, and `tester`.
-The resolver treats `when`, `why`, and top-level `note` as human notes and never uses them for selection.
+The optional `when`, `why`, and top-level `note` fields are human notes and never participate in selection.
 Both `use` and top-level `default` accept one profile object or a non-empty array of profiles.
 Every profile requires `harness`.
 Optional `model` and `effort` values select those exact runtime axes, while omission selects the harness default for that axis.
+An omitted model and the literal model `"default"` are the same selection everywhere the configuration is validated or matched.
+Harness, model, and effort values cannot contain whitespace because the resolver's output protocol is space-delimited.
 Optional `enabled` must be boolean, and omission means enabled.
 Setting `"enabled": false` switches that member off for new dispatches without moving a live worker.
 
@@ -351,7 +353,7 @@ A batch uses one shared `--class`, and each task resolves in sequence so the ear
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, a missing or duplicate class, an empty or malformed pool, an invalid pin, an unverified harness, a non-boolean `enabled`, an all-off pool, or an unsupported effort is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+Malformed JSON, a missing or duplicate class, an empty or malformed pool, an invalid pin, whitespace in a runtime value, an unverified harness, a non-boolean `enabled`, an all-off pool, or an unsupported effort is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
 Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 `GET /rigs` returns each rule's `class`, human name, pool, and pin, plus top-level `defaultPin` raw so the board can label and display the configured pools.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.

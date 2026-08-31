@@ -239,6 +239,18 @@ enable_dispatch_profile_with_switched_off_pin() {
     > "$home/config/crew-dispatch.json"
 }
 
+enable_dispatch_profile_with_default_model_duplicate() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"class":"builder","use":[{"harness":"codex","enabled":false},{"harness":"codex","model":"default"}],"pin":{"harness":"codex"}}],"default":{"harness":"claude"}}' \
+    > "$home/config/crew-dispatch.json"
+}
+
+enable_dispatch_profile_with_whitespace() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt 5","effort":"high"},"pin":{"harness":"codex","model":"gpt 5","effort":"high"}}],"default":{"harness":"claude"}}' \
+    > "$home/config/crew-dispatch.json"
+}
+
 make_seeded_secondmate_home() {
   local home=$1 id=$2
   mkdir -p "$home/bin" "$home/data"
@@ -606,6 +618,83 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   launch=$(cat "$LAUNCH_LOG")
   [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
+}
+
+test_raw_override_precedes_switched_off_pin() {
+  local rec id out status launch
+  id=$(profile_id profile-raw-override-z15b)
+  rec=$(make_spawn_case profile-raw-override claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_switched_off_pin "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness "custom-agent --flag" \
+    --captain-override "captain selected a raw command")
+  status=$?
+  expect_code 0 "$status" "a raw override should precede a switched-off class pin"
+  launch=$(cat "$LAUNCH_LOG")
+  [ "$launch" = "custom-agent --flag" ] || fail "raw class override changed the launch command"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
+  assert_meta_dispatch "$HOME_DIR/state/$id.meta" builder pin
+  assert_grep "dispatch_override=captain selected a raw command" "$HOME_DIR/state/$id.meta" \
+    "raw override reason was not recorded"
+  pass "a raw captain override precedes a switched-off class pin"
+}
+
+test_raw_override_matching_disabled_member_is_refused() {
+  local rec id out status
+  id=$(profile_id profile-raw-disabled-z15c)
+  rec=$(make_spawn_case profile-raw-disabled claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --harness "claude --flag" --model opus --effort high \
+    --captain-override "captain selected a disabled raw runtime")
+  status=$?
+  expect_code 1 "$status" "a raw override naming a disabled tuple should fail"
+  assert_contains "$out" "captain override selects disabled member harness=claude model=opus effort=high" \
+    "raw disabled override did not name its normalized tuple"
+  assert_contains "$out" "re-enable it in config/crew-dispatch.json" \
+    "raw disabled override did not explain how to re-enable the member"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw disabled override typed a launch command"
+  assert_absent "$HOME_DIR/state/$id.meta" "raw disabled override wrote metadata"
+  pass "a raw override cannot select a disabled configured member"
+}
+
+test_default_model_forms_match_through_spawn() {
+  local rec id out status
+  id=$(profile_id profile-default-model-z15d)
+  rec=$(make_spawn_case profile-default-model claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_default_model_duplicate "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 0 "$status" "omitted and explicit default models should resolve identically"
+  assert_contains "$out" "dispatch: class=builder harness=codex model=default effort=default reason=pin" \
+    "spawn did not normalize the equivalent default models"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex default default
+  pass "omitted and explicit default models remain equivalent through spawn"
+}
+
+test_runtime_whitespace_refuses_before_launch() {
+  local rec id out status
+  id=$(profile_id profile-runtime-whitespace-z15e)
+  rec=$(make_spawn_case profile-runtime-whitespace claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile_with_whitespace "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 1 "$status" "runtime whitespace should fail before resolver output is parsed"
+  assert_contains "$out" 'runtime values cannot contain whitespace: use profile model="gpt 5"' \
+    "runtime whitespace refusal did not name the offending field and value"
+  [ ! -s "$LAUNCH_LOG" ] || fail "runtime whitespace reached a launch command"
+  assert_absent "$HOME_DIR/state/$id.meta" "runtime whitespace wrote metadata"
+  pass "runtime whitespace is refused before launch"
 }
 
 test_claude_threads_model_and_effort() {
@@ -1304,6 +1393,10 @@ test_class_resolves_pinned_runtime
 test_active_dispatch_profile_refuses_concrete_harness_without_class
 test_class_runtime_override_requires_and_records_captain_reason
 test_active_dispatch_profile_allows_raw_launch_command
+test_raw_override_precedes_switched_off_pin
+test_raw_override_matching_disabled_member_is_refused
+test_default_model_forms_match_through_spawn
+test_runtime_whitespace_refuses_before_launch
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort
 test_codex_omits_invalid_max_effort

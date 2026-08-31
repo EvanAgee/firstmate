@@ -64,9 +64,10 @@
 //   (like each rule's `why`). Missing or symlinked file: config is null. No token.
 // POST /rigs/config requires the token; body is a whole dispatch config object.
 //   Writes it to config/crew-dispatch.json (creating the file if absent), after
-//   checking every present ladder keeps at least one enabled rung. Default is
-//   optional; when the key is absent it is not required. Bad body or a broken
-//   ladder is refused 400. This is the routing editor's save door.
+//   checking class identity, runtime token safety, and that every present ladder
+//   keeps at least one enabled rung. Default is optional; when the key is absent
+//   it is not required. Bad body or a broken ladder is refused 400. This is the
+//   routing editor's save door.
 
 import http from "node:http";
 import fs from "node:fs";
@@ -555,6 +556,56 @@ function rungEnabled(rung) {
   return Boolean(rung) && typeof rung === "object" && rung.enabled !== false;
 }
 
+function validateDispatchClasses(config) {
+  const classes = [];
+  const seen = new Set();
+  for (const rule of config.rules || []) {
+    if (!rule || typeof rule !== "object") return { error: "a routing rule is not an object" };
+    if (typeof rule.class !== "string" || !rule.class) {
+      return { error: "each routing rule needs a non-empty class" };
+    }
+    if (rule.class === DEFAULT_RIG_CLASS) {
+      return { error: `${DEFAULT_RIG_CLASS} is reserved for the default pool` };
+    }
+    if (seen.has(rule.class)) return { error: `routing class must be unique: ${rule.class}` };
+    seen.add(rule.class);
+    classes.push(rule.class);
+  }
+  return { classes };
+}
+
+function dispatchRuntimeWhitespaceError(config) {
+  const groups = [];
+  for (const rule of config.rules || []) {
+    if (!rule || typeof rule !== "object") continue;
+    groups.push(["use profile", asList(rule.use)]);
+    if (rule.pin && typeof rule.pin === "object") groups.push(["rule pin", [rule.pin]]);
+  }
+  groups.push(["default profile", asList(config.default)]);
+  if (config.defaultPin && typeof config.defaultPin === "object") {
+    groups.push(["defaultPin", [config.defaultPin]]);
+  }
+  for (const [label, profiles] of groups) {
+    for (const profile of profiles) {
+      if (!profile || typeof profile !== "object") continue;
+      for (const field of ["harness", "model", "effort"]) {
+        if (typeof profile[field] === "string" && /\s/.test(profile[field])) {
+          return `${label} ${field}=${JSON.stringify(profile[field])}`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function validRigNames(config, classes) {
+  const names = [...classes];
+  if (Array.isArray(config.default) || (config.default && typeof config.default === "object")) {
+    names.push(DEFAULT_RIG_CLASS);
+  }
+  return names;
+}
+
 // Set enabled on the rung at `index` in `list`, refusing a change that would
 // leave the ladder with no enabled rung. Returns { error } or the new list.
 function setRungEnabled(list, index, enabled) {
@@ -617,6 +668,21 @@ function handleRungToggle(req, res, home, options) {
   handleAuthorizedPost(req, res, options, MAX_BODY_BYTES, (raw) => {
     const toggle = parseRungToggle(raw);
     const { file, config } = readDispatchConfig(home);
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      throw httpError(400, "dispatch file is not valid json");
+    }
+    if ("rules" in config && !Array.isArray(config.rules)) {
+      throw httpError(400, "rules must be an array");
+    }
+    const classCheck = validateDispatchClasses(config);
+    if ("error" in classCheck) throw httpError(400, classCheck.error);
+    const whitespace = dispatchRuntimeWhitespaceError(config);
+    if (whitespace) throw httpError(400, `runtime values cannot contain whitespace: ${whitespace}`);
+    const validRigs = validRigNames(config, classCheck.classes);
+    if (!validRigs.includes(toggle.rig)) {
+      const choices = validRigs.length > 0 ? validRigs.join(", ") : "none";
+      throw httpError(404, `unknown rig '${toggle.rig}'; valid classes: ${choices}`);
+    }
     const next = applyRungToggle(config, toggle);
     if ("error" in next) {
       const notFound = next.error === "rig not found" || next.error === "rung not found";
@@ -649,13 +715,13 @@ function validateDispatchConfig(config) {
     return { error: "default must be an array or object" };
   }
   const ladders = [];
+  const classCheck = validateDispatchClasses(config);
+  if ("error" in classCheck) return classCheck;
+  const whitespace = dispatchRuntimeWhitespaceError(config);
+  if (whitespace) return { error: `runtime values cannot contain whitespace: ${whitespace}` };
   if (Array.isArray(config.rules)) {
     for (const rule of config.rules) {
-      if (!rule || typeof rule !== "object") return { error: "a routing rule is not an object" };
-      if (typeof rule.when !== "string" || !rule.when.trim()) {
-        return { error: "a routing rule is missing its when line" };
-      }
-      ladders.push({ label: rule.when, list: asList(rule.use) });
+      ladders.push({ label: rule.class, list: asList(rule.use) });
     }
   }
   if (Array.isArray(config.default) || (config.default && typeof config.default === "object")) {

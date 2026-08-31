@@ -1031,13 +1031,21 @@ crew_dispatch_validate() {
       or ($items | any(has("effort") and (((.effort | type) != "string") or (.effort | length) == 0)));
     def malformed_enabled($items):
       ($items | any(has("enabled") and ((.enabled | type) != "boolean")));
+    def whitespace_error($label; $items):
+      [$items[]? as $item
+        | ["harness", "model", "effort"][] as $field
+        | select(($item | type) == "object"
+          and ($item | has($field))
+          and (($item[$field] | type) == "string")
+          and ($item[$field] | test("\\s")))
+        | "\($label) \($field)=\($item[$field] | @json)"][0] // null;
     def rung_enabled($p):
       if ($p | has("enabled")) then $p.enabled else true end;
     def enabled_profiles($items):
       [$items[] | select(rung_enabled(.))];
     def same_tuple($left; $right):
-      {harness: $left.harness, model: ($left.model // null), effort: ($left.effort // null)}
-      == {harness: $right.harness, model: ($right.model // null), effort: ($right.effort // null)};
+      {harness: $left.harness, model: ($left.model // "default"), effort: ($left.effort // null)}
+      == {harness: $right.harness, model: ($right.model // "default"), effort: ($right.effort // null)};
     def profile_label($profile):
       "\($profile.harness)/\($profile.model // "<default>")/\($profile.effort // "<default>")";
     def rule_pins_outside_pools:
@@ -1068,7 +1076,11 @@ crew_dispatch_validate() {
       | map(select(. as $p | effort_ok($p.h; $p.e) | not))
       | map("\(.h):\(.e)")
       | unique;
-    if type != "object" then "top-level value must be an object"
+    (whitespace_error("use profile"; [(.rules // [])[]? | profiles(.use?)[]?])
+      // whitespace_error("rule pin"; [(.rules // [])[]? | select(has("pin")) | .pin])
+      // whitespace_error("default profile"; [profiles(.default // [])[]?])
+      // whitespace_error("defaultPin"; [select(has("defaultPin")) | .defaultPin])) as $runtime_whitespace
+    | if type != "object" then "top-level value must be an object"
     elif has("rules") and (.rules | type) != "array" then "rules must be an array"
     elif [(.rules // [])[]? | select(type != "object")] | length > 0 then "each rule must be an object"
     elif [(.rules // [])[]? | select((.class? | type) != "string" or (.class | length) == 0)] | length > 0 then "each rule needs non-empty class"
@@ -1076,7 +1088,7 @@ crew_dispatch_validate() {
     elif ([(.rules // [])[]? | .class] | length) != ([ (.rules // [])[]? | .class ] | unique | length) then
       "dispatch class must be unique: "
       + ([.rules[]?.class] | group_by(.) | map(select(length > 1) | .[0]) | join(", "))
-    elif [(.rules // [])[]? | select((.when? | type) != "string" or (.when | length) == 0)] | length > 0 then "each rule needs non-empty when"
+    elif $runtime_whitespace != null then "runtime values cannot contain whitespace: " + $runtime_whitespace
     elif [(.rules // [])[]? | select((.use? | type) != "object" and (.use? | type) != "array")] | length > 0 then "each rule needs use"
     elif [(.rules // [])[]? | select((.use? | type) == "array" and (.use | length) == 0)] | length > 0 then "each rule needs at least one use profile"
     elif [(.rules // [])[]? | profiles(.use?)[]? | select(type != "object")] | length > 0 then "each use profile must be an object"

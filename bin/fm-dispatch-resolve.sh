@@ -86,6 +86,29 @@ jq -e . "$CONFIG_FILE" >/dev/null 2>&1 || {
   echo "error: config/crew-dispatch.json is malformed" >&2
   exit 1
 }
+RUNTIME_WHITESPACE_ERROR=$(jq -r '
+  def profiles($value):
+    if ($value | type) == "array" then $value
+    elif ($value | type) == "object" then [$value]
+    else []
+    end;
+  def whitespace_error($label; $items):
+    [$items[]? as $item
+      | ["harness", "model", "effort"][] as $field
+      | select(($item | type) == "object"
+        and ($item | has($field))
+        and (($item[$field] | type) == "string")
+        and ($item[$field] | test("\\s")))
+      | "\($label) \($field)=\($item[$field] | @json)"][0] // null;
+  (whitespace_error("use profile"; [(.rules // [])[]? | profiles(.use?)[]?])
+    // whitespace_error("rule pin"; [(.rules // [])[]? | select(has("pin")) | .pin])
+    // whitespace_error("default profile"; [profiles(.default // [])[]?])
+    // whitespace_error("defaultPin"; [select(has("defaultPin")) | .defaultPin])) // empty
+' "$CONFIG_FILE")
+[ -z "$RUNTIME_WHITESPACE_ERROR" ] || {
+  echo "error: config/crew-dispatch.json runtime values cannot contain whitespace: $RUNTIME_WHITESPACE_ERROR" >&2
+  exit 1
+}
 
 MATCH_COUNT=$(jq -r --arg class "$DISPATCH_CLASS" '
   [(.rules // [])[]? | select(.class == $class)] | length
