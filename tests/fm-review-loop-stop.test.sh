@@ -114,6 +114,28 @@ test_threshold_is_configurable() {
   pass "review-loop stop: threshold is configurable and pinned per run"
 }
 
+test_ambient_threshold_does_not_override_a_pinned_run() {
+  local task=pinned-loop run=run-pinned home rc
+  home=$(make_home pinned-threshold "$task")
+  record "$home" "$task" "$run" head-a "Added the first state guard." \
+    "module:src/state:settings-write" --threshold 4 >/dev/null \
+    || fail "explicit threshold should initialize the run"
+  FM_REVIEW_LOOP_THRESHOLD=3 record "$home" "$task" "$run" head-b \
+    "Covered the second writer." "module:src/state:settings-write" >/dev/null \
+    || fail "ambient threshold should not conflict with a pinned run"
+  FM_REVIEW_LOOP_THRESHOLD=3 record "$home" "$task" "$run" head-c \
+    "Covered the third writer." "module:src/state:settings-write" >/dev/null \
+    || fail "ambient threshold should not lower the pinned threshold"
+
+  set +e
+  FM_REVIEW_LOOP_THRESHOLD=3 record "$home" "$task" "$run" head-d \
+    "Covered the final writer." "module:src/state:settings-write" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the pinned fourth round must stop"
+  pass "review-loop stop: ambient threshold cannot override a pinned run"
+}
+
 test_root_decision_starts_a_fresh_count() {
   local task=root-loop run=run-d home rc
   home=$(make_home root-resolution "$task")
@@ -243,6 +265,7 @@ test_dead_lock_owner_is_recovered() {
 test_third_round_surfaces_once
 test_distinct_areas_do_not_trip
 test_threshold_is_configurable
+test_ambient_threshold_does_not_override_a_pinned_run
 test_root_decision_starts_a_fresh_count
 test_simultaneous_clusters_share_one_report
 test_bank_archives_stop_and_accepts_new_clusters

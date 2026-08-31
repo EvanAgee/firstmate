@@ -137,7 +137,7 @@ write_report() { # <path> <state-json> <clusters-json>
 }
 
 record_round() { # <task-id> <args...>
-  local task=$1 run='' head='' changed='' requested_threshold=${FM_REVIEW_LOOP_THRESHOLD:-}
+  local task=$1 run='' head='' changed='' requested_threshold=''
   local clusters='[]' state_file state_json threshold existing_run existing_threshold
   local new_state triggers generation key report round_count
   shift
@@ -197,7 +197,8 @@ record_round() { # <task-id> <args...>
 
   existing_run=$(printf '%s' "$state_json" | jq -r '.run // empty' 2>/dev/null || true)
   if [ "$existing_run" != "$run" ]; then
-    threshold=${requested_threshold:-3}
+    threshold=${requested_threshold:-${FM_REVIEW_LOOP_THRESHOLD:-3}}
+    valid_threshold "$threshold" || die "threshold must be a positive integer"
     state_json=$(jq -cn --arg task "$task" --arg run "$run" --argjson threshold "$threshold" '
       {version: 1, task: $task, run: $run, threshold: $threshold,
        generation: 1, rounds: [], surfaced: null, resolution: null}
