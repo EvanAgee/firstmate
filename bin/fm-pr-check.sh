@@ -6,6 +6,9 @@
 # A GitHub pull request URL and a GitLab merge request URL are both accepted,
 # including a merge request on a self-hosted GitLab instance.
 # A successful GitHub arm also adds the agent-pr-watched label, creating it if missing; label errors warn and never fail the arm.
+# --only-if-unarmed leaves a different recorded PR unchanged, treats an exact
+# valid watch as a no-op, and repairs missing or invalid poll files for the same
+# canonical task and PR identity.
 # Usage: fm-pr-check.sh [--only-if-unarmed] <task-id> <pr-url>
 set -eu
 

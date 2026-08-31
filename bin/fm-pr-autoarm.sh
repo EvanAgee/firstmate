@@ -4,13 +4,15 @@
 # Usage: fm-pr-autoarm.sh sweep
 #        fm-pr-autoarm.sh announce <task-id> <status-line>
 #
-# sweep resumes through ordinary task metadata without pr=, resolves the exact
-# upstream branch from each recorded worktree, and checks that branch's forge.
-# One exact match is armed through fm-pr-check.sh, no matches and forge errors
-# stay silent, and local ambiguity prints one wake line.
+# sweep uses a durable fair cursor across ordinary non-secondmate task metadata
+# without pr=, resolves the recorded worktree's exact upstream branch and
+# repository, and checks that branch's forge. One exact match is armed through
+# fm-pr-check.sh. No match, forge failure, or malformed forge output stays
+# silent. Missing or unreadable worktrees, branches, or upstreams and multiple
+# exact matches queue a durable task wake before sweep progress advances.
 # announce extracts one canonical GitHub PR or GitLab MR URL from the supplied
 # status line and arms it through the same path. Existing pr= metadata is always
-# left alone.
+# left alone, and secondmate metadata is always skipped.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
