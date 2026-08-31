@@ -259,11 +259,13 @@ test_pr_producing_modes_own_feedback_until_merge() {
     brief="$home/data/$id/brief.md"
     case "$mode" in
       no-mistakes)
+        # shellcheck disable=SC2016
         watch_entry='append `done: PR {url} checks green` and enter the PR watch below.'
         expected_action='Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.'
         forbidden_action='fix and push on your `fm/'"$id"'` branch'
         ;;
       direct-PR)
+        # shellcheck disable=SC2016
         watch_entry='append `done: PR {url}` to the status file and enter the PR watch below.'
         expected_action='Apply rule 8 directly to late reviewer feedback: fix and push on your `fm/'"$id"'` branch'
         forbidden_action='Drive late reviewer feedback back through no-mistakes'
