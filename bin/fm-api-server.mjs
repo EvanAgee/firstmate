@@ -31,11 +31,13 @@
 // POST /captain-queue/reply requires the token; body
 //   { id, generation, answer }. Generation is the positive integer served on
 //   that card. Unknown cards and generations newer than the persisted card are
-//   refused. A resolved current generation accepts only its recorded answer.
-//   Real prior generations remain valid stale replies. The server serializes
-//   each reply log and appends an identical id, generation, and answer only
-//   once. Every accepted request queues a captain-reply wake, including a retry
-//   after an earlier wake failure.
+//   refused. Real prior generations remain valid stale replies. The server
+//   serializes each reply log and appends an identical id, generation, and
+//   answer only once. `at` is the server receipt time. For conflicting answers,
+//   reconcile uses the latest receipt time and then log order, retaining and
+//   reporting every earlier answer as superseded. A conflict received after
+//   resolution may supersede the recorded answer. Every accepted request queues
+//   a captain-reply wake, including a retry after an earlier wake failure.
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }
@@ -428,15 +430,6 @@ function validateCaptainReplyTarget(home, reply) {
     error.status = 409;
     throw error;
   }
-  if (
-    target.state === "resolved" &&
-    reply.generation === target.generation &&
-    target.answer !== reply.answer
-  ) {
-    const error = new Error("card already resolved");
-    error.status = 409;
-    throw error;
-  }
   return reply;
 }
 
@@ -514,12 +507,28 @@ function serializeCaptainReply(file, operation) {
   return current;
 }
 
-function captainReplyRecorded(file, reply) {
+function captainReplyReceiptValid(value) {
+  if (typeof value !== "string") return false;
+  const match = value.match(
+    /^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.(?<milliseconds>[0-9]{3})Z|Z|(?<sign>[+-])(?<hours>[0-9]{2}):(?<minutes>[0-9]{2}))$/,
+  );
+  if (!match) return false;
+  const local = new Date(`${match.groups.base}Z`);
+  if (!Number.isFinite(local.getTime()) || local.toISOString().slice(0, 19) !== match.groups.base) {
+    return false;
+  }
+  if (match.groups.sign) {
+    return Number(match.groups.hours) <= 23 && Number(match.groups.minutes) <= 59;
+  }
+  return true;
+}
+
+function classifyCaptainReply(file, reply) {
   let raw;
   try {
     raw = fs.readFileSync(file, "utf8");
   } catch (error) {
-    if (error && error.code === "ENOENT") return false;
+    if (error && error.code === "ENOENT") return "append";
     throw error;
   }
   let found = false;
@@ -543,7 +552,8 @@ function captainReplyRecorded(file, reply) {
       !record.id ||
       typeof record.answer !== "string" ||
       !Number.isInteger(generation) ||
-      generation < 1
+      generation < 1 ||
+      (Object.prototype.hasOwnProperty.call(record, "at") && !captainReplyReceiptValid(record.at))
     ) {
       throw new Error("reply log is malformed");
     }
@@ -555,7 +565,7 @@ function captainReplyRecorded(file, reply) {
       found = true;
     }
   }
-  return found;
+  return found ? "identical" : "append";
 }
 
 function queueCaptainReply(home, stateDir, reply) {
@@ -568,7 +578,7 @@ function queueCaptainReply(home, stateDir, reply) {
     } catch (error) {
       if (!error || error.code !== "ENOENT") throw error;
     }
-    if (!captainReplyRecorded(file, reply)) {
+    if (classifyCaptainReply(file, reply) === "append") {
       const record = { ...reply, at: new Date().toISOString() };
       let separator = "";
       let handle;

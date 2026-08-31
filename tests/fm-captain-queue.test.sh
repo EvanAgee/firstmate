@@ -720,6 +720,120 @@ test_orphan_stops_before_a_later_match() {
   pass "an orphan stops reconcile before any later matching reply"
 }
 
+test_conflicting_replies_rank_timestamp_then_log_order() {
+  local home out handled_count
+  home=$(make_home conflicting-replies)
+  run_q "$home" add --id conflict-card --question "Choose one answer?" >/dev/null
+  run_q "$home" add --id interleaved-card --question "Unrelated answer?" >/dev/null
+  run_q "$home" add --id tied-card --question "Break the tie?" >/dev/null
+  jq -nc \
+    --arg id conflict-card \
+    --arg answer "older answer" \
+    --arg at 2026-08-27T17:59:58Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  jq -nc \
+    --arg id interleaved-card \
+    --arg answer "unrelated answer" \
+    --arg at 2026-08-27T17:59:59Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  jq -nc \
+    --arg id conflict-card \
+    --arg answer "newer answer" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  jq -nc \
+    --arg id tied-card \
+    --arg answer "first tied answer" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  jq -nc \
+    --arg id tied-card \
+    --arg answer "later tied answer" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+
+  out=$(run_q "$home" reconcile) || fail "conflicting reply group failed: $out"
+  assert_contains "$out" \
+    "superseded: [id=conflict-card] [generation=1] [winner-line=3] older answer" \
+    "an older receipt should be marked superseded"
+  assert_contains "$out" \
+    "superseded: [id=tied-card] [generation=1] [winner-line=5] first tied answer" \
+    "later log order should break an equal receipt-time tie"
+  assert_contains "$out" "handled: [id=conflict-card] newer answer" \
+    "the newest conflict receipt should be handled"
+  assert_contains "$out" "handled: [id=interleaved-card] unrelated answer" \
+    "an interleaved reply should still be handled"
+  assert_contains "$out" "handled: [id=tied-card] later tied answer" \
+    "the later tied reply should be handled"
+  handled_count=$(printf '%s\n' "$out" | grep -c '^handled:' || true)
+  [ "$handled_count" = 3 ] \
+    || fail "conflicting groups emitted $handled_count handled answers, wanted 3: $out"
+  [ "$(cursor_value "$home")" = 5 ] \
+    || fail "conflicting groups did not advance the cursor through every reply"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 5 ] \
+    || fail "conflicting groups removed durable reply evidence"
+  jq -e '
+    any(.records[]; .id == "conflict-card" and .answer == "newer answer")
+    and any(.records[]; .id == "interleaved-card" and .answer == "unrelated answer")
+    and any(.records[]; .id == "tied-card" and .answer == "later tied answer")
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "conflicting reply winners were not persisted"
+  pass "conflicting replies rank receipt time then log order without blocking"
+}
+
+test_conflicting_reply_crash_replay_delivers_only_the_winner() {
+  local home out queue_file next_file
+  home=$(make_home conflicting-reply-crash)
+  run_q "$home" add --id crash-conflict-card --question "Which persisted answer?" >/dev/null
+  jq -nc \
+    --arg id crash-conflict-card \
+    --arg answer "superseded answer" \
+    --arg at 2026-08-27T17:59:59Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  jq -nc \
+    --arg id crash-conflict-card \
+    --arg answer "winning answer" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  queue_file="$home/data/captain-queue.json"
+  next_file="$home/data/captain-queue.next"
+  jq --arg stamp "$NOW" '
+    .records[0] += {
+      state: "resolved",
+      answer: "winning answer",
+      resolved_at: $stamp
+    }
+    | .pending_reply_deliveries = [{
+        line: 2,
+        id: "crash-conflict-card",
+        generation: 1,
+        answer: "winning answer"
+      }]
+  ' "$queue_file" > "$next_file"
+  mv "$next_file" "$queue_file"
+
+  out=$(run_q "$home" reconcile) || fail "conflicting crash replay failed: $out"
+  assert_contains "$out" \
+    "superseded: [id=crash-conflict-card] [generation=1] [winner-line=2] superseded answer" \
+    "crash replay should keep the losing reply superseded"
+  assert_contains "$out" "handled: [id=crash-conflict-card] winning answer" \
+    "crash replay should deliver the persisted winner"
+  assert_not_contains "$out" "handled: [id=crash-conflict-card] superseded answer" \
+    "crash replay must not deliver the losing reply"
+  [ "$(cursor_value "$home")" = 2 ] \
+    || fail "conflicting crash replay did not advance past the group"
+  [ "$(jq '.pending_reply_deliveries | length' "$queue_file")" = 0 ] \
+    || fail "conflicting crash replay left pending delivery evidence"
+  pass "conflicting crash replay delivers only its persisted winner"
+}
+
 test_repeat_answer_after_crash_advances_cursor() {
   local home out
   home=$(make_home crash-window)
@@ -1170,6 +1284,8 @@ test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
+test_conflicting_replies_rank_timestamp_then_log_order
+test_conflicting_reply_crash_replay_delivers_only_the_winner
 test_repeat_answer_after_crash_advances_cursor
 test_reopened_card_skips_a_completed_reply_replay
 test_reopened_card_delivers_a_reply_persisted_before_crash

@@ -21,6 +21,13 @@ split_http() {
   HTTP_BODY=$(cat)
 }
 
+post_captain_reply() {  # <port> <token> <json-body>
+  local port=$1 token=$2 body=$3 resp
+  resp=$(HTTP_BODY="$body" HTTP_AUTHORIZATION="Bearer $token" \
+    fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+}
+
 write_fleet_fixture() {  # <home>
   local home=$1
   mkdir -p "$home/projects/alpha"
@@ -835,6 +842,93 @@ test_captain_reply_refuses_a_malformed_existing_log() {
   pass "captain replies fail closed on a malformed existing log"
 }
 
+test_conflicting_api_replies_deliver_only_the_latest_receipt() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (conflicting captain replies)"; return 0; }
+
+  local home port token out now
+  home=$(fm_test_api_home api-captain-reply-conflict)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id conflicting-card --question "Which answer wins?" >/dev/null
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"conflicting-card","generation":1,"answer":"first answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "first conflicting reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  post_captain_reply "$port" "$token" \
+    '{"id":"conflicting-card","generation":1,"answer":"latest answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "latest conflicting reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "conflicting captain replies did not reconcile: $out"
+  assert_contains "$out" \
+    "superseded: [id=conflicting-card] [generation=1] [winner-line=2] first answer" \
+    "the earlier conflicting reply should be explicit superseded evidence"
+  assert_contains "$out" "handled: [id=conflicting-card] latest answer" \
+    "the latest receipt should be the only handled answer"
+  assert_not_contains "$out" "handled: [id=conflicting-card] first answer" \
+    "the superseded reply must not be handled"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 2 ] \
+    || fail "conflicting replies did not advance the cursor past both records"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 2 ] \
+    || fail "conflicting reply evidence was removed from the durable log"
+  [ "$(jq -r '.records[0].answer' "$home/data/captain-queue.json")" = "latest answer" ] \
+    || fail "the resolved card did not retain the winning answer"
+  pass "conflicting API replies retain evidence and handle only the latest receipt"
+}
+
+test_later_conflicting_reply_explicitly_supersedes_a_handled_answer() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (later superseding captain reply)"; return 0; }
+
+  local home port token out now
+  home=$(fm_test_api_home api-captain-reply-late-conflict)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id late-conflict-card --question "Can this answer change?" >/dev/null
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"late-conflict-card","generation":1,"answer":"initial answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "initial captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "initial captain reply did not reconcile: $out"
+  assert_contains "$out" "handled: [id=late-conflict-card] initial answer" \
+    "the initial answer should be surfaced"
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"late-conflict-card","generation":1,"answer":"replacement answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "superseding captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "superseding captain reply did not reconcile: $out"
+  assert_contains "$out" \
+    "superseding: [id=late-conflict-card] [generation=1] replacement answer" \
+    "the later winner should identify itself as superseding"
+  assert_contains "$out" "handled: [id=late-conflict-card] replacement answer" \
+    "the later winner should be surfaced once"
+  [ "$(jq -r '.records[0].answer' "$home/data/captain-queue.json")" = "replacement answer" ] \
+    || fail "the later winner did not replace the recorded answer"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 2 ] \
+    || fail "the superseded answer was removed from the durable log"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "repeat reconcile after superseding answer failed: $out"
+  [ -z "$out" ] || fail "the superseding answer surfaced more than once: $out"
+  pass "a later conflicting reply explicitly supersedes one handled answer"
+}
+
 # A crew-dispatch config with one class rig (two rungs, both on) and a default
 # ladder (two rungs). Used by the rung-toggle tests below.
 write_rung_fixture() {  # <home>
@@ -1437,6 +1531,8 @@ test_captain_reply_validates_card_and_generation_before_append
 test_captain_reply_appends_after_newline_less_record_and_reconciles
 test_captain_reply_retry_after_wake_failure_appends_once
 test_captain_reply_refuses_a_malformed_existing_log
+test_conflicting_api_replies_deliver_only_the_latest_receipt
+test_later_conflicting_reply_explicitly_supersedes_a_handled_answer
 test_worker_relay_without_token_is_unauthorized
 test_worker_relay_with_token_lands_in_wake_queue
 test_worker_relay_unknown_task_is_not_found

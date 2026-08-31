@@ -21,18 +21,22 @@
 # backing classification, including the missing classification on legacy
 # records. Reopening a resolved card also increments its generation.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
-# It reads every new reply line past the cursor, matches by id and generation,
-# changes a matched card's state to `resolved`, and records a pending delivery
-# until `handled:` is emitted and the cursor advances past that line. A reopen
-# cannot discard this evidence. A reply without a generation is legacy
+# It reads every new reply line past the cursor and groups conflicts by id and
+# generation. The latest server receipt time wins, with later log order breaking
+# a tie. Earlier replies remain in the log, print `superseded:`, and advance the
+# cursor. Only the winner prints `handled:`. A winner received after another
+# answer was handled also prints `superseding:` and replaces the recorded answer.
+# A matched winner changes the card's state to `resolved` and records a pending
+# delivery until `handled:` is emitted and the cursor advances past that line.
+# A reopen cannot discard this evidence. A reply without a generation is legacy
 # generation 1. A reply older than the current generation prints `stale:` and
 # advances without changing the card. Resolving the card is not doing the work:
-# each `handled:` line is the answer firstmate still has to act on. An
-# `orphan:` line matches no card; the cursor stays before it so the answer
-# cannot be skipped. Reconcile never advances past an answer that was neither
-# matched nor surfaced. Dashboard-reply clearing is unchanged: a matched reply
-# still prints `handled:` so firstmate can verify a "Done - command ran"
-# answer against reality before treating that work as done.
+# each `handled:` line is the answer firstmate still has to act on. An `orphan:`
+# line matches no card; the cursor stays before it so the answer cannot be
+# skipped. Reconcile never advances past an answer that was neither matched nor
+# surfaced. Dashboard-reply clearing is unchanged: a matched reply still prints
+# `handled:` so firstmate can verify a "Done - command ran" answer against
+# reality before treating that work as done.
 # After applying new replies, or when there are none, reconcile also retires
 # each remaining active card recorded as backed whose backlog item is done.
 # The card id is the backlog captain-hold id or the decision-hold identity, so a done item and
@@ -626,6 +630,28 @@ apply_handled() {  # <queue-json> <id> <generation> <answer> <stamp> [line] -> n
     '
 }
 
+apply_superseding_answer() {  # <queue-json> <id> <generation> <answer> <stamp> <line> -> new queue on stdout
+  local queue=$1 id=$2 generation=$3 answer=$4 stamp=$5 line=$6
+  printf '%s\n' "$queue" | jq -c \
+    --arg id "$id" \
+    --argjson generation "$generation" \
+    --arg answer "$answer" \
+    --arg stamp "$stamp" \
+    --argjson line "$line" '
+      .records = [.records[] |
+        if .id == $id and .generation == $generation and .state == "resolved" then
+          . + {answer: $answer, resolved_at: $stamp}
+        else . end
+      ]
+      | .pending_reply_deliveries = ((.pending_reply_deliveries // []) + [{
+          line: $line,
+          id: $id,
+          generation: $generation,
+          answer: $answer
+        }])
+    '
+}
+
 drop_delivered_replies() {  # <queue-json> <cursor> -> new queue on stdout
   local queue=$1 cursor=$2
   printf '%s\n' "$queue" | jq -c --argjson cursor "$cursor" '
@@ -718,8 +744,87 @@ $ids
 EOF
 }
 
+build_reply_plan() {  # <queue-json> <cursor> -> plan JSON on stdout
+  local queue=$1 cursor=$2
+  jq -nc \
+    --rawfile raw "$REPLIES" \
+    --argjson queue "$queue" \
+    --argjson cursor "$cursor" \
+    "$ISO_EPOCH_JQ"'
+      def receipt_ms:
+        if has("at") | not then -1
+        elif (.at | type) != "string" then null
+        elif (.at | test("\\.[0-9]{3}Z$")) then
+          (.at | capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})\\.(?<ms>[0-9]{3})Z$")) as $parts
+          | ([($parts.base + "Z" | fm_iso_epoch)][0] // null) as $epoch
+          | if $epoch == null then null
+            else ($epoch * 1000) + ($parts.ms | tonumber)
+            end
+        else
+          ([.at | fm_iso_epoch][0] // null) as $epoch
+          | if $epoch == null then null else $epoch * 1000 end
+        end;
+      ($raw
+        | split("\n")
+        | to_entries
+        | if length > 0 and .[-1].value == "" then .[:-1] else . end
+        | map({line: (.key + 1), raw: .value})) as $lines
+      | ($lines | map(
+          . as $line
+          | (try (.raw | fromjson) catch null) as $record
+          | (if ($record | type) == "object" then ($record | receipt_ms) else null end) as $receipt
+          | (if ($record | type) != "object" then false
+             else
+               (($record.id | type) == "string" and ($record.id | length) > 0)
+               and (($record.answer | type) == "string")
+               and ((($record | has("generation")) | not)
+                 or (($record.generation | type) == "number"
+                   and $record.generation > 0
+                   and ($record.generation | floor) == $record.generation))
+               and ((($record | has("at")) | not) or $receipt != null)
+             end) as $valid
+          | . + {
+              valid: $valid,
+              id: (if $valid then $record.id else "" end),
+              generation: (if $valid then ($record.generation // 1) else 0 end),
+              answer: (if $valid then $record.answer else "" end),
+              receipt_ms: (if $valid then $receipt else null end)
+            }
+        )) as $classified
+      | ($classified | map(
+          select(.line > $cursor)
+          | if (.valid | not) then . + {kind: "malformed"}
+            else . as $entry
+            | ([$queue.records[]? | select(.id == $entry.id)][0] // null) as $target
+            | if $target == null or $target.generation < .generation then
+                . + {kind: "orphan"}
+              elif $target.generation > .generation then
+                . + {kind: "stale"}
+              else
+                . + {kind: "current"}
+              end
+            end
+        )) as $pending
+      | ([range(0; $pending | length)
+          | select($pending[.].kind == "malformed" or $pending[.].kind == "orphan")]
+          | .[0] // ($pending | length)) as $stop
+      | ($pending[0:$stop]) as $processable
+      | (($classified | map(select(.valid and .line <= $cursor))) + $processable) as $candidates
+      | {
+          entries: ($processable | map(
+            . as $entry
+            | . + {winner_line: ([$candidates[]
+                | select(.id == $entry.id and .generation == $entry.generation)]
+                | max_by([.receipt_ms, .line])
+                | .line)}
+          )),
+          blocker: (if $stop < ($pending | length) then $pending[$stop] else null end)
+        }
+    '
+}
+
 cmd_reconcile() {
-  local cursor queue pruned line n id generation answer stamp
+  local cursor queue pruned plan blocker_line line entry n id generation answer stamp winner_line
   local orphan=0 orphan_id="" orphan_answer=""
   acquire_queue_lock
   cursor=$(read_cursor)
@@ -731,34 +836,39 @@ cmd_reconcile() {
   fi
 
   if [ -f "$REPLIES" ]; then
+    plan=$(build_reply_plan "$queue" "$cursor") || die 1 "captain-replies.jsonl is unreadable"
+    blocker_line=$(printf '%s\n' "$plan" | jq -r '.blocker.line // 0')
     n=0
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
       [ "$n" -gt "$cursor" ] || continue
-      if [ -z "$line" ]; then
+      if [ "$n" -eq "$blocker_line" ]; then
         orphan=1
-        orphan_id=
-        orphan_answer="malformed reply line $n"
+        if [ "$(printf '%s\n' "$plan" | jq -r '.blocker.kind')" = malformed ]; then
+          orphan_id=
+          orphan_answer="malformed reply line $n"
+        else
+          orphan_id=$(printf '%s\n' "$plan" | jq -r '.blocker.id')
+          orphan_answer=$(printf '%s\n' "$plan" | jq -r '.blocker.answer')
+        fi
         break
       fi
-      if ! printf '%s\n' "$line" | jq -e '
-          type == "object"
-          and (.id | type == "string")
-          and (.id | length > 0)
-          and (.answer | type == "string")
-          and ((has("generation") | not)
-            or ((.generation | type) == "number"
-              and .generation > 0
-              and (.generation | floor) == .generation))
-        ' >/dev/null 2>&1; then
-        orphan=1
-        orphan_id=
-        orphan_answer="malformed reply line $n"
-        break
+      entry=$(printf '%s\n' "$plan" | jq -c --argjson line "$n" \
+        '.entries[] | select(.line == $line)')
+      [ -n "$entry" ] || break
+      id=$(printf '%s\n' "$entry" | jq -r '.id')
+      generation=$(printf '%s\n' "$entry" | jq -r '.generation')
+      answer=$(printf '%s\n' "$entry" | jq -r '.answer')
+      winner_line=$(printf '%s\n' "$entry" | jq -r '.winner_line')
+      if [ "$n" -ne "$winner_line" ]; then
+        printf 'superseded: [id=%s] [generation=%s] [winner-line=%s] %s\n' \
+          "$id" "$generation" "$winner_line" "$answer"
+        write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
+        cursor=$n
+        queue=$(drop_delivered_replies "$queue" "$cursor") || die 1 "failed to clear superseded reply"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to clear superseded reply"
+        continue
       fi
-      id=$(printf '%s\n' "$line" | jq -r '.id')
-      generation=$(printf '%s\n' "$line" | jq -r '.generation // 1')
-      answer=$(printf '%s\n' "$line" | jq -r '.answer')
       if printf '%s\n' "$queue" | jq -e \
           --arg id "$id" \
           --argjson generation "$generation" \
@@ -800,6 +910,20 @@ cmd_reconcile() {
         printf 'handled: [id=%s] %s\n' "$id" "$answer"
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
         cursor=$n
+      elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
+          'any(.records[];
+            .id == $id and .state == "resolved" and .generation == $generation
+          )' >/dev/null; then
+        stamp=$(now_stamp)
+        queue=$(apply_superseding_answer "$queue" "$id" "$generation" "$answer" "$stamp" "$n") \
+          || die 1 "failed to supersede $id"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+        printf 'superseding: [id=%s] [generation=%s] %s\n' "$id" "$generation" "$answer"
+        printf 'handled: [id=%s] %s\n' "$id" "$answer"
+        write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
+        cursor=$n
+        queue=$(drop_delivered_replies "$queue" "$cursor") || die 1 "failed to clear delivered reply"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to clear delivered reply"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
           'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; then
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
