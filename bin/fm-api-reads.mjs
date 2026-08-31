@@ -217,28 +217,62 @@ function emptyCaptainQueue() {
   return { ok: true, updatedAt: "", items: [], parked: [] };
 }
 
-export function captainQueueBody(home) {
+function captainQueueData(home) {
   const file = path.join(home, "data", "captain-queue.json");
   try {
-    if (fs.lstatSync(file).isSymbolicLink()) return emptyCaptainQueue();
+    if (fs.lstatSync(file).isSymbolicLink()) return null;
   } catch (error) {
-    if (error && error.code === "ENOENT") return emptyCaptainQueue();
+    if (error && error.code === "ENOENT") return null;
     throw error;
   }
   let raw;
   try {
     raw = fs.readFileSync(file, "utf8");
   } catch (error) {
-    if (error && error.code === "ENOENT") return emptyCaptainQueue();
+    if (error && error.code === "ENOENT") return null;
     throw error;
   }
-  let data;
   try {
-    data = JSON.parse(raw);
+    const data = JSON.parse(raw);
+    return data && typeof data === "object" && !Array.isArray(data) ? data : null;
   } catch {
-    return emptyCaptainQueue();
+    return null;
   }
-  if (!data || typeof data !== "object" || Array.isArray(data)) return emptyCaptainQueue();
+}
+
+export function captainQueueReplyTarget(home, id) {
+  const data = captainQueueData(home);
+  if (!data) return null;
+  let target = null;
+  for (const record of captainQueueRecords(data)) {
+    if (textField(record.id) !== id) continue;
+    const generation =
+      typeof record.generation === "number" &&
+      Number.isInteger(record.generation) &&
+      record.generation > 0
+        ? record.generation
+        : 1;
+    const stateRank = record.state === "resolved" ? 0 : 1;
+    if (
+      !target ||
+      generation > target.generation ||
+      (generation === target.generation && stateRank > target.stateRank)
+    ) {
+      target = {
+        state: record.state,
+        stateRank,
+        generation,
+        answer: typeof record.answer === "string" ? record.answer : "",
+      };
+    }
+  }
+  if (!target) return null;
+  return { state: target.state, generation: target.generation, answer: target.answer };
+}
+
+export function captainQueueBody(home) {
+  const data = captainQueueData(home);
+  if (!data) return emptyCaptainQueue();
   const records = captainQueueRecords(data);
   const items = records
     .map((row) => asCaptainCard(row))

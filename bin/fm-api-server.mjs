@@ -30,8 +30,11 @@
 //   items and parked are [].
 // POST /captain-queue/reply requires the token; body
 //   { id, generation, answer }. Generation is the positive integer served on
-//   that card. Appends { id, generation, answer, at } to
-//   state/captain-replies.jsonl and queues a captain-reply wake.
+//   that card. Unknown cards and generations newer than the persisted card are
+//   refused. A resolved current generation accepts only its recorded answer.
+//   Real prior generations remain valid stale replies. Accepted replies append
+//   { id, generation, answer, at } to state/captain-replies.jsonl and queue a
+//   captain-reply wake.
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }
@@ -87,6 +90,7 @@ import {
   blockedListBody,
   captainHoldsBody,
   captainQueueBody,
+  captainQueueReplyTarget,
   DEFAULT_RIG_CLASS,
   enrichFleetTasks,
   rigsBody,
@@ -410,6 +414,30 @@ function parseCaptainReply(raw) {
   return { id: body.id, generation: body.generation, answer: body.answer };
 }
 
+function validateCaptainReplyTarget(home, reply) {
+  const target = captainQueueReplyTarget(home, reply.id);
+  if (!target) {
+    const error = new Error("card not found");
+    error.status = 404;
+    throw error;
+  }
+  if (reply.generation > target.generation) {
+    const error = new Error("generation not found");
+    error.status = 409;
+    throw error;
+  }
+  if (
+    target.state === "resolved" &&
+    reply.generation === target.generation &&
+    target.answer !== reply.answer
+  ) {
+    const error = new Error("card already resolved");
+    error.status = 409;
+    throw error;
+  }
+  return reply;
+}
+
 function runCommand(command, args, options = {}) {
   const { stdin, env, timeoutMs = 10000 } = options;
   return new Promise((resolve, reject) => {
@@ -515,6 +543,7 @@ function handleCaptainReply(req, res, home, options) {
   }
   readBody(req, MAX_BODY_BYTES)
     .then(parseCaptainReply)
+    .then((reply) => validateCaptainReplyTarget(home, reply))
     .then((reply) => queueCaptainReply(home, options.stateDir, reply))
     .then(() => json(res, 200, { ok: true }))
     .catch((error) => {

@@ -629,6 +629,18 @@ EOF
 test_captain_reply_requires_generation_and_persists_it() {
   local home port token resp record queue
   home=$(fm_test_api_home api-captain-reply)
+  cat > "$home/data/captain-queue.json" <<'EOF'
+{
+  "updated_at": "2026-08-31T18:00:00Z",
+  "records": [{
+    "id": "sample-decision",
+    "num": 1,
+    "generation": 7,
+    "question": "Approve?",
+    "state": "open"
+  }]
+}
+EOF
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
   HTTP_BODY='{"id":"sample-decision","answer":"approve"}' \
@@ -655,6 +667,63 @@ test_captain_reply_requires_generation_and_persists_it() {
     || fail "captain reply did not queue its wake: $queue"
   fm_test_api_stop "$home"
   pass "captain replies require and persist their card generation"
+}
+
+test_captain_reply_validates_card_and_generation_before_append() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (captain reply target validation)"; return 0; }
+
+  local home port token resp out now queue
+  home=$(fm_test_api_home api-captain-reply-target)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id current-card --question "First question?" >/dev/null
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id current-card --question "Current question?" >/dev/null
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  HTTP_BODY='{"id":"ghost-card","generation":1,"answer":"ghost"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 404 ] \
+    || fail "unknown captain card status $HTTP_CODE, wanted 404: $HTTP_BODY"
+  HTTP_BODY='{"id":"current-card","generation":3,"answer":"future"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 409 ] \
+    || fail "future captain generation status $HTTP_CODE, wanted 409: $HTTP_BODY"
+  [ ! -f "$home/state/captain-replies.jsonl" ] \
+    || fail "rejected captain replies changed the reply log"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -z "$queue" ] || fail "rejected captain replies queued a wake: $queue"
+
+  HTTP_BODY='{"id":"current-card","generation":1,"answer":"late answer"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "real stale captain generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  HTTP_BODY='{"id":"current-card","generation":2,"answer":"current answer"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "current captain generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "validated captain replies did not reconcile: $out"
+  assert_contains "$out" "stale: [id=current-card] [generation=1] late answer" \
+    "a real prior generation should keep stale-reply handling"
+  assert_contains "$out" "handled: [id=current-card] current answer" \
+    "the current generation should still resolve"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 2 ] \
+    || fail "validated replies did not advance the cursor"
+  pass "captain reply validation rejects ghosts and future generations"
 }
 
 test_captain_reply_appends_after_newline_less_record_and_reconciles() {
@@ -1295,6 +1364,7 @@ test_captain_note_accepts_a_backlog_only_hold
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
 test_captain_reply_requires_generation_and_persists_it
+test_captain_reply_validates_card_and_generation_before_append
 test_captain_reply_appends_after_newline_less_record_and_reconciles
 test_worker_relay_without_token_is_unauthorized
 test_worker_relay_with_token_lands_in_wake_queue

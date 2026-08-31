@@ -287,7 +287,7 @@ test_legacy_card_waits_for_verified_migration() {
   local home out
   home=$(make_home legacy-card)
   jq -n '{
-    updated_at: "2026-08-01T18:00:00Z",
+    updated_at: "2026-08-22T18:00:00Z",
     items: [{
       id: "legacy-question",
       num: 1,
@@ -295,7 +295,7 @@ test_legacy_card_waits_for_verified_migration() {
       context: "Created before backing state was recorded.",
       commands: [],
       options: ["Yes", "No"],
-      asked_at: "2026-08-01T18:00:00Z",
+      asked_at: "2026-08-22T18:00:00Z",
       status: "open",
       project: "sample"
     }],
@@ -709,7 +709,7 @@ test_repeat_answer_after_crash_advances_cursor() {
   pass "a replay of an already-resolved answer advances the cursor without dropping it"
 }
 
-test_reopened_card_skips_a_crash_replay_from_its_prior_generation() {
+test_reopened_card_skips_a_completed_reply_replay() {
   local home out
   home=$(make_home reopened-crash-replay)
   run_q "$home" add --id card-a --question "First question?" >/dev/null
@@ -730,7 +730,48 @@ test_reopened_card_skips_a_crash_replay_from_its_prior_generation() {
     and (.records[0] | has("answer") | not)
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "crash replay changed the reopened question"
-  pass "a reopened card skips a crash replay from its prior generation"
+  pass "a reopened card skips a completed reply replay from its prior generation"
+}
+
+test_reopened_card_delivers_a_reply_persisted_before_crash() {
+  local home out queue_file next_file
+  home=$(make_home reopened-persisted-reply)
+  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  append_reply "$home" card-a "first answer"
+  queue_file="$home/data/captain-queue.json"
+  next_file="$home/data/captain-queue.next"
+  jq --arg stamp "$NOW" '
+    .records[0] += {
+      state: "resolved",
+      answer: "first answer",
+      resolved_at: $stamp
+    }
+    | .pending_reply_deliveries = [{
+        line: 1,
+        id: "card-a",
+        generation: 1,
+        answer: "first answer"
+      }]
+  ' "$queue_file" > "$next_file"
+  mv "$next_file" "$queue_file"
+
+  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=card-a] first answer" \
+    "the persisted prior-generation answer should still reach firstmate"
+  assert_not_contains "$out" "stale:" \
+    "a persisted but unsurfaced answer must not become stale after reopen"
+  [ "$(cursor_value "$home")" = 1 ] \
+    || fail "persisted reply should advance the cursor, got $(cursor_value "$home")"
+  jq -e '
+    .records[0].id == "card-a"
+    and .records[0].state == "open"
+    and .records[0].generation == 2
+    and .records[0].question == "Second question?"
+    and (.pending_reply_deliveries | length) == 0
+  ' "$queue_file" >/dev/null \
+    || fail "delivery replay changed the reopened card or retained delivered evidence"
+  pass "a reopen preserves and delivers an answer persisted before a crash"
 }
 
 test_reopened_card_skips_a_delayed_stale_reply_without_blocking() {
@@ -847,7 +888,7 @@ SH
   chmod +x "$1/tasks-axi"
 }
 
-test_legacy_repost_preserves_migration_eligibility() {
+test_legacy_repost_preserves_bounded_expiry() {
   local home fakebin out
   home=$(make_home live-migration)
   jq -n '{
@@ -886,15 +927,11 @@ EOF
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "ordinary repost changed the legacy card's migration state or expiry anchor"
   out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
-  [ -z "$out" ] || fail "legacy repost should still await human migration: $out"
-  [ "$(active_ids "$home")" = legacy-live-question ] \
-    || fail "legacy repost disappeared before human migration"
-  out=$(PATH="$fakebin:$PATH" run_q "$home" park \
-    --id legacy-live-question \
-    --note "Verified legacy deferral")
-  assert_contains "$out" "parked: [id=legacy-live-question] manual" \
-    "human verification should still migrate the reposted legacy card"
-  pass "legacy repost preserves its anchor and migration eligibility"
+  assert_contains "$out" "parked: [id=legacy-live-question] expired-legacy-backing" \
+    "legacy repost should retain the original bounded expiry"
+  [ "$(parked_ids "$home")" = legacy-live-question ] \
+    || fail "legacy repost escaped its bounded expiry"
+  pass "legacy repost preserves its original bounded expiry"
 }
 
 test_done_backlog_item_clears_card_without_a_reply() {
@@ -925,7 +962,7 @@ test_done_backlog_item_clears_card_without_a_reply() {
   pass "a card auto-clears when its backlog item is marked done"
 }
 
-test_legacy_backed_done_card_still_clears() {
+test_legacy_missing_backing_ignores_done_collision_and_expires() {
   local home fakebin out
   home=$(make_home legacy-done)
   cat > "$home/data/backlog.md" <<'EOF'
@@ -951,12 +988,15 @@ EOF
   fakebin=$(fm_fakebin "$home")
   make_failing_tasks_axi "$fakebin"
   out=$(PATH="$fakebin:$PATH" run_q "$home" reconcile)
-  assert_contains "$out" "cleared: [id=legacy-done-card] backlog-done" \
-    "verified done work should retire a legacy card without a backing marker"
-  [ -z "$(active_ids "$home")" ] || fail "legacy done card stayed active"
-  [ "$(resolved_answer "$home" legacy-done-card)" = backlog-done ] \
-    || fail "legacy done card did not record its retirement"
-  pass "legacy backed cards still retire when their work is done"
+  assert_not_contains "$out" "cleared:" \
+    "same-id done work must not resolve a legacy card with unknown backing"
+  assert_contains "$out" "parked: [id=legacy-done-card] expired-legacy-backing" \
+    "an aged legacy card should use its bounded expiry path"
+  [ "$(parked_ids "$home")" = legacy-done-card ] \
+    || fail "legacy card did not remain visible in the parked group"
+  [ -z "$(resolved_answer "$home" legacy-done-card)" ] \
+    || fail "same-id done work resolved the legacy card"
+  pass "legacy unknown backing ignores done collisions and expires to parked"
 }
 
 test_only_done_cards_auto_clear() {
@@ -1103,7 +1143,8 @@ test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
 test_repeat_answer_after_crash_advances_cursor
-test_reopened_card_skips_a_crash_replay_from_its_prior_generation
+test_reopened_card_skips_a_completed_reply_replay
+test_reopened_card_delivers_a_reply_persisted_before_crash
 test_reopened_card_skips_a_delayed_stale_reply_without_blocking
 test_replacing_an_open_ask_rotates_its_generation
 test_partial_last_line_without_newline_is_handled
@@ -1113,9 +1154,9 @@ test_backlog_fallback_avoids_unknown_state
 test_repost_preserves_unknown_add_time_backing
 test_later_done_item_does_not_resolve_an_unbacked_card
 test_resolved_card_id_reopens_without_parked_history
-test_legacy_repost_preserves_migration_eligibility
+test_legacy_repost_preserves_bounded_expiry
 test_done_backlog_item_clears_card_without_a_reply
-test_legacy_backed_done_card_still_clears
+test_legacy_missing_backing_ignores_done_collision_and_expires
 test_only_done_cards_auto_clear
 test_dashboard_reply_after_auto_clear_does_not_orphan
 test_dashboard_reply_still_clears_when_backlog_item_is_open

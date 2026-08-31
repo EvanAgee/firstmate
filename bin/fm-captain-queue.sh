@@ -22,10 +22,11 @@
 # records. Reopening a resolved card also increments its generation.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
 # It reads every new reply line past the cursor, matches by id and generation,
-# changes a matched card's state to `resolved` (answer preserved), and advances
-# the cursor past that line. A reply without a generation is legacy generation
-# 1. A reply older than the current generation prints `stale:` and advances
-# without changing the card. Resolving the card is not doing the work:
+# changes a matched card's state to `resolved`, and records a pending delivery
+# until `handled:` is emitted and the cursor advances past that line. A reopen
+# cannot discard this evidence. A reply without a generation is legacy
+# generation 1. A reply older than the current generation prints `stale:` and
+# advances without changing the card. Resolving the card is not doing the work:
 # each `handled:` line is the answer firstmate still has to act on. An
 # `orphan:` line matches no card; the cursor stays before it so the answer
 # cannot be skipped. Reconcile never advances past an answer that was neither
@@ -33,16 +34,16 @@
 # still prints `handled:` so firstmate can verify a "Done - command ran"
 # answer against reality before treating that work as done.
 # After applying new replies, or when there are none, reconcile also retires
-# each remaining active card whose backing backlog item is done. The card id is
-# the backlog captain-hold id or the decision-hold identity, so a done item and
+# each remaining active card recorded as backed whose backlog item is done.
+# The card id is the backlog captain-hold id or the decision-hold identity, so a done item and
 # a closed decision-hold are the same check: `tasks-axi show <id>` against this
 # home's backlog reports state done. Cards whose item is still open, absent, or
 # unreadable stay. Auto-clear prints `cleared:` lines, not `handled:`; those
 # are not dashboard answers to act on. A readable backlog is checked directly
 # when tasks-axi cannot answer.
 # `add` records backlog_backed as true, false, or null when the backlog cannot
-# be read. False and null records expire after UNBACKED_CARD_EXPIRY_DAYS (7)
-# days without dropping their content.
+# be read. False, null, and legacy records without the field expire after
+# UNBACKED_CARD_EXPIRY_DAYS (7) days without dropping their content.
 # `park` defers a confirmed-unbacked card at any age, or migrates a
 # human-verified legacy card, with a required note.
 # Repeating it is a no-op for parked cards and resolved cards with parked history.
@@ -195,6 +196,14 @@ read_queue() {
           then .generation else 1 end)};
       def valid_state: . == "open" or . == "parked" or . == "resolved";
       def valid_id: (.id | type) == "string" and (.id | length) > 0;
+      def valid_pending_reply_delivery:
+        type == "object"
+        and ((.line | type) == "number" and .line > 0 and (.line | floor) == .line)
+        and ((.generation | type) == "number"
+          and .generation > 0
+          and (.generation | floor) == .generation)
+        and ((.id | type) == "string" and (.id | length) > 0)
+        and (.answer | type) == "string";
       def state_touch_epoch:
         (if .state == "resolved" then (.resolved_at // .parked_at // .asked_at)
         elif .state == "parked" then (.parked_at // .asked_at)
@@ -242,24 +251,39 @@ read_queue() {
           | map(.value + {__fm_legacy_order: .key})
           | latest_legacy_records)
         end | map(with_generation)) as $records
+        | (.pending_reply_deliveries // []) as $pending
+        | (if ($pending | type) != "array" then
+            error("captain-queue.json pending_reply_deliveries is not an array")
+          elif any($pending[]; valid_pending_reply_delivery | not) then
+            error("captain-queue.json has an invalid pending reply delivery")
+          else $pending
+          end) as $pending_reply_deliveries
         | ([$records[] | .id | select(type == "string" and length > 0)]
           | group_by(.) | map(select(length > 1)) | .[0][0] // "") as $duplicate
         | if $duplicate != "" then
             error("captain-queue.json has duplicate card id: " + $duplicate)
           else
-            {updated_at: (.updated_at // ""), records: $records}
+            {
+              updated_at: (.updated_at // ""),
+              records: $records,
+              pending_reply_deliveries: $pending_reply_deliveries
+            }
           end
       end
     ' "$QUEUE"
   else
-    printf '%s\n' '{"updated_at":"","records":[]}'
+    printf '%s\n' '{"updated_at":"","records":[],"pending_reply_deliveries":[]}'
   fi
 }
 
 write_queue() {  # stdin: queue object
   local stamp json
   stamp=$(now_stamp)
-  json=$(jq -c --arg stamp "$stamp" '{updated_at: $stamp, records: (.records // [])}') || return 1
+  json=$(jq -c --arg stamp "$stamp" '{
+    updated_at: $stamp,
+    records: (.records // []),
+    pending_reply_deliveries: (.pending_reply_deliveries // [])
+  }') || return 1
   printf '%s\n' "$json" | jq '.' | atomic_write "$QUEUE"
 }
 
@@ -571,14 +595,15 @@ add_time_backlog_backing_state() {  # <id>
   fi
 }
 
-# Apply one matched reply to an active or parked card.
-apply_handled() {  # <queue-json> <id> <generation> <answer> <stamp> -> new queue on stdout
-  local queue=$1 id=$2 generation=$3 answer=$4 stamp=$5
+# Apply one resolution and optionally retain its reply line for delivery.
+apply_handled() {  # <queue-json> <id> <generation> <answer> <stamp> [line] -> new queue on stdout
+  local queue=$1 id=$2 generation=$3 answer=$4 stamp=$5 line=${6:-}
   printf '%s\n' "$queue" | jq -c \
     --arg id "$id" \
     --argjson generation "$generation" \
     --arg answer "$answer" \
-    --arg stamp "$stamp" '
+    --arg stamp "$stamp" \
+    --arg line "$line" '
       .records = [.records[] |
         if .id == $id
           and .generation == $generation
@@ -590,7 +615,24 @@ apply_handled() {  # <queue-json> <id> <generation> <answer> <stamp> -> new queu
           }
         else . end
       ]
+      | if $line == "" then . else
+          .pending_reply_deliveries = ((.pending_reply_deliveries // []) + [{
+            line: ($line | tonumber),
+            id: $id,
+            generation: $generation,
+            answer: $answer
+          }])
+        end
     '
+}
+
+drop_delivered_replies() {  # <queue-json> <cursor> -> new queue on stdout
+  local queue=$1 cursor=$2
+  printf '%s\n' "$queue" | jq -c --argjson cursor "$cursor" '
+    .pending_reply_deliveries = [
+      (.pending_reply_deliveries // [])[] | select(.line > $cursor)
+    ]
+  '
 }
 
 # True when this home's backlog records <id> as done. Absent, unreadable, or
@@ -608,7 +650,7 @@ clear_closed_cards() {
   records=$(printf '%s\n' "$queue" | jq -r '
     .records[]?
     | select(.state == "open")
-    | select(.backlog_backed == true or (has("backlog_backed") | not))
+    | select(.backlog_backed == true)
     | [.id // "", .generation]
     | @tsv
   ') || return 0
@@ -626,15 +668,17 @@ $records
 EOF
 }
 
-# Move active cards created without a backlog item to parked after seven days.
+# Move active cards without confirmed add-time backing to parked after seven days.
 # A missing or malformed timestamp stays active rather than expiring on a guess.
 park_expired_cards() {
   local id stamp ids backing reason note
   stamp=$(now_stamp)
   ids=$(printf '%s\n' "$queue" | jq -r '
     .records[]?
-    | select(.state == "open" and has("backlog_backed"))
-    | select(.backlog_backed == false or .backlog_backed == null)
+    | select(.state == "open")
+    | select((has("backlog_backed") | not)
+      or .backlog_backed == false
+      or .backlog_backed == null)
     | .id // empty
   ') || return 0
   [ -n "$ids" ] || return 0
@@ -650,11 +694,17 @@ park_expired_cards() {
         ' >/dev/null; then
       continue
     fi
-    backing=$(printf '%s\n' "$queue" | jq -r --arg id "$id" \
-      '.records[] | select(.id == $id and .state == "open") | .backlog_backed')
+    backing=$(printf '%s\n' "$queue" | jq -r --arg id "$id" '
+      .records[]
+      | select(.id == $id and .state == "open")
+      | if has("backlog_backed") then (.backlog_backed | tostring) else "legacy" end
+    ')
     if [ "$backing" = false ]; then
       reason=expired-unbacked
       note="Expired after $UNBACKED_CARD_EXPIRY_DAYS days without a backing backlog item"
+    elif [ "$backing" = legacy ]; then
+      reason=expired-legacy-backing
+      note="Expired after $UNBACKED_CARD_EXPIRY_DAYS days without verified legacy backing"
     else
       reason=expired-unknown-backing
       note="Expired after $UNBACKED_CARD_EXPIRY_DAYS days while backlog backing could not be verified"
@@ -669,11 +719,16 @@ EOF
 }
 
 cmd_reconcile() {
-  local cursor queue line n id generation answer stamp
+  local cursor queue pruned line n id generation answer stamp
   local orphan=0 orphan_id="" orphan_answer=""
   acquire_queue_lock
   cursor=$(read_cursor)
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
+  pruned=$(drop_delivered_replies "$queue" "$cursor") || die 1 "failed to prune delivered replies"
+  if [ "$pruned" != "$queue" ]; then
+    queue=$pruned
+    printf '%s\n' "$queue" | write_queue || die 1 "failed to prune delivered replies"
+  fi
 
   if [ -f "$REPLIES" ]; then
     n=0
@@ -704,17 +759,36 @@ cmd_reconcile() {
       id=$(printf '%s\n' "$line" | jq -r '.id')
       generation=$(printf '%s\n' "$line" | jq -r '.generation // 1')
       answer=$(printf '%s\n' "$line" | jq -r '.answer')
-      if printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
+      if printf '%s\n' "$queue" | jq -e \
+          --arg id "$id" \
+          --argjson generation "$generation" \
+          --arg answer "$answer" \
+          --argjson line "$n" '
+          any(.pending_reply_deliveries[]?;
+            .line == $line
+            and .id == $id
+            and .generation == $generation
+            and .answer == $answer
+          )' >/dev/null; then
+        printf 'handled: [id=%s] %s\n' "$id" "$answer"
+        write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
+        cursor=$n
+        queue=$(drop_delivered_replies "$queue" "$cursor") || die 1 "failed to clear delivered reply"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to clear delivered reply"
+      elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
           'any(.records[];
             .id == $id and .generation == $generation
             and (.state == "open" or .state == "parked")
           )' >/dev/null; then
         stamp=$(now_stamp)
-        queue=$(apply_handled "$queue" "$id" "$generation" "$answer" "$stamp") || die 1 "failed to resolve $id"
+        queue=$(apply_handled "$queue" "$id" "$generation" "$answer" "$stamp" "$n") \
+          || die 1 "failed to resolve $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+        printf 'handled: [id=%s] %s\n' "$id" "$answer"
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
         cursor=$n
-        printf 'handled: [id=%s] %s\n' "$id" "$answer"
+        queue=$(drop_delivered_replies "$queue" "$cursor") || die 1 "failed to clear delivered reply"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to clear delivered reply"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" --arg answer "$answer" \
           'any(.records[];
             .id == $id and .state == "resolved"
@@ -723,9 +797,9 @@ cmd_reconcile() {
           )' >/dev/null; then
         # Crash window: the card already moved, the cursor did not. Same answer
         # means this line was applied; advance without dropping a new answer.
+        printf 'handled: [id=%s] %s\n' "$id" "$answer"
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
         cursor=$n
-        printf 'handled: [id=%s] %s\n' "$id" "$answer"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
           'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; then
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
