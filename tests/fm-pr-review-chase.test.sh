@@ -11,6 +11,7 @@ CHASE="$ROOT/bin/fm-pr-review-chase.sh"
 PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 WATCH="$ROOT/bin/fm-watch.sh"
 POLL="$ROOT/bin/fm-pr-poll.sh"
+REGISTER="$ROOT/bin/fm-check-register.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-review-chase-tests)
 NOW=1788192000
 HEAD_A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -126,6 +127,18 @@ write_response() {
 
 reset_graphql() {
   printf '0\n' > "$1/base-count"
+}
+
+ack_watcher_cycle() {
+  local state=$1 err sequence generation
+  err="$state/.test-wake-drain.err"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2> "$err" || return 1
+  sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err")
+  generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
+  rm -f "$err"
+  [ -n "$sequence" ] && [ -n "$generation" ] || return 1
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" --ack-through "$sequence" \
+    --recovery-generation "$generation"
 }
 
 run_chase() {
@@ -318,11 +331,11 @@ test_interrupted_request_is_restored_before_state_advances() {
 }
 
 run_watcher_bounded() {
-  local case_dir=$1
+  local case_dir=$1 now=$2
   perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
     env FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_CHECK_INTERVAL=0 \
       FM_CHECK_TIMEOUT=2 FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 \
-      FM_PR_REVIEW_CHASE_NOW="$((NOW + 21600))" \
+      FM_PR_REVIEW_CHASE_NOW="$now" \
       FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
       FM_TEST_GH_LOG="$case_dir/gh.log" \
       FM_TEST_GRAPHQL_RESPONSE="$case_dir/response.json" \
@@ -333,8 +346,22 @@ run_watcher_bounded() {
       PATH="$case_dir/fakebin:$PATH" "$WATCH"
 }
 
-test_authenticated_watcher_runs_only_the_request_pair() {
-  local case_dir rc
+run_watcher_pass() {
+  local case_dir=$1 now=$2 label=$3 rc
+  printf '0\n' > "$case_dir/state-count"
+  reset_graphql "$case_dir"
+  set +e
+  run_watcher_bounded "$case_dir" "$now" \
+    > "$case_dir/watch-$label.out" 2> "$case_dir/watch-$label.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "authenticated watcher $label pass failed: $(cat "$case_dir/watch-$label.err")"
+  ack_watcher_cycle "$case_dir/home/state" \
+    || fail "authenticated watcher $label wake acknowledgement failed"
+}
+
+test_authenticated_watcher_enforces_request_interval() {
+  local case_dir
   case_dir=$(make_case watcher-integration)
   write_response "$case_dir/response.json" "$HEAD_A" SUCCESS 0 aos-tester1 "$OLD_HEAD"
   observe_head "$case_dir" "$NOW"
@@ -357,18 +384,30 @@ test_authenticated_watcher_runs_only_the_request_pair() {
   fm_pr_poll_artifacts_valid "$case_dir/home/state" task-a "$POLL" \
     || fail "the watcher integration did not use an authenticated poll"
 
-  printf 'OPEN\nMERGED\n' > "$case_dir/state-sequence"
-  printf '0\n' > "$case_dir/state-count"
-  reset_graphql "$case_dir"
-  set +e
-  run_watcher_bounded "$case_dir" > "$case_dir/watch.out" 2> "$case_dir/watch.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || fail "authenticated watcher pass failed: $(cat "$case_dir/watch.err")"
+  printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' watcher-cycle-complete" \
+    > "$case_dir/home/state/z-cycle.check.sh"
+  chmod 0700 "$case_dir/home/state/z-cycle.check.sh"
+  FM_HOME="$case_dir/home" "$REGISTER" z-cycle >/dev/null \
+    || fail "watcher cycle check did not register"
+  printf 'OPEN\n' > "$case_dir/state-sequence"
+
+  run_watcher_pass "$case_dir" "$((NOW + 21600))" first
   [ "$(request_count DELETE "$case_dir/gh-axi.log")" -eq 1 ] \
     || fail "the authenticated watcher did not remove the stale request once"
   [ "$(request_count POST "$case_dir/gh-axi.log")" -eq 1 ] \
     || fail "the authenticated watcher did not restore the stale request once"
+
+  run_watcher_pass "$case_dir" "$((NOW + 21900))" same-interval
+  [ "$(request_count DELETE "$case_dir/gh-axi.log")" -eq 1 ] \
+    || fail "the next watcher pass repeated the request inside six hours"
+  [ "$(request_count POST "$case_dir/gh-axi.log")" -eq 1 ] \
+    || fail "the next watcher pass reposted the request inside six hours"
+
+  run_watcher_pass "$case_dir" "$((NOW + 43200))" next-interval
+  [ "$(request_count DELETE "$case_dir/gh-axi.log")" -eq 2 ] \
+    || fail "the watcher did not allow a request after the full six-hour interval"
+  [ "$(request_count POST "$case_dir/gh-axi.log")" -eq 2 ] \
+    || fail "the watcher did not complete the next allowed request pair"
   if grep -E '^api (PUT|PATCH|POST|DELETE) .*pulls/[0-9]+/(merge|reviews)( |$)' \
     "$case_dir/gh-axi.log" >/dev/null 2>&1; then
     fail "the reviewer chase approved, merged, or dismissed a review"
@@ -376,7 +415,7 @@ test_authenticated_watcher_runs_only_the_request_pair() {
   if grep -E '^pr (merge|review) ' "$case_dir/gh.log" >/dev/null 2>&1; then
     fail "the watcher used a merge or review command"
   fi
-  pass "the authenticated watcher only re-requests the stale reviewer"
+  pass "the authenticated watcher enforces the six-hour request interval"
 }
 
 test_quiet_clock_starts_at_observation
@@ -386,4 +425,4 @@ test_only_the_review_blocker_is_eligible
 test_review_history_is_paginated
 test_mutation_revalidation_rejects_a_new_red_state
 test_interrupted_request_is_restored_before_state_advances
-test_authenticated_watcher_runs_only_the_request_pair
+test_authenticated_watcher_enforces_request_interval
