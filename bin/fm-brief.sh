@@ -483,6 +483,8 @@ $RULE1
 9. Before reporting done for any PR with user-visible UI changes, upload viewport screenshots to Cloudflare and embed the returned public URLs in the PR body by running, from inside this task worktree, \`node ~/Sites/agent-workflow-kit/scripts/upload-artifact.mjs --ref pr-<PR#> --pr <PR#> <screenshot-file>...\` (credentials live once per machine at \`~/.claude/cloudflare-r2.env\`).
    The tool uploads each file, prints ready-to-paste markdown, writes the links into the PR body, and refuses a desktop or full-screen capture, so pass only viewport screenshots from your own lane's browser.
    Committed repo paths (for example \`docs/reference/151/foo.png\`) and local file paths do NOT render in a private-repo PR and do NOT count.
+   The \`pr-evidence\` check only confirms that the PR body contains Markdown image syntax with an HTTPS URL; it does not fetch or inspect the image, so open the PR page and verify every image displays before reporting done instead of trusting the upload command's output.
+   After embedding the URLs, push a commit (an empty one is fine) so push-triggered checks re-run against the current head; editing the PR body alone does not re-run them.
 10. Run \`npx unslop\` on every changed file and fix all findings before any PR.
 11. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
 
