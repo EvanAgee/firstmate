@@ -179,8 +179,42 @@ test_bank_archives_stop_and_accepts_new_clusters() {
   pass "review-loop stop: bank archives the stop and starts a fresh count"
 }
 
+test_resolution_preserves_other_cluster_streaks() {
+  local task=overlap-loop run=run-g home rc out report
+  home=$(make_home overlapping "$task")
+  record "$home" "$task" "$run" head-a "Changed alpha first." \
+    "file:src/alpha.ts" >/dev/null
+  record "$home" "$task" "$run" head-b "Changed alpha and beta once." \
+    "file:src/alpha.ts" --cluster "file:src/beta.ts" >/dev/null
+
+  set +e
+  record "$home" "$task" "$run" head-c "Changed alpha and beta twice." \
+    "file:src/alpha.ts" --cluster "file:src/beta.ts" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "alpha should stop after three rounds"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root decision should resolve alpha"
+
+  set +e
+  out=$(record "$home" "$task" "$run" head-d "Changed beta a third time." \
+    "file:src/beta.ts" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "beta's open streak must survive alpha's resolution"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "preserved beta streak did not write its report"
+  assert_grep "Changed alpha and beta once" "$report" \
+    "beta report omitted its first active round"
+  assert_grep "Changed alpha and beta twice" "$report" \
+    "beta report omitted its second active round"
+  assert_grep "Changed beta a third time" "$report" \
+    "beta report omitted its tripping round"
+  pass "review-loop stop: resolving one cluster preserves other active streaks"
+}
+
 test_dead_lock_owner_is_recovered() {
-  local task=stale-lock-loop run=run-g home lock ready holder rc i
+  local task=stale-lock-loop run=run-h home lock ready holder rc i
   home=$(make_home stale-lock "$task")
   lock="$home/state/review-loops/$task.lock"
   ready="$home/lock-ready"
@@ -212,4 +246,5 @@ test_threshold_is_configurable
 test_root_decision_starts_a_fresh_count
 test_simultaneous_clusters_share_one_report
 test_bank_archives_stop_and_accepts_new_clusters
+test_resolution_preserves_other_cluster_streaks
 test_dead_lock_owner_is_recovered

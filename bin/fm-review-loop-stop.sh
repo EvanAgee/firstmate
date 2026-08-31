@@ -29,8 +29,9 @@
 # retry repairs a missing event but never duplicates one already appended.
 #
 # resolve records only a decision already supplied by firstmate. Both choices
-# archive the stop and start a fresh count for the same run. This command never
-# chooses a path or drives no-mistakes itself.
+# archive the stop, clear the reported clusters from prior rounds, and preserve
+# active streaks for every other cluster. This command never chooses a path or
+# drives no-mistakes itself.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -302,6 +303,8 @@ resolve_stop() { # <task-id> <args...>
   [ "$surfaced" = true ] || die "run $run has no surfaced review-loop stop"
 
   state_json=$(printf '%s' "$state_json" | jq -c --arg decision "$decision" '
+    .surfaced.clusters as $resolved
+    |
     .resolution = {
       choice: $decision,
       generation: .generation,
@@ -309,7 +312,7 @@ resolve_stop() { # <task-id> <args...>
       report: .surfaced.report
     }
     | .generation += 1
-    | .rounds = []
+    | .rounds |= map(.clusters = (.clusters - $resolved))
     | .surfaced = null
   ')
   atomic_write "$state_file" "$state_json" || die "could not save review-loop resolution"

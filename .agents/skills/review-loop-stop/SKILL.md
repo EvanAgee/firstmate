@@ -65,6 +65,6 @@ When firstmate sends an exact decision, record it before following the supplied 
 
 Use `--decision bank` for an explicit bank-the-remainder choice.
 The helper records the choice but never chooses the gate action.
-For a root fix, it starts a fresh cluster count so three more repeated rounds can surface again.
-For a bank choice, it archives the surfaced stop and starts a fresh count so later Review gates can record new clusters.
+For a root fix, it starts fresh counts for the report's clusters while keeping every other cluster's active streak.
+For a bank choice, it archives the surfaced stop under the same rule so later Review gates can record new or still-open clusters.
 Follow only the exact gate action firstmate authorized.
