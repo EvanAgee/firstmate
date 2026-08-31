@@ -620,46 +620,27 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
-test_raw_override_precedes_switched_off_pin() {
-  local rec id out status launch
+test_raw_override_with_class_requires_provable_runtime() {
+  local rec id out status
   id=$(profile_id profile-raw-override-z15b)
   rec=$(make_spawn_case profile-raw-override claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile_with_switched_off_pin "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --class builder --harness "custom-agent --flag" \
+    "$id" "$PROJ_DIR" --class builder --harness "claude --model opus --effort high" \
     --captain-override "captain selected a raw command")
   status=$?
-  expect_code 0 "$status" "a raw override should precede a switched-off class pin"
-  launch=$(cat "$LAUNCH_LOG")
-  [ "$launch" = "custom-agent --flag" ] || fail "raw class override changed the launch command"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
-  assert_meta_dispatch "$HOME_DIR/state/$id.meta" builder pin
-  assert_grep "dispatch_override=captain selected a raw command" "$HOME_DIR/state/$id.meta" \
-    "raw override reason was not recorded"
-  pass "a raw captain override precedes a switched-off class pin"
-}
-
-test_raw_override_matching_disabled_member_is_refused() {
-  local rec id out status
-  id=$(profile_id profile-raw-disabled-z15c)
-  rec=$(make_spawn_case profile-raw-disabled claude "$id")
-  read_case_record "$rec"
-  enable_dispatch_profile_with_switched_off_rung "$HOME_DIR"
-
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --class builder --harness "claude --flag" --model opus --effort high \
-    --captain-override "captain selected a disabled raw runtime")
-  status=$?
-  expect_code 1 "$status" "a raw override naming a disabled tuple should fail"
-  assert_contains "$out" "captain override selects disabled member harness=claude model=opus effort=high" \
-    "raw disabled override did not name its normalized tuple"
-  assert_contains "$out" "re-enable it in config/crew-dispatch.json" \
-    "raw disabled override did not explain how to re-enable the member"
-  [ ! -s "$LAUNCH_LOG" ] || fail "raw disabled override typed a launch command"
-  assert_absent "$HOME_DIR/state/$id.meta" "raw disabled override wrote metadata"
-  pass "a raw override cannot select a disabled configured member"
+  expect_code 1 "$status" "a raw class override with an unproven runtime should fail"
+  assert_contains "$out" "cannot prove runtime axes harness, model, and effort" \
+    "raw class refusal did not name every unproven runtime axis"
+  assert_contains "$out" "use a supported concrete --harness <adapter>" \
+    "raw class refusal did not offer a provable runtime path"
+  assert_contains "$out" "omit --class to use the raw launch-command escape hatch" \
+    "raw class refusal did not preserve the non-class raw escape hatch"
+  [ ! -s "$LAUNCH_LOG" ] || fail "unproven raw class override typed a launch command"
+  assert_absent "$HOME_DIR/state/$id.meta" "unproven raw class override wrote metadata"
+  pass "a raw class override refuses an unprovable runtime tuple"
 }
 
 test_default_model_forms_match_through_spawn() {
@@ -1393,8 +1374,7 @@ test_class_resolves_pinned_runtime
 test_active_dispatch_profile_refuses_concrete_harness_without_class
 test_class_runtime_override_requires_and_records_captain_reason
 test_active_dispatch_profile_allows_raw_launch_command
-test_raw_override_precedes_switched_off_pin
-test_raw_override_matching_disabled_member_is_refused
+test_raw_override_with_class_requires_provable_runtime
 test_default_model_forms_match_through_spawn
 test_runtime_whitespace_refuses_before_launch
 test_claude_threads_model_and_effort

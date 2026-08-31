@@ -348,7 +348,9 @@ The reasons are `pin`, `round-robin`, `default-pin`, and `default`.
 Passing `--harness`, `--model`, or `--effort` with `--class` requires `--captain-override "<reason>"`, which records `dispatch_override`.
 The resolver applies those override axes before it checks disabled members, so an enabled override outranks a disabled class pin while an override that names a disabled member is refused.
 Without `--class`, an active dispatch file makes a fresh crewmate or scout spawn fail even when a concrete harness was passed.
-The raw launch-command escape hatch and `--relaunch` keep their existing behavior.
+Raw launch commands cannot accompany `--class` because arbitrary shell text cannot prove the exact harness, model, and effort that will run.
+Omit `--class` to use the raw launch-command escape hatch.
+`--relaunch` keeps its existing behavior.
 A batch uses one shared `--class`, and each task resolves in sequence so the earlier task's metadata participates in the next count.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
@@ -363,10 +365,12 @@ Secondmate homes inherit this file from the primary, so a secondmate's own crewm
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.
 It installs automatically supported tools only after you say go; manual-only tools remain for you to install from the printed instructions.
 Required tools come in two parts: a universal toolchain every home needs regardless of backend, and a per-backend delta that follows the runtime backend actually resolved for this home.
-The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, jq, no-mistakes v1.31.2 or newer, compatible gh-axi, compatible chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
-[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh), and [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh) hold their own tools' floor constants.
+The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, jq, no-mistakes v1.31.2 or newer, compatible gh-axi, compatible chrome-devtools-axi, compatible lavish-axi, and compatible tasks-axi per "Backlog backend" above.
+[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh) hold their own tools' floor constants.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
-In that list, jq handles structured state, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and dispatch-pool health.
+In that list, jq handles structured state, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi backs backlog mutations.
+Optional quota-axi supports captain-facing dispatch health notes only.
+The resolver never reads it or requires it to select a runtime.
 The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
 That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`: the resolved backend's own session-provider CLI (`tmux`, `herdr`, `zellij`, `orca`, or `cmux`) and the `treehouse` worktree provider for every session-provider-only backend (`tmux`, `herdr`, `zellij`, `cmux`).
 Backend tool availability uses the adapter's own executable resolver, so bootstrap and spawn agree on supported non-`PATH` locations such as cmux's bundled CLI.
@@ -375,7 +379,7 @@ Orca provides both the task worktree and terminal endpoint (see "Runtime backend
 A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the `treehouse` durable-lease upgrade check runs only for the backends that actually use treehouse.
 Bootstrap uses the universal `jq` installation to validate `config/crew-dispatch.json` when that file exists.
 When Relay is opted in, bootstrap also requires `curl` before arming the relay poll shim.
-`tasks-axi` and `quota-axi` are required bootstrap tools in every profile, the same class as `lavish-axi`.
+`tasks-axi` is a required bootstrap tool in every profile, the same class as `lavish-axi`.
 An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
 An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 An absent or incompatible `chrome-devtools-axi` reports `MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)`.
@@ -385,7 +389,7 @@ Session start exports `CHROME_DEVTOOLS_AXI_MCP_PATH` to that launcher and prints
 Spawn still exports that path and sets `CHROME_DEVTOOLS_AXI_SESSION` to the task id so workers do not share the default bridge or pick up `@latest`.
 Bootstrap's chrome-devtools-axi check is the version floor plus a named-session open-and-snapshot probe owned by [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh).
 An absent or incompatible `lavish-axi` reports `MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)`.
-An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a dispatch pool without a compatible binary.
+An absent or incompatible `quota-axi` does not block bootstrap or dispatch resolution.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
 The locked session-start deferred network stage runs bootstrap's best-effort project clone refresh through `fm-fleet-sync.sh`.

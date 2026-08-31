@@ -64,10 +64,10 @@
 //   (like each rule's `why`). Missing or symlinked file: config is null. No token.
 // POST /rigs/config requires the token; body is a whole dispatch config object.
 //   Writes it to config/crew-dispatch.json (creating the file if absent), after
-//   checking class identity, runtime token safety, and that every present ladder
-//   keeps at least one enabled rung. Default is optional; when the key is absent
-//   it is not required. Bad body or a broken ladder is refused 400. This is the
-//   routing editor's save door.
+//   checking the complete dispatch schema, including class identity, pins,
+//   runtime tokens, and enabled pools. Default is optional; when the key is
+//   absent it is not required. Bad body or a broken ladder is refused 400. This
+//   is the routing editor's save door.
 
 import http from "node:http";
 import fs from "node:fs";
@@ -574,26 +574,102 @@ function validateDispatchClasses(config) {
   return { classes };
 }
 
-function dispatchRuntimeWhitespaceError(config) {
-  const groups = [];
-  for (const rule of config.rules || []) {
-    if (!rule || typeof rule !== "object") continue;
-    groups.push(["use profile", asList(rule.use)]);
-    if (rule.pin && typeof rule.pin === "object") groups.push(["rule pin", [rule.pin]]);
+const VERIFIED_DISPATCH_HARNESSES = new Set([
+  "claude",
+  "codex",
+  "opencode",
+  "omp",
+  "pi",
+  "pi-signed",
+  "grok",
+  "kimi",
+  "cursor",
+  "muse",
+]);
+
+const DISPATCH_EFFORTS = {
+  claude: new Set(["low", "medium", "high", "xhigh", "max"]),
+  codex: new Set(["low", "medium", "high", "xhigh"]),
+  grok: new Set(["low", "medium", "high"]),
+  omp: new Set(["low", "medium", "high", "xhigh", "max"]),
+  pi: new Set(["low", "medium", "high", "xhigh", "max"]),
+  "pi-signed": new Set(["low", "medium", "high", "xhigh", "max"]),
+  muse: new Set(["low", "medium", "high", "xhigh", "max"]),
+  opencode: new Set(),
+  kimi: new Set(),
+  cursor: new Set(),
+};
+
+function dispatchProfileError(profile, label, enabledAllowed = true) {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+    return `${label} must be an object`;
   }
-  groups.push(["default profile", asList(config.default)]);
-  if (config.defaultPin && typeof config.defaultPin === "object") {
-    groups.push(["defaultPin", [config.defaultPin]]);
+  if (typeof profile.harness !== "string" || !profile.harness) {
+    return `${label} needs harness`;
   }
-  for (const [label, profiles] of groups) {
-    for (const profile of profiles) {
-      if (!profile || typeof profile !== "object") continue;
-      for (const field of ["harness", "model", "effort"]) {
-        if (typeof profile[field] === "string" && /\s/.test(profile[field])) {
-          return `${label} ${field}=${JSON.stringify(profile[field])}`;
-        }
-      }
+  for (const field of ["model", "effort"]) {
+    if (field in profile && (typeof profile[field] !== "string" || !profile[field])) {
+      return `${label} ${field} must be a non-empty string when present`;
     }
+  }
+  if (enabledAllowed && "enabled" in profile && typeof profile.enabled !== "boolean") {
+    return `${label} enabled must be true or false when present`;
+  }
+  for (const field of ["harness", "model", "effort"]) {
+    if (typeof profile[field] === "string" && /\s/.test(profile[field])) {
+      return `runtime values cannot contain whitespace: ${label} ${field}=${JSON.stringify(profile[field])}`;
+    }
+  }
+  if (!VERIFIED_DISPATCH_HARNESSES.has(profile.harness)) {
+    return `unverified harness: ${profile.harness}`;
+  }
+  if (profile.effort && !DISPATCH_EFFORTS[profile.harness].has(profile.effort)) {
+    return `invalid effort: ${profile.harness}:${profile.effort}`;
+  }
+  return null;
+}
+
+function normalizedDispatchTuple(profile) {
+  return {
+    harness: profile.harness,
+    model: profile.model ?? "default",
+    effort: profile.effort ?? null,
+  };
+}
+
+function sameDispatchTuple(left, right) {
+  const a = normalizedDispatchTuple(left);
+  const b = normalizedDispatchTuple(right);
+  return a.harness === b.harness && a.model === b.model && a.effort === b.effort;
+}
+
+function dispatchProfileLabel(profile) {
+  return `${profile.harness}/${profile.model ?? "<default>"}/${profile.effort ?? "<default>"}`;
+}
+
+function dispatchPoolError(value, label, profileLabel = `${label} profile`) {
+  if (!Array.isArray(value) && !(value && typeof value === "object")) {
+    return `${label} must be a profile object or non-empty profile array`;
+  }
+  const profiles = asList(value);
+  if (profiles.length === 0) return `${label} needs at least one profile`;
+  for (const profile of profiles) {
+    const error = dispatchProfileError(profile, profileLabel);
+    if (error) return error;
+  }
+  if (!profiles.some(rungEnabled)) return `${label} needs at least one enabled rung`;
+  return null;
+}
+
+function dispatchPinError(pin, pool, label) {
+  const profileError = dispatchProfileError(pin, label, false);
+  if (profileError) return profileError;
+  const matches = pool.filter((profile) => sameDispatchTuple(profile, pin));
+  if (matches.length === 0) {
+    return `${label} is not a member of its pool: ${dispatchProfileLabel(pin)}`;
+  }
+  if (!matches.some(rungEnabled)) {
+    return `${label} names a switched-off member: ${dispatchProfileLabel(pin)}`;
   }
   return null;
 }
@@ -676,8 +752,6 @@ function handleRungToggle(req, res, home, options) {
     }
     const classCheck = validateDispatchClasses(config);
     if ("error" in classCheck) throw httpError(400, classCheck.error);
-    const whitespace = dispatchRuntimeWhitespaceError(config);
-    if (whitespace) throw httpError(400, `runtime values cannot contain whitespace: ${whitespace}`);
     const validRigs = validRigNames(config, classCheck.classes);
     if (!validRigs.includes(toggle.rig)) {
       const choices = validRigs.length > 0 ? validRigs.join(", ") : "none";
@@ -688,16 +762,13 @@ function handleRungToggle(req, res, home, options) {
       const notFound = next.error === "rig not found" || next.error === "rung not found";
       throw httpError(notFound ? 404 : 400, next.error);
     }
+    const candidateCheck = validateDispatchConfig(next.config);
+    if ("error" in candidateCheck) throw httpError(400, candidateCheck.error);
     writeDispatchConfig(file, next.config);
     return { ok: true, rig: toggle.rig, rung: toggle.rung, enabled: toggle.enabled };
   });
 }
 
-// Every present ladder in a dispatch config (each rule's `use`, and `default`
-// when that key is an array or object) must keep at least one enabled rung,
-// and must name at least one. A config with only rules and no default is legal.
-// This mirrors the invariant the single-rung toggle enforces, applied to a
-// whole config the dashboard's routing editor sends at once.
 function validateDispatchConfig(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     return { error: "config must be a json object" };
@@ -714,24 +785,28 @@ function validateDispatchConfig(config) {
   ) {
     return { error: "default must be an array or object" };
   }
-  const ladders = [];
   const classCheck = validateDispatchClasses(config);
   if ("error" in classCheck) return classCheck;
-  const whitespace = dispatchRuntimeWhitespaceError(config);
-  if (whitespace) return { error: `runtime values cannot contain whitespace: ${whitespace}` };
   if (Array.isArray(config.rules)) {
     for (const rule of config.rules) {
-      ladders.push({ label: rule.class, list: asList(rule.use) });
+      if ("select" in rule) {
+        return { error: "select is not supported; use pin or resolver round-robin" };
+      }
+      const poolError = dispatchPoolError(rule.use, rule.class, "use profile");
+      if (poolError) return { error: poolError };
+      if ("pin" in rule) {
+        const pinError = dispatchPinError(rule.pin, asList(rule.use), `pin for ${rule.class}`);
+        if (pinError) return { error: pinError };
+      }
     }
   }
-  if (Array.isArray(config.default) || (config.default && typeof config.default === "object")) {
-    ladders.push({ label: "default", list: asList(config.default) });
+  if ("default" in config) {
+    const poolError = dispatchPoolError(config.default, "default");
+    if (poolError) return { error: poolError };
   }
-  for (const ladder of ladders) {
-    if (ladder.list.length === 0) return { error: `${ladder.label} needs at least one rung` };
-    if (!ladder.list.some(rungEnabled)) {
-      return { error: `${ladder.label} needs at least one enabled rung` };
-    }
+  if ("defaultPin" in config) {
+    const pinError = dispatchPinError(config.defaultPin, asList(config.default), "defaultPin");
+    if (pinError) return { error: pinError };
   }
   return { ok: true };
 }

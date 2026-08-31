@@ -651,6 +651,26 @@ write_rung_fixture() {  # <home>
 EOF
 }
 
+write_pinned_rung_fixture() {  # <home>
+  local home=$1
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [
+    {
+      "class": "builder",
+      "use": [
+        { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
+        { "harness": "claude", "model": "opus", "effort": "high" }
+      ],
+      "pin": { "harness": "codex", "model": "gpt-5.6", "effort": "high" }
+    }
+  ],
+  "default": [{ "harness": "codex" }]
+}
+EOF
+}
+
 write_duplicate_note_rung_fixture() {  # <home>
   local home=$1
   mkdir -p "$home/config"
@@ -834,6 +854,26 @@ test_rung_toggle_with_token_flips_enabled() {
   pass "toggling a rung with the token flips its enabled state in the config"
 }
 
+test_rung_toggle_refuses_disabling_authoritative_pin() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-rung-pinned)
+  write_pinned_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"builder","rung":0,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "pinned rung toggle status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'pin for builder names a switched-off member' >/dev/null \
+    || fail "pinned rung refusal did not name the invalid pin: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "pinned rung refusal rewrote the config"
+  fm_test_api_stop "$home"
+  pass "rung mutation cannot disable the authoritative pin"
+}
+
 test_rung_toggle_refuses_last_enabled_rung() {
   local home port token resp before after
   home=$(fm_test_api_home api-rung-last)
@@ -1004,6 +1044,26 @@ test_rig_config_refuses_runtime_whitespace() {
   pass "API config writes refuse runtime whitespace"
 }
 
+test_rig_config_refuses_invalid_pin() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-invalid-pin)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rules":[{"class":"builder","use":[{"harness":"codex"},{"harness":"claude"}],"pin":{"harness":"pi"}}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "invalid pin config status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'pin for builder is not a member of its pool' >/dev/null \
+    || fail "invalid pin config error was not clear: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "invalid pin config rewrote the file"
+  fm_test_api_stop "$home"
+  pass "whole config writes reject pins outside their pool"
+}
+
 test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
   local home port token resp before after
   home=$(fm_test_api_home api-config-broken)
@@ -1151,6 +1211,7 @@ test_decision_answer_with_token_lands_in_wake_queue
 test_decision_answer_unknown_task_is_not_found
 test_rung_toggle_without_token_is_unauthorized
 test_rung_toggle_with_token_flips_enabled
+test_rung_toggle_refuses_disabling_authoritative_pin
 test_rung_toggle_refuses_last_enabled_rung
 test_rung_toggle_uses_class_when_notes_repeat
 test_rung_toggle_rejects_unknown_class_with_valid_choices
@@ -1159,6 +1220,7 @@ test_rig_config_without_token_is_unauthorized
 test_rig_config_with_token_writes_config
 test_rig_config_requires_unique_non_reserved_classes
 test_rig_config_refuses_runtime_whitespace
+test_rig_config_refuses_invalid_pin
 test_rig_config_refuses_a_ladder_with_no_enabled_rung
 test_rig_config_without_default_is_accepted
 test_rig_config_refuses_malformed_present_fields

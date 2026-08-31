@@ -41,8 +41,10 @@
 #   --class <class> resolves a crewmate or scout runtime through
 #   bin/fm-dispatch-resolve.sh. When config/crew-dispatch.json exists, fresh
 #   crewmate and scout spawns require --class unless they use the raw launch
-#   command escape hatch. --class cannot be combined with --harness, --model,
-#   or --effort unless --captain-override records why this task differs.
+#   command escape hatch without --class. --class cannot be combined with a
+#   concrete --harness, --model, or --effort unless --captain-override records
+#   why this task differs, and it refuses raw shell commands whose runtime tuple
+#   cannot be proven from those structured axes.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are profile axes
@@ -1294,21 +1296,16 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
       echo "error: a positional harness cannot accompany --class; use --harness with --captain-override <reason>" >&2
       exit 1
     fi
+    case "$HARNESS_ARG" in
+      *' '*)
+        echo "error: raw --harness with --class cannot prove runtime axes harness, model, and effort from structured inputs; use a supported concrete --harness <adapter> with --model and --effort as needed, or omit --class to use the raw launch-command escape hatch" >&2
+        exit 1
+        ;;
+    esac
     DISPATCH_ARGS=(--class "$DISPATCH_CLASS" --home "$FM_HOME")
     if [ "$CAPTAIN_OVERRIDE_SET" -eq 1 ]; then
       if [ "$HARNESS_SET" -eq 1 ]; then
-        case "$HARNESS_ARG" in
-          *' '*)
-            RAW_OVERRIDE_HARNESS=$(raw_launch_harness "$HARNESS_ARG") || {
-              echo "error: raw launch command has no executable" >&2
-              exit 1
-            }
-            DISPATCH_ARGS+=(--override-harness "$RAW_OVERRIDE_HARNESS")
-            [ "$MODEL_SET" -eq 1 ] || DISPATCH_ARGS+=(--override-model default)
-            [ "$EFFORT_SET" -eq 1 ] || DISPATCH_ARGS+=(--override-effort default)
-            ;;
-          *) DISPATCH_ARGS+=(--override-harness "$HARNESS_ARG") ;;
-        esac
+        DISPATCH_ARGS+=(--override-harness "$HARNESS_ARG")
       fi
       [ "$MODEL_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-model "${MODEL:-default}")
       [ "$EFFORT_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-effort "$EFFORT")

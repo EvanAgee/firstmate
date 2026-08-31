@@ -60,9 +60,9 @@
 #          chrome-devtools-axi also runs a named-session open-and-snapshot
 #          probe so a pageId or floating @latest MCP contract break cannot stay
 #          silent; bin/fm-chrome-devtools-axi-lib.sh owns that probe and its floor.
-#          tasks-axi and quota-axi are required bootstrap tools (same class as
-#          lavish-axi). A compatible tasks-axi default backend is silent.
-#          quota-axi supports the captain-facing dispatch health note in
+#          tasks-axi is a required bootstrap tool. A compatible tasks-axi
+#          default backend is silent. Optional quota-axi supports the
+#          captain-facing dispatch health note in
 #          .agents/skills/quota-array-dispatch/SKILL.md and never selects a runtime.
 #          On a primary home, the locked mutable path materializes the visible
 #          default config/startup-memory-budget=7500 when absent. It never
@@ -134,8 +134,6 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
-# shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-chrome-devtools-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -788,7 +786,7 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh jq no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi"
+COMMON_TOOLS="node git gh jq no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
@@ -1226,9 +1224,6 @@ detect_local_tools() {
   fi
   if command -v lavish-axi >/dev/null 2>&1 && ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
     echo "MISSING: lavish-axi (install: $(install_cmd lavish-axi))"
-  fi
-  if command -v quota-axi >/dev/null 2>&1 && ! fm_quota_axi_compatible; then
-    echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
   fi
   if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
     echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"

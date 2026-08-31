@@ -144,7 +144,8 @@ Observed source statuses are `available`, `expired` (with an `error` slug), and 
 - A `pi:`-prefixed source exists only where Pi holds its own credential for that family (`pi:xai`, `pi:kimi-coding`). Pi's `openai-codex` family has none, because it authenticates through the Codex store that the `codex` provider already lists. A missing `pi:` source is therefore never evidence against a Pi candidate.
 
 Neither this per-source shape nor `state.authStatus` exists before quota-axi 0.1.16.
-`bin/fm-bootstrap.sh` enforces the current compatibility floor through `bin/fm-quota-axi-lib.sh`.
+`bin/fm-quota-axi-lib.sh` exposes the compatibility floor to optional health checks.
+Bootstrap and runtime selection do not require quota-axi.
 
 Grok also reports `credits.remaining: 0` alongside `percentRemaining: 41` on a healthy account.
 That zero is a prepaid balance, not the subscription window, and is never headroom.
@@ -175,4 +176,4 @@ Re-run the two commands above and update this section and the pinned version tog
 It asserts that the script accepts no harness, model, or provider input, never calls `quota-axi`, exits alike for every probe result because it renders no verdict, invokes only the two fixed non-destructive argv forms with stdin closed, holds a real bound even when the configured bound is zero or malformed, and never echoes raw vendor output.
 `tests/fm-dispatch-resolve.test.sh` owns pin, live-worker count, switched-off pin, and default selection.
 `tests/fm-spawn-dispatch-profile.test.sh` owns class resolution, recorded captain overrides, and concrete-runtime refusals.
-`tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
+`tests/fm-bootstrap.test.sh` proves quota-axi availability and version do not gate bootstrap.

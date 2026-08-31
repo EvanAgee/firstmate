@@ -4,15 +4,15 @@
 # Bootstrap prints one block or line per actionable problem, optional verbose
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
 # all is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
-# 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
-# 'MISSING: gh-axi (install: ...)', 'MISSING: chrome-devtools-axi (install: ...)',
+# 'MISSING: tasks-axi (install: ...)', 'MISSING: gh-axi (install: ...)',
+# 'MISSING: chrome-devtools-axi (install: ...)',
 # 'MISSING: lavish-axi (install: ...)', and
 # 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
 # are table-driven over the inputs that vary: whether `treehouse get --help`
 # advertises --lease, which (if any) tasks-axi version is on PATH, whether
 # tasks-axi update advertises --archive-body, whether its mv help advertises
 # multi-ID moves, whether its hold help advertises parked, future, and dated
-# holds, whether quota-axi is on PATH, whether chrome-devtools-axi meets its floor,
+# holds, whether optional quota-axi is on PATH, whether chrome-devtools-axi meets its floor,
 # whether the local backend config opts out of tasks-axi backlog mutations,
 # which no-mistakes version is on PATH, which gh-axi version is on PATH, and
 # which lavish-axi version is on PATH.
@@ -318,11 +318,11 @@ missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (insta
 incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without archive-body is required by default^1^0.2.4:noarchive^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without multi-id mv is required by default^1^0.2.4:nomulti^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-missing quota-axi is required by default^1^0.2.4^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
+missing quota-axi is optional^1^0.2.4^0^manual^empty^^
 manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 manual backlog backend suppresses tasks-axi availability^1^0.2.4^1^manual^empty^^
 ROWS
-  pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
+  pass "bootstrap reports required tools without gating optional quota health"
 }
 
 test_no_mistakes_min_version() {
@@ -512,13 +512,10 @@ ROWS
   pass "bootstrap enforces tasks-axi minimum version"
 }
 
-# These rows exercise the real bootstrap check with a fake quota-axi answering
-# --version: below the floor produces MISSING, while at or above is silent.
-test_quota_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
-  missing='MISSING: quota-axi (install: npm install -g quota-axi)'
+test_quota_axi_is_optional() {
+  local label version case_dir fakebin out n
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label version; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/quota-axi-$n"
@@ -527,22 +524,13 @@ test_quota_axi_min_version() {
     fakebin=$(make_fake_toolchain "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_QUOTA_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
-    case "$mode" in
-      empty)
-        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
-      missing)
-        [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
-    esac
+    [ -z "$out" ] || fail "$label: expected silence, got: $out"
   done <<'ROWS'
-minimum quota-axi version is accepted^0.1.25^empty
-newer quota-axi patch is accepted^0.1.26^empty
-newer quota-axi minor is accepted^0.2.0^empty
-newer quota-axi major is accepted^1.0.0^empty
-the patch just below the floor reports an upgrade^0.1.24^missing
-much older quota-axi minor reports an upgrade^0.0.9^missing
-unparseable quota-axi version reports an upgrade^quota-axi development build^missing
+minimum quota-axi version is ignored^0.1.25
+older quota-axi version is ignored^0.1.24
+unparseable quota-axi version is ignored^quota-axi development build
 ROWS
-  pass "bootstrap enforces quota-axi minimum version"
+  pass "bootstrap leaves optional quota health tooling out of dispatch readiness"
 }
 
 test_git_is_required_with_supported_install_instruction() {
@@ -1279,7 +1267,7 @@ test_gh_axi_min_version
 test_lavish_axi_min_version
 test_chrome_devtools_axi_min_version
 test_tasks_axi_min_version
-test_quota_axi_min_version
+test_quota_axi_is_optional
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux
