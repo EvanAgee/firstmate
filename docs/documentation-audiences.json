@@ -312,6 +312,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/review-loop-stop/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/scaffold-exercises/SKILL.md",
       "audience": "agent-runtime"
     },

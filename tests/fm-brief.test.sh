@@ -401,6 +401,8 @@ test_no_mistakes_dod_wording() {
   # guards the structure that makes it safe.
   assert_grep "firstmate's authority check" "$brief" \
     "no-mistakes DOD lost the apostrophe prose that the structural fix makes parse-safe"
+  assert_grep ".agents/skills/review-loop-stop/SKILL.md" "$brief" \
+    "no-mistakes DOD must load the repeated-review stop before another fix response"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe"
 }
 
