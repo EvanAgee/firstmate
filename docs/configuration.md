@@ -273,12 +273,12 @@ A bare `<harness>` preserves the previous behavior: harness only, with no model 
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
-An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
+An explicit harness argument to `fm-spawn.sh` overrides the static crew or secondmate harness for that spawn when no crew-dispatch file applies.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; for a local route, an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
 Remote secondmate routes accept verified harness adapters only and reject raw launch commands.
-When `config/crew-dispatch.json` exists, crewmate and scout spawns require an explicit resolved harness instead of automatically falling back to `config/crew-harness`.
+When `config/crew-dispatch.json` exists, fresh crewmate and scout spawns require `--class` instead of falling back to `config/crew-harness` or accepting a concrete runtime chosen at intake.
 The inherited-local-material contract is owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); its harness-relevant consequence is that a secondmate's own crewmates use the primary's dispatch profiles and static harness value.
-Those inherited values are defaults and rules only; `fm-spawn` still permits a consciously chosen explicit runtime outside the config.
+An explicit captain per-task runtime remains available only with `--class` and a recorded `--captain-override` reason.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
 For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
 For Kimi crews, `fm-spawn.sh` runs `fm-kimi-turnend-hook.sh install`, drops a per-task `.fm-kimi-turnend` pointer in the worktree, and records the matching private registry token for teardown.
@@ -290,55 +290,75 @@ For OMP secondmate launches, it explicitly loads that home's `.omp/extensions/fm
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
-`config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
-The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or pool under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
-When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
-Batch spawns satisfy the same requirement with a shared `--harness`.
-Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
-This section is the single owner of the canonical schema and its per-field semantics.
-`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the round-robin pool selection procedure.
-Optional `note`, per-rule `pin`, and top-level `defaultPin` are presentation only.
-Dispatch ignores them.
-`GET /rigs` returns those keys raw so a dashboard can show the same floor rule and pins without reading the file.
-`bin/fm-api-server.mjs` owns that JSON.
+`config/crew-dispatch.json` is an optional local, gitignored file that maps machine-readable task classes to runtime pools.
+This section is the single owner of its schema, field meanings, and selection order.
+Firstmate names the class at crewmate or scout intake and normally passes `--class <class>` to `fm-spawn.sh`.
+`bin/fm-dispatch-resolve.sh` selects the runtime without reading Markdown, matching `when`, or consulting quota.
+Secondmate spawns do not use classes and continue to resolve through `config/secondmate-harness`.
 
 ```json
 {
+  "note": "<optional human note>",
   "rules": [
     {
-      "when": "<natural-language condition describing a kind of task>",
+      "class": "builder",
+      "when": "<optional human description of this class>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": "<true|false, optional, default true>" }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": true }
       ],
-      "why": "<optional rationale that helps firstmate choose>"
+      "pin": { "harness": "<same adapter>", "model": "<same optional model>", "effort": "<same optional effort>" },
+      "why": "<optional human rationale>"
     }
   ],
   "default": [
     { "harness": "<adapter>", "model": "<optional model>", "effort": "<optional effort>" }
-  ]
+  ],
+  "defaultPin": { "harness": "<same adapter>", "model": "<same optional model>", "effort": "<same optional effort>" }
 }
 ```
 
-Per rule, `when` and `use` are required.
-Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
-An array is a pool: every member holds that category's quality floor, and firstmate spreads new tasks evenly across the pool by round-robin rather than always picking the first member.
-The single-object form stays fully backward-compatible, and every profile needs `harness`.
-Profile `model` and `effort` fields and rule `why` are optional.
-An omitted model or effort means the selected harness uses its own default for that axis.
-Profile `enabled` is optional and must be `true` or `false` when present.
-An absent `enabled` key means the rung is on, so every existing configuration keeps its current behavior.
-Setting `"enabled": false` switches that rung off: firstmate drops it before counting live workers or selecting, and `fm-spawn.sh` refuses a crewmate or scout spawn that names it.
-A switched-off member is a hard lock that no evidence may re-enable, and a switch applies to the next dispatch only, so a worker already running finishes on its original harness.
-A rule whose members are all switched off, or an all-off `default`, is a configuration error rather than a silent fallback, because the floor rule forbids dropping to an unlisted lane.
-Every pool of more than one member is resolved by round-robin through `quota-array-dispatch`: firstmate picks the enabled, healthy member carrying the fewest live workers from that pool in this home, breaking ties by quota headroom, then list order.
-Quota is a health filter and a tie-break there, not the selector, so members are dropped only when unhealthy or genuinely quota-tight and the rest share the work evenly.
-If no dispatch rule fits, firstmate resolves `default` through the same object-or-pool path before falling back to `config/crew-harness`.
-If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
+Every rule requires a non-empty, unique `class` and a non-empty `use` pool.
+The class `__default__` is reserved for the default pool's API identity.
+The usual classes are `researcher`, `builder`, `designer`, and `tester`.
+The optional `when`, `why`, and top-level `note` fields are human notes and never participate in selection.
+Both `use` and top-level `default` accept one profile object or a non-empty array of profiles.
+Every profile requires `harness`.
+Optional `model` and `effort` values select those exact runtime axes, while omission selects the harness default for that axis.
+An omitted model and the literal model `"default"` are the same selection everywhere the configuration is validated or matched.
+Harness, model, and effort values cannot contain whitespace because the resolver's output protocol is space-delimited.
+Optional `enabled` must be boolean, and omission means enabled.
+Setting `"enabled": false` switches that member off for new dispatches without moving a live worker.
+
+A rule's `pin` selects one exact `{harness, model, effort}` member of that rule's own pool.
+Top-level `defaultPin` selects one exact member of `default`.
+Pins are selections, not presentation fields.
+The old `select` field is rejected because the resolver now owns unpinned round-robin selection.
+Bootstrap rejects a pin whose harness, model, and effort do not exactly match one member of its pool.
+The resolver refuses a switched-off pin without falling through to another member or to `default`.
+
+Without a pin, the resolver chooses the enabled pool member carrying the fewest matching live workers in this home.
+It counts `state/*.meta` records whose harness, model, and effort match the member and excludes `kind=secondmate`.
+List order breaks a tie.
+Quota does not select, remove, rank, or break a tie between members.
+An unknown class uses `defaultPin` when present, otherwise it applies the same count and list-order selection to `default`.
+An empty enabled pool is an error with no fallback.
+
+With `--class`, `fm-spawn.sh` records `dispatch_class` and the resolver's `dispatch_reason` in task metadata.
+The reasons are `pin`, `round-robin`, `default-pin`, and `default`.
+Passing `--harness`, `--model`, or `--effort` with `--class` requires `--captain-override "<reason>"`, which records `dispatch_override`.
+The resolver applies those override axes before it checks disabled members, so an enabled override outranks a disabled class pin while an override that names a disabled member is refused.
+Without `--class`, an active dispatch file makes a fresh crewmate or scout spawn fail even when a concrete harness was passed.
+Raw launch commands cannot accompany `--class` because arbitrary shell text cannot prove the exact harness, model, and effort that will run.
+Omit `--class` to use the raw launch-command escape hatch.
+`--relaunch` keeps its existing behavior.
+A batch uses one shared `--class`, and each task resolves in sequence so the earlier task's metadata participates in the next count.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
-When the file exists, bootstrap validates it with `jq`.
+`bin/fm-dispatch-validate.sh` is the single executable validation boundary used by bootstrap, the resolver, and API writes.
+It uses the adapter support definitions in `bin/fm-dispatch-runtime-lib.sh` before any caller reads or acts on the config.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, an empty or malformed rule/default array, an unverified harness, a non-boolean `enabled`, a rule with every member switched off, an all-off `default`, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
-While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
+Malformed JSON, a non-object top level, a missing or duplicate class, an empty or malformed pool, an invalid pin, whitespace in a runtime value, an unsupported runtime setting, a non-boolean `enabled`, or an all-off pool is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
+`GET /rigs` returns each rule's `class`, human name, pool, and pin, plus top-level `defaultPin` raw so the board can label and display the configured pools.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
 ## Toolchain
@@ -346,19 +366,21 @@ Secondmate homes inherit this file from the primary, so a secondmate's own crewm
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.
 It installs automatically supported tools only after you say go; manual-only tools remain for you to install from the printed instructions.
 Required tools come in two parts: a universal toolchain every home needs regardless of backend, and a per-backend delta that follows the runtime backend actually resolved for this home.
-The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, jq, no-mistakes v1.31.2 or newer, compatible gh-axi, compatible chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
-[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh), and [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh) hold their own tools' floor constants.
+The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, jq, no-mistakes v1.31.2 or newer, compatible gh-axi, compatible chrome-devtools-axi, compatible lavish-axi, and compatible tasks-axi per "Backlog backend" above.
+[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh) hold their own tools' floor constants.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
-In that list, jq handles structured state, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and dispatch-pool health.
+In that list, jq handles structured state, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi backs backlog mutations.
+Optional quota-axi supports captain-facing dispatch health notes only.
+The resolver never reads it or requires it to select a runtime.
 The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
 That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`: the resolved backend's own session-provider CLI (`tmux`, `herdr`, `zellij`, `orca`, or `cmux`) and the `treehouse` worktree provider for every session-provider-only backend (`tmux`, `herdr`, `zellij`, `cmux`).
 Backend tool availability uses the adapter's own executable resolver, so bootstrap and spawn agree on supported non-`PATH` locations such as cmux's bundled CLI.
 An unknown resolved backend emits `BACKEND_INVALID` and blocks dispatch instead of silently dropping its dependency delta or falling back to tmux.
 Orca provides both the task worktree and terminal endpoint (see "Runtime backend" above), so `backend=orca` requires only `orca` on top of the universal toolchain and skips both `treehouse` and every other backend's session CLI.
 A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the `treehouse` durable-lease upgrade check runs only for the backends that actually use treehouse.
-Bootstrap uses the universal `jq` installation to validate `config/crew-dispatch.json` when that file exists.
+The crew-dispatch validator uses the universal `jq` installation when `config/crew-dispatch.json` exists.
 When Relay is opted in, bootstrap also requires `curl` before arming the relay poll shim.
-`tasks-axi` and `quota-axi` are required bootstrap tools in every profile, the same class as `lavish-axi`.
+`tasks-axi` is a required bootstrap tool in every profile, the same class as `lavish-axi`.
 An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
 An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 An absent or incompatible `chrome-devtools-axi` reports `MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)`.
@@ -368,7 +390,7 @@ Session start exports `CHROME_DEVTOOLS_AXI_MCP_PATH` to that launcher and prints
 Spawn still exports that path and sets `CHROME_DEVTOOLS_AXI_SESSION` to the task id so workers do not share the default bridge or pick up `@latest`.
 Bootstrap's chrome-devtools-axi check is the version floor plus a named-session open-and-snapshot probe owned by [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh).
 An absent or incompatible `lavish-axi` reports `MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)`.
-An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a dispatch pool without a compatible binary.
+An absent or incompatible `quota-axi` does not block bootstrap or dispatch resolution.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
 The locked session-start deferred network stage runs bootstrap's best-effort project clone refresh through `fm-fleet-sync.sh`.
@@ -595,8 +617,8 @@ An unknown task returns 404.
 A worker relay never closes a durable captain decision.
 `POST /decisions/answer` accepts JSON `{"task":"<id>","key":"<key>","text":"<one line>"}` and queues an answer for firstmate on the same wake queue, encoded as operational input.
 Firstmate closes an active durable captain decision with `bin/fm-send.sh --resolve-key` on its next supervision turn.
-`POST /rigs/rung` accepts JSON `{"rig":"<when line or default>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
-`rig` is the rule's `when` line, or `default` for the fallback ladder, the same name `GET /rigs` already serves.
+`POST /rigs/rung` accepts JSON `{"rig":"<class or __default__>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
+`rig` is the rule's unique `class`, or `__default__` for the fallback ladder, matching the `class` value `GET /rigs` serves.
 `rung` is that ladder's index, because harness and model can repeat.
 A change that would turn off a ladder's last enabled rung is refused with 400.
 `GET /rigs/config` returns the exact `config/crew-dispatch.json` as `{"ok":true,"config":<object>}`, so an editor can read the whole file (every field `GET /rigs` drops, such as each rule's `why`), change it, and save it back.
@@ -617,7 +639,7 @@ An unknown task ID returns JSON 404.
 The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
 `GET /captain-queue` serves the `data/captain-queue.json` cards firstmate escalated to the captain, not worker `needs-decision` lines.
 `GET /blocked` serves blocked tasks.
-`GET /rigs` serves rig pools plus the dispatch note, pins, and raw crew and secondmate pin lines.
+`GET /rigs` serves each rig's class, pool, and pin plus the dispatch note and raw crew and secondmate pin lines.
 `GET /captain-holds` serves the open captain-kind decisions from this home's backlog, including deferred rows.
 Missing read sources stay empty or null rather than failing the request.
 `bin/fm-api-server.mjs` owns those JSON contracts.

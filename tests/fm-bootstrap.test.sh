@@ -4,15 +4,15 @@
 # Bootstrap prints one block or line per actionable problem, optional verbose
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
 # all is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
-# 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
-# 'MISSING: gh-axi (install: ...)', 'MISSING: chrome-devtools-axi (install: ...)',
+# 'MISSING: tasks-axi (install: ...)', 'MISSING: gh-axi (install: ...)',
+# 'MISSING: chrome-devtools-axi (install: ...)',
 # 'MISSING: lavish-axi (install: ...)', and
 # 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
 # are table-driven over the inputs that vary: whether `treehouse get --help`
 # advertises --lease, which (if any) tasks-axi version is on PATH, whether
 # tasks-axi update advertises --archive-body, whether its mv help advertises
 # multi-ID moves, whether its hold help advertises parked, future, and dated
-# holds, whether quota-axi is on PATH, whether chrome-devtools-axi meets its floor,
+# holds, whether optional quota-axi is on PATH, whether chrome-devtools-axi meets its floor,
 # whether the local backend config opts out of tasks-axi backlog mutations,
 # which no-mistakes version is on PATH, which gh-axi version is on PATH, and
 # which lavish-axi version is on PATH.
@@ -318,11 +318,11 @@ missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (insta
 incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without archive-body is required by default^1^0.2.4:noarchive^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without multi-id mv is required by default^1^0.2.4:nomulti^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-missing quota-axi is required by default^1^0.2.4^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
+missing quota-axi is optional^1^0.2.4^0^manual^empty^^
 manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 manual backlog backend suppresses tasks-axi availability^1^0.2.4^1^manual^empty^^
 ROWS
-  pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
+  pass "bootstrap reports required tools without gating optional quota health"
 }
 
 test_no_mistakes_min_version() {
@@ -512,13 +512,10 @@ ROWS
   pass "bootstrap enforces tasks-axi minimum version"
 }
 
-# These rows exercise the real bootstrap check with a fake quota-axi answering
-# --version: below the floor produces MISSING, while at or above is silent.
-test_quota_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
-  missing='MISSING: quota-axi (install: npm install -g quota-axi)'
+test_quota_axi_is_optional() {
+  local label version case_dir fakebin out n
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label version; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/quota-axi-$n"
@@ -527,22 +524,13 @@ test_quota_axi_min_version() {
     fakebin=$(make_fake_toolchain "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_QUOTA_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
-    case "$mode" in
-      empty)
-        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
-      missing)
-        [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
-    esac
+    [ -z "$out" ] || fail "$label: expected silence, got: $out"
   done <<'ROWS'
-minimum quota-axi version is accepted^0.1.25^empty
-newer quota-axi patch is accepted^0.1.26^empty
-newer quota-axi minor is accepted^0.2.0^empty
-newer quota-axi major is accepted^1.0.0^empty
-the patch just below the floor reports an upgrade^0.1.24^missing
-much older quota-axi minor reports an upgrade^0.0.9^missing
-unparseable quota-axi version reports an upgrade^quota-axi development build^missing
+minimum quota-axi version is ignored^0.1.25
+older quota-axi version is ignored^0.1.24
+unparseable quota-axi version is ignored^quota-axi development build
 ROWS
-  pass "bootstrap enforces quota-axi minimum version"
+  pass "bootstrap leaves optional quota health tooling out of dispatch readiness"
 }
 
 test_git_is_required_with_supported_install_instruction() {
@@ -882,7 +870,7 @@ make_routine_bootstrap_fixture() {
   fm_git_identity
   mkdir -p "$home/config" "$home/state"
   printf '%s\n' codex > "$home/config/crew-harness"
-  printf '%s\n' '{"rules":[{"when":"normal work","use":{"harness":"codex"}}],"default":{"harness":"claude","effort":"low"}}' \
+  printf '%s\n' '{"rules":[{"class":"builder","when":"normal work","use":{"harness":"codex"}}],"default":{"harness":"claude","effort":"low"}}' \
     > "$home/config/crew-dispatch.json"
   git init -q -b main "$root"
   {
@@ -1149,7 +1137,7 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   case_dir="$TMP_ROOT/dispatch-active"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf '%s\n' '{"rules":[{"when":"fresh news","use":{"harness":"grok"},"why":"current context"},{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]},{"when":"legacy feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"quota-balanced"}],"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},{"harness":"grok","model":"grok-4.5","effort":"high"}]}' > "$case_dir/home/config/crew-dispatch.json"
+  printf '%s\n' '{"rules":[{"class":"researcher","when":"fresh news","use":{"harness":"grok"},"why":"current context"},{"class":"builder","when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]},{"class":"tester","when":"legacy feature","use":[{"harness":"claude"},{"harness":"codex"}]}],"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},{"harness":"grok","model":"grok-4.5","effort":"high"}]}' > "$case_dir/home/config/crew-dispatch.json"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
 
@@ -1160,7 +1148,7 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_BOOTSTRAP_VERBOSE_FACTS=1 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
 
-  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch rule: fresh news -> grok\nBOOTSTRAP_INFO: crew dispatch rule: big feature -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch rule: legacy feature -> quota-balanced[claude, codex]\nBOOTSTRAP_INFO: crew dispatch default: quota-balanced[pi/anthropic/claude-sonnet-5/high, grok/grok-4.5/high]'
+  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch class: researcher -> grok\nBOOTSTRAP_INFO: crew dispatch class: builder -> round-robin[claude/claude-sonnet-5/high, codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch class: tester -> round-robin[claude, codex]\nBOOTSTRAP_INFO: crew dispatch default: round-robin[pi/anthropic/claude-sonnet-5/high, grok/grok-4.5/high]'
   [ "$out" = "$expect" ] || fail "active dispatch verbose info block mismatch"$'\n'"expected: $expect"$'\n'"actual:   $out"
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
@@ -1170,7 +1158,7 @@ test_crew_dispatch_switched_off_rungs_are_marked_in_verbose_facts() {
   case_dir="$TMP_ROOT/dispatch-off-marked"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf '%s\n' '{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5.5","effort":"high"}]}],"default":[{"harness":"pi","model":"xai/grok-4.6","enabled":false},{"harness":"codex"}]}' > "$case_dir/home/config/crew-dispatch.json"
+  printf '%s\n' '{"rules":[{"class":"builder","when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":false},{"harness":"codex","model":"gpt-5.5","effort":"high"}]}],"default":[{"harness":"pi","model":"xai/grok-4.6","enabled":false},{"harness":"codex"}]}' > "$case_dir/home/config/crew-dispatch.json"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
 
@@ -1181,7 +1169,7 @@ test_crew_dispatch_switched_off_rungs_are_marked_in_verbose_facts() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_BOOTSTRAP_VERBOSE_FACTS=1 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
 
-  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch rule: big feature -> quota-balanced[claude/opus/high (off), codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch default: quota-balanced[pi/xai/grok-4.6 (off), codex]'
+  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch class: builder -> round-robin[claude/opus/high (off), codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch default: round-robin[pi/xai/grok-4.6 (off), codex]'
   [ "$out" = "$expect" ] || fail "switched-off rungs should be marked (off) in verbose facts"$'\n'"expected: $expect"$'\n'"actual:   $out"
   pass "bootstrap marks switched-off crew-dispatch rungs in verbose facts"
 }
@@ -1195,6 +1183,13 @@ test_crew_dispatch_validation() {
     case_dir="$TMP_ROOT/dispatch-$n"
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+    if normalized=$(printf '%s\n' "$body" | jq -c '
+      if type == "object" and (.rules? | type) == "array" then
+        .rules |= (to_entries | map(.value + if (.value.class? | type) == "string" then {} else {class: (.value.when // "fixture-\(.key)")} end))
+      else . end
+    ' 2>/dev/null); then
+      body=$normalized
+    fi
     printf '%s\n' "$body" > "$case_dir/home/config/crew-dispatch.json"
     fakebin=$(make_fake_toolchain "$case_dir")
     add_real_jq "$fakebin"
@@ -1210,32 +1205,46 @@ test_crew_dispatch_validation() {
     esac
   done <<'ROWS'
 malformed dispatch config is flagged^{"rules":[^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON
-unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: spaceship
-unsupported codex max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
-unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:max
-unsupported grok xhigh effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:xhigh
+non-object dispatch config is flagged^[]^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - top-level value must be an object
+missing dispatch class is flagged^{"rules":[{"class":"","when":"builder","use":{"harness":"codex"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs non-empty class
+reserved default dispatch class is flagged^{"rules":[{"class":"__default__","when":"builder","use":{"harness":"codex"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - dispatch class __default__ is reserved for the default pool
+duplicate dispatch class is flagged^{"rules":[{"class":"builder","when":"one","use":{"harness":"codex"}},{"class":"builder","when":"two","use":{"harness":"pi"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - dispatch class must be unique: builder
+rule without human notes is accepted^{"rules":[{"class":"builder","use":{"harness":"codex"}}]}^empty^
+unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported harness 'spaceship' for class anything use profile 1; supported harnesses: claude, codex, opencode, omp, pi, pi-signed, grok, kimi, cursor, muse
+unsupported codex max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'max' for class big feature use profile 1 harness 'codex'; supported efforts: low, medium, high, xhigh, or omit effort
+unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'max' for class deep current work use profile 1 harness 'grok'; supported efforts: low, medium, high, or omit effort
+unsupported grok xhigh effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'xhigh' for class deep current work use profile 1 harness 'grok'; supported efforts: low, medium, high, or omit effort
 omp model profile is accepted^{"rules":[{"when":"omp coding","use":{"harness":"omp","model":"glm52-phala"}}]}^empty^
 omp records shared effort intent^{"rules":[{"when":"omp deep coding","use":{"harness":"omp","model":"glm52-phala","effort":"high"}}]}^empty^
 pi max effort is accepted^{"rules":[{"when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
 pi-signed max effort is accepted^{"rules":[{"when":"signed coding","use":{"harness":"pi-signed","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
 muse shared efforts are accepted^{"rules":[{"when":"muse low","use":{"harness":"muse","effort":"low"}},{"when":"muse medium","use":{"harness":"muse","effort":"medium"}},{"when":"muse high","use":{"harness":"muse","effort":"high"}},{"when":"muse xhigh","use":{"harness":"muse","effort":"xhigh"}},{"when":"muse max","use":{"harness":"muse","effort":"max"}}]}^empty^
-unsupported muse ultra effort is flagged^{"rules":[{"when":"muse ultra","use":{"harness":"muse","effort":"ultra"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: muse:ultra
+unsupported muse ultra effort is flagged^{"rules":[{"when":"muse ultra","use":{"harness":"muse","effort":"ultra"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'ultra' for class muse ultra use profile 1 harness 'muse'; supported efforts: low, medium, high, xhigh, max, or omit effort
 omp max effort is accepted^{"rules":[{"when":"OMP coding","use":{"harness":"omp","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
-unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
+unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'high' for class opencode work use profile 1 harness 'opencode'; omit effort for this harness
 kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
-unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high
+unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'high' for class kimi work use profile 1 harness 'kimi'; omit effort for this harness
 cursor model profile is accepted^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high"}}]}^empty^
-unsupported cursor effort is flagged^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: cursor:high
-array use with quota-balanced is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^empty^
+unsupported cursor effort is flagged^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'high' for class cursor work use profile 1 harness 'cursor'; omit effort for this harness
+legacy select is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - select is not supported; use pin or resolver round-robin
 array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
 one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"harness":"claude"}]}]}^empty^
+pin matching a use member is accepted^{"rules":[{"when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"grok","model":"grok-4.5","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}]}^empty^
+omitted and explicit default models match^{"rules":[{"class":"builder","use":[{"harness":"codex","enabled":false},{"harness":"codex","model":"default"}],"pin":{"harness":"codex"}}]}^empty^
+whitespace in a member model is flagged^{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt 5"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - runtime values cannot contain whitespace: use profile model="gpt 5"
+whitespace in a rule pin effort is flagged^{"rules":[{"class":"builder","use":{"harness":"codex","effort":"high"},"pin":{"harness":"codex","effort":"high effort"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - runtime values cannot contain whitespace: rule pin effort="high effort"
+whitespace in a default pin harness is flagged^{"default":{"harness":"codex"},"defaultPin":{"harness":"code x"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - runtime values cannot contain whitespace: defaultPin harness="code x"
+pin outside its use pool is flagged^{"rules":[{"when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"pin":{"harness":"grok","model":"grok-4.5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - pin is not a member of the use pool for builder: grok/grok-4.5/high
+switched-off pinned member is flagged^{"rules":[{"when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":false},{"harness":"grok","model":"grok-4.5","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - pin names a switched-off member for builder: codex/gpt-5.6-sol/high
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^
 one-element default array is accepted^{"default":[{"harness":"codex"}]}^empty^
+defaultPin matching a default member is accepted^{"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"defaultPin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}^empty^
+defaultPin outside the default pool is flagged^{"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"defaultPin":{"harness":"grok","model":"grok-4.5","effort":"high"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - defaultPin is not a member of the default pool: grok/grok-4.5/high
+switched-off defaultPin member is flagged^{"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":false},{"harness":"grok","model":"grok-4.5","effort":"high"}],"defaultPin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - defaultPin names a switched-off member: codex/gpt-5.6-sol/high
 empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
 array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
 array profile with malformed model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","model":5}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings when present
-unknown select is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"mystery"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unknown select: mystery
-array profile unsupported effort is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
+array profile unsupported effort is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'max' for class big feature use profile 1 harness 'codex'; supported efforts: low, medium, high, xhigh, or omit effort
 empty default array is flagged^{"default":[]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default needs at least one profile
 non-object default array entry is flagged^{"default":["codex"]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile must be an object
 default array profile without harness is flagged^{"default":[{"model":"gpt-5.5"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile needs harness
@@ -1259,7 +1268,7 @@ test_gh_axi_min_version
 test_lavish_axi_min_version
 test_chrome_devtools_axi_min_version
 test_tasks_axi_min_version
-test_quota_axi_min_version
+test_quota_axi_is_optional
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux

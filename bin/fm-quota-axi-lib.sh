@@ -1,13 +1,8 @@
 # shellcheck shell=bash
-# Shared quota-axi compatibility floor for the bootstrap diagnostic.
+# Shared quota-axi compatibility floor for optional health checks.
 # Usage: . bin/fm-quota-axi-lib.sh
 #
-# FM_QUOTA_AXI_MIN follows the axi-family floor policy owned beside the floor
-# constants in bin/fm-bootstrap.sh.
-#
-# This file is the single owner of that version number. bin/fm-bootstrap.sh
-# turns a failing check into the operator-facing MISSING diagnostic, which is
-# what keeps an older build from reaching a dispatch intake at all.
+# This file is the single owner of that version number.
 
 FM_QUOTA_AXI_MIN=0.1.25
 

@@ -635,6 +635,7 @@ write_rung_fixture() {  # <home>
 {
   "rules": [
     {
+      "class": "builder",
       "when": "builder class: ordinary",
       "use": [
         { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
@@ -646,6 +647,54 @@ write_rung_fixture() {  # <home>
     { "harness": "codex", "model": "gpt-5.5", "effort": "medium" },
     { "harness": "pi", "model": "anthropic/claude-sonnet-5", "effort": "medium" }
   ]
+}
+EOF
+}
+
+write_pinned_rung_fixture() {  # <home>
+  local home=$1
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [
+    {
+      "class": "builder",
+      "use": [
+        { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
+        { "harness": "claude", "model": "opus", "effort": "high" }
+      ],
+      "pin": { "harness": "codex", "model": "gpt-5.6", "effort": "high" }
+    }
+  ],
+  "default": [{ "harness": "codex" }]
+}
+EOF
+}
+
+write_duplicate_note_rung_fixture() {  # <home>
+  local home=$1
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [
+    {
+      "class": "builder",
+      "when": "Work",
+      "use": [
+        { "harness": "codex", "model": "gpt-5.6", "effort": "high" },
+        { "harness": "claude", "model": "opus", "effort": "high" }
+      ]
+    },
+    {
+      "class": "reviewer",
+      "when": "Work",
+      "use": [
+        { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" },
+        { "harness": "grok", "model": "grok-4", "effort": "high" }
+      ]
+    }
+  ],
+  "default": [{ "harness": "codex" }]
 }
 EOF
 }
@@ -769,7 +818,7 @@ test_rung_toggle_without_token_is_unauthorized() {
   write_rung_fixture "$home"
   before=$(cat "$home/config/crew-dispatch.json")
   port=$(fm_test_api_start "$home")
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":false}' \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
@@ -785,7 +834,7 @@ test_rung_toggle_with_token_flips_enabled() {
   write_rung_fixture "$home"
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":false}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
@@ -793,7 +842,7 @@ test_rung_toggle_with_token_flips_enabled() {
   [ "$(node -e 'const c=require(process.argv[1]);process.stdout.write(String(c.rules[0].use[1].enabled))' \
       "$home/config/crew-dispatch.json")" = false ] \
     || fail "rung 1 was not turned off in the config"
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":true}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":true}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
@@ -805,6 +854,26 @@ test_rung_toggle_with_token_flips_enabled() {
   pass "toggling a rung with the token flips its enabled state in the config"
 }
 
+test_rung_toggle_refuses_disabling_authoritative_pin() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-rung-pinned)
+  write_pinned_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"builder","rung":0,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "pinned rung toggle status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'pin names a switched-off member for builder' >/dev/null \
+    || fail "pinned rung refusal did not name the invalid pin: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "pinned rung refusal rewrote the config"
+  fm_test_api_stop "$home"
+  pass "rung mutation cannot disable the authoritative pin"
+}
+
 test_rung_toggle_refuses_last_enabled_rung() {
   local home port token resp before after
   home=$(fm_test_api_home api-rung-last)
@@ -812,13 +881,13 @@ test_rung_toggle_refuses_last_enabled_rung() {
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
   # Turn off rung 0 first so rung 1 is the last one on.
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":0,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":0,"enabled":false}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 200 ] || fail "turning off rung 0 status $HTTP_CODE, wanted 200: $HTTP_BODY"
   before=$(cat "$home/config/crew-dispatch.json")
-  HTTP_BODY='{"rig":"builder class: ordinary","rung":1,"enabled":false}' \
+  HTTP_BODY='{"rig":"builder","rung":1,"enabled":false}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/rung POST)
   split_http <<<"$resp"
@@ -831,13 +900,75 @@ test_rung_toggle_refuses_last_enabled_rung() {
   pass "a toggle that would turn off a ladder's last rung is refused with a clear error"
 }
 
+test_rung_toggle_uses_class_when_notes_repeat() {
+  local home port token resp states
+  home=$(fm_test_api_home api-rung-duplicate-note)
+  write_duplicate_note_rung_fixture "$home"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"reviewer","rung":1,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "class-addressed rung toggle status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  states=$(node -e 'const c=require(process.argv[1]);process.stdout.write(JSON.stringify(c.rules.map(r => r.use.map(x => x.enabled))))' \
+    "$home/config/crew-dispatch.json")
+  [ "$states" = '[[null,null],[null,false]]' ] \
+    || fail "class-addressed toggle changed the wrong rule: $states"
+  fm_test_api_stop "$home"
+  pass "rung toggles use class identity when human notes repeat"
+}
+
+test_rung_toggle_rejects_unknown_class_with_valid_choices() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-rung-unknown-class)
+  write_duplicate_note_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"designer","rung":0,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 404 ] || fail "unknown class status $HTTP_CODE, wanted 404: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F "valid classes: builder, reviewer, __default__" >/dev/null \
+    || fail "unknown class error did not list configured classes: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "unknown class toggle rewrote the config"
+  fm_test_api_stop "$home"
+  pass "unknown API classes are refused with the configured choices"
+}
+
+test_rung_toggle_refuses_duplicate_config_classes() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-rung-duplicate-class)
+  mkdir -p "$home/config"
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"builder","use":{"harness":"codex"}},{"class":"builder","use":{"harness":"pi"}}]}
+EOF
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rig":"builder","rung":0,"enabled":false}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/rung POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "duplicate class toggle status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'class must be unique: builder' >/dev/null \
+    || fail "duplicate class toggle error was not clear: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "duplicate class toggle rewrote the config"
+  fm_test_api_stop "$home"
+  pass "rung mutations refuse ambiguous configured classes"
+}
+
 test_rig_config_without_token_is_unauthorized() {
   local home port resp before after
   home=$(fm_test_api_home api-config-no-token)
   write_rung_fixture "$home"
   before=$(cat "$home/config/crew-dispatch.json")
   port=$(fm_test_api_start "$home")
-  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":[{"harness":"codex"}]}' \
+  HTTP_BODY='{"rules":[{"class":"builder","when":"x","use":[{"harness":"claude"}]}],"default":[{"harness":"codex"}]}' \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 401 ] || fail "missing token status $HTTP_CODE, wanted 401: $HTTP_BODY"
@@ -853,7 +984,7 @@ test_rig_config_with_token_writes_config() {
   write_rung_fixture "$home"
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
-  HTTP_BODY='{"note":"n","rules":[{"when":"builder class: ordinary","use":[{"harness":"claude","model":"opus"}]}],"default":[{"harness":"codex","model":"gpt-5.5"}]}' \
+  HTTP_BODY='{"note":"n","rules":[{"class":"builder","use":[{"harness":"claude","model":"opus"}]}],"default":[{"harness":"codex","model":"gpt-5.5"}]}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
@@ -865,7 +996,92 @@ test_rig_config_with_token_writes_config() {
       "$home/config/crew-dispatch.json")" = n ] \
     || fail "config save dropped the note"
   fm_test_api_stop "$home"
-  pass "saving a whole dispatch config with the token writes it"
+  pass "saving a dispatch config without human notes writes it"
+}
+
+test_rig_config_requires_unique_non_reserved_classes() {
+  local home port token resp before after body expected
+  home=$(fm_test_api_home api-config-class-validation)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  while IFS='|' read -r body expected; do
+    HTTP_BODY=$body HTTP_AUTHORIZATION="Bearer $token" \
+      resp=$(fm_test_api_http "$port" /rigs/config POST)
+    split_http <<<"$resp"
+    [ "$HTTP_CODE" = 400 ] || fail "invalid class config status $HTTP_CODE, wanted 400: $HTTP_BODY"
+    printf '%s' "$HTTP_BODY" | grep -F "$expected" >/dev/null \
+      || fail "invalid class error did not contain '$expected': $HTTP_BODY"
+  done <<'ROWS'
+{"rules":[{"use":{"harness":"codex"}}]}|non-empty class
+{"rules":[{"class":"builder","use":{"harness":"codex"}},{"class":"builder","use":{"harness":"pi"}}]}|class must be unique: builder
+{"rules":[{"class":"__default__","use":{"harness":"codex"}}]}|reserved for the default pool
+ROWS
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "invalid class config rewrote the file"
+  fm_test_api_stop "$home"
+  pass "API config writes require unique non-reserved classes"
+}
+
+test_rig_config_refuses_runtime_whitespace() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-whitespace)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt 5"}}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "runtime whitespace status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'use profile model=\"gpt 5\"' >/dev/null \
+    || fail "runtime whitespace error did not name the field and value: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "runtime whitespace refusal rewrote the file"
+  fm_test_api_stop "$home"
+  pass "API config writes refuse runtime whitespace"
+}
+
+test_rig_config_refuses_unsupported_runtime() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-unsupported-runtime)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt-5.6-sol","effort":"max"}}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "unsupported runtime status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F "unsupported effort 'max' for class builder use profile 1 harness 'codex'" >/dev/null \
+    || fail "unsupported runtime error did not name the field and value: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "unsupported runtime refusal rewrote the file"
+  fm_test_api_stop "$home"
+  pass "API config writes use canonical runtime validation"
+}
+
+test_rig_config_refuses_invalid_pin() {
+  local home port token resp before after
+  home=$(fm_test_api_home api-config-invalid-pin)
+  write_rung_fixture "$home"
+  before=$(cat "$home/config/crew-dispatch.json")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"rules":[{"class":"builder","use":[{"harness":"codex"},{"harness":"claude"}],"pin":{"harness":"pi"}}]}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /rigs/config POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] || fail "invalid pin config status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  printf '%s' "$HTTP_BODY" | grep -F 'pin is not a member of the use pool for builder' >/dev/null \
+    || fail "invalid pin config error was not clear: $HTTP_BODY"
+  after=$(cat "$home/config/crew-dispatch.json")
+  [ "$before" = "$after" ] || fail "invalid pin config rewrote the file"
+  fm_test_api_stop "$home"
+  pass "whole config writes reject pins outside their pool"
 }
 
 test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
@@ -875,12 +1091,12 @@ test_rig_config_refuses_a_ladder_with_no_enabled_rung() {
   before=$(cat "$home/config/crew-dispatch.json")
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
-  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude","enabled":false}]}],"default":[{"harness":"codex"}]}' \
+  HTTP_BODY='{"rules":[{"class":"builder","when":"x","use":[{"harness":"claude","enabled":false}]}],"default":[{"harness":"codex"}]}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
   [ "$HTTP_CODE" = 400 ] || fail "all-off ladder status $HTTP_CODE, wanted 400: $HTTP_BODY"
-  printf '%s' "$HTTP_BODY" | grep -F 'enabled rung' >/dev/null \
+  printf '%s' "$HTTP_BODY" | grep -F 'every rung is turned off for: builder' >/dev/null \
     || fail "all-off ladder error is not clear: $HTTP_BODY"
   after=$(cat "$home/config/crew-dispatch.json")
   [ "$before" = "$after" ] || fail "refused config save still rewrote the config"
@@ -895,7 +1111,7 @@ test_rig_config_without_default_is_accepted() {
   cat > "$home/config/crew-dispatch.json" <<'EOF'
 {
   "rules": [
-    { "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
+    { "class": "builder", "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
   ]
 }
 EOF
@@ -935,7 +1151,7 @@ test_rig_config_refuses_malformed_present_fields() {
   printf '%s' "$HTTP_BODY" | grep -F 'rules must be an array' >/dev/null \
     || fail "object rules error is not clear: $HTTP_BODY"
   # default present but a primitive.
-  HTTP_BODY='{"rules":[{"when":"x","use":[{"harness":"claude"}]}],"default":"nope"}' \
+  HTTP_BODY='{"rules":[{"class":"builder","when":"x","use":[{"harness":"claude"}]}],"default":"nope"}' \
     HTTP_AUTHORIZATION="Bearer $token" \
     resp=$(fm_test_api_http "$port" /rigs/config POST)
   split_http <<<"$resp"
@@ -956,7 +1172,7 @@ test_rig_config_get_returns_the_whole_file() {
 {
   "note": "the note",
   "rules": [
-    { "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
+    { "class": "builder", "when": "builder class: ordinary", "use": [{ "harness": "claude", "model": "opus" }], "why": "keep this reason" }
   ],
   "default": [{ "harness": "codex", "model": "gpt-5.5" }]
 }
@@ -1015,9 +1231,17 @@ test_decision_answer_with_token_lands_in_wake_queue
 test_decision_answer_unknown_task_is_not_found
 test_rung_toggle_without_token_is_unauthorized
 test_rung_toggle_with_token_flips_enabled
+test_rung_toggle_refuses_disabling_authoritative_pin
 test_rung_toggle_refuses_last_enabled_rung
+test_rung_toggle_uses_class_when_notes_repeat
+test_rung_toggle_rejects_unknown_class_with_valid_choices
+test_rung_toggle_refuses_duplicate_config_classes
 test_rig_config_without_token_is_unauthorized
 test_rig_config_with_token_writes_config
+test_rig_config_requires_unique_non_reserved_classes
+test_rig_config_refuses_runtime_whitespace
+test_rig_config_refuses_unsupported_runtime
+test_rig_config_refuses_invalid_pin
 test_rig_config_refuses_a_ladder_with_no_enabled_rung
 test_rig_config_without_default_is_accepted
 test_rig_config_refuses_malformed_present_fields

@@ -142,6 +142,7 @@ family_for_basename() {
     fm-composer-ghost.test.sh|fm-composer-lib.test.sh|\
     fm-crew-state.test.sh|fm-captain-queue.test.sh|fm-decision-hold-lifecycle.test.sh|\
     fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
+    fm-dispatch-resolve.test.sh|\
     fm-kimi-harness.test.sh|fm-muse-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
     fm-omp-harness.test.sh|fm-omp-detection.test.sh|fm-operational-input.test.sh|\
     fm-pi-compatible-family.test.sh|fm-pi-primary-types.test.sh|\
@@ -198,7 +199,7 @@ family_for_basename() {
     fm-omp-secondmate-live-e2e.test.sh|fm-omp-worker-tmux-live-e2e.test.sh|\
     fm-opencode-primary-live-e2e.test.sh|fm-pi-primary-live-e2e.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
-    fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
+    fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-chrome-devtools-axi-live-e2e.test.sh)
       printf '%s\n' live-harness-optin
       ;;
@@ -447,7 +448,6 @@ tests/fm-procevent-when.test.sh 14964
 tests/fm-procevent.test.sh 53138
 tests/fm-project-origin.test.sh 112
 tests/fm-public-followup.test.sh 40690
-tests/fm-quota-array-dispatch-live-e2e.test.sh 21
 tests/fm-remote-backlog-handoff.test.sh 19052
 tests/fm-remote-doctor.test.sh 4628
 tests/fm-remote-entrypoint.test.sh 121
@@ -1065,6 +1065,11 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' secondmate
       ;;
+    bin/fm-dispatch-resolve.sh|bin/fm-dispatch-runtime-lib.sh|bin/fm-dispatch-validate.sh)
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' backend-dispatch
+      printf '%s\n' session-bootstrap
+      ;;
     bin/fm-spawn.sh|bin/fm-send.sh|bin/fm-peek.sh|bin/fm-composer*)
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
@@ -1092,10 +1097,8 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       ;;
     .agents/skills/quota-array-dispatch/*)
-      # The skill and any supporting file select both families the SKILL.md
-      # owns, so a later second file does not drop live-harness-optin.
+      # The intake skill has no credentialed selector now.
       printf '%s\n' pure-contract-unit
-      printf '%s\n' live-harness-optin
       printf '%s\n' "__script__:fm-skills-lock.test.sh"
       ;;
     .agents/skills/*/SKILL.md)

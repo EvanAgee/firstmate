@@ -34,8 +34,8 @@
 //   { ok, blocked: [{ task, key, summary }] }
 //   Blocked tasks still open in this home. Empty home: blocked is [].
 // GET /rigs
-//   { ok, note, rigs: [{ name, rungs: [{ harness, model, effort, enabled }],
-//   pin }], defaultPin, crew, secondmate }
+//   { ok, note, rigs: [{ name, class, rungs: [{ harness, model, effort,
+//   enabled }], pin }], defaultPin, crew, secondmate }
 //   Dispatch pools, each rung's enabled state, the dispatch note, per-rig and
 //   default pins, and the raw crew/secondmate pin lines. Missing config:
 //   rigs is [] and the extras are empty.
@@ -57,27 +57,29 @@
 //   close the active durable decision. Unknown task: 404. Bad body: 400.
 // POST /rigs/rung requires the token; body { rig, rung, enabled }. Sets a
 //   rung's enabled state in config/crew-dispatch.json, where rig is the rule's
-//   `when` line or "default" and rung is its index. A change that would turn
+//   `class` or "__default__" and rung is its index. A change that would turn
 //   off a ladder's last enabled rung is refused 400. Unknown rig/rung: 404.
 // GET /rigs/config returns the exact dispatch config file as { ok, config }, so
 //   the routing editor edits the whole file and loses no field GET /rigs drops
 //   (like each rule's `why`). Missing or symlinked file: config is null. No token.
 // POST /rigs/config requires the token; body is a whole dispatch config object.
 //   Writes it to config/crew-dispatch.json (creating the file if absent), after
-//   checking every present ladder keeps at least one enabled rung. Default is
-//   optional; when the key is absent it is not required. Bad body or a broken
-//   ladder is refused 400. This is the routing editor's save door.
+//   checking the complete dispatch schema, including class identity, pins,
+//   runtime tokens, and enabled pools. Default is optional; when the key is
+//   absent it is not required. Bad body or a broken ladder is refused 400. This
+//   is the routing editor's save door.
 
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   blockedListBody,
   captainHoldsBody,
   captainQueueBody,
+  DEFAULT_RIG_CLASS,
   enrichFleetTasks,
   rigsBody,
 } from "./fm-api-reads.mjs";
@@ -86,6 +88,7 @@ import { taskDetailBody } from "./fm-api-task-detail.mjs";
 export const API_VERSION = "1";
 const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SNAPSHOT_SCRIPT = path.join(BIN_DIR, "fm-fleet-snapshot.sh");
+const DISPATCH_VALIDATE_SCRIPT = path.join(BIN_DIR, "fm-dispatch-validate.sh");
 const MAX_BODY_BYTES = 16384;
 // A whole dispatch config can be larger than a one-line write body.
 const MAX_CONFIG_BYTES = 65536;
@@ -303,45 +306,57 @@ function noteState(verb) {
   return "running";
 }
 
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function withHttpError(action, status, message) {
+  try {
+    return action();
+  } catch {
+    throw httpError(status, message);
+  }
+}
+
+function parseJson(raw, malformedError) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw malformedError();
+  }
+}
+
+function parseJsonObject(raw) {
+  const body = parseJson(raw, () => httpError(400, "malformed json"));
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw httpError(400, "malformed json");
+  }
+  return body;
+}
+
+function taskTextFields(body) {
+  const { task, text } = body;
+  if (typeof task !== "string" || !TASK_SLUG.test(task)) {
+    throw httpError(400, "invalid task");
+  }
+  if (typeof text !== "string" || !text.trim()) {
+    throw httpError(400, "missing text");
+  }
+  if (/[\r\n\u2028\u2029]/.test(text)) {
+    throw httpError(400, "text must be one line");
+  }
+  if (text.length > MAX_NOTE_TEXT) {
+    throw httpError(400, "text too long");
+  }
+  return { task, text };
+}
+
 // Parse a { task, text } write body: a valid task slug and one line of text
 // within the length cap. Shared by the captain-note and worker-relay writes.
 function parseTaskText(raw) {
-  let body;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    const error = new Error("malformed json");
-    error.status = 400;
-    throw error;
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    const error = new Error("malformed json");
-    error.status = 400;
-    throw error;
-  }
-  const task = body.task;
-  const text = body.text;
-  if (typeof task !== "string" || !TASK_SLUG.test(task)) {
-    const error = new Error("invalid task");
-    error.status = 400;
-    throw error;
-  }
-  if (typeof text !== "string" || !text.trim()) {
-    const error = new Error("missing text");
-    error.status = 400;
-    throw error;
-  }
-  if (/[\r\n\u2028\u2029]/.test(text)) {
-    const error = new Error("text must be one line");
-    error.status = 400;
-    throw error;
-  }
-  if (text.length > MAX_NOTE_TEXT) {
-    const error = new Error("text too long");
-    error.status = 400;
-    throw error;
-  }
-  return { task, text };
+  return taskTextFields(parseJsonObject(raw));
 }
 
 function runCommand(command, args, options = {}) {
@@ -414,7 +429,7 @@ async function queueCaptainNote(home, stateDir, note) {
   await enqueueCheckWake(home, stateDir, key, `check: captain-note: ${encoded}`);
 }
 
-function handleCaptainNote(req, res, home, options) {
+function handleAuthorizedPost(req, res, options, maxBytes, action) {
   if (req.method !== "POST") {
     req.resume();
     json(res, 405, { ok: false, error: "method not allowed" });
@@ -425,31 +440,30 @@ function handleCaptainNote(req, res, home, options) {
     json(res, 401, { ok: false, error: "unauthorized" });
     return;
   }
-  readBody(req, MAX_BODY_BYTES)
-    .then((raw) => {
-      const note = parseTaskText(raw);
-      // A note may be about a live task or a task that lives only in the backlog,
-      // so accept either. The relay and answer writes stay strict: they need a
-      // live task or an active decision.
-      if (!taskExists(home, note.task) && !taskInBacklog(home, note.task)) {
-        const error = new Error("not found");
-        error.status = 404;
-        throw error;
-      }
-      return queueCaptainNote(home, options.stateDir, note);
-    })
-    .then(() => {
-      json(res, 200, { ok: true });
-    })
+  readBody(req, maxBytes)
+    .then(action)
+    .then((body) => json(res, 200, body || { ok: true }))
     .catch((error) => {
       if (res.headersSent) {
         res.destroy();
         return;
       }
       const status = error && error.status ? error.status : 500;
-      const message = status === 500 ? "failed" : error.message;
-      json(res, status, { ok: false, error: message });
+      json(res, status, { ok: false, error: status === 500 ? "failed" : error.message });
     });
+}
+
+function handleCaptainNote(req, res, home, options) {
+  handleAuthorizedPost(req, res, options, MAX_BODY_BYTES, async (raw) => {
+    const note = parseTaskText(raw);
+    // A note may be about a live task or a parked captain hold that lives only
+    // in the backlog, so accept either. The relay and answer writes stay
+    // strict: they need a live task or an open decision.
+    if (!taskExists(home, note.task) && !taskInBacklog(home, note.task)) {
+      throw httpError(404, "not found");
+    }
+    await queueCaptainNote(home, options.stateDir, note);
+  });
 }
 
 // A worker relay rides the same relay as a captain note, but its body tells
@@ -464,81 +478,19 @@ async function queueWorkerRelay(home, stateDir, relay) {
 }
 
 function handleWorkerRelay(req, res, home, options) {
-  if (req.method !== "POST") {
-    req.resume();
-    json(res, 405, { ok: false, error: "method not allowed" });
-    return;
-  }
-  if (!writeAuthorized(req, options.tokenFile)) {
-    req.resume();
-    json(res, 401, { ok: false, error: "unauthorized" });
-    return;
-  }
-  readBody(req, MAX_BODY_BYTES)
-    .then((raw) => {
-      const relay = parseTaskText(raw);
-      if (!taskExists(home, relay.task)) {
-        const error = new Error("not found");
-        error.status = 404;
-        throw error;
-      }
-      return queueWorkerRelay(home, options.stateDir, relay);
-    })
-    .then(() => {
-      json(res, 200, { ok: true });
-    })
-    .catch((error) => {
-      if (res.headersSent) {
-        res.destroy();
-        return;
-      }
-      const status = error && error.status ? error.status : 500;
-      const message = status === 500 ? "failed" : error.message;
-      json(res, status, { ok: false, error: message });
-    });
+  handleAuthorizedPost(req, res, options, MAX_BODY_BYTES, async (raw) => {
+    const relay = parseTaskText(raw);
+    if (!taskExists(home, relay.task)) throw httpError(404, "not found");
+    await queueWorkerRelay(home, options.stateDir, relay);
+  });
 }
 
 function parseDecisionAnswer(raw) {
-  let body;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    const error = new Error("malformed json");
-    error.status = 400;
-    throw error;
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    const error = new Error("malformed json");
-    error.status = 400;
-    throw error;
-  }
-  const task = body.task;
+  const body = parseJsonObject(raw);
+  const { task, text } = taskTextFields(body);
   const key = body.key;
-  const text = body.text;
-  if (typeof task !== "string" || !TASK_SLUG.test(task)) {
-    const error = new Error("invalid task");
-    error.status = 400;
-    throw error;
-  }
   if (typeof key !== "string" || !DECISION_KEY.test(key)) {
-    const error = new Error("invalid key");
-    error.status = 400;
-    throw error;
-  }
-  if (typeof text !== "string" || !text.trim()) {
-    const error = new Error("missing text");
-    error.status = 400;
-    throw error;
-  }
-  if (/[\r\n\u2028\u2029]/.test(text)) {
-    const error = new Error("text must be one line");
-    error.status = 400;
-    throw error;
-  }
-  if (text.length > MAX_NOTE_TEXT) {
-    const error = new Error("text too long");
-    error.status = 400;
-    throw error;
+    throw httpError(400, "invalid key");
   }
   return { task, key, text };
 }
@@ -556,81 +508,36 @@ async function queueDecisionAnswer(home, stateDir, answer) {
 }
 
 function handleDecisionAnswer(req, res, home, options) {
-  if (req.method !== "POST") {
-    req.resume();
-    json(res, 405, { ok: false, error: "method not allowed" });
-    return;
-  }
-  if (!writeAuthorized(req, options.tokenFile)) {
-    req.resume();
-    json(res, 401, { ok: false, error: "unauthorized" });
-    return;
-  }
-  readBody(req, MAX_BODY_BYTES)
-    .then((raw) => {
-      const answer = parseDecisionAnswer(raw);
-      if (!taskExists(home, answer.task)) {
-        const error = new Error("not found");
-        error.status = 404;
-        throw error;
-      }
-      return queueDecisionAnswer(home, options.stateDir, answer);
-    })
-    .then(() => {
-      json(res, 200, { ok: true });
-    })
-    .catch((error) => {
-      if (res.headersSent) {
-        res.destroy();
-        return;
-      }
-      const status = error && error.status ? error.status : 500;
-      const message = status === 500 ? "failed" : error.message;
-      json(res, status, { ok: false, error: message });
-    });
+  handleAuthorizedPost(req, res, options, MAX_BODY_BYTES, async (raw) => {
+    const answer = parseDecisionAnswer(raw);
+    if (!taskExists(home, answer.task)) throw httpError(404, "not found");
+    await queueDecisionAnswer(home, options.stateDir, answer);
+  });
 }
 
 function parseRungToggle(raw) {
-  let body;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    const error = new Error("malformed json");
-    error.status = 400;
-    throw error;
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    const error = new Error("malformed json");
-    error.status = 400;
-    throw error;
-  }
+  const body = parseJsonObject(raw);
   const rig = body.rig;
   const rung = body.rung;
   const enabled = body.enabled;
   if (typeof rig !== "string" || !rig) {
-    const error = new Error("invalid rig");
-    error.status = 400;
-    throw error;
+    throw httpError(400, "invalid rig");
   }
   if (typeof rung !== "number" || !Number.isInteger(rung) || rung < 0) {
-    const error = new Error("invalid rung");
-    error.status = 400;
-    throw error;
+    throw httpError(400, "invalid rung");
   }
   if (typeof enabled !== "boolean") {
-    const error = new Error("invalid enabled");
-    error.status = 400;
-    throw error;
+    throw httpError(400, "invalid enabled");
   }
   return { rig, rung, enabled };
 }
 
-// The list of rung objects for one ladder: the fallback ("default") is the
-// top-level `default`, every other rig is the `use` of the rule whose `when`
+// The list of rung objects for one ladder: the fallback ("__default__") is the
+// top-level `default`, every other rig is the `use` of the rule whose `class`
 // matches. A single-object `use` counts as a one-rung list. Returns null when
 // the named rig is not in the config.
 function ladderList(config, rig) {
-  if (rig === "default") {
+  if (rig === DEFAULT_RIG_CLASS) {
     if (Array.isArray(config.default)) return config.default;
     if (config.default && typeof config.default === "object") return [config.default];
     return null;
@@ -638,7 +545,7 @@ function ladderList(config, rig) {
   if (!Array.isArray(config.rules)) return null;
   for (const rule of config.rules) {
     if (!rule || typeof rule !== "object") continue;
-    if (rule.when !== rig) continue;
+    if (rule.class !== rig) continue;
     if (Array.isArray(rule.use)) return rule.use;
     if (rule.use && typeof rule.use === "object") return [rule.use];
     return [];
@@ -648,6 +555,44 @@ function ladderList(config, rig) {
 
 function rungEnabled(rung) {
   return Boolean(rung) && typeof rung === "object" && rung.enabled !== false;
+}
+
+function validateDispatchClasses(config) {
+  const classes = [];
+  const seen = new Set();
+  for (const rule of config.rules || []) {
+    if (!rule || typeof rule !== "object") return { error: "a routing rule is not an object" };
+    if (typeof rule.class !== "string" || !rule.class) {
+      return { error: "each routing rule needs a non-empty class" };
+    }
+    if (rule.class === DEFAULT_RIG_CLASS) {
+      return { error: `${DEFAULT_RIG_CLASS} is reserved for the default pool` };
+    }
+    if (seen.has(rule.class)) return { error: `routing class must be unique: ${rule.class}` };
+    seen.add(rule.class);
+    classes.push(rule.class);
+  }
+  return { classes };
+}
+
+function validateDispatchConfig(config) {
+  const result = spawnSync(DISPATCH_VALIDATE_SCRIPT, ["--stdin"], {
+    input: JSON.stringify(config),
+    encoding: "utf8",
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    return { error: result.stderr.trim() || "dispatch config validation failed" };
+  }
+  return { ok: true };
+}
+
+function validRigNames(config, classes) {
+  const names = [...classes];
+  if (Array.isArray(config.default) || (config.default && typeof config.default === "object")) {
+    names.push(DEFAULT_RIG_CLASS);
+  }
+  return names;
 }
 
 // Set enabled on the rung at `index` in `list`, refusing a change that would
@@ -680,11 +625,11 @@ function applyRungToggle(config, toggle) {
   if (list === null) return { error: "rig not found" };
   const next = setRungEnabled(list, toggle.rung, toggle.enabled);
   if ("error" in next) return next;
-  if (toggle.rig === "default") {
+  if (toggle.rig === DEFAULT_RIG_CLASS) {
     return { config: { ...config, default: next.list } };
   }
   const rules = config.rules.map((rule) => {
-    if (!rule || typeof rule !== "object" || rule.when !== toggle.rig) return rule;
+    if (!rule || typeof rule !== "object" || rule.class !== toggle.rig) return rule;
     return { ...rule, use: next.list };
   });
   return { config: { ...config, rules } };
@@ -692,35 +637,13 @@ function applyRungToggle(config, toggle) {
 
 function readDispatchConfig(home) {
   const file = path.join(home, "config", "crew-dispatch.json");
-  try {
-    if (fs.lstatSync(file).isSymbolicLink()) {
-      const error = new Error("dispatch file is a symlink");
-      error.status = 400;
-      throw error;
-    }
-  } catch (error) {
-    if (error && error.code === "ENOENT") {
-      const missing = new Error("rig not found");
-      missing.status = 404;
-      throw missing;
-    }
-    throw error;
-  }
-  let raw;
-  try {
-    raw = fs.readFileSync(file, "utf8");
-  } catch {
-    const error = new Error("rig not found");
-    error.status = 404;
-    throw error;
-  }
-  try {
-    return { file, config: JSON.parse(raw) };
-  } catch {
-    const error = new Error("dispatch file is not valid json");
-    error.status = 400;
-    throw error;
-  }
+  const state = dispatchFileState(file);
+  if (state === "missing") throw httpError(404, "rig not found");
+  if (state === "symlink") throw httpError(400, "dispatch file is a symlink");
+  const raw = readFileOrNull(file);
+  if (raw === null) throw httpError(404, "rig not found");
+  const config = parseJson(raw, () => httpError(400, "dispatch file is not valid json"));
+  return { file, config };
 }
 
 function writeDispatchConfig(file, config) {
@@ -731,104 +654,34 @@ function writeDispatchConfig(file, config) {
 }
 
 function handleRungToggle(req, res, home, options) {
-  if (req.method !== "POST") {
-    req.resume();
-    json(res, 405, { ok: false, error: "method not allowed" });
-    return;
-  }
-  if (!writeAuthorized(req, options.tokenFile)) {
-    req.resume();
-    json(res, 401, { ok: false, error: "unauthorized" });
-    return;
-  }
-  readBody(req, MAX_BODY_BYTES)
-    .then((raw) => {
-      const toggle = parseRungToggle(raw);
-      const { file, config } = readDispatchConfig(home);
-      const next = applyRungToggle(config, toggle);
-      if ("error" in next) {
-        const error = new Error(next.error);
-        error.status = next.error === "rig not found" || next.error === "rung not found" ? 404 : 400;
-        throw error;
-      }
-      writeDispatchConfig(file, next.config);
-      json(res, 200, { ok: true, rig: toggle.rig, rung: toggle.rung, enabled: toggle.enabled });
-    })
-    .catch((error) => {
-      if (res.headersSent) {
-        res.destroy();
-        return;
-      }
-      const status = error && error.status ? error.status : 500;
-      const message = status === 500 ? "failed" : error.message;
-      json(res, status, { ok: false, error: message });
-    });
-}
-
-// Every present ladder in a dispatch config (each rule's `use`, and `default`
-// when that key is an array or object) must keep at least one enabled rung,
-// and must name at least one. A config with only rules and no default is legal.
-// This mirrors the invariant the single-rung toggle enforces, applied to a
-// whole config the dashboard's routing editor sends at once.
-function validateDispatchConfig(config) {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return { error: "config must be a json object" };
-  }
-  // A present but wrong-typed rules or default would be silently skipped below
-  // and then written, so reject it rather than persist a config off-schema.
-  if ("rules" in config && !Array.isArray(config.rules)) {
-    return { error: "rules must be an array" };
-  }
-  if (
-    "default" in config &&
-    !Array.isArray(config.default) &&
-    !(config.default && typeof config.default === "object")
-  ) {
-    return { error: "default must be an array or object" };
-  }
-  const ladders = [];
-  if (Array.isArray(config.rules)) {
-    for (const rule of config.rules) {
-      if (!rule || typeof rule !== "object") return { error: "a routing rule is not an object" };
-      if (typeof rule.when !== "string" || !rule.when.trim()) {
-        return { error: "a routing rule is missing its when line" };
-      }
-      ladders.push({ label: rule.when, list: asList(rule.use) });
+  handleAuthorizedPost(req, res, options, MAX_BODY_BYTES, (raw) => {
+    const toggle = parseRungToggle(raw);
+    const { file, config } = readDispatchConfig(home);
+    const configCheck = validateDispatchConfig(config);
+    if ("error" in configCheck) throw httpError(400, configCheck.error);
+    const classCheck = validateDispatchClasses(config);
+    if ("error" in classCheck) throw httpError(400, classCheck.error);
+    const validRigs = validRigNames(config, classCheck.classes);
+    if (!validRigs.includes(toggle.rig)) {
+      const choices = validRigs.length > 0 ? validRigs.join(", ") : "none";
+      throw httpError(404, `unknown rig '${toggle.rig}'; valid classes: ${choices}`);
     }
-  }
-  if (Array.isArray(config.default) || (config.default && typeof config.default === "object")) {
-    ladders.push({ label: "default", list: asList(config.default) });
-  }
-  for (const ladder of ladders) {
-    if (ladder.list.length === 0) return { error: `${ladder.label} needs at least one rung` };
-    if (!ladder.list.some(rungEnabled)) {
-      return { error: `${ladder.label} needs at least one enabled rung` };
+    const next = applyRungToggle(config, toggle);
+    if ("error" in next) {
+      const notFound = next.error === "rig not found" || next.error === "rung not found";
+      throw httpError(notFound ? 404 : 400, next.error);
     }
-  }
-  return { ok: true };
-}
-
-function asList(value) {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object") return [value];
-  return [];
+    const candidateCheck = validateDispatchConfig(next.config);
+    if ("error" in candidateCheck) throw httpError(400, candidateCheck.error);
+    writeDispatchConfig(file, next.config);
+    return { ok: true, rig: toggle.rig, rung: toggle.rung, enabled: toggle.enabled };
+  });
 }
 
 function parseDispatchConfig(raw) {
-  let body;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    const error = new Error("malformed json");
-    error.status = 400;
-    throw error;
-  }
+  const body = parseJsonObject(raw);
   const check = validateDispatchConfig(body);
-  if ("error" in check) {
-    const error = new Error(check.error);
-    error.status = 400;
-    throw error;
-  }
+  if ("error" in check) throw httpError(400, check.error);
   return body;
 }
 
@@ -836,16 +689,32 @@ function parseDispatchConfig(raw) {
 // allow a missing file: saving a whole config may create it.
 function dispatchFileForWrite(home) {
   const file = path.join(home, "config", "crew-dispatch.json");
-  try {
-    if (fs.lstatSync(file).isSymbolicLink()) {
-      const error = new Error("dispatch file is a symlink");
-      error.status = 400;
-      throw error;
-    }
-  } catch (error) {
-    if (!error || error.code !== "ENOENT") throw error;
-  }
+  if (dispatchFileState(file) === "symlink") throw httpError(400, "dispatch file is a symlink");
   return file;
+}
+
+function dispatchFileState(file) {
+  try {
+    return fs.lstatSync(file).isSymbolicLink() ? "symlink" : "file";
+  } catch (error) {
+    if (error && error.code === "ENOENT") return "missing";
+    throw error;
+  }
+}
+
+function readFileOrNull(file) {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function invalidRigConfigError() {
+  const error = new Error("invalid rig config");
+  error.code = "INVALID_RIG_CONFIG";
+  return error;
 }
 
 // The exact dispatch config, so the routing editor can read the whole file
@@ -855,68 +724,35 @@ function dispatchFileForWrite(home) {
 // posture as the reads. Needs no token; the read is open like GET /rigs.
 function rawDispatchBody(home) {
   const file = path.join(home, "config", "crew-dispatch.json");
+  if (dispatchFileState(file) !== "file") return { ok: true, config: null };
+  const raw = readFileOrNull(file);
+  if (raw === null) return { ok: true, config: null };
+  return { ok: true, config: parseJson(raw, invalidRigConfigError) };
+}
+
+function sendRawDispatch(req, res, home) {
   try {
-    if (fs.lstatSync(file).isSymbolicLink()) return { ok: true, config: null };
+    sendGet(req, res, rawDispatchBody(home));
   } catch (error) {
-    if (error && error.code === "ENOENT") return { ok: true, config: null };
-    throw error;
-  }
-  let raw;
-  try {
-    raw = fs.readFileSync(file, "utf8");
-  } catch (error) {
-    if (error && error.code === "ENOENT") return { ok: true, config: null };
-    throw error;
-  }
-  try {
-    return { ok: true, config: JSON.parse(raw) };
-  } catch {
-    const error = new Error("invalid rig config");
-    error.code = "INVALID_RIG_CONFIG";
+    if (error && error.code === "INVALID_RIG_CONFIG") {
+      json(res, 500, { ok: false, error: "invalid rig config" });
+      return;
+    }
     throw error;
   }
 }
 
 function handleRigConfig(req, res, home, options) {
   if (req.method === "GET" || req.method === "HEAD") {
-    try {
-      sendGet(req, res, rawDispatchBody(home));
-    } catch (error) {
-      if (error && error.code === "INVALID_RIG_CONFIG") {
-        json(res, 500, { ok: false, error: "invalid rig config" });
-        return;
-      }
-      throw error;
-    }
+    sendRawDispatch(req, res, home);
     return;
   }
-  if (req.method !== "POST") {
-    req.resume();
-    json(res, 405, { ok: false, error: "method not allowed" });
-    return;
-  }
-  if (!writeAuthorized(req, options.tokenFile)) {
-    req.resume();
-    json(res, 401, { ok: false, error: "unauthorized" });
-    return;
-  }
-  readBody(req, MAX_CONFIG_BYTES)
-    .then((raw) => {
-      const config = parseDispatchConfig(raw);
-      const file = dispatchFileForWrite(home);
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      writeDispatchConfig(file, config);
-      json(res, 200, { ok: true });
-    })
-    .catch((error) => {
-      if (res.headersSent) {
-        res.destroy();
-        return;
-      }
-      const status = error && error.status ? error.status : 500;
-      const message = status === 500 ? "failed" : error.message;
-      json(res, status, { ok: false, error: message });
-    });
+  handleAuthorizedPost(req, res, options, MAX_CONFIG_BYTES, (raw) => {
+    const config = parseDispatchConfig(raw);
+    const file = dispatchFileForWrite(home);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    writeDispatchConfig(file, config);
+  });
 }
 
 function handleTaskDetail(req, res, home, stateDir, task) {
@@ -934,106 +770,102 @@ function handleTaskDetail(req, res, home, stateDir, task) {
     });
 }
 
-function handle(req, res, home, options, events) {
-  const stateDir = options.stateDir || path.join(home, "state");
-  let url;
-  try {
-    url = new URL(req.url || "/", "http://127.0.0.1");
-  } catch {
-    json(res, 400, { ok: false, error: "malformed url" });
+const READ_PATHS = new Set([
+  "/health",
+  "/fleet",
+  "/captain-queue",
+  "/captain-holds",
+  "/blocked",
+  "/rigs",
+]);
+
+function requestTarget(req) {
+  const url = withHttpError(
+    () => new URL(req.url || "/", "http://127.0.0.1"),
+    400,
+    "malformed url",
+  );
+  const match = url.pathname.match(/^\/tasks\/([^/]+)$/);
+  if (!match) return { url, task: null };
+  const task = withHttpError(() => decodeURIComponent(match[1]), 400, "malformed url");
+  if (!TASK_SLUG.test(task)) throw httpError(404, "task not found");
+  return { url, task };
+}
+
+function sendCaptainHolds(req, res, home) {
+  if (req.method === "HEAD") {
+    sendGet(req, res, { ok: true, holds: [] });
     return;
   }
-  const taskMatch = url.pathname.match(/^\/tasks\/([^/]+)$/);
-  let task = null;
-  if (taskMatch) {
-    try {
-      task = decodeURIComponent(taskMatch[1]);
-    } catch {
-      json(res, 400, { ok: false, error: "malformed url" });
+  captainHoldsBody(home)
+    .then((body) => json(res, 200, body))
+    .catch((error) => {
+      process.stderr.write(`captain holds failed: ${error.message}\n`);
+      if (!res.headersSent) json(res, 500, { ok: false, error: "captain holds failed" });
+    });
+}
+
+function sendRigs(req, res, home) {
+  try {
+    sendGet(req, res, rigsBody(home));
+  } catch (error) {
+    if (error && error.code === "INVALID_RIG_CONFIG") {
+      json(res, 500, { ok: false, error: "invalid rig config" });
       return;
     }
-    if (!TASK_SLUG.test(task)) {
-      json(res, 404, { ok: false, error: "task not found" });
-      return;
-    }
+    throw error;
   }
-  const read = url.pathname === "/health"
-    || url.pathname === "/fleet"
-    || url.pathname === "/captain-queue"
-    || url.pathname === "/captain-holds"
-    || url.pathname === "/blocked"
-    || url.pathname === "/rigs"
-    || task !== null;
-  if (read && req.method !== "GET" && req.method !== "HEAD") {
+}
+
+function handleReadRoute(req, res, home, stateDir, pathname, task) {
+  const routes = {
+    "/health": () => sendGet(req, res, { ok: true, version: API_VERSION, home }),
+    "/captain-queue": () => sendGet(req, res, captainQueueBody(home)),
+    "/captain-holds": () => sendCaptainHolds(req, res, home),
+    "/blocked": () => sendGet(req, res, blockedListBody(stateDir)),
+    "/rigs": () => sendRigs(req, res, home),
+    "/fleet": () => sendFleetSnapshot(req, res, home),
+  };
+  const route = routes[pathname];
+  if (route) {
+    route();
+    return true;
+  }
+  if (task === null) return false;
+  handleTaskDetail(req, res, home, stateDir, task);
+  return true;
+}
+
+function handleWriteRoute(req, res, home, options, pathname) {
+  const routes = {
+    "/captain-notes": () => handleCaptainNote(req, res, home, options),
+    "/workers/relay": () => handleWorkerRelay(req, res, home, options),
+    "/decisions/answer": () => handleDecisionAnswer(req, res, home, options),
+    "/rigs/rung": () => handleRungToggle(req, res, home, options),
+    "/rigs/config": () => handleRigConfig(req, res, home, options),
+  };
+  const route = routes[pathname];
+  if (!route) return false;
+  route();
+  return true;
+}
+
+function handle(req, res, home, options, events) {
+  const stateDir = options.stateDir || path.join(home, "state");
+  let target;
+  try {
+    target = requestTarget(req);
+  } catch (error) {
+    json(res, error.status || 500, { ok: false, error: error.status ? error.message : "failed" });
+    return;
+  }
+  const { url, task } = target;
+  if ((READ_PATHS.has(url.pathname) || task !== null) && req.method !== "GET" && req.method !== "HEAD") {
     json(res, 405, { ok: false, error: "method not allowed" });
     return;
   }
-  if (url.pathname === "/health") {
-    sendGet(req, res, { ok: true, version: API_VERSION, home });
-    return;
-  }
-  if (url.pathname === "/captain-queue") {
-    sendGet(req, res, captainQueueBody(home));
-    return;
-  }
-  if (url.pathname === "/captain-holds") {
-    if (req.method === "HEAD") {
-      sendGet(req, res, { ok: true, holds: [] });
-      return;
-    }
-    captainHoldsBody(home)
-      .then((body) => json(res, 200, body))
-      .catch((error) => {
-        process.stderr.write(`captain holds failed: ${error.message}\n`);
-        if (!res.headersSent) json(res, 500, { ok: false, error: "captain holds failed" });
-      });
-    return;
-  }
-  if (url.pathname === "/blocked") {
-    sendGet(req, res, blockedListBody(stateDir));
-    return;
-  }
-  if (url.pathname === "/rigs") {
-    try {
-      sendGet(req, res, rigsBody(home));
-    } catch (error) {
-      if (error && error.code === "INVALID_RIG_CONFIG") {
-        json(res, 500, { ok: false, error: "invalid rig config" });
-        return;
-      }
-      throw error;
-    }
-    return;
-  }
-  if (url.pathname === "/fleet") {
-    // JSON contract: bin/fm-fleet-snapshot.sh --json (schema fm-fleet-snapshot.v1).
-    sendFleetSnapshot(req, res, home);
-    return;
-  }
-  if (task !== null) {
-    handleTaskDetail(req, res, home, stateDir, task);
-    return;
-  }
-  if (url.pathname === "/captain-notes") {
-    handleCaptainNote(req, res, home, options);
-    return;
-  }
-  if (url.pathname === "/workers/relay") {
-    handleWorkerRelay(req, res, home, options);
-    return;
-  }
-  if (url.pathname === "/decisions/answer") {
-    handleDecisionAnswer(req, res, home, options);
-    return;
-  }
-  if (url.pathname === "/rigs/rung") {
-    handleRungToggle(req, res, home, options);
-    return;
-  }
-  if (url.pathname === "/rigs/config") {
-    handleRigConfig(req, res, home, options);
-    return;
-  }
+  if (handleReadRoute(req, res, home, stateDir, url.pathname, task)) return;
+  if (handleWriteRoute(req, res, home, options, url.pathname)) return;
   if (url.pathname === "/events") {
     if (req.method !== "GET") {
       json(res, 405, { ok: false, error: "method not allowed" });

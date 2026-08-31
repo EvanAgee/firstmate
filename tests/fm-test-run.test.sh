@@ -98,11 +98,14 @@ init_changed_fixture_repo() {
     fm-ask-user-authority.test.sh \
     fm-cd-pretool-check.test.sh \
     fm-daemon.test.sh \
+    fm-dispatch-resolve.test.sh \
     fm-backend-herdr-smoke.test.sh \
+    fm-api.test.sh \
     fm-secondmate-safety.test.sh \
     fm-session-start.test.sh \
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
+    fm-spawn-dispatch-profile.test.sh \
     fm-pr-merge.test.sh \
     fm-omp-harness.test.sh \
     fm-omp-primary.test.sh \
@@ -130,6 +133,7 @@ init_changed_fixture_repo() {
   : >"$repo/bin/fm-pi-compatible-lib.sh"
   : >"$repo/bin/fm-pi-compatible-runtimes"
   : >"$repo/bin/fm-primary-watch-core.ts"
+  : >"$repo/bin/fm-dispatch-runtime-lib.sh"
   : >"$repo/bin/unmapped-source.sh"
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
@@ -215,6 +219,17 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" add bin/fm-omp-process-lib.sh bin/fm-session-lock-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm omp-identity-change
 
+  printf '\n' >>"$repo/bin/fm-dispatch-runtime-lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-dispatch-resolve.test.sh" \
+    "dispatch runtime validation selects resolver coverage"
+  assert_contains "$listed" "tests/fm-spawn-dispatch-profile.test.sh" \
+    "dispatch runtime validation selects spawn coverage"
+  assert_contains "$listed" "tests/fm-api.test.sh" \
+    "dispatch runtime validation selects API and bootstrap coverage"
+  git -C "$repo" add bin/fm-dispatch-runtime-lib.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm dispatch-runtime-change
+
   printf '\n' >>"$repo/.omp/extensions/fm-primary-omp.ts"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-omp-primary.test.sh" "OMP native extension selects primary runtime coverage"
@@ -263,14 +278,14 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" add .agents
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm skill-script-change
 
-  # A quota-array-dispatch supporting file must keep both families that skill's
-  # SKILL.md owns, not only pure-contract-unit.
+  # A quota-array-dispatch supporting file selects deterministic unit coverage
+  # and the vendored lock check, never credentialed harness selection.
   printf '\n' >>"$repo/.agents/skills/quota-array-dispatch/notes.md"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
     "a quota-array-dispatch supporting file selects pure-contract-unit"
-  assert_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" \
-    "a quota-array-dispatch supporting file selects live-harness-optin"
+  assert_not_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" \
+    "a quota-array-dispatch supporting file must not select live-harness-optin"
   assert_contains "$listed" "tests/fm-skills-lock.test.sh" \
     "a quota-array-dispatch supporting file selects the vendored lock check"
   git -C "$repo" add .agents

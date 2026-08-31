@@ -60,11 +60,10 @@
 #          chrome-devtools-axi also runs a named-session open-and-snapshot
 #          probe so a pageId or floating @latest MCP contract break cannot stay
 #          silent; bin/fm-chrome-devtools-axi-lib.sh owns that probe and its floor.
-#          tasks-axi and quota-axi are required bootstrap tools (same class as
-#          lavish-axi). A compatible tasks-axi default backend is silent.
-#          quota-axi is required for the agent-owned dispatch-pool
-#          procedure in AGENTS.md section 4 and
-#          .agents/skills/quota-array-dispatch/SKILL.md.
+#          tasks-axi is a required bootstrap tool. A compatible tasks-axi
+#          default backend is silent. Optional quota-axi supports the
+#          captain-facing dispatch health note in
+#          .agents/skills/quota-array-dispatch/SKILL.md and never selects a runtime.
 #          On a primary home, the locked mutable path materializes the visible
 #          default config/startup-memory-budget=7500 when absent. It never
 #          guesses at malformed or unsafe existing files, and secondmate homes
@@ -135,8 +134,6 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
-# shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-chrome-devtools-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -789,7 +786,7 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh jq no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi"
+COMMON_TOOLS="node git gh jq no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
@@ -1002,83 +999,7 @@ crew_dispatch_validate() {
     echo "MISSING: jq (install: $(install_cmd jq))"
     return 0
   fi
-  if ! jq -e . "$file" >/dev/null 2>&1; then
-    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON"
-    return 0
-  fi
-  err=$(jq -r '
-    def verified($h): ["claude","codex","opencode","omp","pi","pi-signed","grok","kimi","cursor","muse"] | index($h);
-    def effort_ok($h; $e):
-      if $e == null then true
-      elif ($e | type) != "string" then false
-      elif $h == "claude" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "codex" then (["low","medium","high","xhigh"] | index($e))
-      elif $h == "grok" then (["low","medium","high"] | index($e))
-      elif $h == "omp" or $h == "pi" or $h == "pi-signed" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "muse" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "opencode" or $h == "kimi" or $h == "cursor" then false
-      else true
-      end;
-    def profiles($value):
-      if ($value | type) == "array" then $value
-      elif ($value | type) == "object" then [$value]
-      else []
-      end;
-    def configured_profiles:
-      ([(.rules // [])[]? | profiles(.use?)[]?]
-        + (if has("default") then [profiles(.default)[]?] else [] end));
-    def malformed_optional_fields($items):
-      ($items | any(has("model") and (((.model | type) != "string") or (.model | length) == 0)))
-      or ($items | any(has("effort") and (((.effort | type) != "string") or (.effort | length) == 0)));
-    def malformed_enabled($items):
-      ($items | any(has("enabled") and ((.enabled | type) != "boolean")));
-    def rung_enabled($p):
-      if ($p | has("enabled")) then $p.enabled else true end;
-    def enabled_profiles($items):
-      [$items[] | select(rung_enabled(.))];
-    def bad_efforts:
-      configured_profiles
-      | map({h: .harness, e: .effort})
-      | map(select(.e != null))
-      | map(select((.h | type) == "string" and verified(.h)))
-      | map(select(. as $p | effort_ok($p.h; $p.e) | not))
-      | map("\(.h):\(.e)")
-      | unique;
-    if type != "object" then "top-level value must be an object"
-    elif has("rules") and (.rules | type) != "array" then "rules must be an array"
-    elif [(.rules // [])[]? | select(type != "object")] | length > 0 then "each rule must be an object"
-    elif [(.rules // [])[]? | select((.when? | type) != "string" or (.when | length) == 0)] | length > 0 then "each rule needs non-empty when"
-    elif [(.rules // [])[]? | select((.use? | type) != "object" and (.use? | type) != "array")] | length > 0 then "each rule needs use"
-    elif [(.rules // [])[]? | select((.use? | type) == "array" and (.use | length) == 0)] | length > 0 then "each rule needs at least one use profile"
-    elif [(.rules // [])[]? | profiles(.use?)[]? | select(type != "object")] | length > 0 then "each use profile must be an object"
-    elif [(.rules // [])[]? | profiles(.use?)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "each use profile needs harness"
-    elif malformed_optional_fields([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile model and effort must be non-empty strings when present"
-    elif malformed_enabled([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile enabled must be true or false when present"
-    elif [(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0)] | length > 0 then
-      "every rung is turned off for: " + ([(.rules // [])[]? | select((enabled_profiles(profiles(.use?)) | length) == 0) | .when] | join("; "))
-    elif [(.rules // [])[]? | select(has("select") and ((.select? | type) != "string" or (.select | length) == 0))] | length > 0 then "select must be a non-empty string"
-    elif [(.rules // [])[]? | .select? // empty | select(. != "quota-balanced")] | length > 0 then
-      "unknown select: " + ([ (.rules // [])[]? | .select? // empty | select(. != "quota-balanced") ] | unique | join(", "))
-    elif has("default") and ((.default | type) != "object" and (.default | type) != "array") then "default must be a profile object or non-empty profile array"
-    elif has("default") and ((.default | type) == "array" and (.default | length) == 0) then "default needs at least one profile"
-    elif has("default") and ([profiles(.default)[]? | select(type != "object")] | length) > 0 then "each default profile must be an object"
-    elif has("default") and ([profiles(.default)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length) > 0 then "each default profile needs harness"
-    elif has("default") and malformed_optional_fields([profiles(.default)[]?]) then "default profile model and effort must be non-empty strings when present"
-    elif has("default") and malformed_enabled([profiles(.default)[]?]) then "default profile enabled must be true or false when present"
-    elif has("default") and ((enabled_profiles([profiles(.default)[]?]) | length) == 0) then "every default rung is turned off"
-    else
-      (configured_profiles
-        | map(.harness)
-        | map(select(. != null))
-        | map(select(. as $h | verified($h) | not))
-        | unique) as $bad_harnesses
-      | if ($bad_harnesses | length) > 0 then "unverified harness: " + ($bad_harnesses | join(", "))
-        elif (bad_efforts | length) > 0 then "invalid effort: " + (bad_efforts | join(", "))
-        else empty
-        end
-    end
-  ' "$file" 2>/dev/null || true)
-  if [ -n "$err" ]; then
+  if ! err=$("$SCRIPT_DIR/fm-dispatch-validate.sh" --file "$file" 2>&1); then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
     return 0
   fi
@@ -1091,19 +1012,18 @@ crew_dispatch_validate() {
          else "" end)
       + (if ($p.effort? != null) then "/" + ($p.effort | tostring) else "" end)
       + (if ($p.enabled? == false) then " (off)" else "" end);
-    def profile_set($value; $selector):
+    def profile_set($value):
       if ($value | type) == "array" then
-        (($selector // "quota-balanced") + "[" + ([$value[] | profile(.)] | join(", ")) + "]")
+        ("round-robin[" + ([$value[] | profile(.)] | join(", ")) + "]")
       else profile($value)
       end;
     (["BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json"]
-      + [(.rules // [])[]? | "BOOTSTRAP_INFO: crew dispatch rule: " + (.when | tostring) + " -> " + profile_set(.use; .select?)]
-      + (if has("default") then ["BOOTSTRAP_INFO: crew dispatch default: " + profile_set(.default; null)] else [] end))
+      + [(.rules // [])[]? | "BOOTSTRAP_INFO: crew dispatch class: " + (.class | tostring) + " -> " + profile_set(.use)]
+      + (if has("default") then ["BOOTSTRAP_INFO: crew dispatch default: " + profile_set(.default)] else [] end))
     | .[]
   ' "$file"
   fi
 }
-
 startup_memory_budget_setup() {
   # Primary bootstrap owns default publication. A secondmate is deliberately
   # passive here because its setting must converge from the primary through the
@@ -1173,9 +1093,6 @@ detect_local_tools() {
   fi
   if command -v lavish-axi >/dev/null 2>&1 && ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
     echo "MISSING: lavish-axi (install: $(install_cmd lavish-axi))"
-  fi
-  if command -v quota-axi >/dev/null 2>&1 && ! fm_quota_axi_compatible; then
-    echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
   fi
   if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
     echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"

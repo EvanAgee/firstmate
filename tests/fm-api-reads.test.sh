@@ -276,6 +276,7 @@ test_rigs_returns_pools_and_rung_enabled_state() {
 {
   "rules": [
     {
+      "class": "builder",
       "when": "The task is a builder assignment.",
       "use": [
         { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
@@ -295,6 +296,8 @@ EOF
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs.length')" = 2 ] || fail "wanted 2 rigs: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[0].name')" = "The task is a builder assignment." ] || \
     fail "first rig name: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[0].class')" = builder ] || \
+    fail "first rig class: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[0].rungs.length')" = 2 ] || \
     fail "first rig rung count: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[0].rungs[0].harness')" = codex ] || \
@@ -311,6 +314,8 @@ EOF
     fail "switched-off rung should be off: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].name')" = default ] || \
     fail "default rig name: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].class')" = __default__ ] || \
+    fail "default rig class: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].rungs[0].harness')" = pi ] || \
     fail "default rung harness: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.rigs[1].rungs[0].enabled')" = true ] || \
@@ -327,8 +332,10 @@ test_rigs_returns_note_pins_and_harness_pins() {
   "note": "FLOOR RULE: nothing drops below Grok. codex gpt-5.6-sol is capped until 2026-09-01.",
   "rules": [
     {
+      "class": "builder",
       "when": "The task is a builder assignment.",
       "use": [
+        { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" },
         { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" }
       ],
       "pin": { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" }
@@ -337,7 +344,7 @@ test_rigs_returns_note_pins_and_harness_pins() {
   "default": [
     { "harness": "pi", "model": "xai/grok-4.6", "effort": "medium" }
   ],
-  "defaultPin": { "harness": "pi", "model": "xai/grok-4.6" }
+  "defaultPin": { "harness": "pi", "model": "xai/grok-4.6", "effort": "medium" }
 }
 EOF
   printf 'pi\n' > "$home/config/crew-harness"
@@ -369,6 +376,7 @@ test_rigs_extras_default_to_empty_when_absent() {
 {
   "rules": [
     {
+      "class": "builder",
       "when": "The task is a builder assignment.",
       "use": [ { "harness": "codex", "model": "gpt-5.6-sol" } ]
     }

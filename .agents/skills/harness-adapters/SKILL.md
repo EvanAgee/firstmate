@@ -14,9 +14,9 @@ metadata:
 Use this reference before any harness-specific firstmate operation: spawn, recovery, trust-dialog handling, skill invocation, interrupt, exit, resume, or adapter verification.
 
 Crewmates default to the same harness firstmate is running on unless `config/crew-harness` records an adapter name.
-Optional dispatch profiles in `config/crew-dispatch.json` can override that static default for one crewmate or scout dispatch by selecting concrete harness, model, and effort axes at intake.
-When a matched rule or default is a pool of more than one member, load `quota-array-dispatch` for the round-robin choice after this skill establishes harness and model/provider facts.
-The captain may override that file at session start or later; a per-task instruction such as "run this one on codex" overrides it for that dispatch only.
+Optional dispatch profiles in `config/crew-dispatch.json` replace that static default with class-based runtime selection for crewmates and scouts.
+Load `quota-array-dispatch` to name the class, then pass `--class` and let `fm-dispatch-resolve.sh` select the configured harness, model, and effort.
+A captain per-task runtime instruction uses `--captain-override` so task metadata records the reason.
 `default` means mirror firstmate's own harness.
 
 Secondmates have their own harness knob, so a secondmate can run on a different adapter than crewmates.
@@ -26,7 +26,7 @@ The [`secondmate-provisioning` skill](../secondmate-provisioning/SKILL.md) owns 
 This skill owns only the harness-relevant consequence: a secondmate's own crewmates use the primary's inherited dispatch profiles and static harness value, while `config/secondmate-harness` is the primary's own setting and is never inherited - secondmates do not spawn secondmates.
 Inheritance copies the literal `config/crew-harness` file, so for a secondmate's own crewmates to run on the primary's crewmate harness the captain must set `config/crew-harness` to a concrete adapter name, such as `codex`.
 If `config/crew-harness` is unset or `default`, there is no concrete value to inherit, so the secondmate's own crewmates fall back to the secondmate's own/detected harness rather than the primary's effective crewmate harness.
-Inheritance also copies the literal `config/crew-dispatch.json` file, so secondmates apply the same best-fit profile rules for their own crewmates.
+Inheritance also copies the literal `config/crew-dispatch.json` file, so secondmates apply the same class pools for their own crewmates.
 
 Each adapter splits into mechanics and knowledge.
 The per-task mechanics, including launch command, autonomy flag, and any enabled crewmate turn-end hook, live in `bin/fm-spawn.sh`.
@@ -121,8 +121,9 @@ When changing any primary watcher adapter, update `docs/supervision-protocols/`,
 
 ## Launch profile axes
 
-`bin/fm-spawn.sh` accepts concrete `--harness`, `--model`, and `--effort` values chosen by firstmate at intake.
-Do not make the shell scripts parse or match natural-language dispatch rules.
+`bin/fm-spawn.sh` accepts `--class` and resolves its concrete harness, model, and effort through `bin/fm-dispatch-resolve.sh`.
+Concrete runtime flags alongside a class are captain overrides and require a recorded reason.
+Do not make shell scripts parse or match the human `when`, `why`, or `note` fields.
 
 Effort precedence is an explicit per-task captain instruction first, then any applicable standing dispatch profile or secondmate pin, then the generic fallback below.
 Never replace an effort value supplied by either higher-precedence source.
