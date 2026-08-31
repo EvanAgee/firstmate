@@ -141,6 +141,36 @@ test_multiple_mid_note_keys_are_not_guessed() {
   pass "multiple [key=x] tokens inside a note stay ambiguous instead of choosing a key"
 }
 
+test_malformed_positional_key_does_not_hide_valid_mid_note_key() {
+  local dir
+  dir=$(case_dir malformed-positional-valid-mid-note)
+  printf '%s\n' \
+    'needs-decision: [key=bad key] review found [key=review-labels]: choose the labels' \
+    > "$dir/head.status"
+  assert_fold "$dir/head.status" \
+    "$(printf 'review-labels\tneeds-decision\t[key=bad key] review found: choose the labels\n')" \
+    "malformed head before one valid canonical mid-note key"
+  printf '%s\n' \
+    'needs-decision [key=bad key]: review found [key=review-labels]: choose the labels' \
+    > "$dir/before.status"
+  assert_fold "$dir/before.status" \
+    "$(printf 'review-labels\tneeds-decision\treview found: choose the labels\n')" \
+    "malformed before-colon key before one valid canonical mid-note key"
+  pass "a malformed positional key cannot hide the only valid canonical mid-note key"
+}
+
+test_malformed_head_does_not_break_mid_note_ambiguity() {
+  local dir
+  dir=$(case_dir malformed-head-ambiguous-mid-note)
+  printf '%s\n' \
+    'needs-decision: [key=bad key] pick a [key=red] or [key=blue] theme' \
+    > "$dir/t.status"
+  assert_fold "$dir/t.status" \
+    "$(printf 'default\tneeds-decision\t[key=bad key] pick a [key=red] or [key=blue] theme\n')" \
+    "malformed head before multiple valid canonical mid-note keys"
+  pass "multiple valid mid-note keys stay ambiguous after a malformed head"
+}
+
 test_malformed_stated_key_never_collapses_to_default() {
   local dir
   dir=$(case_dir malformed)
@@ -306,27 +336,27 @@ test_invalid_lookalike_before_valid_mid_note_key_is_ignored() {
   pass "an invalid key lookalike cannot hide the only valid canonical key"
 }
 
-test_v6_cursor_that_skipped_valid_key_is_rebuilt() {
+test_v7_cursor_that_skipped_valid_key_is_rebuilt() {
   local dir f cf ident size expected got
-  dir=$(case_dir stale-v6-invalid-before-valid)
+  dir=$(case_dir stale-v7-invalid-before-valid)
   f="$dir/t.status"
   cf=$(_fm_open_decisions_cursor_path "$f")
   printf '%s\n' \
-    'needs-decision: review mentions [key=bad key] before its finding [key=review-labels]: choose the labels' \
+    'needs-decision: [key=bad key] review found [key=review-labels]: choose the labels' \
     > "$f"
   ident=$(_fm_open_decisions_file_ident "$f")
-  [ -n "$ident" ] || fail "could not read status-file identity for the planted v6 cursor"
+  [ -n "$ident" ] || fail "could not read status-file identity for the planted v7 cursor"
   size=$(LC_ALL=C wc -c < "$f" | tr -d '[:space:]')
   {
-    printf 'version=6\n'
+    printf 'version=7\n'
     printf 'offset=%s\n' "$size"
     printf 'ident=%s\n' "$ident"
   } > "$cf"
-  expected=$(printf 'review-labels\tneeds-decision\treview mentions [key=bad key] before its finding: choose the labels\n')
+  expected=$(printf 'review-labels\tneeds-decision\t[key=bad key] review found: choose the labels\n')
   got=$(status_open_decisions_incremental "$f")
   [ "$got" = "$expected" ] \
-    || fail "stale v6 cursor was kept: got '$got' want '$expected'"
-  pass "a v6 cursor that skipped a valid key after a malformed lookalike is rebuilt"
+    || fail "stale v7 cursor was kept: got '$got' want '$expected'"
+  pass "a v7 cursor that skipped a valid key after a malformed head is rebuilt"
 }
 
 test_v5_cursor_holding_default_for_mid_sentence_key_is_rebuilt() {
@@ -408,6 +438,8 @@ test_resolution_closes_across_positions
 test_blocked_is_position_tolerant_like_needs_decision
 test_two_colon_form_decisions_stay_distinct
 test_multiple_mid_note_keys_are_not_guessed
+test_malformed_positional_key_does_not_hide_valid_mid_note_key
+test_malformed_head_does_not_break_mid_note_ambiguity
 test_malformed_stated_key_never_collapses_to_default
 test_status_line_verb_strips_every_bracket_tag_before_colon
 test_corr_and_key_tags_open_and_close_under_the_stated_key
@@ -422,4 +454,4 @@ test_bare_bracket_token_is_a_stated_key
 test_unique_canonical_mid_note_key_is_stated
 test_blocked_unique_mid_note_key_is_stated
 test_invalid_lookalike_before_valid_mid_note_key_is_ignored
-test_v6_cursor_that_skipped_valid_key_is_rebuilt
+test_v7_cursor_that_skipped_valid_key_is_rebuilt

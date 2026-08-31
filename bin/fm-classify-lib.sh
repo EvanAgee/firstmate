@@ -173,18 +173,19 @@ status_is_paused_or_captain_held() {  # <status-line>
 #      the end of a one-line summary; losing it both keeps the fold open
 #      forever and makes fm-send --resolve-key refuse the exact key it prints)
 #        blocked: waiting on OpenAI credits [key=nm-openai-credits]
-#   4. as the only canonical key token inside the note (review tools often put
-#      their finding count before the key and the question after it)
+#   4. on needs-decision/blocked openers only, as the one valid canonical key
+#      token inside the note (review tools often put their finding count before
+#      the key and the question after it)
 #        needs-decision: review found 2 findings [key=review-labels]: pick labels
 # A bare "[<slug>]" strictly inside the note is prose. Multiple canonical key
-# tokens strictly inside the note are ambiguous and remain prose. Positions
+# tokens strictly inside the note are ambiguous and remain prose. Canonical key
+# tokens strictly inside every other verb's note are also prose. Valid positions
 # resolve in order before-colon, note-head, note-tail, unique canonical token;
-# when several positions carry a key token the earlier position wins and the
-# later token stays note text.
-# A line with no token in those four positions uses the key "default", preserving
+# a malformed earlier candidate cannot hide a later valid one.
+# A line with no token in its allowed positions uses the key "default", preserving
 # the historical one-open-decision-per-task behavior (a bare "resolved:" closes
-# "default"). A stated key whose slug fails the charset below is rejected (the
-# folds skip the line), never rewritten to "default".
+# "default"). The folds skip a line when every stated candidate is malformed.
+# Multiple valid interior candidates remain ambiguous and use "default".
 # The parsers are pure reads of a single line. Status metadata may contain any
 # number of "[name=value]" tags before the colon, in any order, so verb parsing
 # ends at the first tag rather than special-casing "[key=...]".
@@ -268,9 +269,9 @@ _fm_key_raw_tail() {  # <status-line> -> raw slug
   case "$tail" in *\[*) return 1 ;; esac
   printf '%s' "$tail"
 }
-# Raw slug from the only canonical key token inside the note, or failure.
-# Requiring one complete token leaves prose with multiple key examples
-# unclassified instead of choosing one arbitrarily.
+# Raw slug from the only valid canonical key token inside the note.
+# Returns 2 for multiple valid tokens and 3 when every complete token is
+# malformed, so callers can distinguish ambiguity from rejection.
 _fm_key_raw_anywhere() {  # <status-line> -> raw slug
   local note scan rest k token before after valid='' valid_count=0 invalid=''
   case "$1" in
@@ -303,8 +304,9 @@ _fm_key_raw_anywhere() {  # <status-line> -> raw slug
     printf '%s' "$valid"
     return 0
   fi
-  [ "$valid_count" -eq 0 ] && [ -n "$invalid" ] || return 1
-  printf '%s' "$invalid"
+  [ "$valid_count" -gt 1 ] && return 2
+  [ -n "$invalid" ] && return 3
+  return 1
 }
 # 0 when a stated key slug is well-formed: nonempty, A-Za-z0-9._- only.
 _fm_decision_slug_ok() {  # <slug>
@@ -313,61 +315,97 @@ _fm_decision_slug_ok() {  # <slug>
     *) return 0 ;;
   esac
 }
+_fm_decision_key_candidate() {  # <status-line> -> "<position>\t<key>"
+  local line=$1 verb k rc invalid=0
+  if k=$(_fm_key_raw_before "$line"); then
+    if _fm_decision_slug_ok "$k"; then
+      printf 'before\t%s' "$k"
+      return 0
+    fi
+    invalid=1
+  fi
+  if k=$(_fm_key_raw_head "$line"); then
+    if _fm_decision_slug_ok "$k"; then
+      printf 'head\t%s' "$k"
+      return 0
+    fi
+    invalid=1
+  fi
+  if k=$(_fm_key_raw_tail "$line"); then
+    if _fm_decision_slug_ok "$k"; then
+      printf 'tail\t%s' "$k"
+      return 0
+    fi
+    invalid=1
+  fi
+  verb=$(status_line_verb "$line")
+  case "$verb" in
+    needs-decision|blocked)
+      if k=$(_fm_key_raw_anywhere "$line"); then
+        printf 'interior\t%s' "$k"
+        return 0
+      else
+        rc=$?
+      fi
+      [ "$rc" -eq 2 ] && { printf 'default\tdefault'; return 0; }
+      [ "$rc" -eq 3 ] && invalid=1
+      ;;
+  esac
+  [ "$invalid" -eq 0 ] || return 1
+  printf 'default\tdefault'
+}
+
 status_line_note() {  # <status-line> -> text after the first colon, trimmed
-  local n k tail token before after
+  local n candidate position tail token before after
   case "$1" in
     *:*) n=${1#*:}; n=${n#"${n%%[![:space:]]*}"} ;;
     *) printf '%s' "$1"; return 0 ;;
   esac
-  if k=$(_fm_key_raw_before "$1") && _fm_decision_slug_ok "$k"; then
-    # A before-colon token never reaches the note; nothing to strip here.
-    :
-  elif k=$(_fm_key_raw_head "$1") && _fm_decision_slug_ok "$k"; then
-    # A note-head token that states this line's key is key metadata, not note
-    # text: strip it so every stated-key position yields the same note.
-    n=${n#*\]}
-    n=${n#"${n%%[![:space:]]*}"}
-  elif k=$(_fm_key_raw_tail "$1") && _fm_decision_slug_ok "$k"; then
-    # Same for a note-tail token: the trailing key never stays as prose.
-    tail=${n##*[[:space:]]}
-    n=${n%"$tail"}
-    n=${n%"${n##*[![:space:]]}"}
-  elif k=$(_fm_key_raw_anywhere "$1") && _fm_decision_slug_ok "$k"; then
-    token="[key=$k]"
-    before=${n%%"$token"*}
-    after=${n#*"$token"}
-    before=${before%"${before##*[![:space:]]}"}
-    after=${after#"${after%%[![:space:]]*}"}
-    case "$after" in
-      :*)
-        after=${after#:}
-        after=${after#"${after%%[![:space:]]*}"}
-        if [ -n "$before" ] && [ -n "$after" ]; then
-          n="$before: $after"
-        else
-          n="$before$after"
-        fi
-        ;;
-      *)
-        if [ -n "$before" ] && [ -n "$after" ]; then
-          n="$before $after"
-        else
-          n="$before$after"
-        fi
-        ;;
-    esac
-  fi
+  candidate=$(_fm_decision_key_candidate "$1") || { printf '%s' "$n"; return 0; }
+  position=${candidate%%$'\t'*}
+  case "$position" in
+    before|default) ;;
+    head)
+      n=${n#*\]}
+      n=${n#"${n%%[![:space:]]*}"}
+      ;;
+    tail)
+      tail=${n##*[[:space:]]}
+      n=${n%"$tail"}
+      n=${n%"${n##*[![:space:]]}"}
+      ;;
+    interior)
+      token="[key=${candidate#*$'\t'}]"
+      before=${n%%"$token"*}
+      after=${n#*"$token"}
+      before=${before%"${before##*[![:space:]]}"}
+      after=${after#"${after%%[![:space:]]*}"}
+      case "$after" in
+        :*)
+          after=${after#:}
+          after=${after#"${after%%[![:space:]]*}"}
+          if [ -n "$before" ] && [ -n "$after" ]; then
+            n="$before: $after"
+          else
+            n="$before$after"
+          fi
+          ;;
+        *)
+          if [ -n "$before" ] && [ -n "$after" ]; then
+            n="$before $after"
+          else
+            n="$before$after"
+          fi
+          ;;
+      esac
+      ;;
+  esac
   printf '%s' "$n"
 }
 _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
-  local k
-  k=$(_fm_key_raw_before "$1") \
-    || k=$(_fm_key_raw_head "$1") \
-    || k=$(_fm_key_raw_tail "$1") \
-    || k=$(_fm_key_raw_anywhere "$1") \
-    || { printf 'default'; return 0; }
-  _fm_decision_slug_ok "$k" || return 1
-  printf '%s' "$k"
+  local candidate
+  candidate=$(_fm_decision_key_candidate "$1") || return 1
+  printf '%s' "${candidate#*$'\t'}"
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
@@ -559,7 +597,7 @@ _fm_open_decisions_cursor_path() {  # <status-file>
   printf '%s/.%s.open-decisions-cursor' "$dir" "${base%.status}"
 }
 
-FM_OPEN_DECISIONS_FOLD_VERSION=7
+FM_OPEN_DECISIONS_FOLD_VERSION=8
 
 # Portable device:inode identity for the rotation/recreation check below.
 _fm_open_decisions_file_ident() {  # <file> -> "dev:inode", empty on I/O failure
