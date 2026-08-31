@@ -1,0 +1,28 @@
+SCENARIO 1: existing append-only log with a stale saved decision fold
+Saved fold before the command:
+version=5
+key=default
+
+$ FM_STATE_OVERRIDE=<fixture>/state bin/fm-wake-drain.sh
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+pto-export-window-ui [key=169-noun-and-grade-labels] needs-decision: fix-review found 2 new ask-user findings: choose the noun and grade labels
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+SCENARIO 2: answer the visible key through the public send command
+$ bin/fm-send.sh pto-export-window-ui --resolve-key 169-noun-and-grade-labels "use the revised labels"
+exit: 0
+Message delivered to the worker: use the revised labels
+Append-only status history after the answer:
+  needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels
+  resolved [key=169-noun-and-grade-labels]: answered: use the revised labels
+
+$ FM_STATE_OVERRIDE=<fixture>/state bin/fm-wake-drain.sh
+<no open decisions>
+
+SCENARIO 3: existing key positions, keyless notes, and ambiguous interior keys
+$ FM_STATE_OVERRIDE=<fixture>/state bin/fm-wake-drain.sh
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+ambiguous needs-decision: pick a [key=red] or [key=blue] theme
+unkeyed needs-decision: choose a timezone
+well-formed [key=existing-position] needs-decision: keep this grammar
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
