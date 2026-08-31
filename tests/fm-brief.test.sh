@@ -242,6 +242,41 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+# The worker that opens a PR owns its review feedback until the PR merges,
+# including feedback that arrives AFTER the done report (a late review-bot pass,
+# a human thread, a requested change). This must reach both PR-producing modes
+# and must not weaken the never-merge prohibition. local-only has no PR, so it
+# stays out.
+test_pr_producing_modes_own_feedback_until_merge() {
+  local home id mode brief
+  home="$TMP_ROOT/pr-watch-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR; do
+    id="brief-pr-watch-${mode}"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "Reporting done does not end your ownership of this PR - it stays yours until it merges." "$brief" \
+      "$mode: brief did not keep PR ownership past the done report"
+    assert_grep "When new reviewer feedback lands after your done report" "$brief" \
+      "$mode: brief did not require handling feedback that arrives after done"
+    assert_grep "fix and push on your \`fm/$id\` branch, resolve the threads, or reply with a concrete reason a finding is not valid, then re-report status." "$brief" \
+      "$mode: brief lost the fix/resolve/reply-then-report post-done contract"
+    assert_grep "Never merge the PR and never arm auto-merge; the configured merge authority owns that." "$brief" \
+      "$mode: post-done watch weakened the never-merge prohibition"
+  done
+
+  # local-only produces no PR, so the watch-until-merge block must not appear.
+  id="brief-pr-watch-local-only"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1 \
+    || fail "local-only: ship brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "it stays yours until it merges" "$brief" \
+    "local-only brief added a PR-watch contract it has no PR for"
+  pass "fm-brief.sh: PR-producing modes own review feedback until merge; local-only stays out"
+}
+
 test_matt_flow_is_explicit_and_thin() {
   local home id brief status
   home="$TMP_ROOT/matt-flow-home"
@@ -833,6 +868,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_pr_producing_modes_own_feedback_until_merge
 test_matt_flow_is_explicit_and_thin
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry

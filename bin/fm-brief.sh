@@ -362,6 +362,19 @@ fi
 # delivery mode, validated above. The generated DOD opens with the fixed
 # "Delivery contract: mode=<mode>" line that bin/fm-spawn.sh checks against its own
 # explicit --mode before launching.
+#
+# PR_WATCH is the shared post-done contract for both PR-producing modes
+# (no-mistakes and direct-PR): reporting done hands the PR back, but the worker
+# stays its owner until it merges, including feedback that lands after the done
+# report. Local-only has no PR, so it does not include this. Rule 8 owns HOW a
+# finding is addressed; this block only extends WHEN that duty applies.
+IFS= read -r -d '' PR_WATCH <<EOF || true
+
+Reporting done does not end your ownership of this PR - it stays yours until it merges.
+Stay on watch for it. When new reviewer feedback lands after your done report - a review bot's later pass, or a human review thread or requested change - address it the same way rule 8 requires: fix and push on your \`fm/$ID\` branch, resolve the threads, or reply with a concrete reason a finding is not valid, then re-report status.
+Never merge the PR and never arm auto-merge; the configured merge authority owns that.
+EOF
+PR_WATCH=${PR_WATCH%$'\n'}
 case "$MODE" in
   direct-PR)
     SETUP2=""
@@ -373,6 +386,7 @@ This task ships **direct-PR**: you raise the PR yourself, without the no-mistake
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+$PR_WATCH
 EOF
     ;;
   local-only)
@@ -414,6 +428,7 @@ Two firstmate-specific rules layer on top of that guidance:
   Use \`$FM_ROOT/bin/fm-review-loop-stop.sh\` for every record and resolve call.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
+$PR_WATCH
 EOF
     ;;
 esac
