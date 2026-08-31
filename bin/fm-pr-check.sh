@@ -108,7 +108,17 @@ META_LOCK_HELD=1
 [ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
   || { echo "error: task metadata is unavailable" >&2; exit 1; }
 if [ "$ONLY_IF_UNARMED" -eq 1 ] && grep -q '^pr=' "$META"; then
-  exit 0
+  if ! fm_pr_metadata_identity_parse "$META" \
+    || [ "$FM_PR_META_PROVIDER" != "$PROVIDER" ] \
+    || [ "$FM_PR_META_URL" != "$URL" ] \
+    || [ "$FM_PR_META_HOST" != "$HOST" ] \
+    || [ "$FM_PR_META_PATH" != "$PROJECT_PATH" ] \
+    || [ "$FM_PR_META_NUMBER" != "$NUMBER" ]; then
+    exit 0
+  fi
+  if fm_pr_poll_artifacts_valid "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh"; then
+    exit 0
+  fi
 fi
 META_DEVICE=$(fm_pr_file_device "$META") || exit 1
 STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
@@ -129,6 +139,10 @@ fm_pr_metadata_identity_parse "$META_TMP" || exit 1
   && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
   && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
 fm_pr_regular_destination_on_device_or_absent "$META" "$STATE_DEVICE" || exit 1
+fm_pr_poll_publish_prepared files-only || {
+  echo "error: could not publish PR poll" >&2
+  exit 1
+}
 mv -f -- "$META_TMP" "$META" || exit 1
 META_TMP=
 fm_pr_private_file_valid "$META" 600 "$STATE_DEVICE" || exit 1
@@ -136,10 +150,7 @@ fm_pr_metadata_identity_parse "$META" || exit 1
 [ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
   && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
   && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
-fm_pr_poll_publish_prepared || {
-  echo "error: could not publish PR poll" >&2
-  exit 1
-}
+fm_pr_poll_artifacts_valid "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || exit 1
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
 

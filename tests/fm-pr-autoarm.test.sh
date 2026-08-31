@@ -47,6 +47,12 @@ case "${1:-} ${2:-}" in
           *repos/acme/late/pulls*) printf 'https://github.com/acme/late/pull/51\tacme/late\tactual-feature\n' ;;
         esac
         ;;
+      fair)
+        case "$*" in
+          *repos/acme/widget/pulls*) printf 'https://github.com/acme/widget/pull/41\tacme/widget\tactual-feature\n' ;;
+          *repos/acme/late/pulls*) printf 'https://github.com/acme/late/pull/51\tacme/late\tactual-feature\n' ;;
+        esac
+        ;;
       interrupt)
         kill -TERM "$(cat "$FM_TEST_SWEEP_PID_FILE")"
         sleep 0.1
@@ -75,7 +81,10 @@ esac
 SH
   cat > "$dir/arm" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}" != --only-if-unarmed ] || shift
+if [ "${1:-}" = --only-if-unarmed ]; then
+  shift
+  grep -q '^pr=' "$FM_STATE_OVERRIDE/$1.meta" && exit 0
+fi
 printf '%s %s\n' "$1" "$2" >> "$FM_TEST_ARM_LOG"
 printf 'pr=%s\n' "$2" >> "$FM_STATE_OVERRIDE/$1.meta"
 SH
@@ -290,6 +299,83 @@ FM_HOME="$dir/home" \
   || fail "an interrupted task was skipped when the sweep resumed"
 pass "sweep progress records only completed task inspections"
 
+dir=$(make_case durable-sweep-reason)
+mv "$dir/home/state/different-task.meta" "$dir/home/state/z-interrupt.meta"
+fm_write_meta "$dir/home/state/a-missing.meta" \
+  "worktree=$dir/missing-wt" \
+  'kind=ship' \
+  'mode=no-mistakes'
+cat > "$dir/interrupt-sweep" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$FM_TEST_SWEEP_PID_FILE"
+exec "$FM_TEST_AUTOARM" sweep
+SH
+chmod +x "$dir/interrupt-sweep"
+if FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/arm" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  FM_TEST_ARM_LOG="$dir/arm.log" \
+  FM_TEST_FORGE_RESULT=interrupt \
+  FM_TEST_SWEEP_PID_FILE="$dir/sweep.pid" \
+  FM_TEST_AUTOARM="$AUTOARM" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$dir/interrupt-sweep" >/dev/null 2>&1; then
+  fail "the durable-reason interruption fixture exited successfully"
+fi
+grep -F "check: pr-autoarm: task=a-missing worktree is missing or unreadable" \
+  "$dir/home/state/.wake-queue" >/dev/null \
+  || fail "a later interruption lost an earlier task reason"
+[ "$(cat "$dir/home/state/.pr-autoarm-sweep-cursor")" = a-missing ] \
+  || fail "the sweep did not commit progress after queuing the task reason"
+pass "sweep reasons are durable before progress advances"
+
+dir=$(make_case fair-arm-timeout)
+mv "$dir/home/state/different-task.meta" "$dir/home/state/a-slow.meta"
+mkdir -p "$dir/late-wt"
+fm_git_init_commit "$dir/late-wt"
+git -C "$dir/late-wt" checkout -qb actual-feature
+git -C "$dir/late-wt" remote add origin https://github.com/acme/late.git
+git -C "$dir/late-wt" config branch.actual-feature.remote origin
+git -C "$dir/late-wt" config branch.actual-feature.merge refs/heads/actual-feature
+fm_write_meta "$dir/home/state/z-late.meta" \
+  "worktree=$dir/late-wt" \
+  'kind=scout' \
+  'mode=no-mistakes'
+cat > "$dir/slow-arm" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --only-if-unarmed ] || shift
+if [ "$1" = a-slow ]; then
+  sleep 10
+  exit 1
+fi
+printf '%s %s\n' "$1" "$2" >> "$FM_TEST_ARM_LOG"
+printf 'pr=%s\n' "$2" >> "$FM_STATE_OVERRIDE/$1.meta"
+SH
+chmod +x "$dir/slow-arm"
+# shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
+. "$ROOT/bin/fm-timeout-lib.sh"
+fair_rc=0
+fm_run_timed 4 env \
+  FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/slow-arm" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  FM_TEST_ARM_LOG="$dir/arm.log" \
+  FM_TEST_FORGE_RESULT=fair \
+  FM_PR_AUTOARM_TASK_TIMEOUT=1 \
+  FM_PR_AUTOARM_SWEEP_BUDGET=3 \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$AUTOARM" sweep > "$dir/sweep.out" || fair_rc=$?
+[ "$fair_rc" -eq 0 ] || fail "one blocked arm exhausted the whole sweep timeout"
+grep -qxF 'z-late https://github.com/acme/late/pull/51' "$dir/arm.log" \
+  || fail "one blocked arm starved later task metadata"
+if ! grep -F 'task=a-slow inspection ' "$dir/home/state/.wake-queue" >/dev/null \
+  || ! grep -F 'and will retry' "$dir/home/state/.wake-queue" >/dev/null; then
+  fail "the blocked arm did not retain a retry reason"
+fi
+pass "bounded arm attempts preserve fair sweep progress"
+
 dir=$(make_case watcher-cycle)
 watch_out="$dir/watch.out"
 FM_HOME="$dir/home" \
@@ -325,6 +411,45 @@ wait "$watch_pid" 2>/dev/null || true
 [ -s "$dir/arm.log" ] || fail "the watcher never ran the delayed branch sweep"
 [ ! -s "$watch_out" ] || fail "a successful watcher sweep printed a wake: $(cat "$watch_out")"
 pass "the watcher runs the silent sweep on its delayed check cadence"
+
+dir=$(make_case announcement-wake-order)
+fm_write_meta "$dir/home/state/current-task.meta" \
+  "worktree=$dir/wt" \
+  'kind=ship' \
+  'mode=no-mistakes'
+printf '%s\n' 'done: old PR https://github.com/acme/widget/pull/85' \
+  > "$dir/home/state/different-task.status"
+old_sig=$(FM_STATE_OVERRIDE="$dir/home/state" bash -c '
+  . "$1/bin/fm-wake-lib.sh"
+  fm_wake_signal_sig "$2"
+' _ "$ROOT" "$dir/home/state/different-task.status")
+old_seen=$(FM_STATE_OVERRIDE="$dir/home/state" bash -c '
+  . "$1/bin/fm-wake-lib.sh"
+  fm_wake_signal_seen_path "$2" "$3"
+' _ "$ROOT" "$dir/home/state" "$dir/home/state/different-task.status")
+printf '%s' "$old_sig" > "$old_seen"
+printf '%s\n' 'done: current signal' > "$dir/home/state/current-task.status"
+cat > "$dir/blocking-arm" <<'SH'
+#!/usr/bin/env bash
+: > "$FM_TEST_BLOCKING_ARM_CALLED"
+sleep 10
+exit 1
+SH
+chmod +x "$dir/blocking-arm"
+FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/blocking-arm" \
+  FM_TEST_BLOCKING_ARM_CALLED="$dir/blocking-arm.called" \
+  FM_CHECK_INTERVAL=999999 \
+  FM_HEARTBEAT=999999 \
+  FM_GH_HEALTH_PROBE_CMD=true \
+  FM_SIGNAL_GRACE=0 \
+  FM_POLL=0.1 \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$WATCH" > "$dir/watch.out"
+grep -q '^signal:' "$dir/watch.out" || fail "the current signal did not keep first refusal"
+[ ! -e "$dir/blocking-arm.called" ] || fail "an old announcement retry preempted the current signal"
+pass "current signals run before old announcement retries"
 
 dir=$(make_case announcement)
 printf '%s\n' \
@@ -565,3 +690,115 @@ FM_ROOT_OVERRIDE="$ROOT" bash -c '
 ' _ "$ROOT" "$dir/home/state" \
   || fail "concurrent arming left the recorded PR without a valid poll"
 pass "metadata locking covers poll publication"
+
+dir=$(make_case recoverable-publication)
+printf '%s\n' fm-pr-check-migration-scan-v1 > "$dir/home/state/.pr-check-migration-scan-v1"
+printf '%s\n' fm-pr-check-migration-v1 > "$dir/home/state/.pr-check-migration-v1"
+chmod 0600 "$dir/home/state/.pr-check-migration-scan-v1" "$dir/home/state/.pr-check-migration-v1"
+real_mv=$(command -v mv)
+cat > "$dir/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+if [ "${FM_TEST_FAIL_PUBLISH:-}" = 1 ]; then
+  for argument in "$@"; do
+    case "$argument" in */.fm-pr-poll-check.*) exit 1 ;; esac
+  done
+fi
+if [ "${FM_TEST_INTERRUPT_META:-}" = 1 ]; then
+  for argument in "$@"; do
+    case "$argument" in
+      */.fm-pr-meta.*)
+        kill -TERM "$PPID"
+        sleep 0.1
+        exit 1
+        ;;
+    esac
+  done
+fi
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+chmod +x "$dir/fakebin/mv"
+publication_rc=0
+FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_GUARD_GRACE=999999 \
+  FM_TEST_FAIL_PUBLISH=1 \
+  FM_TEST_REAL_MV="$real_mv" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$ROOT/bin/fm-pr-check.sh" --only-if-unarmed different-task \
+  https://github.com/acme/widget/pull/99 >/dev/null 2>&1 || publication_rc=$?
+[ "$publication_rc" -ne 0 ] || fail "the forced poll publication failure reported success"
+if grep -q '^pr=' "$dir/home/state/different-task.meta"; then
+  fail "failed poll publication committed PR metadata"
+fi
+[ ! -e "$dir/home/state/different-task.check.sh" ] \
+  && [ ! -e "$dir/home/state/different-task.pr-poll" ] \
+  && [ ! -e "$dir/home/state/different-task.pr-poll-registration" ] \
+  || fail "failed poll publication left partial final artifacts"
+publication_rc=0
+FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_GUARD_GRACE=999999 \
+  FM_TEST_INTERRUPT_META=1 \
+  FM_TEST_REAL_MV="$real_mv" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$ROOT/bin/fm-pr-check.sh" --only-if-unarmed different-task \
+  https://github.com/acme/widget/pull/99 >/dev/null 2>&1 || publication_rc=$?
+[ "$publication_rc" -ne 0 ] || fail "the interrupted metadata commit reported success"
+if grep -q '^pr=' "$dir/home/state/different-task.meta"; then
+  fail "an interrupted metadata commit recorded an unwatched PR"
+fi
+FM_ROOT_OVERRIDE="$ROOT" bash -c '
+  . "$1/bin/fm-pr-lib.sh"
+  ! fm_pr_poll_artifacts_valid "$2" different-task "$1/bin/fm-pr-poll.sh"
+' _ "$ROOT" "$dir/home/state" \
+  || fail "poll files became active before their metadata commit"
+FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_GUARD_GRACE=999999 \
+  FM_TEST_REAL_MV="$real_mv" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$ROOT/bin/fm-pr-check.sh" --only-if-unarmed different-task \
+  https://github.com/acme/widget/pull/99 >/dev/null
+FM_ROOT_OVERRIDE="$ROOT" bash -c '
+  . "$1/bin/fm-pr-lib.sh"
+  fm_pr_poll_artifacts_valid "$2" different-task "$1/bin/fm-pr-poll.sh"
+' _ "$ROOT" "$dir/home/state" \
+  || fail "a clean retry did not complete the PR watch transaction"
+rm -f "$dir/home/state/different-task.check.sh" \
+  "$dir/home/state/different-task.pr-poll" \
+  "$dir/home/state/different-task.pr-poll-registration"
+FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_GUARD_GRACE=999999 \
+  FM_TEST_REAL_MV="$real_mv" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$ROOT/bin/fm-pr-check.sh" --only-if-unarmed different-task \
+  https://github.com/acme/widget/pull/99 >/dev/null
+FM_ROOT_OVERRIDE="$ROOT" bash -c '
+  . "$1/bin/fm-pr-lib.sh"
+  fm_pr_poll_artifacts_valid "$2" different-task "$1/bin/fm-pr-poll.sh"
+' _ "$ROOT" "$dir/home/state" \
+  || fail "an exact retry did not repair its missing registered poll"
+cp "$dir/home/state/different-task.meta" "$dir/meta.snapshot"
+cp "$dir/home/state/different-task.pr-poll-registration" "$dir/registration.snapshot"
+FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_GUARD_GRACE=999999 \
+  FM_TEST_REAL_MV="$real_mv" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$ROOT/bin/fm-pr-check.sh" --only-if-unarmed different-task \
+  https://github.com/acme/widget/pull/99 >/dev/null
+cmp -s "$dir/meta.snapshot" "$dir/home/state/different-task.meta" \
+  && cmp -s "$dir/registration.snapshot" "$dir/home/state/different-task.pr-poll-registration" \
+  || fail "an exact completed retry republished the transaction"
+pass "PR watch publication is recoverable and exact-idempotent"

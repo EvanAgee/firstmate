@@ -19,6 +19,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 PR_CHECK_BIN="${FM_PR_CHECK_BIN:-$SCRIPT_DIR/fm-pr-check.sh}"
 LOOKUP_TIMEOUT=${FM_PR_AUTOARM_LOOKUP_TIMEOUT:-2}
+TASK_TIMEOUT=${FM_PR_AUTOARM_TASK_TIMEOUT:-4}
 SWEEP_BUDGET=${FM_PR_AUTOARM_SWEEP_BUDGET:-20}
 SWEEP_CURSOR="$STATE/.pr-autoarm-sweep-cursor"
 
@@ -26,6 +27,8 @@ SWEEP_CURSOR="$STATE/.pr-autoarm-sweep-cursor"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 
 case "$LOOKUP_TIMEOUT" in
   ''|*[!0-9]*|0) LOOKUP_TIMEOUT=2 ;;
@@ -33,13 +36,17 @@ esac
 case "$SWEEP_BUDGET" in
   ''|*[!0-9]*|0) SWEEP_BUDGET=20 ;;
 esac
+case "$TASK_TIMEOUT" in
+  ''|*[!0-9]*|0) TASK_TIMEOUT=4 ;;
+esac
+[ "$TASK_TIMEOUT" -le 10 ] || TASK_TIMEOUT=10
 
 FM_PR_AUTOARM_PROVIDER=
 FM_PR_AUTOARM_HOST=
 FM_PR_AUTOARM_PATH=
 FM_PR_AUTOARM_URL=
 FM_PR_AUTOARM_COUNT=0
-FM_PR_AUTOARM_AMBIGUITIES=
+FM_PR_AUTOARM_REASON=
 
 fm_pr_autoarm_meta_has_pr() {
   grep -q '^pr=' "$1" 2>/dev/null
@@ -50,13 +57,8 @@ fm_pr_autoarm_meta_field() {
 }
 
 fm_pr_autoarm_note() {
-  local task=$1 reason=$2 entry
-  entry="task=$task $reason"
-  if [ -n "$FM_PR_AUTOARM_AMBIGUITIES" ]; then
-    FM_PR_AUTOARM_AMBIGUITIES="$FM_PR_AUTOARM_AMBIGUITIES; $entry"
-  else
-    FM_PR_AUTOARM_AMBIGUITIES=$entry
-  fi
+  local task=$1 reason=$2
+  FM_PR_AUTOARM_REASON="task=$task $reason"
 }
 
 fm_pr_autoarm_remote_parse() {
@@ -261,7 +263,7 @@ fm_pr_autoarm_sweep_one() {
 }
 
 fm_pr_autoarm_sweep() {
-  local meta task cursor='' resume=1 started=$SECONDS processed=0 last_task='' exhausted=0
+  local meta task task_result task_rc cursor='' resume=1 started=$SECONDS processed=0 last_task='' exhausted=0
   [ -d "$STATE" ] && [ ! -L "$STATE" ] || return 0
   if [ -f "$SWEEP_CURSOR" ] && [ ! -L "$SWEEP_CURSOR" ]; then
     cursor=$(sed -n '1p' "$SWEEP_CURSOR" 2>/dev/null || true)
@@ -281,9 +283,50 @@ fm_pr_autoarm_sweep() {
       [ "$task" != "$cursor" ] || resume=1
       continue
     fi
-    fm_pr_autoarm_sweep_one "$meta"
+    task_result=
+    task_rc=0
+    task_result=$(fm_run_timed "$TASK_TIMEOUT" env \
+      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_PR_CHECK_BIN="$PR_CHECK_BIN" \
+      FM_PR_AUTOARM_LOOKUP_TIMEOUT="$LOOKUP_TIMEOUT" \
+      "$SCRIPT_DIR/fm-pr-autoarm.sh" sweep-one "$task" 2>/dev/null) || task_rc=$?
+    case "$task_rc" in
+      0)
+        if [ -n "$task_result" ]; then
+          case "$task_result" in
+            "task=$task "*) ;;
+            *) task_result="task=$task inspection failed" ;;
+          esac
+          if ! fm_wake_append check "pr-autoarm:$task" "check: pr-autoarm: $task_result"; then
+            printf 'pr-autoarm: task=%s could not queue sweep result\n' "$task"
+            exhausted=1
+            break
+          fi
+          printf 'pr-autoarm: %s\n' "$task_result"
+        fi
+        ;;
+      124)
+        task_result="task=$task inspection timed out and will retry"
+        if ! fm_wake_append check "pr-autoarm:$task" "check: pr-autoarm: $task_result"; then
+          printf 'pr-autoarm: task=%s could not queue sweep timeout\n' "$task"
+          exhausted=1
+          break
+        fi
+        printf 'pr-autoarm: %s\n' "$task_result"
+        ;;
+      *)
+        task_result="task=$task inspection failed and will retry"
+        if ! fm_wake_append check "pr-autoarm:$task" "check: pr-autoarm: $task_result"; then
+          printf 'pr-autoarm: task=%s could not queue sweep failure\n' "$task"
+          exhausted=1
+          break
+        fi
+        printf 'pr-autoarm: %s\n' "$task_result"
+        ;;
+    esac
     if ! fm_pr_autoarm_cursor_write "$task"; then
-      fm_pr_autoarm_note "$task" "could not save sweep progress"
+      fm_wake_append check "pr-autoarm:$task" \
+        "check: pr-autoarm: task=$task could not save sweep progress" || true
+      printf 'pr-autoarm: task=%s could not save sweep progress\n' "$task"
       exhausted=1
       break
     fi
@@ -295,8 +338,6 @@ fm_pr_autoarm_sweep() {
     fi
   done
   [ "$exhausted" -eq 1 ] || rm -f -- "$SWEEP_CURSOR"
-  [ -z "$FM_PR_AUTOARM_AMBIGUITIES" ] \
-    || printf 'pr-autoarm: %s\n' "$FM_PR_AUTOARM_AMBIGUITIES"
 }
 
 fm_pr_autoarm_announce() {
@@ -304,7 +345,6 @@ fm_pr_autoarm_announce() {
   fm_pr_task_id_valid "$task" || return 0
   meta="$STATE/$task.meta"
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
-  fm_pr_autoarm_meta_has_pr "$meta" && return 0
   [ "$(fm_pr_autoarm_meta_field "$meta" kind)" != secondmate ] || return 0
   remainder=$line
   while [[ "$remainder" == *https://* ]]; do
@@ -336,6 +376,14 @@ case "${1:-}" in
   sweep)
     [ "$#" -eq 1 ] || { echo "error: invalid PR autoarm request" >&2; exit 2; }
     fm_pr_autoarm_sweep
+    ;;
+  sweep-one)
+    if [ "$#" -ne 2 ] || ! fm_pr_task_id_valid "$2"; then
+      echo "error: invalid PR autoarm request" >&2
+      exit 2
+    fi
+    fm_pr_autoarm_sweep_one "$STATE/$2.meta"
+    [ -z "$FM_PR_AUTOARM_REASON" ] || printf '%s\n' "$FM_PR_AUTOARM_REASON"
     ;;
   announce)
     [ "$#" -eq 3 ] || { echo "error: invalid PR autoarm request" >&2; exit 2; }

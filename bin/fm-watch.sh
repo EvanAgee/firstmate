@@ -145,6 +145,9 @@ FM_ANCHOR_INTERVAL=${FM_ANCHOR_INTERVAL:-$HEARTBEAT_MAX}
 case "$FM_ANCHOR_INTERVAL" in ''|*[!0-9]*) FM_ANCHOR_INTERVAL=$HEARTBEAT_MAX ;; esac
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
+AUTOARM_ANNOUNCE_TIMEOUT=${FM_PR_AUTOARM_ANNOUNCE_TIMEOUT:-3}
+case "$AUTOARM_ANNOUNCE_TIMEOUT" in ''|*[!0-9]*|0) AUTOARM_ANNOUNCE_TIMEOUT=3 ;; esac
+[ "$AUTOARM_ANNOUNCE_TIMEOUT" -le 5 ] || AUTOARM_ANNOUNCE_TIMEOUT=5
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
@@ -527,8 +530,10 @@ autoarm_status_cursor_write() {  # <cursor> <inode> <offset>
 }
 
 autoarm_status_announcements() {  # <changed signal paths...>
-  local file task line sig size inode ignored cursor cursor_inode offset extra line_bytes
+  local file task line sig size inode ignored cursor cursor_inode offset extra line_bytes deadline remaining
+  deadline=$((SECONDS + AUTOARM_ANNOUNCE_TIMEOUT))
   for file in "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || break
     case "$file" in
       "$STATE"/*.status) ;;
       *) continue ;;
@@ -549,7 +554,10 @@ autoarm_status_announcements() {  # <changed signal paths...>
         || offset=0
     fi
     LC_ALL=C tail -c "+$((offset + 1))" "$file" 2>/dev/null | while IFS= read -r line; do
-      if ! (FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      remaining=$((deadline - SECONDS))
+      [ "$remaining" -gt 0 ] || break
+      if ! (CHECK_TIMEOUT="$remaining"; \
+        FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
         run_check_process "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" \
         >/dev/null 2>&1); then
         break
@@ -1065,10 +1073,6 @@ while :; do
     touch "$STATE/.last-check"
   fi
 
-  # Reconcile announcement cursors independently of ordinary signal markers.
-  # A failed arm must retry even when no worker appends another status line.
-  autoarm_status_announcements "$STATE"/*.status
-
   # On the first changed signal, linger one grace period and re-scan before
   # classifying: a crewmate's final status write and the same turn's turn-end
   # hook land seconds apart, and reporting them as separate actionable wakes
@@ -1085,6 +1089,8 @@ while :; do
     done <<EOF
 $pending
 EOF
+    # shellcheck disable=SC2086 # Paths come from validated task ids and are intentionally expanded.
+    autoarm_status_announcements $files
     reason="signal:$files"
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
@@ -1295,6 +1301,8 @@ EOF
     fi
   done < <(recorded_windows)
 
+  autoarm_status_announcements "$STATE"/*.status
+
   # The missing-watch sweep shares the slow-check cadence but runs only after
   # existing signals and stale-task checks have had first refusal. Its own
   # marker keeps an earlier actionable wake from postponing the next attempt.
@@ -1305,8 +1313,7 @@ EOF
     out=$FM_CHECK_RESULT
     touch "$STATE/.last-pr-autoarm"
     if [ -n "$out" ]; then
-      reason="check: pr-autoarm: $out"
-      fm_wake_append check pr-autoarm "$reason" || exit 1
+      reason="check: pr-autoarm: $(printf '%s' "$out" | tr '\n' ';')"
       wake "$reason"
     fi
   fi
