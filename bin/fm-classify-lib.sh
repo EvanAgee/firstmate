@@ -561,8 +561,33 @@ status_open_decisions() {  # <status-file>
 # just that it is no longer open - uses this. fm-decision-hold.sh's own
 # answer/resolve/decline paths write no status line at all, so a hold closed purely
 # through them carries no evidence here and is attested through `repair` instead.
+# The part of <note> that a delivered-answer marker would lead, for <key>.
+# A reserved-namespace key must open its note with that namespace's own vocabulary
+# (see _fm_decision_key_transition_allowed), so the marker can only appear after it
+# and that segment is skipped. Every other key's note is returned untouched: an
+# ordinary key never prefixes its own name, and stripping one would delete the marker
+# outright for a key named after it.
+_fm_decision_answer_note() {  # <key> <note>
+  local key=$1 note=$2 prefix rest
+  for prefix in ${FM_CLASSIFY_RESERVED_KEY_PREFIXES:-$FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT}; do
+    case "$key" in
+      "$prefix"*)
+        rest=${note#"$prefix"}
+        case "$rest" in
+          *:*)
+            rest=${rest#*:}
+            printf '%s' "${rest#"${rest%%[![:space:]]*}"}"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  done
+  printf '%s' "$note"
+}
+
 status_key_answered() {  # <status-file> <key>
-  local f=$1 key=$2 line resolve marker verb line_key note answer_note answered=0
+  local f=$1 key=$2 line resolve marker verb line_key note answered=0
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   marker=$FM_CLASSIFY_ANSWER_NOTE_MARKER
@@ -582,12 +607,7 @@ status_key_answered() {  # <status-file> <key>
     _fm_decision_key_transition_allowed "$key" "$note" || continue
     answered=0
     if [ "$verb" = "$resolve" ]; then
-      answer_note=$note
-      case "$key" in
-        *-) ;;
-        *) answer_note=${answer_note#"$key": } ;;
-      esac
-      case "$answer_note" in
+      case "$(_fm_decision_answer_note "$key" "$note")" in
         "$marker"*) answered=1 ;;
       esac
     fi

@@ -1798,6 +1798,41 @@ test_completion_refuses_a_key_that_was_never_held() {
   pass "completion refuses a key whose hold was never registered, and accepts it once held"
 }
 
+# A decision key is an ordinary slug, so nothing stops one from being named after the
+# answer marker itself. Such a key must clear the archival tolerance like any other, or
+# its origin can never finish teardown.
+test_verify_accepts_an_archived_hold_whose_key_is_named_answered() {
+  local home id hold
+  home=$(make_home key-named-answered)
+  id=sample-answered-key-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the answered-key sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create answered-key origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=answered]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample answered-key review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" answered \
+    --title "Choose the answered-key sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the answered-key hold"
+  run_decisions "$home" complete "$id" answered >/dev/null \
+    || fail "completion failed for the answered-key origin"
+  printf 'Captain chose option A.\n' > "$home/answered-decision.txt"
+  run_decisions "$home" answer "$id" answered --decision-file "$home/answered-decision.txt" >/dev/null \
+    || fail "could not answer the answered-key choice"
+  # bin/fm-send.sh appends this delivered-answer line when the answer reaches the mate.
+  printf 'resolved [key=answered]: answered: captain chose option A\n' >> "$home/state/$id.status"
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "verify failed while the answered-key hold was still in the backlog"
+
+  # Retention trims the answered Done hold out of the backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/answered-key.err" \
+    || fail "verify rejected an archived answered hold because its key is named 'answered': $(cat "$home/answered-key.err")"
+  pass "verify accepts an archived answered hold whose key is named after the answer marker"
+}
+
 test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
@@ -1823,3 +1858,4 @@ test_verify_tolerates_answered_hold_archived_out_of_backlog
 test_verify_refuses_when_the_backlog_cannot_be_read
 test_verify_refuses_a_mate_self_close_as_an_answer
 test_completion_refuses_a_key_that_was_never_held
+test_verify_accepts_an_archived_hold_whose_key_is_named_answered

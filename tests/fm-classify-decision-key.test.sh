@@ -593,6 +593,30 @@ test_status_key_answered_follows_the_last_transition() {
   pass "status_key_answered follows the last transition, so a re-open unanswers a key"
 }
 
+# A decision key is an ordinary slug, so a key can be named after the answer marker
+# itself. The marker check must read the note as written and must not strip anything
+# named after the key, or such a key can never be proven answered.
+test_status_key_answered_handles_a_key_named_after_the_marker() {
+  local dir
+  dir=$(case_dir key-answered-marker-name)
+
+  {
+    printf 'needs-decision [key=answered]: pick A or B\n'
+    printf 'resolved [key=answered]: answered: captain picked A\n'
+  } > "$dir/real.status"
+  status_key_answered "$dir/real.status" answered \
+    || fail "a delivered answer was not read as an answer for a key named 'answered'"
+
+  {
+    printf 'needs-decision [key=answered]: pick A or B\n'
+    printf 'resolved [key=answered]: the phase ended without a decision\n'
+  } > "$dir/self-close.status"
+  if status_key_answered "$dir/self-close.status" answered; then
+    fail "a self-close was read as an answer for a key named 'answered'"
+  fi
+  pass "status_key_answered reads the marker on a key named after the marker itself"
+}
+
 # The reserved-namespace guard the fold applies must apply here too: a resolved
 # line whose note does not speak a reserved key's own vocabulary is not a valid
 # transition and must not count as an answer.
@@ -653,4 +677,5 @@ test_v7_cursor_that_skipped_valid_key_is_rebuilt
 test_v8_cursor_that_chose_one_punctuated_key_is_rebuilt
 test_status_key_answered_requires_an_explicit_answer_line
 test_status_key_answered_follows_the_last_transition
+test_status_key_answered_handles_a_key_named_after_the_marker
 test_status_key_answered_honors_the_reserved_key_guard
