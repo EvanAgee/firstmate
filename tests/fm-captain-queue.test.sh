@@ -619,7 +619,7 @@ test_add_reconstructs_consumed_reply_history() {
   jq -e '
     .records[0].state == "open"
     and .records[0].generation == 2
-    and .delivered_reply_winners == [{
+    and (.delivered_reply_winners | map(del(.receipt_ms))) == [{
       line: 1,
       id: "upgrade-card",
       generation: 1,
@@ -727,7 +727,7 @@ test_legacy_backlog_done_history_reconstructs_dashboard_delivery() {
   jq -e '
     .records[0].state == "open"
     and .records[0].generation == 2
-    and .delivered_reply_winners == [{
+    and (.delivered_reply_winners | map(del(.receipt_ms))) == [{
       line: 1,
       id: "legacy-backlog-done-card",
       generation: 1,
@@ -1187,6 +1187,78 @@ test_reply_behind_orphan_delivers_after_orphan_clears() {
   pass "a reply behind a blocker still delivers once the blocker clears"
 }
 
+append_stamped_reply() {  # <home> <id> <answer> <at>
+  jq -nc --arg id "$2" --arg answer "$3" --arg at "$4" \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$1/state/captain-replies.jsonl"
+}
+
+test_older_receipt_cannot_supersede_a_delivered_answer() {
+  local home out
+  home=$(make_home older-receipt-conflict)
+  run_q "$home" add --id card-x --question "Which one?" >/dev/null
+  append_stamped_reply "$home" card-x "later answer" 2026-08-27T13:00:00Z
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=card-x] later answer" \
+    "the first winner should be delivered"
+
+  append_stamped_reply "$home" card-x "earlier answer" 2026-08-27T12:30:00Z
+  out=$(run_q "$home" reconcile)
+  assert_not_contains "$out" "handled: [id=card-x] earlier answer" \
+    "an older receipt must not be delivered after a newer answer was handled"
+  assert_not_contains "$out" "superseding: [id=card-x]" \
+    "an older receipt must not claim to supersede the delivered winner"
+  assert_contains "$out" "superseded: [id=card-x]" \
+    "the losing older reply should still be surfaced as evidence"
+  [ "$(resolved_answer "$home" card-x)" = "later answer" ] \
+    || fail "the stored answer changed to an older reply: $(resolved_answer "$home" card-x)"
+  [ "$(cursor_value "$home")" = 2 ] \
+    || fail "the losing reply should advance the cursor, got $(cursor_value "$home")"
+
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "a settled older conflict should stay quiet: $out"
+  pass "an older receipt cannot supersede an already delivered answer"
+}
+
+test_retry_of_a_superseded_reply_is_not_redelivered() {
+  local home out
+  home=$(make_home superseded-retry)
+  run_q "$home" add --id card-x --question "Which one?" >/dev/null
+  append_stamped_reply "$home" card-x "first answer" 2026-08-27T11:00:00Z
+  append_stamped_reply "$home" card-x "winning answer" 2026-08-27T13:00:00Z
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=card-x] winning answer" \
+    "the newest reply should be delivered"
+
+  append_stamped_reply "$home" card-x "first answer" 2026-08-27T11:00:00Z
+  out=$(run_q "$home" reconcile)
+  assert_not_contains "$out" "handled: [id=card-x] first answer" \
+    "a byte-identical retry of a superseded reply must not run again"
+  [ "$(resolved_answer "$home" card-x)" = "winning answer" ] \
+    || fail "a superseded retry overwrote the stored answer"
+  pass "a retry of a superseded reply is not redelivered"
+}
+
+test_newer_receipt_still_supersedes_a_delivered_answer() {
+  local home out
+  home=$(make_home newer-receipt-conflict)
+  run_q "$home" add --id card-x --question "Which one?" >/dev/null
+  append_stamped_reply "$home" card-x "first answer" 2026-08-27T12:00:00Z
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=card-x] first answer" \
+    "the first winner should be delivered"
+
+  append_stamped_reply "$home" card-x "corrected answer" 2026-08-27T14:00:00Z
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "superseding: [id=card-x] [generation=1] corrected answer" \
+    "a newer receipt should still supersede the delivered answer"
+  assert_contains "$out" "handled: [id=card-x] corrected answer" \
+    "the newer winner should be delivered"
+  [ "$(resolved_answer "$home" card-x)" = "corrected answer" ] \
+    || fail "the newer answer was not stored"
+  pass "a newer receipt still supersedes an already delivered answer"
+}
+
 test_conflicting_replies_rank_timestamp_then_log_order() {
   local home out handled_count
   home=$(make_home conflicting-replies)
@@ -1403,7 +1475,7 @@ test_pending_group_winner_is_not_superseding() {
   [ "$(resolved_answer "$home" card-a)" = "newer pending winner" ] \
     || fail "the pending group winner was not persisted"
   jq -e '
-    .delivered_reply_winners == [{
+    (.delivered_reply_winners | map(del(.receipt_ms))) == [{
       line: 2,
       id: "card-a",
       generation: 1,
@@ -1986,6 +2058,9 @@ test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
 test_conflict_ranking_sees_winner_after_orphan
 test_reply_behind_orphan_delivers_after_orphan_clears
+test_older_receipt_cannot_supersede_a_delivered_answer
+test_retry_of_a_superseded_reply_is_not_redelivered
+test_newer_receipt_still_supersedes_a_delivered_answer
 test_conflicting_replies_rank_timestamp_then_log_order
 test_conflicting_reply_crash_replay_delivers_only_the_winner
 test_historical_conflict_preserves_pending_delivery

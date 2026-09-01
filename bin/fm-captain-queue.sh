@@ -296,7 +296,10 @@ read_queue() {
           and (.generation | floor) == .generation)
         and ((.id | type) == "string" and (.id | length) > 0)
         and (.answer | type) == "string"
-        and (.kind == "handled" or .kind == "superseding");
+        and (.kind == "handled" or .kind == "superseding")
+        and ((has("receipt_ms") | not)
+          or (.receipt_ms | type) == "null"
+          or (.receipt_ms | type) == "number");
       def state_touch_epoch:
         (if .state == "resolved" then (.resolved_at // .parked_at // .asked_at)
         elif .state == "parked" then (.parked_at // .asked_at)
@@ -487,7 +490,8 @@ migrate_reply_delivery_tracking() {  # <queue-json> <cursor>
                 id: .id,
                 generation: .generation,
                 answer: .answer,
-                kind: "handled"
+                kind: "handled",
+                receipt_ms: .receipt_ms
               })) as $reconstructed
       | $queue
       | .delivered_reply_winners = (
@@ -891,8 +895,8 @@ drop_delivered_replies() {  # <queue-json> <cursor> -> new queue on stdout
   '
 }
 
-finish_reply_delivery() {  # <id> <generation> <answer> <line> <kind>
-  local id=$1 generation=$2 answer=$3 line=$4 kind=$5
+finish_reply_delivery() {  # <id> <generation> <answer> <line> <kind> <receipt-ms>
+  local id=$1 generation=$2 answer=$3 line=$4 kind=$5 receipt=${6:-null}
   if [ "$kind" = superseding ]; then
     printf 'superseding: [id=%s] [generation=%s] %s\n' "$id" "$generation" "$answer"
   fi
@@ -902,7 +906,8 @@ finish_reply_delivery() {  # <id> <generation> <answer> <line> <kind>
     --argjson generation "$generation" \
     --arg answer "$answer" \
     --argjson line "$line" \
-    --arg kind "$kind" '
+    --arg kind "$kind" \
+    --argjson receipt "$receipt" '
       .pending_reply_deliveries = [
         (.pending_reply_deliveries // [])[] | select(.line > $line)
       ]
@@ -914,7 +919,8 @@ finish_reply_delivery() {  # <id> <generation> <answer> <line> <kind>
               id: $id,
               generation: $generation,
               answer: $answer,
-              kind: $kind
+              kind: $kind,
+              receipt_ms: $receipt
             }]
         )
       | .reply_delivery_tracking = true
@@ -1051,6 +1057,7 @@ build_reply_plan() {  # <queue-json> <cursor> -> plan JSON on stdout
 cmd_reconcile() {
   local cursor queue pruned plan blocker_line line entry n id generation answer stamp winner_line
   local reply_kind delivery_kind delivered_kind prior_delivered_line prior_delivered_answer replacement_kind
+  local receipt_ms prior_delivered_receipt outranks_delivered
   local needs_migration
   local orphan=0 orphan_id="" orphan_answer=""
   acquire_queue_lock
@@ -1108,9 +1115,28 @@ cmd_reconcile() {
             | select(.id == $id and .generation == $generation)
             | .answer][0] // ""
         ')
+      receipt_ms=$(printf '%s\n' "$entry" | jq -r '.receipt_ms // -1')
+      prior_delivered_receipt=$(printf '%s\n' "$queue" | jq -r \
+        --arg id "$id" --argjson generation "$generation" '
+          [.delivered_reply_winners[]?
+            | select(.id == $id and .generation == $generation)
+            | (.receipt_ms // -1)][0] // -1
+        ')
       replacement_kind=handled
+      outranks_delivered=1
       if [ "$prior_delivered_line" -gt 0 ] && [ "$prior_delivered_answer" != "$answer" ]; then
         replacement_kind=superseding
+        outranks_delivered=$(printf '%s\n' "$queue" | jq -r \
+          --argjson receipt "$receipt_ms" \
+          --argjson prior "$prior_delivered_receipt" \
+          --argjson line "$n" \
+          --argjson prior_line "$prior_delivered_line" '
+            if $receipt > $prior then 1
+            elif $receipt < $prior then 0
+            elif $line > $prior_line then 1
+            else 0
+            end
+          ')
       fi
       delivered_kind=$(printf '%s\n' "$queue" | jq -r \
         --arg id "$id" \
@@ -1155,9 +1181,17 @@ cmd_reconcile() {
         queue=$(drop_delivered_replies "$queue" "$cursor") \
           || die 1 "failed to clear duplicate delivered reply"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to clear duplicate delivered reply"
+      elif [ "$replacement_kind" = superseding ] && [ "$outranks_delivered" -eq 0 ]; then
+        printf 'superseded: [id=%s] [generation=%s] [winner-line=%s] %s\n' \
+          "$id" "$generation" "$prior_delivered_line" "$answer"
+        write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
+        cursor=$n
+        queue=$(drop_delivered_replies "$queue" "$cursor") || die 1 "failed to clear superseded reply"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to clear superseded reply"
+        continue
       elif [ -n "$delivery_kind" ] \
           && { [ "$n" -eq "$winner_line" ] || [ "$reply_kind" = stale ]; }; then
-        finish_reply_delivery "$id" "$generation" "$answer" "$n" "$delivery_kind"
+        finish_reply_delivery "$id" "$generation" "$answer" "$n" "$delivery_kind" "$receipt_ms"
       elif [ "$n" -ne "$winner_line" ]; then
         printf 'superseded: [id=%s] [generation=%s] [winner-line=%s] %s\n' \
           "$id" "$generation" "$winner_line" "$answer"
@@ -1175,7 +1209,7 @@ cmd_reconcile() {
         queue=$(apply_handled "$queue" "$id" "$generation" "$answer" "$stamp" "$n") \
           || die 1 "failed to resolve $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
-        finish_reply_delivery "$id" "$generation" "$answer" "$n" handled
+        finish_reply_delivery "$id" "$generation" "$answer" "$n" handled "$receipt_ms"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" --arg answer "$answer" \
           'any(.records[];
             .id == $id and .state == "resolved"
@@ -1185,7 +1219,7 @@ cmd_reconcile() {
         queue=$(record_reply_delivery "$queue" "$id" "$generation" "$answer" "$n" handled) \
           || die 1 "failed to retain delivery for $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to retain delivery for $id"
-        finish_reply_delivery "$id" "$generation" "$answer" "$n" handled
+        finish_reply_delivery "$id" "$generation" "$answer" "$n" handled "$receipt_ms"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" '
           any(.records[];
             .id == $id and .state == "resolved"
@@ -1195,7 +1229,7 @@ cmd_reconcile() {
         queue=$(record_reply_delivery "$queue" "$id" "$generation" "$answer" "$n" "$replacement_kind") \
           || die 1 "failed to retain delivery for $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to retain delivery for $id"
-        finish_reply_delivery "$id" "$generation" "$answer" "$n" "$replacement_kind"
+        finish_reply_delivery "$id" "$generation" "$answer" "$n" "$replacement_kind" "$receipt_ms"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
           'any(.records[];
             .id == $id and .state == "resolved" and .generation == $generation
@@ -1205,14 +1239,14 @@ cmd_reconcile() {
           "$queue" "$id" "$generation" "$answer" "$stamp" "$n" "$replacement_kind") \
           || die 1 "failed to supersede $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
-        finish_reply_delivery "$id" "$generation" "$answer" "$n" "$replacement_kind"
+        finish_reply_delivery "$id" "$generation" "$answer" "$n" "$replacement_kind" "$receipt_ms"
       elif [ "$replacement_kind" = superseding ] && printf '%s\n' "$queue" | jq -e \
           --arg id "$id" --argjson generation "$generation" \
           'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; then
         queue=$(record_reply_delivery "$queue" "$id" "$generation" "$answer" "$n" superseding) \
           || die 1 "failed to retain historical supersession for $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to retain historical supersession for $id"
-        finish_reply_delivery "$id" "$generation" "$answer" "$n" superseding
+        finish_reply_delivery "$id" "$generation" "$answer" "$n" superseding "$receipt_ms"
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
           'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; then
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
