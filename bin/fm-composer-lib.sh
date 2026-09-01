@@ -1754,6 +1754,15 @@ _fm_composer_omp_strip_edge_rule() {  # <content> <dash> <leading|trailing> -> c
 # and a blank interior is empty, independent of the agent's turn state, because
 # the composer is always the live bottom rule whether the agent is idle or
 # working.
+#
+# The agent must be exactly `omp`, not the wider pi family the pi separated
+# shape accepts. Only OMP draws the titled-top-over-bottom-rule composer, and
+# both identity sources report `omp` for a real OMP worker, so this costs no
+# real detection. A pi transcript, by contrast, renders collapsed titled boxes -
+# a tool-call header row directly above an all-rule closing row with no body -
+# and this shape's turn-state independence would read one as `empty` mid-turn.
+# A pi identity therefore keeps resolving through _fm_composer_pi_verdict and
+# its idle|done|blocked gate.
 _fm_composer_omp_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent raw content state
   if [ "$has_identity" != 1 ]; then
@@ -1770,7 +1779,7 @@ _fm_composer_omp_verdict() {  # <screen> <styled> <has_identity> <identity>
   fi
   agent=${identity%%$'\t'*}
   case "$agent" in
-    omp|pi) ;;
+    omp) ;;
     *) printf 'unknown'; return 0 ;;
   esac
   raw=$(_fm_composer_screen_row "$FM_COMPOSER_SCAN_OMP_BOTTOM" "$screen")

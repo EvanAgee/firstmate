@@ -3269,8 +3269,8 @@ test_composer_state_omp_shape_verdicts_are_safe() {
   # border; the classifier reads the interior content (not a measured width),
   # and the identity gate already proved this is live OMP, so an empty interior
   # is empty and typed text is pending. Malformed (no closing row), stale
-  # (transcript below the pair), unreadable identity, and a non-pi-family
-  # identity all stay unknown so the injection guard defers.
+  # (transcript below the pair), unreadable identity, and any identity other
+  # than `omp` all stay unknown so the injection guard defers.
   one_case() {
     local cid=$1 rows=$2 ag=$3 st=$4 wnt=$5 d l r fbn o
     d="$TMP_ROOT/composer-omp-safe-$cid"; mkdir -p "$d/responses"; l="$d/log"; r="$d/responses"; : > "$l"
@@ -3296,7 +3296,13 @@ test_composer_state_omp_shape_verdicts_are_safe() {
   one_case malformed     'missing OMP closing row'                                  omp        idle    unknown
   one_case stale         '╰─ stale input ─╯\ntranscript continued after stale composer' omp    idle    unknown
   one_case unreadable    '╰─          ─╯'                                            UNREADABLE idle    unknown
-  one_case non-pi-family '╰─          ─╯'                                            claude     idle    unknown
+  one_case non-omp-agent '╰─          ─╯'                                            claude     idle    unknown
+  # Only `omp` resolves this shape. Pi draws a different composer (its separated
+  # rule pair) but its transcript renders collapsed titled boxes with the same
+  # two-row structure, and this shape ignores turn state, so a pi identity must
+  # not reach `empty` here.
+  one_case pi-working    '╰─          ─╯'                                            pi         working unknown
+  one_case pi-idle       '╰─          ─╯'                                            pi         idle    unknown
   # Transcript below the pair keeps it unknown even when that transcript row
   # happens to start or end with a border, rule, pipe, or plus glyph: those are
   # ordinary agent output, not the composer's own furniture.
@@ -3309,7 +3315,7 @@ test_composer_state_omp_shape_verdicts_are_safe() {
   top='+-- GPT-5.6-Sol++ · low · project --+'
   one_case ascii-pair    '+-                                -+'                     omp        idle    unknown
   top=$ascii_top
-  pass "fm_backend_herdr_composer_state: OMP reads empty/typed through native identity, and malformed, stale (including edge-glyph transcript), ascii-family, unreadable, and non-pi-family shapes stay unknown"
+  pass "fm_backend_herdr_composer_state: OMP reads empty/typed through native identity, and malformed, stale (including edge-glyph transcript), ascii-family, unreadable, pi, and other non-omp identities stay unknown"
 }
 
 # Real Pi 0.80.7 on Herdr 0.7.3 renders no prompt glyph and no side border.

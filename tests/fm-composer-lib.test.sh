@@ -330,9 +330,10 @@ test_matrix_omp_two_row_input_border() {
   # interior IS the input area - unlike every other bordered harness, the typed
   # text lives in the bottom border, not a separate content row. The cursor
   # sits on that bottom row. OMP is identity-provable through the same pi-family
-  # probe (tmux foreground process reads omp/pi; herdr `agent get` reports it),
-  # so the verdict is an identity + structure conjunction exactly like pi's
-  # separated shape: structure alone never proves it.
+  # probe (tmux foreground process reads omp; herdr `agent get` reports it), so
+  # the verdict is an identity + structure conjunction exactly like pi's
+  # separated shape: structure alone never proves it. The agent must be exactly
+  # `omp` here, unlike pi's own shape, which accepts the wider family.
   #
   # The top row here is a faithful reduction of the real capture's status bar
   # (model, thinking level, project, branch markers) to prove the titled top
@@ -432,6 +433,25 @@ test_matrix_omp_two_row_input_border() {
   ascii_pair='+-- π > GLM 5.3 Flash > project --+'$'\n''+-                              -+'
   assert_screen "omp ascii pair is not an OMP composer" unknown "$CAPS_STYLED" "$ascii_pair" '' "$omp_idle"
   assert_screen "omp ascii pair is not an OMP composer on tmux" unknown "$CAPS_TMUX" "$ascii_pair" 1 "$omp_idle"
+
+  # Only an `omp` identity may resolve this shape. A pi transcript renders
+  # COLLAPSED titled boxes - a tool-call header row directly above an all-rule
+  # closing row with no body - which is structurally the same two rows OMP draws.
+  # This shape's verdict ignores turn state (OMP's composer is always the live
+  # bottom rule), so accepting the wider pi family would read a mid-turn pi
+  # tool box as `empty`, the verdict that authorizes typing. A pi identity must
+  # keep resolving through the pi separated shape and its idle|done|blocked gate.
+  local collapsed pi_working pi_idle
+  pi_working=$(printf 'pi\tworking')
+  pi_idle=$(printf 'pi\tidle')
+  collapsed=$'Running tool\n╭─ Read(src/app.ts) ─────────────╮\n╰────────────────────────────────╯'
+  assert_screen "a pi tool box is not an OMP composer" unknown "$CAPS_STYLED" "$collapsed" '' "$pi_working"
+  assert_screen "a pi tool box is not an OMP composer on tmux" unknown "$CAPS_TMUX" "$collapsed" 2 "$pi_working"
+  assert_screen "an idle pi tool box is not an OMP composer" unknown "$CAPS_STYLED" "$collapsed" '' "$pi_idle"
+  # The same structure under a live OMP identity still resolves, so restricting
+  # the gate costs no real OMP detection.
+  assert_screen "the same shape with an omp identity still resolves" empty "$CAPS_STYLED" "$collapsed" '' "$omp_idle"
+  assert_screen "the same shape with an omp identity still resolves on tmux" empty "$CAPS_TMUX" "$collapsed" 2 "$omp_idle"
 
   # A draft made only of rule glyphs is real typed input, not furniture: the
   # extractor strips only the structural flanking rule run, so `───` reads
