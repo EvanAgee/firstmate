@@ -1505,7 +1505,7 @@ test_verify_tolerates_answered_hold_archived_out_of_backlog() {
   write_origin_meta "$home" "$id"
   cat > "$home/state/$id.status" <<'EOF'
 needs-decision [key=choice]: choose sample option A or option B
-resolved [key=choice]: captain chose option A
+resolved [key=choice]: answered: captain chose option A
 done: report complete
 EOF
   printf '# Sample archived review\n\nOne choice remained and was answered.\n' > "$home/data/$id/report.md"
@@ -1709,6 +1709,49 @@ test_verify_refuses_when_the_backlog_cannot_be_read() {
   pass "verify treats only a real not-found as archival and refuses when the backlog cannot be read"
 }
 
+# bin/fm-brief.sh tells a mate to append its own `resolved [key=<slug>]: <why it is no
+# longer active>` line when a keyed phase fizzles or a blocker clears without anyone
+# answering, into the very status file this gate reads. That line closes the key for
+# the fold but proves nothing about a captain answer, so an archived hold backed only
+# by a self-close must still fail before teardown erases the source.
+test_verify_refuses_a_mate_self_close_as_an_answer() {
+  local home id hold
+  home=$(make_home self-close-answer)
+  id=sample-selfclose-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the self-close sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create self-close origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample self-close review\n\nThe phase ended with no captain answer.\n' \
+    > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the self-close sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the self-close hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the self-close origin"
+  # The mate closes its own keyed phase. No captain answer, no answer/resolve/decline.
+  {
+    printf 'resolved [key=choice]: no longer active, that branch was abandoned\n'
+    printf 'done: report complete\n'
+  } >> "$home/state/$id.status"
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if run_decisions "$home" verify "$id" > "$home/selfclose.out" 2> "$home/selfclose.err"; then
+    fail "verify accepted a mate's own self-close as proof the captain answered"
+  fi
+  assert_contains "$(cat "$home/selfclose.err")" "$hold" \
+    "the self-close refusal did not name the absent hold, so a different gate refused it"
+
+  # The same origin with a delivered answer on that line passes, so the refusal above
+  # is about the missing answer marker and not about the fixture being broken.
+  printf 'resolved [key=choice]: answered: captain chose option A\n' >> "$home/state/$id.status"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/selfclose-answered.err" \
+    || fail "verify rejected the same archived hold once a delivered answer was recorded: $(cat "$home/selfclose-answered.err")"
+  pass "verify refuses a mate's own self-close but accepts a delivered captain answer"
+}
+
 test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
@@ -1732,3 +1775,4 @@ test_answer_preserves_every_unrouted_close_guard
 test_chat_channel_feeds_the_same_keyed_answer_intake
 test_verify_tolerates_answered_hold_archived_out_of_backlog
 test_verify_refuses_when_the_backlog_cannot_be_read
+test_verify_refuses_a_mate_self_close_as_an_answer

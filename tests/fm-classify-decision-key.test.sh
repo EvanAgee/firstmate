@@ -476,14 +476,31 @@ test_status_key_answered_requires_an_explicit_answer_line() {
   dir=$(case_dir key-answered)
 
   printf 'needs-decision [key=choice]: pick A or B\n' > "$dir/resolved.status"
-  printf 'resolved [key=choice]: captain picked A\n' >> "$dir/resolved.status"
+  printf 'resolved [key=choice]: answered: captain picked A\n' >> "$dir/resolved.status"
   status_key_answered "$dir/resolved.status" choice \
-    || fail "a resolved line was not read as an answer for its key"
+    || fail "a delivered-answer resolved line was not read as an answer for its key"
 
   printf 'needs-decision: [key=choice] pick A or B\n' > "$dir/colon-first.status"
-  printf 'resolved: [key=choice] captain picked A\n' >> "$dir/colon-first.status"
+  printf 'resolved: [key=choice] answered: captain picked A\n' >> "$dir/colon-first.status"
   status_key_answered "$dir/colon-first.status" choice \
-    || fail "a colon-first resolved line was not read as an answer"
+    || fail "a colon-first delivered-answer resolved line was not read as an answer"
+
+  # bin/fm-brief.sh tells a mate to close its own keyed phase with a bare resolved
+  # line when the phase fizzles or a blocker clears on its own. That closes the key
+  # for the fold, but nobody answered, so it must not count here.
+  printf 'needs-decision [key=choice]: pick A or B\n' > "$dir/self-close.status"
+  printf 'resolved [key=choice]: no longer active, that branch was abandoned\n' \
+    >> "$dir/self-close.status"
+  if status_key_answered "$dir/self-close.status" choice; then
+    fail "a mate's own self-close resolved line was read as a captain answer"
+  fi
+
+  # The marker has to open the note, not merely appear somewhere in the prose.
+  printf 'needs-decision [key=choice]: pick A or B\n' > "$dir/prose.status"
+  printf 'resolved [key=choice]: nobody answered: we gave up waiting\n' >> "$dir/prose.status"
+  if status_key_answered "$dir/prose.status" choice; then
+    fail "a self-close whose prose merely contains the marker was read as an answer"
+  fi
 
   # The captain-held transfer records where the decision now lives. It is written
   # for every reviewed key that is still open, so it is not answer evidence.
@@ -500,7 +517,7 @@ test_status_key_answered_requires_an_explicit_answer_line() {
   fi
 
   # Never mentioned: the key does not appear in the status log at all.
-  printf 'needs-decision [key=other]: pick X or Y\nresolved [key=other]: chose X\n' > "$dir/absent.status"
+  printf 'needs-decision [key=other]: pick X or Y\nresolved [key=other]: answered: chose X\n' > "$dir/absent.status"
   if status_key_answered "$dir/absent.status" choice; then
     fail "a key that never appears in the status log was read as answered"
   fi
@@ -511,12 +528,12 @@ test_status_key_answered_requires_an_explicit_answer_line() {
   fi
 
   # A resolved line for a different key must not answer this one.
-  printf 'needs-decision [key=choice]: pick A or B\nresolved [key=elsewhere]: chose that\n' \
+  printf 'needs-decision [key=choice]: pick A or B\nresolved [key=elsewhere]: answered: chose that\n' \
     > "$dir/wrong-key.status"
   if status_key_answered "$dir/wrong-key.status" choice; then
     fail "a resolved line for a different key was read as answering this one"
   fi
-  pass "status_key_answered needs an explicit resolved line for the exact key"
+  pass "status_key_answered needs a delivered-answer resolved line for the exact key"
 }
 
 # A decision key is stable and reusable, so the same key can be answered and then
@@ -528,7 +545,7 @@ test_status_key_answered_follows_the_last_transition() {
 
   {
     printf 'needs-decision [key=choice]: pick A or B\n'
-    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'resolved [key=choice]: answered: captain picked A\n'
     printf 'needs-decision [key=choice]: now pick C or D\n'
     printf 'done: report complete\n'
   } > "$dir/reopened.status"
@@ -538,7 +555,7 @@ test_status_key_answered_follows_the_last_transition() {
 
   {
     printf 'needs-decision [key=choice]: pick A or B\n'
-    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'resolved [key=choice]: answered: captain picked A\n'
     printf 'blocked [key=choice]: cannot proceed until the captain picks again\n'
   } > "$dir/reopened-blocked.status"
   if status_key_answered "$dir/reopened-blocked.status" choice; then
@@ -547,9 +564,9 @@ test_status_key_answered_follows_the_last_transition() {
 
   {
     printf 'needs-decision [key=choice]: pick A or B\n'
-    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'resolved [key=choice]: answered: captain picked A\n'
     printf 'needs-decision [key=choice]: now pick C or D\n'
-    printf 'resolved [key=choice]: captain picked C\n'
+    printf 'resolved [key=choice]: answered: captain picked C\n'
     printf 'done: report complete\n'
   } > "$dir/reanswered.status"
   status_key_answered "$dir/reanswered.status" choice \
@@ -559,7 +576,7 @@ test_status_key_answered_follows_the_last_transition() {
   # erase an earlier real answer.
   {
     printf 'needs-decision [key=choice]: pick A or B\n'
-    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'resolved [key=choice]: answered: captain picked A\n'
     printf 'captain-held [key=choice]: tracked by origin-decision-choice\n'
   } > "$dir/answered-then-held.status"
   status_key_answered "$dir/answered-then-held.status" choice \
@@ -568,7 +585,7 @@ test_status_key_answered_follows_the_last_transition() {
   # A re-open of a different key must not disturb this key's answered verdict.
   {
     printf 'needs-decision [key=choice]: pick A or B\n'
-    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'resolved [key=choice]: answered: captain picked A\n'
     printf 'needs-decision [key=elsewhere]: pick X or Y\n'
   } > "$dir/other-key-reopened.status"
   status_key_answered "$dir/other-key-reopened.status" choice \
@@ -585,14 +602,24 @@ test_status_key_answered_honors_the_reserved_key_guard() {
 
   printf 'needs-decision [key=pending-reply-42]: pending-reply-42: awaiting the mate\n' \
     > "$dir/good.status"
-  printf 'resolved [key=pending-reply-42]: pending-reply-42: the mate answered\n' \
+  printf 'resolved [key=pending-reply-42]: pending-reply-42: answered: the mate replied\n' \
     >> "$dir/good.status"
   status_key_answered "$dir/good.status" pending-reply-42 \
     || fail "a reserved-namespace resolution in its own vocabulary was not read as an answer"
 
   printf 'needs-decision [key=pending-reply-42]: pending-reply-42: awaiting the mate\n' \
     > "$dir/bad.status"
-  printf 'resolved [key=pending-reply-42]: some unrelated note\n' >> "$dir/bad.status"
+  printf 'resolved [key=pending-reply-42]: answered: some unrelated note\n' >> "$dir/bad.status"
+
+  # A reserved key speaking its own vocabulary but closing itself, with no delivered
+  # answer, is still not answered.
+  printf 'needs-decision [key=pending-reply-42]: pending-reply-42: awaiting the mate\n' \
+    > "$dir/self.status"
+  printf 'resolved [key=pending-reply-42]: pending-reply-42: the wait cleared on its own\n' \
+    >> "$dir/self.status"
+  if status_key_answered "$dir/self.status" pending-reply-42; then
+    fail "a reserved-key self-close with no delivered answer was read as an answer"
+  fi
   if status_key_answered "$dir/bad.status" pending-reply-42; then
     fail "a reserved-key resolution with a foreign note was read as an answer"
   fi

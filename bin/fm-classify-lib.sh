@@ -77,6 +77,17 @@ FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 FM_CLASSIFY_RESOLVE_VERB_DEFAULT='resolved'
 FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT='captain-held'
 
+# The note prefix bin/fm-send.sh writes on the resolved line it appends when a
+# captain's answer is DELIVERED. A resolved line is not by itself proof of an
+# answer: bin/fm-brief.sh tells a mate to append its own `resolved [key=<slug>]:
+# <why it is no longer active>` when a keyed phase fizzles or a blocker clears on
+# its own, into the same status file. Only the delivered-answer close carries this
+# marker, so a reader that must prove the CAPTAIN answered matches on it. The
+# writer (fm-send) and the reader (status_key_answered) share this one constant so
+# the two cannot drift apart.
+# shellcheck disable=SC2034 # Read by bin/fm-send.sh, not by this lib's own fold.
+FM_CLASSIFY_ANSWER_NOTE_MARKER='answered:'
+
 # Return the last non-blank line of a status file (empty if missing/blank).
 last_status_line() {
   local f=$1
@@ -529,24 +540,32 @@ status_open_decisions() {  # <status-file>
   printf '%s' "$open"
 }
 
-# Positive answer evidence for ONE decision key: return 0 only when the key's
-# LAST transition in the status stream is an explicit resolve, applying the same
+# Positive evidence that the CAPTAIN answered ONE decision key: return 0 only when
+# the key's LAST transition in the status stream is a resolve whose note carries the
+# delivered-answer marker (FM_CLASSIFY_ANSWER_NOTE_MARKER). It applies the same
 # needs-decision/blocked-opens and resolve-closes rule, key extraction, and
-# reserved-key guard _fm_decision_fold_line uses, so the two can never disagree.
+# reserved-key guard _fm_decision_fold_line uses, so the two never disagree about
+# which lines are transitions - it is strictly stricter about which ones are answers.
+# A bare resolved line closes the key for the fold but is NOT an answer here: a mate
+# writes its own resolved line when a keyed phase fizzles or a blocker clears without
+# anyone answering, so only the marker distinguishes an answer from a self-close.
 # A key is stable and reusable, so a decision answered in round one and re-opened
 # by a later needs-decision or blocked line for the same key is NOT answered: only
 # the final transition counts. The captain-held transfer verb, which also closes a
-# key for the fold, is NOT an answer here: fm-decision-hold.sh writes it for every
-# reviewed key that is still open, so it records where the decision now lives, not
-# that anyone answered it, and it leaves an earlier verdict standing. This is
+# key for the fold, is NOT an answer here either: fm-decision-hold.sh writes it for
+# every reviewed key that is still open, so it records where the decision now lives,
+# not that anyone answered it, and it leaves an earlier verdict standing. This is
 # affirmative, not the inverse of the open set: a key that never appeared in the
 # stream is NOT answered here, unlike merely being absent from
 # status_open_decisions. A consumer that must prove a decision was answered - not
-# just that it is no longer open - uses this.
+# just that it is no longer open - uses this. fm-decision-hold.sh's own
+# answer/resolve/decline paths write no status line at all, so a hold closed purely
+# through them carries no evidence here and is attested through `repair` instead.
 status_key_answered() {  # <status-file> <key>
-  local f=$1 key=$2 line resolve verb line_key answered=0
+  local f=$1 key=$2 line resolve marker verb line_key note answer_note answered=0
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+  marker=$FM_CLASSIFY_ANSWER_NOTE_MARKER
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       *[![:space:]]*) ;;
@@ -559,11 +578,19 @@ status_key_answered() {  # <status-file> <key>
     esac
     line_key=$(_fm_decision_key "$line") || continue
     [ "$line_key" = "$key" ] || continue
-    _fm_decision_key_transition_allowed "$key" "$(status_line_note "$line")" || continue
-    case "$verb" in
-      "$resolve") answered=1 ;;
-      *) answered=0 ;;
-    esac
+    note=$(status_line_note "$line")
+    _fm_decision_key_transition_allowed "$key" "$note" || continue
+    answered=0
+    if [ "$verb" = "$resolve" ]; then
+      answer_note=$note
+      case "$key" in
+        *-) ;;
+        *) answer_note=${answer_note#"$key": } ;;
+      esac
+      case "$answer_note" in
+        "$marker"*) answered=1 ;;
+      esac
+    fi
   done < "$f"
   [ "$answered" = 1 ]
 }

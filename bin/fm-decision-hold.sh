@@ -42,14 +42,17 @@
 # `verify` is read-only and is called by scout teardown so teardown cannot erase a
 # source before this gate has succeeded. A reviewed key whose hold was answered and
 # then trimmed out of the backlog by Done-history retention still passes, but only on
-# positive evidence: the key's LAST status transition must be an explicit resolved
-# line that closed that exact key. The captain-held transfer line is not answer proof
-# - `complete` writes it for every reviewed key that is still open. A key answered in
-# round one and then re-opened by a later needs-decision or blocked line is not
-# answered either, because only its final transition counts. A reviewed key that does
-# not end resolved - one still open, one re-opened, or one that never appeared in the
-# status log at all - must keep a present durable hold, so an absent hold with no
-# answer evidence keeps failing. A hold answered through the direct
+# positive evidence: the key's LAST status transition must be a resolved line closing
+# that exact key AND carrying the `answered:` marker that fm-send.sh writes when a
+# captain's answer is delivered. A bare resolved line without that marker is a mate's
+# own self-close, written when a keyed phase fizzles or a blocker clears on its own,
+# so it is not answer proof. Neither is the captain-held transfer line - `complete`
+# writes it for every reviewed key that is still open. A key answered in round one and
+# then re-opened by a later needs-decision or blocked line is not answered either,
+# because only its final transition counts. A reviewed key without that final answered
+# resolve - one still open, one re-opened, one self-closed, or one that never appeared
+# in the status log at all - must keep a present durable hold, so an absent hold with
+# no answer evidence keeps failing. A hold answered through the direct
 # answer/resolve/decline path, which writes no status line, and then archived is
 # attested through `repair` as before.
 #
@@ -271,33 +274,37 @@ task_show() {  # <id>
   tasks_axi show "$1" --full 2>/dev/null
 }
 
-# Why one hold read failed, phrased to finish "captain decision <id> ...". A backlog
-# that cannot be read is NOT a deleted hold: reporting one as the other would send an
-# operator hunting for a missing item at the exact moment teardown is about to erase a
-# source, so the two are told apart by tasks-axi's own NOT_FOUND code and any other
-# failure carries its payload through. Returns 1 when the read actually succeeded.
-hold_read_failure_reason() {  # <id>
+# Read one hold ONCE and say what came back, as "<verdict>\t<payload>":
+#   ok       + the show output           - the hold is present and readable
+#   absent   + a reason clause           - tasks-axi says NOT_FOUND, so it is really gone
+#   unreadable + a reason clause         - any other failure, payload carried through
+# A backlog that cannot be read is NOT a deleted hold. Reporting one as the other
+# would send an operator hunting for a missing item at the exact moment teardown is
+# about to erase a source, so tasks-axi's own NOT_FOUND code tells them apart. Both
+# reason clauses are phrased to finish "captain decision <id> ...".
+# One read serves both the absence probe and the durability check: splitting them
+# into separate reads costs a second subprocess per key and lets the backlog change
+# between the two, which is how a caller ends up with no reason to report at all.
+read_hold() {  # <id>
   local id=$1 out
-  out=$(tasks_axi show "$id" --full 2>&1) && return 1
+  if out=$(tasks_axi show "$id" --full 2>&1); then
+    printf 'ok\t%s' "$out"
+    return 0
+  fi
   if printf '%s\n' "$out" | grep -qx 'code: NOT_FOUND'; then
-    printf 'is absent from %s/data/backlog.md' "$FM_HOME"
+    printf 'absent\tis absent from %s/data/backlog.md' "$FM_HOME"
   else
-    printf 'could not be read from %s/data/backlog.md: %s' \
+    printf 'unreadable\tcould not be read from %s/data/backlog.md: %s' \
       "$FM_HOME" "$(printf '%s' "$out" | tr '\n' ' ')"
   fi
 }
 
-# 0 only when tasks-axi says the hold is genuinely NOT in the backlog. Every other
-# failure - an unreadable or corrupt backlog, a transient error - returns nonzero, so
-# a caller that tolerates absence cannot mistake a broken read for a missing item and
-# must fall through to the loud verify_hold_durable failure instead.
-hold_is_absent() {  # <id>
-  local reason
-  reason=$(hold_read_failure_reason "$1") || return 1
-  case "$reason" in
-    'is absent from '*) return 0 ;;
-  esac
-  return 1
+hold_read_verdict() {  # <read_hold-output>
+  printf '%s' "${1%%$'\t'*}"
+}
+
+hold_read_payload() {  # <read_hold-output>
+  printf '%s' "${1#*$'\t'}"
 }
 
 show_field() {  # <show-output> <field>
@@ -540,9 +547,11 @@ verify_hold_resolved() {  # <hold-id>
   body_has_resolution_record "$body"
 }
 
-verify_hold_durable() {  # <hold-id>
-  local id=$1 show state held kind hold_kind body
-  show=$(task_show "$id") || fail "captain decision $id $(hold_read_failure_reason "$id")"
+verify_hold_durable() {  # <hold-id> [prior-read_hold-output]
+  local id=$1 read_out=${2:-} show state held kind hold_kind body
+  [ -n "$read_out" ] || read_out=$(read_hold "$id")
+  show=$(hold_read_payload "$read_out")
+  [ "$(hold_read_verdict "$read_out")" = ok ] || fail "captain decision $id $show"
   state=$(show_field "$show" state)
   held=$(show_field "$show" held)
   kind=$(show_field "$show" kind)
@@ -582,11 +591,13 @@ verify_hold_durable() {  # <hold-id>
 # existed. This gate is the last thing standing between scout teardown and deleting a
 # source, so an unreadable backlog must never be mistaken for a trimmed one.
 verify_reviewed_hold() {  # <hold-id> <status-file> <key>
-  local id=$1 status_file=$2 key=$3
-  if hold_is_absent "$id" && status_key_answered "$status_file" "$key"; then
+  local id=$1 status_file=$2 key=$3 read_out
+  read_out=$(read_hold "$id")
+  if [ "$(hold_read_verdict "$read_out")" = absent ] \
+    && status_key_answered "$status_file" "$key"; then
     return 0
   fi
-  verify_hold_durable "$id"
+  verify_hold_durable "$id" "$read_out"
 }
 
 verify_parked_hold() {  # <hold-id> <mode> <until-or-empty> <reason> [allow-expired]
