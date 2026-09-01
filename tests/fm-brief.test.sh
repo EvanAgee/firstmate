@@ -911,3 +911,73 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+
+# Four worker-silence gaps closed on 2026-09-01 after five of fifteen workers
+# stalled without firstmate ever seeing an open decision. Each stall traced to
+# something the scaffold never said, so each fact is pinned here against the
+# generated brief TEXT rather than the script source.
+#   1. An unkeyed needs-decision/blocked line never reaches OPEN DECISIONS.
+#   2. Ending a turn with a validation gate open makes no progress.
+#   3. Appending `resolved` records an answer; it does not do the work.
+#   4. A local dependency or environment failure is the worker's own to fix.
+test_status_protocol_closes_worker_silence_gaps() {
+  local home id mode brief
+  home="$TMP_ROOT/silence-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-silence-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "ship brief --mode $mode failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    assert_grep 'MUST carry `[key=<slug>]`' "$brief" \
+      "$id: ship brief must require a key on every needs-decision and blocked line"
+    assert_grep "An unkeyed line does not reach firstmate as an open decision" "$brief" \
+      "$id: ship brief must say plainly that an unkeyed line never opens a decision"
+    assert_grep 'needs-decision [key=' "$brief" \
+      "$id: ship brief must show the keyed form in its needs-decision example"
+    assert_grep 'blocked [key=' "$brief" \
+      "$id: ship brief must show the keyed form in its blocked example"
+    assert_grep "Recording a decision is not acting on it" "$brief" \
+      "$id: ship brief must separate recording an answer from doing the work"
+    assert_grep "the work it unblocks still has to be done in the same turn" "$brief" \
+      "$id: ship brief must require the answered work to happen in the same turn"
+    assert_grep "broken environment inside your own worktree is yours to fix" "$brief" \
+      "$id: ship brief must make local environment failures the worker's own to fix"
+    assert_grep "Never write a real blocker as a \`working:\` line" "$brief" \
+      "$id: ship brief must forbid hiding a real blocker in a working line"
+  done
+
+  brief="$home/data/brief-silence-no-mistakes/brief.md"
+  assert_grep "While a validation gate is open, the turn is not finished" "$brief" \
+    "no-mistakes DOD must say an open gate leaves the turn unfinished"
+  assert_grep "drive the gate and process every return until it reaches an outcome" "$brief" \
+    "no-mistakes DOD must require driving the gate to an outcome"
+
+  id=brief_silence_scout
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 \
+    || fail "scout brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'MUST carry `[key=<slug>]`' "$brief" \
+    "scout brief must require a key on every needs-decision and blocked line"
+  assert_grep "An unkeyed line does not reach firstmate as an open decision" "$brief" \
+    "scout brief must say plainly that an unkeyed line never opens a decision"
+  assert_grep 'needs-decision [key=' "$brief" \
+    "scout brief must show the keyed form in its needs-decision example"
+  assert_grep 'blocked [key=' "$brief" \
+    "scout brief must show the keyed form in its blocked example"
+  assert_grep "Recording a decision is not acting on it" "$brief" \
+    "scout brief must separate recording an answer from doing the work"
+  assert_grep "the work it unblocks still has to be done in the same turn" "$brief" \
+    "scout brief must require the answered work to happen in the same turn"
+  assert_grep "broken environment inside your own worktree is yours to fix" "$brief" \
+    "scout brief must make local environment failures the worker's own to fix"
+  assert_grep "Never write a real blocker as a \`working:\` line" "$brief" \
+    "scout brief must forbid hiding a real blocker in a working line"
+
+  pass "fm-brief.sh: ship and scout briefs close the four worker-silence gaps"
+}
+
+test_status_protocol_closes_worker_silence_gaps

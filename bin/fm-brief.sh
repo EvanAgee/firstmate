@@ -337,10 +337,16 @@ The report is the only thing that survives, so anything worth keeping must be in
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset):
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
+5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
+   A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
+   Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
+   Never write a real blocker as a \`working:\` line: that hides it from firstmate while nothing is waiting on firstmate either.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   Every \`needs-decision:\` and \`blocked:\` line MUST carry \`[key=<slug>]\`, using a short slug you choose for that question.
+   An unkeyed line does not reach firstmate as an open decision; it reads as ordinary status prose and sits unanswered.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
+   Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
@@ -417,6 +423,8 @@ You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
+While a validation gate is open, the turn is not finished: drive the gate and process every return until it reaches an outcome.
+Ending a turn with a gate still open makes no progress, because nothing is waiting on firstmate and no step is running.
 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
@@ -491,10 +499,16 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
+5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
+   A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
+   Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
+   Never write a real blocker as a \`working:\` line: that hides it from firstmate while nothing is waiting on firstmate either.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
+   append \`needs-decision [key=<slug>]: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
+   Every \`needs-decision:\` and \`blocked:\` line MUST carry \`[key=<slug>]\`, using a short slug you choose for that question.
+   An unkeyed line does not reach firstmate as an open decision; it reads as ordinary status prose and sits unanswered.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
+   Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
