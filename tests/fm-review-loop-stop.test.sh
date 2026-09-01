@@ -54,12 +54,14 @@ test_resolved_round_carries_no_stale_targeting() {
   FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
     || fail "root resolution should succeed"
 
-  # A retry of the resolved head re-adds the cleared cluster. The resolved round
-  # must contribute no stale targeting, so one new round cannot re-trip.
-  record "$home" "$task" "$run" head-b "Round two retried after the root fix." \
-    "defect:x" >/dev/null || fail "a retry of the resolved head should continue"
+  # Both resolved heads are retried. The retries re-report the resolved cluster
+  # but aim elsewhere, so the resolved rounds must contribute no targeting for it.
+  record_raw "$home" "$task" "$run" head-a "Retry of head-a, aimed at z." \
+    --cluster "defect:x" --cluster "defect:z" --targeted "defect:z" >/dev/null \
+    || fail "a retry of the first resolved head should continue"
   set +e
-  record "$home" "$task" "$run" head-c "Root fix applied." "defect:x" >/dev/null 2>&1
+  record_raw "$home" "$task" "$run" head-b "Retry of head-b, aimed at x." \
+    --cluster "defect:x" --targeted "defect:x" >/dev/null 2>&1
   rc=$?
   set -e
   expect_code 0 "$rc" "a resolved cluster must get a full fresh count after root"
@@ -436,17 +438,50 @@ test_untargeted_reconcile_does_not_retroactively_target() {
     --cluster "defect:epsilon" --targeted "defect:epsilon" >/dev/null \
     || fail "one targeted epsilon round must not trip at threshold two"
 
-  # A same-head retry that adds a cluster but names no --targeted must add no
-  # targeting, so epsilon keeps its single targeted round and does not stop.
+  # A same-head retry targets only the clusters it names. It must not reach back
+  # and target epsilon, which head-a deliberately left untargeted.
   set +e
   record_raw "$home" "$task" "$run" head-a "Same head now also carries eta." \
-    --cluster "defect:epsilon" --cluster "defect:zeta" --cluster "defect:eta" >/dev/null 2>&1
+    --cluster "defect:zeta" --cluster "defect:eta" >/dev/null 2>&1
   rc=$?
   set -e
   expect_code 0 "$rc" "an untargeted reconcile must not fabricate a stop"
   [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
-    || fail "an untargeted reconcile retroactively targeted a recorded cluster"
-  pass "review-loop stop: an untargeted reconcile adds no targeting"
+    || fail "a reconcile retroactively targeted a cluster it did not name"
+  pass "review-loop stop: a reconcile targets only the clusters it names"
+}
+
+test_untargeted_retry_counts_like_one_combined_call() {
+  local task=backcompat run=run-backcompat home_one home_split rc_one rc_split
+  home_one=$(make_home backcompat-one "$task")
+  home_split=$(make_home backcompat-split "$task")
+  # No --targeted anywhere. A legacy caller must reach the same outcome whether
+  # both clusters arrive in one call or the second arrives on a same-head retry.
+  record_raw "$home_one" "$task" "$run" head-a "Round one." \
+    --cluster "defect:a" --cluster "defect:b" --threshold 2 >/dev/null \
+    || fail "combined first round should continue"
+  set +e
+  record_raw "$home_one" "$task" "$run" head-b "Round two." \
+    --cluster "defect:b" >/dev/null 2>&1
+  rc_one=$?
+  set -e
+
+  record_raw "$home_split" "$task" "$run" head-a "Round one." \
+    --cluster "defect:a" --threshold 2 >/dev/null \
+    || fail "split first round should continue"
+  record_raw "$home_split" "$task" "$run" head-a "Retry: the gate also returned b." \
+    --cluster "defect:a" --cluster "defect:b" >/dev/null \
+    || fail "untargeted same-head retry should be accepted"
+  set +e
+  record_raw "$home_split" "$task" "$run" head-b "Round two." \
+    --cluster "defect:b" >/dev/null 2>&1
+  rc_split=$?
+  set -e
+
+  expect_code 20 "$rc_one" "the combined untargeted call must trip at threshold two"
+  expect_code "$rc_one" "$rc_split" \
+    "an untargeted retry must count like one combined call"
+  pass "review-loop stop: an untargeted retry counts like one combined call"
 }
 
 test_same_head_retry_keeps_added_targeting() {
@@ -483,6 +518,7 @@ test_untargeted_recurrence_does_not_advance_count
 test_multiple_severities_all_recorded
 test_expanded_same_head_retry_keeps_new_cluster
 test_untargeted_reconcile_does_not_retroactively_target
+test_untargeted_retry_counts_like_one_combined_call
 test_same_head_retry_keeps_added_targeting
 test_resolved_round_carries_no_stale_targeting
 test_threshold_is_configurable

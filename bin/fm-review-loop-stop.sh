@@ -17,21 +17,22 @@
 # a stable defect-identity key assigned by the invoking agent under the skill's
 # definition; pass one per returned finding cluster at any severity.
 #
-# --targeted names each cluster this round's change tried to close. A cluster's
+# --targeted names each cluster this call's change tried to close. A cluster's
 # loop count advances only across a trailing run of rounds where that cluster was
 # both returned and targeted, so a defect that merely reappears without a fix
 # aimed at it is recorded but does not advance toward a stop. Every --targeted
-# value must also be a --cluster of the same record. Omitting --targeted entirely
-# treats every returned cluster as targeted.
+# value must also be a --cluster of the same call. Omitting --targeted entirely
+# targets every cluster this call names.
 #
 # --head makes a retry against an already recorded head idempotent, but only when
-# it adds nothing: its clusters are already in that round and its explicit
-# --targeted values, if any, are already targeted there. A same-head retry that
-# adds a cluster or adds explicit targeting is reconciled into that round (the
-# added clusters and the explicitly named targeted clusters are unioned in and
-# the trip is re-evaluated) so new information is never silently lost. A retry
-# that omits --targeted adds no targeting, so it never marks a cluster the
-# recorded round deliberately left untargeted.
+# it adds nothing: its clusters are already in that round and its targeting is
+# already recorded there. A same-head retry that adds a cluster or adds targeting
+# is reconciled into that round (this call's clusters and targeting are unioned
+# in and the trip is re-evaluated) so new information is never silently lost. A
+# retry only ever targets the clusters it names, so it never marks a stored
+# cluster the recorded round deliberately left untargeted. An untargeted caller
+# therefore reaches the same count whether clusters arrive in one call or across
+# same-head retries.
 #
 # A cluster trips after the configured number of consecutive targeted-and-
 # returned rounds. --threshold sets that number for a new run. Otherwise
@@ -156,7 +157,7 @@ write_report() { # <path> <state-json> <clusters-json>
 
 record_round() { # <task-id> <args...>
   local task=$1 run='' head='' changed='' requested_threshold='' targeted_given=0
-  local clusters='[]' targeted='[]' explicit_targeted='[]'
+  local clusters='[]' targeted='[]'
   local state_file state_json threshold existing_run existing_threshold
   local new_state triggers generation key report round_count missing_target
   shift
@@ -210,13 +211,11 @@ record_round() { # <task-id> <args...>
   [ -z "$requested_threshold" ] || valid_threshold "$requested_threshold" ||
     die "threshold must be a positive integer"
 
-  # No --targeted means the whole round was a fix attempt aimed at every cluster
-  # it returned. An explicit --targeted set must name only returned clusters.
+  # No --targeted means this call was a fix attempt aimed at every cluster it
+  # names. An explicit --targeted set must name only this call's clusters.
   if [ "$targeted_given" -eq 0 ]; then
     targeted=$clusters
-    explicit_targeted='[]'
   else
-    explicit_targeted=$targeted
     missing_target=$(jq -rn --argjson clusters "$clusters" --argjson targeted "$targeted" \
       '($targeted - $clusters) | join(", ")')
     [ -z "$missing_target" ] || die "--targeted names clusters that are not --cluster values: $missing_target"
@@ -263,12 +262,12 @@ record_round() { # <task-id> <args...>
   if printf '%s' "$state_json" | jq -e --arg head "$head" \
     '.rounds[]? | select(.head == $head)' >/dev/null; then
     # A retry against a head we already recorded is idempotent only when it adds
-    # nothing: no new cluster and no explicit targeting the round is missing.
-    # Anything else is reconciled into the round so new information is never
-    # silently dropped. Only explicitly named targeting is unioned in, so a retry
-    # that omits --targeted never retroactively targets a recorded cluster.
+    # nothing: no new cluster and no targeting the round is missing. Anything
+    # else is reconciled into the round so new information is never silently
+    # dropped. Only this call's own targeting is unioned in, so a retry never
+    # targets a stored cluster it does not name.
     if printf '%s' "$state_json" | jq -e --arg head "$head" \
-      --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
+      --argjson clusters "$clusters" --argjson targeted "$targeted" '
       [.rounds[] | select(.head == $head)][-1] as $round
       | (($clusters - $round.clusters) | length == 0)
         and ((($targeted - ($round.targeted // [])) | length) == 0)
@@ -277,7 +276,7 @@ record_round() { # <task-id> <args...>
       return 0
     fi
     new_state=$(printf '%s' "$state_json" | jq -c \
-      --arg head "$head" --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
+      --arg head "$head" --argjson clusters "$clusters" --argjson targeted "$targeted" '
         .rounds |= map(
           if .head == $head then
             .clusters = (.clusters + $clusters | unique)
