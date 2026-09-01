@@ -36,15 +36,16 @@ The second route covers a key the captain answered in chat while it was still op
 There the key's last status transition must be a resolved line closing that exact key and carrying the `answered:` marker that `bin/fm-send.sh` writes when a captain's answer is delivered.
 A bare `resolved [key=...]` line without it is a mate closing its own keyed phase, which `bin/fm-brief.sh` tells mates to do when a phase fizzles or a blocker clears on its own, so it is not proof anyone answered.
 The `captain-held` transfer line is not answer proof either, because `complete` writes one for every reviewed key that is still open.
-A key is stable and reusable, so an answer followed by a later `needs-decision` or `blocked` line re-opens it and it counts as unanswered again.
 This route is never required and can never stand alone as proof of something the close paths did not do; it only adds a case the `answered_keys` record cannot reach.
+
+A key is stable and reusable, so a decision answered in one round can be asked again, and neither route may outrank a live question.
+Both are therefore checked against the same open-decision fold `complete` and `verify` already gate on: a key a later `needs-decision` or `blocked` line re-opened counts as unanswered again, even with a durable `answered_keys` record standing.
 A reviewed key with neither proof, whether still open, re-opened, self-closed, or never seen anywhere, must still have a present, durable hold, so an absent hold with no answer evidence keeps failing the gate.
 The hold must be proven gone, and that takes a `tasks-axi` `NOT_FOUND` read out of a backlog that is still intact.
 `tasks-axi` answers `NOT_FOUND` for a backlog that is missing, empty, or no longer structured exactly as it does for a hold retention trimmed, so a wiped backlog cannot stand in for archival.
-Retention only removes entries and leaves the file's section headings behind, so a readable backlog still carrying its `## Done` heading is a real backlog that simply no longer lists this hold.
+Retention only removes entries and leaves the file's section headings behind, so a readable backlog still carrying a Done heading is a real backlog that simply no longer lists this hold.
+The heading is matched the permissive way `tasks-axi`'s own parser matches it, a level-2 heading whose text begins with `done` case-insensitively, because `tasks-axi` writes back whatever heading a file already had and a sound home may spell it `## Done (last 10)`.
 A backlog that is missing, empty, structurally destroyed, or unreadable fails the gate loudly instead of passing as archival.
-A hold answered through the direct `answer`, `resolve`, or `decline` path writes no status line, and its `answered_keys` record is what proves the answer once retention has archived it.
-A hold closed outside the script entirely is still attested through the existing `repair` path, which records the same `answered_keys` entry.
 The `--force` path remains the explicit captain-approved discard escape hatch.
 
 The `resolve`, `answer`, and `decline` subcommands close active holds, while `repair` attests a hold already closed outside the script.

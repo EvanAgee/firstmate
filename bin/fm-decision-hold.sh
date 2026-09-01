@@ -56,7 +56,8 @@
 # clears on its own, so it is not answer proof. Neither is the captain-held transfer
 # line - `complete` writes it for every reviewed key that is still open. A key answered
 # in round one and then re-opened by a later needs-decision or blocked line is not
-# answered either, because only its final transition counts. A reviewed key with
+# answered either: both routes are checked against the same open-decision fold, so a
+# live question outranks even a standing answered_keys record. A reviewed key with
 # neither proof - one still open, one re-opened, one self-closed, or one that never
 # appeared anywhere - must keep a present durable hold, so an absent hold with no
 # answer evidence keeps failing.
