@@ -1491,9 +1491,23 @@ SH
   assert_contains "$show" "Resolution mode: answered" "the chat-answered hold did not record its close path"
   assert_contains "$show" "Answer: go with option A" "the chat-answered hold lost the captain answer"
   assert_contains "$show" "answer sent to $id" "the chat-answered hold lost its channel provenance"
+  # The real fm-send flow routed through the hold-close path, so the durable proof
+  # the archival gate reads is the origin's answered_keys, not any status line.
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "chat-choice" \
+    "the real fm-send answer did not durably record answered_keys"
   run_decisions "$home" verify "$id" >/dev/null \
     || fail "a chat-answered decision did not satisfy the completion gate"
-  pass "the chat channel feeds the same keyed-answer intake a captured review does"
+
+  # Retention trims the answered Done hold; the fm-send-answered decision must still
+  # clear the gate end to end, on the durable answered_keys record alone.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+    fail "the archival step did not remove the fm-send-answered hold from the backlog"
+  fi
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/chat-archived.err" \
+    || fail "verify rejected an fm-send-answered hold after archival: $(cat "$home/chat-archived.err")"
+  pass "the chat channel feeds the same keyed-answer intake and clears the gate after archival"
 }
 
 # Done history is trimmed to a bounded recent window, so a captain hold that was
