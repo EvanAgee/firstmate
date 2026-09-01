@@ -24,17 +24,13 @@
 # value must also be a --cluster of the same call. Omitting --targeted entirely
 # targets every cluster this call names.
 #
-# --head makes a retry against an already recorded head idempotent, but only when
-# it adds nothing: its clusters are already in that round and its targeting is
-# already recorded there. Any other same-head retry is reconciled into that
-# round and the trip is re-evaluated, so new information is never silently lost.
-# A reconcile splits this call's clusters into the ones it newly adds and the
-# ones the round already stored. It decides targeting only for the newly added
-# clusters, under the same rule a fresh round uses. Targeting already stored for
-# a cluster stands untouched, so a retry never marks a cluster the recorded round
-# deliberately left untargeted. A reconcile also replaces the round's --changed
-# summary with this call's. An untargeted caller therefore reaches the same count
-# whether clusters arrive in one call or across same-head retries.
+# --head identifies the reviewed commit, and a record against an already recorded
+# head has exactly two outcomes. It is an idempotent no-op when it adds nothing:
+# its clusters are already in that round and its explicit --targeted values, if
+# any, are already targeted there. This is what makes a crash-recovery replay
+# safe. It is an error when it would add a cluster or new targeting, because a
+# fix round produces a new commit; record those clusters against the current
+# head instead. A recorded round is never rewritten.
 #
 # A cluster trips after the configured number of consecutive targeted-and-
 # returned rounds. --threshold sets that number for a new run. Otherwise
@@ -50,9 +46,10 @@
 # resolve records only a decision already supplied by firstmate. Both choices
 # archive the stop, clear the reported clusters from both the returned and the
 # targeted set of every prior round, and preserve active streaks for every other
-# cluster. A later same-head retry that re-adds a resolved cluster therefore
-# starts a genuinely fresh count. This command never chooses a path or
-# drives no-mistakes itself.
+# cluster. Each round remembers which of its clusters were resolved away, so a
+# later replay of a decided head stays an idempotent no-op instead of reviving
+# the stop. The resolved clusters start a fresh count from the next recorded
+# head. This command never chooses a path or drives no-mistakes itself.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -159,7 +156,7 @@ write_report() { # <path> <state-json> <clusters-json>
 
 record_round() { # <task-id> <args...>
   local task=$1 run='' head='' changed='' requested_threshold='' targeted_given=0
-  local clusters='[]' targeted='[]'
+  local clusters='[]' targeted='[]' explicit_targeted='[]'
   local state_file state_json threshold existing_run existing_threshold
   local new_state triggers generation key report round_count missing_target
   shift
@@ -217,7 +214,9 @@ record_round() { # <task-id> <args...>
   # names. An explicit --targeted set must name only this call's clusters.
   if [ "$targeted_given" -eq 0 ]; then
     targeted=$clusters
+    explicit_targeted='[]'
   else
+    explicit_targeted=$targeted
     missing_target=$(jq -rn --argjson clusters "$clusters" --argjson targeted "$targeted" \
       '($targeted - $clusters) | join(", ")')
     [ -z "$missing_target" ] || die "--targeted names clusters that are not --cluster values: $missing_target"
@@ -263,39 +262,22 @@ record_round() { # <task-id> <args...>
 
   if printf '%s' "$state_json" | jq -e --arg head "$head" \
     '.rounds[]? | select(.head == $head)' >/dev/null; then
-    # A reconcile decides targeting only for the clusters this call newly adds
-    # to the round. Targeting already stored for a cluster from an earlier call
-    # stands untouched, so a retry never marks a cluster the recorded round
-    # deliberately left untargeted. A retry that adds no cluster and no missing
-    # targeting is a no-op.
+    # A retry of an already recorded head repeats a review round we have. It is
+    # an idempotent no-op when it adds nothing, and an error when it would add a
+    # cluster or targeting, because a fix round produces a new head to record
+    # against instead.
     if printf '%s' "$state_json" | jq -e --arg head "$head" \
-      --argjson clusters "$clusters" --argjson targeted "$targeted" \
-      --argjson given "$targeted_given" '
+      --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
       [.rounds[] | select(.head == $head)][-1] as $round
-      | ($clusters - $round.clusters) as $new_clusters
-      | (if $given == 1 then ($targeted - ($targeted - $new_clusters))
-         else $new_clusters end) as $new_targeted
-      | (($new_clusters | length) == 0)
-        and (($new_targeted | length) == 0)
-        and ((($targeted - ($round.targeted // [])) | length) == 0)
+      | (($round.clusters + ($round.resolved // []))) as $recorded
+      | (($round.targeted // []) + ($round.resolved // [])) as $aimed
+      | ((($clusters - $recorded) | length) == 0)
+        and ((($targeted - $aimed) | length) == 0)
     ' >/dev/null; then
       printf 'continue: reviewed head %s was already recorded\n' "$head"
       return 0
     fi
-    new_state=$(printf '%s' "$state_json" | jq -c \
-      --arg head "$head" --arg changed "$changed" \
-      --argjson clusters "$clusters" --argjson targeted "$targeted" \
-      --argjson given "$targeted_given" '
-        .rounds |= map(
-          if .head == $head then
-            ($clusters - .clusters) as $new_clusters
-            | (if $given == 1 then ($targeted - ($targeted - $new_clusters))
-               else $new_clusters end) as $new_targeted
-            | .changed = $changed
-            | .clusters = (.clusters + $new_clusters | unique)
-            | .targeted = ((.targeted // []) + $new_targeted | unique)
-          else . end)
-      ')
+    die "reviewed head $head is already recorded with different clusters; record new clusters against the current head"
   else
     new_state=$(printf '%s' "$state_json" | jq -c \
       --arg head "$head" --arg changed "$changed" \
@@ -389,7 +371,9 @@ resolve_stop() { # <task-id> <args...>
     }
     | .generation += 1
     | .rounds |= map(
-        .clusters = (.clusters - $resolved)
+        .resolved = (((.resolved // []) + (.clusters - (.clusters - $resolved)))
+                     | unique)
+        | .clusters = (.clusters - $resolved)
         | .targeted = ((.targeted // []) - $resolved))
     | .surfaced = null
   ')
