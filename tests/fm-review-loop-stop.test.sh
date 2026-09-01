@@ -41,6 +41,33 @@ hold_lock() { # <home> <lock> <ready>
   while :; do sleep 1; done
 }
 
+test_resolved_round_carries_no_stale_targeting() {
+  local task=resolve-residue run=run-resolve-residue home rc
+  home=$(make_home resolve-residue "$task")
+  record "$home" "$task" "$run" head-a "Round one." "defect:x" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  set +e
+  record "$home" "$task" "$run" head-b "Round two." "defect:x" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "two targeted rounds must stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root resolution should succeed"
+
+  # A retry of the resolved head re-adds the cleared cluster. The resolved round
+  # must contribute no stale targeting, so one new round cannot re-trip.
+  record "$home" "$task" "$run" head-b "Round two retried after the root fix." \
+    "defect:x" >/dev/null || fail "a retry of the resolved head should continue"
+  set +e
+  record "$home" "$task" "$run" head-c "Root fix applied." "defect:x" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "a resolved cluster must get a full fresh count after root"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 1 ] \
+    || fail "a resolved round's stale targeting re-surfaced the same cluster"
+  pass "review-loop stop: a resolved round carries no stale targeting"
+}
+
 test_third_round_surfaces_once() {
   local task=sample-loop run=run-a home rc out report
   home=$(make_home tripping "$task")
@@ -457,6 +484,7 @@ test_multiple_severities_all_recorded
 test_expanded_same_head_retry_keeps_new_cluster
 test_untargeted_reconcile_does_not_retroactively_target
 test_same_head_retry_keeps_added_targeting
+test_resolved_round_carries_no_stale_targeting
 test_threshold_is_configurable
 test_ambient_threshold_does_not_override_a_pinned_run
 test_root_decision_starts_a_fresh_count

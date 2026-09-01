@@ -45,8 +45,10 @@
 # retry repairs a missing event but never duplicates one already appended.
 #
 # resolve records only a decision already supplied by firstmate. Both choices
-# archive the stop, clear the reported clusters from prior rounds, and preserve
-# active streaks for every other cluster. This command never chooses a path or
+# archive the stop, clear the reported clusters from both the returned and the
+# targeted set of every prior round, and preserve active streaks for every other
+# cluster. A later same-head retry that re-adds a resolved cluster therefore
+# starts a genuinely fresh count. This command never chooses a path or
 # drives no-mistakes itself.
 set -eu
 
@@ -374,7 +376,9 @@ resolve_stop() { # <task-id> <args...>
       report: .surfaced.report
     }
     | .generation += 1
-    | .rounds |= map(.clusters = (.clusters - $resolved))
+    | .rounds |= map(
+        .clusters = (.clusters - $resolved)
+        | .targeted = ((.targeted // []) - $resolved))
     | .surfaced = null
   ')
   atomic_write "$state_file" "$state_json" || die "could not save review-loop resolution"
