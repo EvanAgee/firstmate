@@ -1,9 +1,9 @@
 ---
 name: diagnostic-reasoning
 description: >-
-  Agent-only procedure for diagnosing reported bugs.
-  Use before scoping a reported bug and before acting on a diagnostic report.
-  Owns end-user-aligned reproduction, causal separation, divergent-path and history inspection, counterfactual testing, and disconfirming evidence.
+  Agent-only procedure for diagnosing reports of broken behavior.
+  Use before scoping a reported bug, before acting on a diagnostic report, runtime alert, monitoring signal, outage report, failing scheduled check, or triage summary, and before repeating any second-hand claim about a cause as established fact.
+  Owns end-user-aligned reproduction, causal separation, divergent-path and history inspection, counterfactual testing, disconfirming evidence, and the second-hand claim rule.
 user-invocable: false
 metadata:
   internal: true
@@ -12,8 +12,28 @@ metadata:
 # diagnostic-reasoning
 
 Use this procedure before scoping a reported bug and before acting on a diagnostic report.
+A runtime alert, monitoring signal, outage report, failing scheduled check, or triage summary is a report of broken behavior and carries the same trigger; the arriving format does not change the procedure owed.
 This skill is the single owner of Firstmate's bug-diagnosis reasoning procedure.
 Firstmate applies it when briefing delegated investigation and evaluating the resulting evidence, without taking over project-specific investigation itself.
+
+## Never repeat a second-hand claim as fact
+
+A claim written by a triage post, an alert body, an issue comment, a worker status line, a report, or a prior session is an assertion, not an observation.
+Verify it against the live system, the run history, or the code before repeating it to the captain, carrying it into an issue, or reasoning from it.
+This applies to any factual claim, including one you wrote yourself in an earlier turn.
+
+Three checks, each cheap, each earned by a real failure:
+
+- **Is it current?**
+  A closed issue may be shipped rather than abandoned; check the merge and the code before calling the work missing.
+- **Is it a pattern or a single event?**
+  "Fifth time this month" needs the actual run history, not a sentence asserting it.
+- **Is the evidence real or absent?**
+  An empty field is a missing observation, never proof of an empty result; read the producing code before treating any value as evidence.
+
+One observation is not a pattern, and a transient failure can heal itself between the alert and the investigation.
+Re-observe before declaring any failure permanent, and before recommending an action a person cannot undo.
+When a claim cannot be verified, say it is unverified in the same sentence that carries it, never in a later qualification.
 
 ## Establish the observed behavior
 
