@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/fm-api.test.sh - localhost API front door: health, bind, config, lifecycle,
-# the fleet snapshot read, write token, captain notes, worker relays, decision answers, and rung toggles.
+# the fleet snapshot read, write token, captain replies, captain notes, worker relays, decision answers, and rung toggles.
 #
 # Speaks real HTTP against a throwaway firstmate home. Does not read the live
 # home and does not inspect server source.
@@ -19,6 +19,13 @@ split_http() {
   HTTP_BODY=
   IFS= read -r HTTP_CODE || true
   HTTP_BODY=$(cat)
+}
+
+post_captain_reply() {  # <port> <token> <json-body>
+  local port=$1 token=$2 body=$3 resp
+  resp=$(HTTP_BODY="$body" HTTP_AUTHORIZATION="Bearer $token" \
+    fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
 }
 
 write_fleet_fixture() {  # <home>
@@ -626,6 +633,390 @@ EOF
   pass "a clarifying question-back stays a captain note and does not close a hold"
 }
 
+test_captain_reply_requires_generation_and_persists_it() {
+  local home port token resp record queue
+  home=$(fm_test_api_home api-captain-reply)
+  cat > "$home/data/captain-queue.json" <<'EOF'
+{
+  "updated_at": "2026-08-31T18:00:00Z",
+  "records": [{
+    "id": "sample-decision",
+    "num": 1,
+    "generation": 7,
+    "question": "Approve?",
+    "state": "open"
+  }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"id":"sample-decision","answer":"approve"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 400 ] \
+    || fail "captain reply without generation status $HTTP_CODE, wanted 400: $HTTP_BODY"
+  HTTP_BODY='{"id":"sample-decision","generation":7,"answer":"approve"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "generation-bound captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  record=$(tail -n 1 "$home/state/captain-replies.jsonl")
+  [ "$(json_query "$record" 'd.id')" = sample-decision ] \
+    || fail "persisted captain reply lost its id: $record"
+  [ "$(json_query "$record" 'd.generation')" = 7 ] \
+    || fail "persisted captain reply lost its generation: $record"
+  [ "$(json_query "$record" 'd.answer')" = approve ] \
+    || fail "persisted captain reply lost its answer: $record"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  printf '%s\n' "$queue" | grep -F 'check: captain-reply' >/dev/null \
+    || fail "captain reply did not queue its wake: $queue"
+  fm_test_api_stop "$home"
+  pass "captain replies require and persist their card generation"
+}
+
+test_captain_reply_validates_card_and_generation_before_append() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (captain reply target validation)"; return 0; }
+
+  local home port token resp out now queue
+  home=$(fm_test_api_home api-captain-reply-target)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id current-card --question "First question?" >/dev/null
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id current-card --question "Current question?" >/dev/null
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  HTTP_BODY='{"id":"ghost-card","generation":1,"answer":"ghost"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 404 ] \
+    || fail "unknown captain card status $HTTP_CODE, wanted 404: $HTTP_BODY"
+  HTTP_BODY='{"id":"current-card","generation":3,"answer":"future"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 409 ] \
+    || fail "future captain generation status $HTTP_CODE, wanted 409: $HTTP_BODY"
+  [ ! -f "$home/state/captain-replies.jsonl" ] \
+    || fail "rejected captain replies changed the reply log"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -z "$queue" ] || fail "rejected captain replies queued a wake: $queue"
+
+  HTTP_BODY='{"id":"current-card","generation":1,"answer":"late answer"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "real stale captain generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  HTTP_BODY='{"id":"current-card","generation":2,"answer":"current answer"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "current captain generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "validated captain replies did not reconcile: $out"
+  assert_contains "$out" "stale: [id=current-card] [generation=1] late answer" \
+    "a real prior generation should keep stale-reply handling"
+  assert_contains "$out" "handled: [id=current-card] current answer" \
+    "the current generation should still resolve"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 2 ] \
+    || fail "validated replies did not advance the cursor"
+  pass "captain reply validation rejects ghosts and future generations"
+}
+
+test_captain_reply_uses_legacy_reopen_generation() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (legacy captain generation)"; return 0; }
+
+  local home port token resp generations
+  home=$(fm_test_api_home api-captain-reply-legacy-reopen)
+  cat > "$home/data/captain-queue.json" <<'EOF'
+{
+  "updated_at": "2026-08-31T18:00:00Z",
+  "items": [{
+    "id": "legacy-reopened-card",
+    "question": "New question?",
+    "asked_at": "2026-08-31T18:00:00Z",
+    "status": "open"
+  }],
+  "resolved": [{
+    "id": "legacy-reopened-card",
+    "question": "Old question?",
+    "answer": "old answer",
+    "resolved_at": "2026-08-30T18:00:00Z",
+    "status": "resolved"
+  }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  post_captain_reply "$port" "$token" \
+    '{"id":"legacy-reopened-card","generation":3,"answer":"future"}'
+  [ "$HTTP_CODE" = 409 ] \
+    || fail "legacy future generation status $HTTP_CODE, wanted 409: $HTTP_BODY"
+  post_captain_reply "$port" "$token" \
+    '{"id":"legacy-reopened-card","generation":1,"answer":"delayed old answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "legacy prior generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  post_captain_reply "$port" "$token" \
+    '{"id":"legacy-reopened-card","generation":2,"answer":"new answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "legacy current generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  generations=$(jq -c '[.generation]' "$home/state/captain-replies.jsonl")
+  [ "$generations" = $'[1]\n[2]' ] \
+    || fail "legacy reply API persisted the wrong generations: $generations"
+  pass "captain reply API uses the legacy reopen successor generation"
+}
+
+test_captain_reply_appends_after_newline_less_record_and_reconciles() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (captain reply reconcile)"; return 0; }
+
+  local home port token resp out now
+  home=$(fm_test_api_home api-captain-reply-newline)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id first-newline-less-reply --question "First answer?" >/dev/null
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id second-api-reply --question "Second answer?" >/dev/null
+  printf '%s' \
+    '{"id":"first-newline-less-reply","generation":1,"answer":"first","at":"2026-08-31T18:00:00Z"}' \
+    > "$home/state/captain-replies.jsonl"
+
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  HTTP_BODY='{"id":"second-api-reply","generation":1,"answer":"second"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "captain reply append status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "newline-less reply log did not reconcile: $out"
+  assert_contains "$out" "handled: [id=first-newline-less-reply] first" \
+    "reconcile should handle the existing newline-less reply"
+  assert_contains "$out" "handled: [id=second-api-reply] second" \
+    "reconcile should handle the API-appended reply"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 2 ] \
+    || fail "reconcile did not advance past both framed replies"
+  [ "$(jq '[.records[] | select(.state == "resolved")] | length' \
+    "$home/data/captain-queue.json")" = 2 ] \
+    || fail "reconcile did not resolve both framed replies"
+  pass "captain reply append frames and reconciles after a newline-less record"
+}
+
+test_captain_reply_retry_after_wake_failure_appends_once() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (captain reply retry reconcile)"; return 0; }
+
+  local home port token resp out now handled_count
+  home=$(fm_test_api_home api-captain-reply-retry)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id retry-card --question "Retry answer?" >/dev/null
+  mkdir "$home/state/.wake-queue"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  HTTP_BODY='{"id":"retry-card","generation":1,"answer":"run once"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 500 ] \
+    || fail "wake-failing captain reply status $HTTP_CODE, wanted 500: $HTTP_BODY"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 1 ] \
+    || fail "the failed wake did not leave exactly one durable captain reply"
+
+  rmdir "$home/state/.wake-queue"
+  HTTP_BODY='{"id":"retry-card","generation":1,"answer":"run once"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "retried captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 1 ] \
+    || fail "retry appended an identical captain reply twice"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "retried captain reply did not reconcile: $out"
+  handled_count=$(printf '%s\n' "$out" | grep -cF 'handled: [id=retry-card] run once' || true)
+  [ "$handled_count" = 1 ] \
+    || fail "retried captain reply was delivered $handled_count times: $out"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 1 ] \
+    || fail "retried captain reply did not advance exactly one log line"
+  pass "captain reply retry after wake failure appends and delivers once"
+}
+
+test_captain_reply_refuses_a_malformed_existing_log() {
+  local home port token resp before after queue
+  home=$(fm_test_api_home api-captain-reply-malformed-log)
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-08-31T18:00:00Z \
+    "$ROOT/bin/fm-captain-queue.sh" add \
+    --id malformed-log-card --question "Can this answer append?" >/dev/null
+  printf '{not-json}\n' > "$home/state/captain-replies.jsonl"
+  before=$(cat "$home/state/captain-replies.jsonl")
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  HTTP_BODY='{"id":"malformed-log-card","generation":1,"answer":"blocked"}' \
+    HTTP_AUTHORIZATION="Bearer $token" \
+    resp=$(fm_test_api_http "$port" /captain-queue/reply POST)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 500 ] \
+    || fail "malformed reply log status $HTTP_CODE, wanted 500: $HTTP_BODY"
+  after=$(cat "$home/state/captain-replies.jsonl")
+  [ "$after" = "$before" ] || fail "the API appended behind a malformed reply record"
+  queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
+  [ -z "$queue" ] || fail "a rejected malformed-log append queued a wake: $queue"
+  fm_test_api_stop "$home"
+  pass "captain replies fail closed on a malformed existing log"
+}
+
+test_captain_reply_accepts_only_consumed_legacy_records() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (consumed legacy captain replies)"; return 0; }
+
+  local home port token out before after
+  home=$(fm_test_api_home api-captain-reply-consumed-legacy)
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-09-01T18:00:00Z \
+    "$ROOT/bin/fm-captain-queue.sh" add \
+    --id consumed-legacy-card --question "Can this answer append?" >/dev/null
+  printf '%s\n' \
+    '{"id":"old-generation","answer":"old","generation":"one","extra":true}' \
+    '{"id":"old-offset","answer":"old","at":"2026-08-20T12:59:59.500-05:00","extra":true}' \
+    > "$home/state/captain-replies.jsonl"
+  printf '2\n' > "$home/state/captain-replies.cursor"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"consumed-legacy-card","generation":1,"answer":"accepted after legacy"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "consumed legacy reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 3 ] \
+    || fail "valid reply was not appended after consumed legacy records"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-09-01T18:00:00Z \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "reply after consumed legacy records did not reconcile: $out"
+  assert_contains "$out" "handled: [id=consumed-legacy-card] accepted after legacy" \
+    "consumed legacy records should not block the appended answer"
+
+  printf '%s\n' \
+    '{"id":"unconsumed-invalid","answer":"bad","generation":"one"}' \
+    >> "$home/state/captain-replies.jsonl"
+  before=$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')
+  post_captain_reply "$port" "$token" \
+    '{"id":"consumed-legacy-card","generation":1,"answer":"blocked after invalid"}'
+  [ "$HTTP_CODE" = 500 ] \
+    || fail "unconsumed malformed reply status $HTTP_CODE, wanted 500: $HTTP_BODY"
+  after=$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')
+  [ "$after" = "$before" ] || fail "API appended behind an unconsumed malformed record"
+  fm_test_api_stop "$home"
+  pass "captain reply API preserves only consumed legacy records"
+}
+
+test_conflicting_api_replies_deliver_only_the_latest_receipt() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (conflicting captain replies)"; return 0; }
+
+  local home port token out now
+  home=$(fm_test_api_home api-captain-reply-conflict)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id conflicting-card --question "Which answer wins?" >/dev/null
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"conflicting-card","generation":1,"answer":"first answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "first conflicting reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  post_captain_reply "$port" "$token" \
+    '{"id":"conflicting-card","generation":1,"answer":"latest answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "latest conflicting reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "conflicting captain replies did not reconcile: $out"
+  assert_contains "$out" \
+    "superseded: [id=conflicting-card] [generation=1] [winner-line=2] first answer" \
+    "the earlier conflicting reply should be explicit superseded evidence"
+  assert_contains "$out" "handled: [id=conflicting-card] latest answer" \
+    "the latest receipt should be the only handled answer"
+  assert_not_contains "$out" "handled: [id=conflicting-card] first answer" \
+    "the superseded reply must not be handled"
+  [ "$(tr -cd '0-9' < "$home/state/captain-replies.cursor")" = 2 ] \
+    || fail "conflicting replies did not advance the cursor past both records"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 2 ] \
+    || fail "conflicting reply evidence was removed from the durable log"
+  [ "$(jq -r '.records[0].answer' "$home/data/captain-queue.json")" = "latest answer" ] \
+    || fail "the resolved card did not retain the winning answer"
+  pass "conflicting API replies retain evidence and handle only the latest receipt"
+}
+
+test_later_conflicting_reply_explicitly_supersedes_a_handled_answer() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (later superseding captain reply)"; return 0; }
+
+  local home port token out now
+  home=$(fm_test_api_home api-captain-reply-late-conflict)
+  now=2026-08-31T18:00:00Z
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
+    --id late-conflict-card --question "Can this answer change?" >/dev/null
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"late-conflict-card","generation":1,"answer":"initial answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "initial captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "initial captain reply did not reconcile: $out"
+  assert_contains "$out" "handled: [id=late-conflict-card] initial answer" \
+    "the initial answer should be surfaced"
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"late-conflict-card","generation":1,"answer":"replacement answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "superseding captain reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "superseding captain reply did not reconcile: $out"
+  assert_contains "$out" \
+    "superseding: [id=late-conflict-card] [generation=1] replacement answer" \
+    "the later winner should identify itself as superseding"
+  assert_contains "$out" "handled: [id=late-conflict-card] replacement answer" \
+    "the later winner should be surfaced once"
+  [ "$(jq -r '.records[0].answer' "$home/data/captain-queue.json")" = "replacement answer" ] \
+    || fail "the later winner did not replace the recorded answer"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 2 ] \
+    || fail "the superseded answer was removed from the durable log"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "repeat reconcile after superseding answer failed: $out"
+  [ -z "$out" ] || fail "the superseding answer surfaced more than once: $out"
+  pass "a later conflicting reply explicitly supersedes one handled answer"
+}
+
 # A crew-dispatch config with one class rig (two rungs, both on) and a default
 # ladder (two rungs). Used by the rung-toggle tests below.
 write_rung_fixture() {  # <home>
@@ -1223,6 +1614,15 @@ test_captain_note_with_token_lands_in_wake_queue
 test_captain_note_accepts_a_backlog_only_hold
 test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
+test_captain_reply_requires_generation_and_persists_it
+test_captain_reply_validates_card_and_generation_before_append
+test_captain_reply_uses_legacy_reopen_generation
+test_captain_reply_appends_after_newline_less_record_and_reconciles
+test_captain_reply_retry_after_wake_failure_appends_once
+test_captain_reply_refuses_a_malformed_existing_log
+test_captain_reply_accepts_only_consumed_legacy_records
+test_conflicting_api_replies_deliver_only_the_latest_receipt
+test_later_conflicting_reply_explicitly_supersedes_a_handled_answer
 test_worker_relay_without_token_is_unauthorized
 test_worker_relay_with_token_lands_in_wake_queue
 test_worker_relay_unknown_task_is_not_found

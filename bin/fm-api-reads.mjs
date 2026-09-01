@@ -5,8 +5,7 @@
 // GET /captain-queue reads data/captain-queue.json cards firstmate wrote for
 // the captain. It does not scan worker status files. An ordinary
 // needs-decision is firstmate's to handle and never appears here.
-// This file is also the one owner of captain-card option rules: every card
-// that ships must offer real named plain-English choices, recommended first.
+// This file also owns captain-card option handling; the contract is below.
 // Blocked tasks come from fm-classify-lib.sh's scan_open_decisions fold so
 // the API cannot disagree with firstmate.
 // Rigs come from config/crew-dispatch.json, plus the dispatch note, per-rig
@@ -74,12 +73,14 @@ function asItem(row) {
 
 // --- captain-card options ---------------------------------------------------
 //
-// One owner of the board-card options contract. A writer of
-// data/captain-queue.json and GET /captain-queue both use these helpers so a
-// card cannot ship with empty, generic-letter, or jargon options.
+// One owner of the board-card options contract. Writers of
+// data/captain-queue.json and GET /captain-queue both use these helpers.
+// An open card cannot ship with empty, generic-letter, or jargon options.
 // Each option is a short plain-English label naming the real choice.
 // The recommended option is marked and comes first. A plain "Something else"
 // may follow last. Generic "A" / "B" / "Option C" labels are refused.
+// Parked cards preserve their historical option arrays without validation,
+// trimming, filtering, or reordering.
 
 const GENERIC_LETTER = /^(option\s+)?[A-Z]$/i;
 const GENERIC_LETTER_PREFIX = /^(option\s+)?[A-Z]\s*[-.:)]\s*/i;
@@ -91,11 +92,85 @@ function textField(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function normalizeCaptainCardOptions(options) {
-  const labels = (Array.isArray(options) ? options : [])
+const CARD_STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
+
+function cardStampEpoch(value) {
+  if (typeof value !== "string") return -1;
+  const parts = CARD_STAMP.exec(value);
+  if (!parts) return -1;
+  const [, base, fraction, zone] = parts;
+  const whole = Date.parse(`${base}Z`);
+  if (!Number.isFinite(whole)) return -1;
+  if (new Date(whole).toISOString().replace(/\.\d{3}Z$/, "Z") !== `${base}Z`) return -1;
+  let offset = 0;
+  if (zone !== "Z") {
+    const hours = Number(zone.slice(1, 3));
+    const minutes = Number(zone.slice(4, 6));
+    if (hours > 23 || minutes > 59) return -1;
+    offset = (hours * 60 + minutes) * 60 * (zone[0] === "+" ? -1 : 1);
+  }
+  return whole / 1000 + (fraction ? Number(`0.${fraction}`) : 0) + offset;
+}
+
+function legacyStateRank(state) {
+  if (state === "parked") return 2;
+  if (state === "open") return 1;
+  return 0;
+}
+
+function legacyStateTouchEpoch(record) {
+  if (record.state === "resolved") {
+    return cardStampEpoch(record.resolved_at ?? record.parked_at ?? record.asked_at);
+  }
+  if (record.state === "parked") {
+    return cardStampEpoch(record.parked_at ?? record.asked_at);
+  }
+  return cardStampEpoch(record.asked_at);
+}
+
+function clampLegacyOpenAnchor(record, migrationStamp, migrationEpoch) {
+  if (record.state !== "open") return record;
+  const asked = cardStampEpoch(record.asked_at);
+  if (asked >= 0 && asked <= migrationEpoch) return record;
+  return { ...record, asked_at: migrationStamp };
+}
+
+function collapseLegacyRecordsById(records) {
+  const bestByBucket = new Map();
+  const order = [];
+  records.forEach((record, index) => {
+    const id = textField(record.id);
+    const bucket = id || ` unkeyed:${index}`;
+    const rank = [
+      legacyStateRank(record.state),
+      legacyStateTouchEpoch(record),
+      typeof record.num === "number" && Number.isFinite(record.num) ? record.num : 0,
+      index,
+    ];
+    const current = bestByBucket.get(bucket);
+    if (!current) {
+      bestByBucket.set(bucket, { record, rank });
+      order.push(bucket);
+      return;
+    }
+    for (let level = 0; level < rank.length; level += 1) {
+      if (rank[level] === current.rank[level]) continue;
+      if (rank[level] > current.rank[level]) bestByBucket.set(bucket, { record, rank });
+      return;
+    }
+  });
+  return order.map((bucket) => bestByBucket.get(bucket).record);
+}
+
+function normalizedCaptainCardOptionLabels(options) {
+  return (Array.isArray(options) ? options : [])
     .filter((raw) => typeof raw === "string")
     .map((raw) => raw.trim())
     .filter(Boolean);
+}
+
+export function normalizeCaptainCardOptions(options) {
+  const labels = normalizedCaptainCardOptionLabels(options);
   const markedAt = labels.findIndex((label) => RECOMMENDED_MARK.test(label));
   if (markedAt > 0) {
     const [marked] = labels.splice(markedAt, 1);
@@ -140,78 +215,178 @@ export function captainCardOptionsError(options) {
   return null;
 }
 
-function asCaptainCard(raw, resolvedIds) {
+function captainQueueRecords(data) {
+  const states = new Set(["open", "parked", "resolved"]);
+  const normalize = (raw, fallbackState = "") => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const state = (textField(raw.state) || textField(raw.status) || fallbackState).toLowerCase();
+    if (!states.has(state)) return null;
+    return { ...raw, state };
+  };
+  if (Array.isArray(data.records)) {
+    return data.records.map((row) => normalize(row)).filter((row) => row !== null);
+  }
+  const migrationStamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const migrationEpoch = cardStampEpoch(migrationStamp);
+  const records = [
+    ...(Array.isArray(data.items) ? data.items.map((row) => normalize(row, "open")) : []),
+    ...(Array.isArray(data.parked) ? data.parked.map((row) => normalize(row, "parked")) : []),
+    ...(Array.isArray(data.resolved) ? data.resolved.map((row) => normalize(row, "resolved")) : []),
+  ]
+    .filter((row) => row !== null)
+    .map((row) => clampLegacyOpenAnchor(row, migrationStamp, migrationEpoch));
+  const resolvedGenerationById = new Map();
+  for (const record of records) {
+    if (record.state !== "resolved") continue;
+    const id = textField(record.id);
+    if (!id) continue;
+    const generation =
+      typeof record.generation === "number" &&
+      Number.isInteger(record.generation) &&
+      record.generation > 0
+        ? record.generation
+        : 1;
+    resolvedGenerationById.set(id, Math.max(resolvedGenerationById.get(id) || 0, generation));
+  }
+  return collapseLegacyRecordsById(records).map((record) => {
+    if (record.state === "resolved") return record;
+    const resolvedGeneration = resolvedGenerationById.get(textField(record.id)) || 0;
+    if (resolvedGeneration === 0) return record;
+    const generation =
+      typeof record.generation === "number" &&
+      Number.isInteger(record.generation) &&
+      record.generation > 0
+        ? record.generation
+        : 1;
+    return { ...record, generation: Math.max(generation, resolvedGeneration + 1) };
+  });
+}
+
+function asCaptainCard(raw, expectedState = "open") {
   if (!raw || typeof raw !== "object") return null;
   const id = textField(raw.id);
   const question = textField(raw.question);
   if (!id || !question) return null;
-  if (resolvedIds.has(id)) return null;
-  const status = textField(raw.status).toLowerCase() || "open";
-  if (status !== "open") return null;
-  const options = normalizeCaptainCardOptions(raw.options);
-  if (captainCardOptionsError(options)) return null;
-  const recommended = options.find((label) => RECOMMENDED_MARK.test(label));
-  if (!recommended) return null;
+  const state = textField(raw.state).toLowerCase();
+  if (state !== expectedState) return null;
+  const options =
+    expectedState === "open"
+      ? normalizeCaptainCardOptions(raw.options)
+      : Array.isArray(raw.options)
+        ? [...raw.options]
+        : [];
+  const recommended =
+    options.find((label) => typeof label === "string" && RECOMMENDED_MARK.test(label)) || "";
+  if (expectedState === "open" && captainCardOptionsError(options)) return null;
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
+  const generation =
+    typeof raw.generation === "number" && Number.isInteger(raw.generation) && raw.generation > 0
+      ? raw.generation
+      : 1;
   const askedAt = textField(raw.asked_at) || textField(raw.askedAt);
   const commands = Array.isArray(raw.commands)
     ? raw.commands
         .filter((command) => typeof command === "string" && command.trim())
         .map((command) => command.trim())
     : [];
-  return {
+  const card = {
     id,
     num,
+    generation,
     question,
     context: typeof raw.context === "string" ? raw.context : "",
     commands,
     options,
     recommended,
     askedAt,
-    status: "open",
+    status: expectedState,
     project: textField(raw.project),
   };
+  if (expectedState === "parked") {
+    return {
+      ...card,
+      parkedAt: textField(raw.parked_at) || textField(raw.parkedAt),
+      parkedReason: textField(raw.parked_reason) || textField(raw.parkedReason),
+      parkedNote: textField(raw.parked_note) || textField(raw.parkedNote),
+    };
+  }
+  return card;
 }
 
 function emptyCaptainQueue() {
-  return { ok: true, updatedAt: "", items: [] };
+  return { ok: true, updatedAt: "", items: [], parked: [] };
 }
 
-export function captainQueueBody(home) {
+function captainQueueData(home) {
   const file = path.join(home, "data", "captain-queue.json");
   try {
-    if (fs.lstatSync(file).isSymbolicLink()) return emptyCaptainQueue();
+    if (fs.lstatSync(file).isSymbolicLink()) return null;
   } catch (error) {
-    if (error && error.code === "ENOENT") return emptyCaptainQueue();
+    if (error && error.code === "ENOENT") return null;
     throw error;
   }
   let raw;
   try {
     raw = fs.readFileSync(file, "utf8");
   } catch (error) {
-    if (error && error.code === "ENOENT") return emptyCaptainQueue();
+    if (error && error.code === "ENOENT") return null;
     throw error;
   }
-  let data;
   try {
-    data = JSON.parse(raw);
+    const data = JSON.parse(raw);
+    return data && typeof data === "object" && !Array.isArray(data) ? data : null;
   } catch {
-    return emptyCaptainQueue();
+    return null;
   }
-  if (!data || typeof data !== "object" || Array.isArray(data)) return emptyCaptainQueue();
-  const resolvedIds = new Set(
-    (Array.isArray(data.resolved) ? data.resolved : [])
-      .map((row) => (row && typeof row.id === "string" ? row.id.trim() : ""))
-      .filter(Boolean),
-  );
-  const items = (Array.isArray(data.items) ? data.items : [])
-    .map((row) => asCaptainCard(row, resolvedIds))
+}
+
+export function captainQueueReplyTarget(home, id) {
+  const data = captainQueueData(home);
+  if (!data) return null;
+  let target = null;
+  for (const record of captainQueueRecords(data)) {
+    if (textField(record.id) !== id) continue;
+    const generation =
+      typeof record.generation === "number" &&
+      Number.isInteger(record.generation) &&
+      record.generation > 0
+        ? record.generation
+        : 1;
+    const stateRank = record.state === "resolved" ? 0 : 1;
+    if (
+      !target ||
+      generation > target.generation ||
+      (generation === target.generation && stateRank > target.stateRank)
+    ) {
+      target = {
+        state: record.state,
+        stateRank,
+        generation,
+        answer: typeof record.answer === "string" ? record.answer : "",
+      };
+    }
+  }
+  if (!target) return null;
+  return { state: target.state, generation: target.generation, answer: target.answer };
+}
+
+export function captainQueueBody(home) {
+  const data = captainQueueData(home);
+  if (!data) return emptyCaptainQueue();
+  const records = captainQueueRecords(data);
+  const items = records
+    .map((row) => asCaptainCard(row))
+    .filter((card) => card !== null)
+    .sort((a, b) => a.num - b.num || a.id.localeCompare(b.id));
+  const parked = records
+    .map((row) => asCaptainCard(row, "parked"))
     .filter((card) => card !== null)
     .sort((a, b) => a.num - b.num || a.id.localeCompare(b.id));
   return {
     ok: true,
     updatedAt: textField(data.updated_at) || textField(data.updatedAt),
     items,
+    parked,
   };
 }
 

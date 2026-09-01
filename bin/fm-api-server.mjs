@@ -19,11 +19,23 @@
 //   Unknown id: JSON 404 { ok: false, error: "task not found" }.
 //   bin/fm-api-task-detail.mjs owns the exact success JSON contract.
 // GET /captain-queue
-//   { ok, updatedAt, items: [{ id, num, question, context, commands,
-//   options, recommended, askedAt, status, project }] }
-//   Captain-queue.json cards firstmate escalated to the captain, open only,
-//   with named options already validated. A worker needs-decision is not a
-//   source. Empty home or missing file: items is [].
+//   { ok, updatedAt, items: [{ id, num, generation, question, context, commands,
+//   options, recommended, askedAt, status, project }],
+//   parked: [{ id, num, generation, question, context, commands, options, recommended,
+//   askedAt, status, project, parkedAt, parkedReason, parkedNote }] }
+//   Captain-queue.json cards firstmate escalated to the captain. Open cards
+//   have named options already validated. Parked cards remain visible even
+//   when their historical options do not meet the active-card contract.
+//   A worker needs-decision is not a source. Empty home or missing file:
+//   items and parked are [].
+// POST /captain-queue/reply requires the token; body
+//   { id, generation, answer }. Generation is the positive integer served on
+//   that card. Unknown cards and generations newer than the persisted card are
+//   refused. Real prior generations remain valid stale replies. The stored line
+//   is { id, generation, answer, at }, where `at` is the server receipt time.
+//   The server serializes each reply log, stores an identical reply once, and
+//   queues a wake for every accepted request. bin/fm-captain-queue.sh owns reply
+//   ranking, reconciliation, and delivery behavior.
 // GET /captain-holds
 //   { ok, holds: [{ id, title, reason, repo, createdAt, blockedBy,
 //   hold_kind, actionable, parked, done, answerable }] }
@@ -79,6 +91,7 @@ import {
   blockedListBody,
   captainHoldsBody,
   captainQueueBody,
+  captainQueueReplyTarget,
   DEFAULT_RIG_CLASS,
   enrichFleetTasks,
   rigsBody,
@@ -97,7 +110,9 @@ const NOTE_KIND = "away-supervisor";
 const TASK_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 // The same key charset fm-send.sh accepts for --resolve-key.
 const DECISION_KEY = /^[A-Za-z0-9._-]{1,128}$/;
+const CARD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENDED_VERBS = new Set(["done", "closed", "cancelled"]);
+const captainReplyWriteTails = new Map();
 
 const EVENT_QUIET_MS = 100;
 const EVENT_DEADLINE_MS = 1000;
@@ -359,6 +374,63 @@ function parseTaskText(raw) {
   return taskTextFields(parseJsonObject(raw));
 }
 
+function parseCaptainReply(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    const error = new Error("malformed json");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof body.id !== "string" || !CARD_ID.test(body.id)) {
+    const error = new Error("invalid id");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof body.generation !== "number" || !Number.isInteger(body.generation) || body.generation < 1) {
+    const error = new Error("invalid generation");
+    error.status = 400;
+    throw error;
+  }
+  if (typeof body.answer !== "string" || !body.answer.trim()) {
+    const error = new Error("missing answer");
+    error.status = 400;
+    throw error;
+  }
+  if (/[\r\n\u2028\u2029]/.test(body.answer)) {
+    const error = new Error("answer must be one line");
+    error.status = 400;
+    throw error;
+  }
+  if (body.answer.length > MAX_NOTE_TEXT) {
+    const error = new Error("answer too long");
+    error.status = 400;
+    throw error;
+  }
+  return { id: body.id, generation: body.generation, answer: body.answer };
+}
+
+function validateCaptainReplyTarget(home, reply) {
+  const target = captainQueueReplyTarget(home, reply.id);
+  if (!target) {
+    const error = new Error("card not found");
+    error.status = 404;
+    throw error;
+  }
+  if (reply.generation > target.generation) {
+    const error = new Error("generation not found");
+    error.status = 409;
+    throw error;
+  }
+  return reply;
+}
+
 function runCommand(command, args, options = {}) {
   const { stdin, env, timeoutMs = 10000 } = options;
   return new Promise((resolve, reject) => {
@@ -419,6 +491,161 @@ async function enqueueCheckWake(home, stateDir, key, payload) {
     },
   });
   if (result.code !== 0) throw new Error("wake append failed");
+}
+
+function serializeCaptainReply(file, operation) {
+  const previous = captainReplyWriteTails.get(file) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  captainReplyWriteTails.set(file, current);
+  current
+    .finally(() => {
+      if (captainReplyWriteTails.get(file) === current) captainReplyWriteTails.delete(file);
+    })
+    .catch(() => {});
+  return current;
+}
+
+function captainReplyReceiptValid(value) {
+  if (typeof value !== "string") return false;
+  const match = value.match(
+    /^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.(?<milliseconds>[0-9]{3})Z|Z|(?<sign>[+-])(?<hours>[0-9]{2}):(?<minutes>[0-9]{2}))$/,
+  );
+  if (!match) return false;
+  const local = new Date(`${match.groups.base}Z`);
+  if (!Number.isFinite(local.getTime()) || local.toISOString().slice(0, 19) !== match.groups.base) {
+    return false;
+  }
+  if (match.groups.sign) {
+    return Number(match.groups.hours) <= 23 && Number(match.groups.minutes) <= 59;
+  }
+  return true;
+}
+
+function captainReplyCursor(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return 0;
+    throw error;
+  }
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (!digits) return 0;
+  const cursor = Number(digits);
+  if (!Number.isSafeInteger(cursor)) throw new Error("reply cursor is malformed");
+  return cursor;
+}
+
+function classifyCaptainReply(file, cursor, reply) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return "append";
+    throw error;
+  }
+  let found = false;
+  const lines = raw.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (!line && index === lines.length - 1) continue;
+    if (!line) throw new Error("reply log is malformed");
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      throw new Error("reply log is malformed");
+    }
+    const consumed = index + 1 <= cursor;
+    const legacyRecord =
+      record &&
+      typeof record === "object" &&
+      !Array.isArray(record) &&
+      typeof record.id === "string" &&
+      typeof record.answer === "string";
+    if (!legacyRecord) throw new Error("reply log is malformed");
+    const hasGeneration = Object.prototype.hasOwnProperty.call(record || {}, "generation");
+    const generation = hasGeneration ? record.generation : 1;
+    const generationValid = Number.isInteger(generation) && generation >= 1;
+    const receiptValid =
+      !Object.prototype.hasOwnProperty.call(record, "at") || captainReplyReceiptValid(record.at);
+    if (!consumed && (!record.id || !generationValid || !receiptValid)) {
+      throw new Error("reply log is malformed");
+    }
+    if (
+      generationValid &&
+      record.id === reply.id &&
+      generation === reply.generation &&
+      record.answer === reply.answer
+    ) {
+      found = true;
+    }
+  }
+  return found ? "identical" : "append";
+}
+
+function queueCaptainReply(home, stateDir, reply) {
+  const state = stateDir || path.join(home, "state");
+  const file = path.join(state, "captain-replies.jsonl");
+  return serializeCaptainReply(file, async () => {
+    fs.mkdirSync(state, { recursive: true });
+    try {
+      if (fs.lstatSync(file).isSymbolicLink()) throw new Error("reply log is a symlink");
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+    }
+    const cursor = captainReplyCursor(path.join(state, "captain-replies.cursor"));
+    if (classifyCaptainReply(file, cursor, reply) === "append") {
+      const record = { ...reply, at: new Date().toISOString() };
+      let separator = "";
+      let handle;
+      try {
+        handle = fs.openSync(file, "r");
+        const { size } = fs.fstatSync(handle);
+        if (size > 0) {
+          const lastByte = Buffer.allocUnsafe(1);
+          fs.readSync(handle, lastByte, 0, 1, size - 1);
+          if (lastByte[0] !== 0x0a) separator = "\n";
+        }
+      } catch (error) {
+        if (!error || error.code !== "ENOENT") throw error;
+      } finally {
+        if (handle !== undefined) fs.closeSync(handle);
+      }
+      fs.appendFileSync(file, `${separator}${JSON.stringify(record)}\n`, {
+        encoding: "utf8",
+        flag: "a",
+      });
+    }
+    const key = `captain-reply:${reply.id}:${reply.generation}:${crypto.randomBytes(8).toString("hex")}`;
+    await enqueueCheckWake(home, state, key, "check: captain-reply");
+  });
+}
+
+function handleCaptainReply(req, res, home, options) {
+  if (req.method !== "POST") {
+    req.resume();
+    json(res, 405, { ok: false, error: "method not allowed" });
+    return;
+  }
+  if (!writeAuthorized(req, options.tokenFile)) {
+    req.resume();
+    json(res, 401, { ok: false, error: "unauthorized" });
+    return;
+  }
+  readBody(req, MAX_BODY_BYTES)
+    .then(parseCaptainReply)
+    .then((reply) => validateCaptainReplyTarget(home, reply))
+    .then((reply) => queueCaptainReply(home, options.stateDir, reply))
+    .then(() => json(res, 200, { ok: true }))
+    .catch((error) => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      const status = error && error.status ? error.status : 500;
+      const message = status === 500 ? "failed" : error.message;
+      json(res, status, { ok: false, error: message });
+    });
 }
 
 async function queueCaptainNote(home, stateDir, note) {
@@ -839,6 +1066,7 @@ function handleReadRoute(req, res, home, stateDir, pathname, task) {
 function handleWriteRoute(req, res, home, options, pathname) {
   const routes = {
     "/captain-notes": () => handleCaptainNote(req, res, home, options),
+    "/captain-queue/reply": () => handleCaptainReply(req, res, home, options),
     "/workers/relay": () => handleWorkerRelay(req, res, home, options),
     "/decisions/answer": () => handleDecisionAnswer(req, res, home, options),
     "/rigs/rung": () => handleRungToggle(req, res, home, options),

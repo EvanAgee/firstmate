@@ -70,10 +70,11 @@ test_captain_queue_serves_open_named_cards() {
   write_queue "$home" <<'EOF'
 {
   "updated_at": "2026-08-27T16:00:00Z",
-  "items": [
+  "records": [
     {
       "id": "fm-memory-path",
       "num": 3,
+      "generation": 4,
       "question": "Keep trimming memory, or adopt a vault?",
       "context": "The research recommends staying with trim.",
       "commands": [],
@@ -83,7 +84,7 @@ test_captain_queue_serves_open_named_cards() {
         "Something else"
       ],
       "asked_at": "2026-08-26T20:45:00Z",
-      "status": "open",
+      "state": "open",
       "project": "firstmate"
     },
     {
@@ -91,7 +92,7 @@ test_captain_queue_serves_open_named_cards() {
       "num": 1,
       "question": "Already answered",
       "options": ["Yes, ship it (recommended)", "Hold"],
-      "status": "resolved",
+      "state": "resolved",
       "project": "firstmate"
     }
   ]
@@ -105,6 +106,8 @@ EOF
     fail "wanted 1 open card and no worker leak: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].id')" = fm-memory-path ] || \
     fail "queue id: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].generation')" = 4 ] || \
+    fail "queue generation: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options.length')" = 3 ] || \
     fail "queue options: $HTTP_BODY"
   [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options[0]')" = "Stay with trim (recommended)" ] || \
@@ -115,6 +118,222 @@ EOF
     fail "updatedAt: $HTTP_BODY"
   fm_test_api_stop "$home"
   pass "captain queue serves an open named card and hides a resolved one"
+}
+
+test_captain_queue_serves_legacy_reopen_generation() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-legacy-reopen)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [{
+    "id": "legacy-reopened-card",
+    "question": "New question?",
+    "options": ["Approve (recommended)", "Decline"],
+    "asked_at": "2026-08-27T18:00:00Z",
+    "status": "open"
+  }],
+  "resolved": [{
+    "id": "legacy-reopened-card",
+    "question": "Old question?",
+    "answer": "old answer",
+    "resolved_at": "2026-08-21T18:00:00Z",
+    "status": "resolved"
+  }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "legacy reopen queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] \
+    || fail "legacy reopen should serve one open card: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].generation')" = 2 ] \
+    || fail "legacy reopen should serve successor generation 2: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue serves legacy reopens with successor generations"
+}
+
+test_captain_queue_collapses_legacy_duplicate_id() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-legacy-duplicate)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [{
+    "id": "legacy-duplicate-card",
+    "question": "Still asking?",
+    "options": ["Approve (recommended)", "Decline"],
+    "asked_at": "2026-08-20T10:00:00Z",
+    "status": "open"
+  }],
+  "parked": [{
+    "id": "legacy-duplicate-card",
+    "question": "Still asking?",
+    "options": ["Approve (recommended)", "Decline"],
+    "asked_at": "2026-08-20T10:00:00Z",
+    "status": "parked",
+    "parked_at": "2026-08-27T10:00:00Z",
+    "parked_reason": "expired-unbacked"
+  }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "legacy duplicate queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 0 ] \
+    || fail "a parked legacy card must not also be served as an active ask: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked.length')" = 1 ] \
+    || fail "the parked legacy card should be served once: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedReason')" = expired-unbacked ] \
+    || fail "the surviving legacy row should be the parked one: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue collapses a legacy id listed as both open and parked"
+}
+
+test_captain_queue_clamps_corrupt_legacy_anchor_like_the_writer() {
+  local home port resp served_question served_asked written_question
+  home=$(fm_test_api_home api-queue-legacy-corrupt-anchor)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [
+    {
+      "id": "corrupt-anchor-card",
+      "question": "Unreadable stamp ask?",
+      "options": ["Approve (recommended)", "Decline"],
+      "asked_at": "not-a-date",
+      "status": "open"
+    },
+    {
+      "id": "corrupt-anchor-card",
+      "question": "Readable stamp ask?",
+      "options": ["Approve (recommended)", "Decline"],
+      "asked_at": "2026-08-26T10:00:00Z",
+      "status": "open"
+    },
+    {
+      "id": "future-anchor-card",
+      "question": "Far future ask?",
+      "options": ["Approve (recommended)", "Decline"],
+      "asked_at": "2099-01-01T10:00:00Z",
+      "status": "open"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "corrupt anchor queue status $HTTP_CODE: $HTTP_BODY"
+  served_question=$(fm_test_json "$HTTP_BODY" \
+    'd.items.filter(c=>c.id==="corrupt-anchor-card").map(c=>c.question).join(",")')
+  served_asked=$(fm_test_json "$HTTP_BODY" \
+    'd.items.filter(c=>c.id==="future-anchor-card").map(c=>c.askedAt).join(",")')
+  [ "$served_asked" != "2099-01-01T10:00:00Z" ] \
+    || fail "a future legacy asked-at was served verbatim: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  FM_HOME="$home" "$ROOT/bin/fm-captain-queue.sh" reconcile >/dev/null 2>&1 \
+    || fail "reconcile failed on the corrupt legacy anchor fixture"
+  written_question=$(fm_test_json "$(cat "$home/data/captain-queue.json")" \
+    'd.records.filter(c=>c.id==="corrupt-anchor-card").map(c=>c.question).join(",")')
+  [ "$served_question" = "$written_question" ] \
+    || fail "reader served '$served_question' but the writer kept '$written_question'"
+  pass "captain queue clamps a corrupt legacy anchor the way the writer does"
+}
+
+test_captain_queue_serves_parked_cards_separately() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-parked)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-31T18:00:00Z",
+  "records": [
+    {
+      "id": "active-choice",
+      "question": "Keep waiting?",
+      "options": ["Keep waiting (recommended)", "Stop"],
+      "state": "open"
+    },
+    {
+      "id": "expired-choice",
+      "num": 4,
+      "generation": 3,
+      "question": "Approve the old release?",
+      "context": "No backlog item tracked this question.",
+      "commands": ["deploy-old"],
+      "options": [" Decline ", "", "Approve (recommended)", " Something else "],
+      "asked_at": "2026-08-20T18:00:00Z",
+      "state": "parked",
+      "project": "sample",
+      "parked_at": "2026-08-27T18:00:00Z",
+      "parked_reason": "expired-unbacked",
+      "parked_note": "Expired after 7 days without a backing backlog item"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "parked queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] \
+    || fail "active captain queue changed when parked cards were present: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked.length')" = 1 ] \
+    || fail "parked captain card was not exposed separately: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].id')" = expired-choice ] \
+    || fail "parked captain card id missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].status')" = parked ] \
+    || fail "parked captain card status missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].generation')" = 3 ] \
+    || fail "parked captain card generation missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedReason')" = expired-unbacked ] \
+    || fail "parked captain card reason missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedNote')" = "Expired after 7 days without a backing backlog item" ] \
+    || fail "parked captain card note missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].options')" = \
+    '[" Decline ","","Approve (recommended)"," Something else "]' ] \
+    || fail "parked captain card changed its stored option array: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].recommended')" = "Approve (recommended)" ] \
+    || fail "parked captain card lost its recommendation: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue serves parked cards separately from active cards"
+}
+
+test_captain_queue_keeps_parked_cards_without_active_options() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-parked-no-options)
+  write_queue "$home" <<'EOF'
+{
+  "records": [
+    {
+      "id": "parked-without-options",
+      "question": "Historical unanswered question?",
+      "options": [],
+      "asked_at": "2026-08-20T18:00:00Z",
+      "state": "parked",
+      "parked_at": "2026-08-27T18:00:00Z",
+      "parked_reason": "expired-unbacked"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "parked no-options queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked.length')" = 1 ] \
+    || fail "parked card without active options disappeared: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].id')" = parked-without-options ] \
+    || fail "parked no-options card id missing: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].options.length')" = 0 ] \
+    || fail "parked no-options card changed its historical options: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].recommended')" = "" ] \
+    || fail "parked no-options card should have an empty recommendation: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue keeps parked cards that lack active-card options"
 }
 
 test_captain_queue_rejects_bad_options() {
@@ -643,6 +862,11 @@ EOF
 test_empty_home_queue_is_empty
 test_captain_queue_ignores_worker_needs_decision
 test_captain_queue_serves_open_named_cards
+test_captain_queue_serves_legacy_reopen_generation
+test_captain_queue_collapses_legacy_duplicate_id
+test_captain_queue_clamps_corrupt_legacy_anchor_like_the_writer
+test_captain_queue_serves_parked_cards_separately
+test_captain_queue_keeps_parked_cards_without_active_options
 test_captain_queue_rejects_bad_options
 test_captain_queue_moves_recommended_first
 test_captain_attention_hold_present_worker_absent
