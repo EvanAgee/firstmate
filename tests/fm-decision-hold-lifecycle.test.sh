@@ -2247,7 +2247,7 @@ test_a_post_teardown_close_does_not_resurrect_origin_metadata() {
     --title "Choose the later torn option" --reason "captain later choice pending" --repo sample) \
     || fail "could not register the second torn-origin hold"
   rm -f "$home/state/$id.meta"
-  before=$(ls "$home/state" | LC_ALL=C sort)
+  before=$(find "$home/state" | LC_ALL=C sort)
   printf 'Captain chose the later option.\n' > "$home/later-decision.txt"
   run_decisions "$home" answer "$id" later --decision-file "$home/later-decision.txt" >/dev/null \
     || fail "a post-teardown close should still close its hold"
@@ -2255,7 +2255,7 @@ test_a_post_teardown_close_does_not_resurrect_origin_metadata() {
     "the post-teardown close did not actually close the hold"
   assert_absent "$home/state/$id.meta" \
     "a post-teardown close recreated the origin metadata teardown deleted"
-  after=$(ls "$home/state" | LC_ALL=C sort)
+  after=$(find "$home/state" | LC_ALL=C sort)
   [ "$before" = "$after" ] \
     || fail "a post-teardown close added state files: before [$before] after [$after]"
   pass "a post-teardown close closes its hold without resurrecting origin metadata"
