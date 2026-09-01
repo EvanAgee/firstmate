@@ -46,21 +46,20 @@
 # decision_keys, which only happens after an earlier `complete` found its hold durable,
 # because tasks-axi reports the same not-found for a hold that was trimmed and one that
 # never existed. And the captain must be proven to have answered it. The durable proof
-# is the origin's recorded answered_keys: `resolve`, `answer`, `decline`, and `repair`
-# each add the key there after tasks-axi confirms the hold kept its resolution record,
-# so the proof lives in state and survives the retention that removes the hold itself.
-# A key the captain answered in chat while it was still open is proven instead by the
-# status log, whose LAST transition for that key must be a resolved line carrying the
-# `answered:` marker fm-send.sh writes on delivery. A bare resolved line without that
-# marker is a mate's own self-close, written when a keyed phase fizzles or a blocker
-# clears on its own, so it is not answer proof. Neither is the captain-held transfer
-# line - `complete` writes it for every reviewed key that is still open. A key answered
-# in round one and then re-opened by a later needs-decision or blocked line is not
-# answered either: both routes are checked against the same open-decision fold, so a
-# live question outranks even a standing answered_keys record. A reviewed key with
-# neither proof - one still open, one re-opened, one self-closed, or one that never
-# appeared anywhere - must keep a present durable hold, so an absent hold with no
-# answer evidence keeps failing.
+# is the origin's ONLY recorded answered_keys: `resolve`, `answer`, `decline`, and
+# `repair` each add the key there after tasks-axi confirms the hold kept its resolution
+# record, so the proof lives in state and survives the retention that removes the hold
+# itself. Nothing else counts. The status log was once a second route, and it was
+# removed: fm-brief.sh tells a crewmate or scout to append its own
+# `resolved [key=<slug>]: ...` line whenever a blocker clears without a firstmate reply,
+# so a worker can write any resolved line it likes, marker and all. A check the guarded
+# agent can satisfy by writing a sentence about itself is no check. A key answered in
+# round one and then re-opened by a later needs-decision or blocked line is not answered
+# either: answered_keys is checked against the open-decision fold, so a live question
+# outranks even a standing answered_keys record. A reviewed key with no such record -
+# one still open, one re-opened, one a mate closed itself, or one that never appeared
+# anywhere - must keep a present durable hold, so an absent hold with no answer evidence
+# keeps failing.
 #
 # `resolve`, `answer`, and `decline` close active holds; `repair` attests a hold
 # already closed outside this script. All four paths require a non-empty captain
@@ -291,6 +290,68 @@ task_show() {  # <id>
 # One read serves both the absence probe and the durability check: splitting them
 # into separate reads costs a second subprocess per key and lets the backlog change
 # between the two, which is how a caller ends up with no reason to report at all.
+
+# The backlog file tasks-axi actually reads. tasks_axi runs it with $FM_HOME as its
+# working directory, so this mirrors tasks-axi's own config resolution (its
+# resolveConfig / resolveMarkdownPath) rather than assuming $DATA/backlog.md: an
+# intactness check on a file tasks-axi never consulted would decide archival from the
+# wrong contents. In tasks-axi's precedence order, TASKS_AXI_FILE wins outright, then
+# the `path` key of the `[markdown]` table in $FM_HOME/.tasks.toml, then the same key
+# in the user's ~/.tasks-axi/config.toml. The table matters: tasks-axi ignores keys in
+# any other table, so a `path` under some unrelated `[section]` must not be picked up
+# here either, or a decoy path could stand in for a destroyed backlog. With no path
+# configured anywhere, tasks-axi takes the FIRST of "backlog.md" then "data/backlog.md"
+# that EXISTS relative to $FM_HOME, and falls back to the first candidate when neither
+# does. Relative paths resolve against $FM_HOME, matching tasks-axi's cwd.
+toml_markdown_path() {  # <toml-path>
+  [ -r "$1" ] || return 0
+  awk '
+    { line = $0; sub(/#.*/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line) }
+    line == "" { next }
+    line ~ /^\[[^]]*\]$/ {
+      table = substr(line, 2, length(line) - 2)
+      gsub(/^[ \t]+|[ \t]+$/, "", table)
+      next
+    }
+    table != "markdown" { next }
+    {
+      if (match(line, /^path[ \t]*=[ \t]*/)) {
+        value = substr(line, RLENGTH + 1)
+        gsub(/^[ \t]+|[ \t]+$/, "", value)
+        quote = substr(value, 1, 1)
+        if ((quote == "\"" || quote == "'\''") && length(value) > 1 \
+            && substr(value, length(value), 1) == quote) {
+          print substr(value, 2, length(value) - 2)
+          exit
+        }
+      }
+    }
+  ' "$1"
+}
+
+backlog_file() {
+  local path=''
+  if [ -n "${TASKS_AXI_FILE:-}" ]; then
+    path=$TASKS_AXI_FILE
+  else
+    path=$(toml_markdown_path "$FM_HOME/.tasks.toml")
+    [ -n "$path" ] || path=$(toml_markdown_path "$HOME/.tasks-axi/config.toml")
+  fi
+  if [ -z "$path" ]; then
+    if [ -e "$FM_HOME/backlog.md" ]; then
+      path=backlog.md
+    elif [ -e "$FM_HOME/data/backlog.md" ]; then
+      path=data/backlog.md
+    else
+      path=backlog.md
+    fi
+  fi
+  case "$path" in
+    /*) printf '%s' "$path" ;;
+    *) printf '%s/%s' "$FM_HOME" "$path" ;;
+  esac
+}
+
 # 0 when this home's backlog is a readable file that still has the structure
 # tasks-axi maintains. Retention only removes entries, never the section headings, so
 # a missing, empty, or structurally destroyed file is not a backlog whose contents can
@@ -298,24 +359,6 @@ task_show() {  # <id>
 # tasks-axi's own parser matches it - a level-2 heading whose text begins with "done",
 # case-insensitively - because tasks-axi writes back whatever heading the file already
 # had, so a real home may spell it "## Done (last 10)" or "## done" and still be sound.
-# The backlog file tasks-axi actually reads. tasks-axi runs in $FM_HOME and resolves
-# the markdown backend's `path` from $FM_HOME/.tasks.toml (default "data/backlog.md",
-# relative to $FM_HOME), so this must resolve the same file rather than a hardcoded
-# $DATA/backlog.md - the two diverge when the configured path is customised or when
-# FM_DATA_OVERRIDE moves $DATA away from $FM_HOME/data, and an intactness check on the
-# wrong file would decide archival from a file tasks-axi never consulted.
-backlog_file() {
-  local toml="$FM_HOME/.tasks.toml" path=''
-  if [ -r "$toml" ]; then
-    path=$(sed -n 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$toml" | head -1)
-  fi
-  [ -n "$path" ] || path="data/backlog.md"
-  case "$path" in
-    /*) printf '%s' "$path" ;;
-    *) printf '%s/%s' "$FM_HOME" "$path" ;;
-  esac
-}
-
 backlog_is_intact() {
   local f
   f=$(backlog_file)
@@ -663,14 +706,14 @@ verify_hold_durable() {  # <hold-id> [prior-read_hold-output]
 # Done hold out of the backlog, so archival must not fail the gate; nothing weaker than
 # real proof may pass, because this is the last thing standing between scout teardown
 # and deleting a source.
-# First, the captain must genuinely have answered the key. The durable proof is the
-# origin metadata's answered_keys list, which only a close path writes and only after
-# tasks-axi confirmed the hold kept its resolution record. It lives in state, so it
-# outlives the Done entry retention removes. The status log's own answered marker is
-# accepted as a second, independent route to the same fact, because fm-send.sh writes
-# it for a key still open in the fold; it is never required, and a status log alone
-# cannot make an unanswered decision pass, because a mate's bare self-close carries no
-# marker and the captain-held transfer `complete` writes is not an answer either.
+# First, the captain must genuinely have answered the key. The SOLE positive proof is
+# the origin metadata's answered_keys list, which only a close path writes and only
+# after tasks-axi confirmed the hold kept its resolution record. It lives in state, so
+# it outlives the Done entry retention removes. The status log is NOT accepted, and no
+# longer offers a second route: a worker writes its own status lines (fm-brief.sh tells
+# a crewmate or scout to append its own resolved line when a blocker clears without a
+# firstmate reply), so any answered marker there is forgeable by the very agent whose
+# source deletion this gate guards.
 # Second, the hold must have EXISTED before, or a hold that never existed would be
 # indistinguishable from one retention trimmed - tasks-axi reports NOT_FOUND for both.
 # The caller passes held_before=1 only for a key already in the origin's decision_keys,

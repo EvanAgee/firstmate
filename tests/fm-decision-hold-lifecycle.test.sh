@@ -1964,9 +1964,9 @@ test_verify_tolerates_archival_on_the_real_answer_ordering() {
     "the real-order answer left its captain hold open"
   assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "choice" \
     "the close path did not durably record the captain answer"
-  # The close path writes no status line, so the status log alone still proves nothing.
-  if bash -c '. "$1"; status_key_answered "$2" choice' _ \
-    "$ROOT/bin/fm-classify-lib.sh" "$home/state/$id.status"; then
+  # The close path writes no status line at all, so the status log carries no answer
+  # evidence here; the durable answered_keys record above is the only proof there is.
+  if grep -q "answered:" "$home/state/$id.status"; then
     fail "precondition: the close path wrote a status answer marker, so this is not the real ordering"
   fi
   run_decisions "$home" verify "$id" >/dev/null \
@@ -2147,6 +2147,69 @@ test_concurrent_park_and_answer_keep_one_decision
 test_out_of_band_close_is_repairable_before_teardown
 test_unanswered_decision_still_blocks_completion_and_teardown
 test_structured_holds_survive_teardown_and_route_resolution
+# tasks-axi resolves its backlog from the `path` key of the `[markdown]` table in the
+# home's .tasks.toml, so a home that configures a non-default path keeps its whole
+# backlog somewhere else. The intactness check that decides archival has to read THAT
+# file. A check that assumed data/backlog.md would judge a home by a file tasks-axi
+# never touches: it would refuse a real archival because the assumed file is missing,
+# and, worse, a stray `path` under some other table could pass a destroyed backlog off
+# as an intact one. Both directions are proven here against the real script.
+test_verify_reads_the_backlog_path_tasks_axi_resolves() {
+  local home id hold
+  home=$(make_home configured-backlog-path)
+  # The real backlog lives at a configured path, and an unrelated table names a decoy
+  # file that tasks-axi ignores and this gate must ignore too.
+  mkdir -p "$home/custom" "$home/decoy"
+  cat > "$home/.tasks.toml" <<'EOF'
+backend = "markdown"
+
+[sqlite]
+path = "decoy/backlog.md"
+
+[markdown]
+path = "custom/board.md"
+done_keep = 10
+EOF
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/custom/board.md"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/decoy/backlog.md"
+  rm -f "$home/data/backlog.md"
+
+  id=sample-configured-path-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the configured-path sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create configured-path origin"
+  assert_grep "$id" "$home/custom/board.md" "tasks-axi did not use the configured backlog path"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample configured-path review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the configured-path option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the configured-path hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the configured-path origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the configured-path choice"
+  cp "$home/custom/board.md" "$home/board.intact.md"
+
+  # Real archival out of the configured backlog still clears the gate.
+  grep -v "$hold" "$home/board.intact.md" > "$home/custom/board.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/configured.err" \
+    || fail "verify rejected archival out of the configured backlog: $(cat "$home/configured.err")"
+
+  # Destroying the configured backlog must refuse, even though the decoy path named by
+  # the other table is still a perfectly structured file.
+  printf 'not a backlog at all\n' > "$home/custom/board.md"
+  assert_grep "## Done" "$home/decoy/backlog.md" "the decoy file stopped being a structured backlog"
+  if run_decisions "$home" verify "$id" >/dev/null 2> "$home/decoy.err"; then
+    fail "verify read the decoy backlog and accepted a destroyed one as archival"
+  fi
+  assert_contains "$(cat "$home/decoy.err")" "$hold" \
+    "the destroyed configured-backlog refusal did not name the hold"
+  pass "verify judges archival from the backlog path tasks-axi resolves, not a decoy"
+}
+
 test_origin_slug_validation_precedes_path_construction
 test_visual_review_uses_shared_completion_owner
 test_none_inventory_and_resolved_prose_do_not_create_holds
@@ -2167,3 +2230,4 @@ test_verify_accepts_archival_under_a_custom_done_heading
 test_verify_tolerates_archival_on_the_real_answer_ordering
 test_every_close_path_records_the_captain_answer
 test_a_reopened_key_defeats_its_earlier_durable_answer
+test_verify_reads_the_backlog_path_tasks_axi_resolves

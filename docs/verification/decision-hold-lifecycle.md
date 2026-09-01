@@ -43,7 +43,8 @@ They drive the real completion-then-answer ordering end to end, so the answer re
 Every close path is shown recording that key while a hold left unclosed records none, and a key re-asked after its durable answer is unanswered again.
 The negatives prove an archived hold still fails with no answer evidence, with a mate's own bare self-close, and for a key that was never registered as a hold.
 A missing, empty, or unstructured backlog is refused rather than read as archival, while a real backlog whose Done heading carries trailing text is accepted.
-`status_key_answered`'s own regressions cover the delivered-answer marker for the exact key, last-transition re-open semantics, a key named after the marker itself, and the reserved-key namespace guard.
+A home whose `.tasks.toml` configures a non-default `[markdown] path` is judged from that file: real archival out of it still clears the gate, and destroying it is refused even while a decoy `path` under an unrelated table still names a perfectly structured file.
+The status-log answer reader was removed along with its own regressions, because a worker writes its own status lines and could forge the marker it matched on.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -68,10 +69,10 @@ ok - resolve matches first/middle/last in quoted blocked_by and rejects a genuin
 ok - a bound channel's captured answers close their captain holds at answer time
 ok - a channel source with no decision binding closes nothing
 ok - the answer path keeps every guard the unrouted close path already had
-ok - the chat channel feeds the same keyed-answer intake a captured review does
+ok - the chat channel feeds the same keyed-answer intake and clears the gate after archival
 ok - verify tolerates an answered hold archived out of the backlog but still fails one with no answer evidence
 ok - verify treats only a real not-found as archival and refuses when the backlog cannot be read
-ok - verify refuses a mate's own self-close but accepts a delivered captain answer
+ok - verify refuses a mate's own self-close and a forged answered marker with no durable record
 ok - completion refuses a key whose hold was never registered, and accepts it once held
 ok - verify accepts an archived answered hold whose key is named after the answer marker
 ok - verify refuses a deleted, empty, or unstructured backlog instead of reading it as archival
@@ -79,6 +80,7 @@ ok - verify accepts archival in a backlog whose Done heading carries trailing te
 ok - verify tolerates archival of a hold answered on the real completion-then-answer ordering
 ok - every close path records the captain answer durably and an unclosed hold records none
 ok - a re-asked key is unanswered again despite its earlier durable answer record
+ok - verify judges archival from the backlog path tasks-axi resolves, not a decoy
 
 $ bash tests/fm-classify-decision-key.test.sh
 ok - a stated [key=X] opens X whether it precedes or follows the verb colon
@@ -106,10 +108,6 @@ ok - a blocked line accepts one canonical key inside its note
 ok - an invalid key lookalike cannot hide the only valid canonical key
 ok - a v7 cursor that skipped a valid key after a malformed head is rebuilt
 ok - a v8 cursor that chose one punctuated key is rebuilt
-ok - status_key_answered needs a delivered-answer resolved line for the exact key
-ok - status_key_answered follows the last transition, so a re-open unanswers a key
-ok - status_key_answered reads the marker on a key named after the marker itself
-ok - status_key_answered applies the reserved-key namespace guard the fold uses
 
 $ bash tests/fm-api-reads.test.sh
 ok - empty home captain queue is an empty list

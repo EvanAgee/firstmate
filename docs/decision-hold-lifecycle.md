@@ -25,22 +25,19 @@ Scout teardown calls the script's read-only `verify` subcommand after checking f
 A hold that was answered and marked Done is eventually trimmed out of the backlog by Done-history retention, so `verify` treats a reviewed key whose hold is gone as satisfied only on positive evidence, on two counts.
 First, the key must already be listed in the origin's recorded `decision_keys`, which `complete` writes only after it has found that key's hold durable.
 `tasks-axi` reports the same not-found for a hold retention trimmed and a hold that never existed, so that record is what tells the two apart, and a key being inventoried for the first time can never use the tolerance.
-Second, the captain must be proven to have answered the key, by either of two durable routes.
-
-The primary route is the origin's recorded `answered_keys=` list.
+Second, the captain must be proven to have answered the key, and the origin's recorded `answered_keys=` list is the only thing that proves it.
 The `resolve`, `answer`, `decline`, and `repair` subcommands each union the key into that list once `tasks-axi` has confirmed the hold kept its resolution record, so the list states only what this script actually closed.
 It lives in the origin metadata beside `decision_keys`, which is state rather than backlog, so it outlives the Done entry retention removes.
 This is the route the ordinary flow takes: `complete` transfers a still-open decision to its hold with a `captain-held` line, which closes the live status copy, so a later captain answer is routed to the hold-close path and writes no status line at all.
 
-The second route covers a key the captain answered in chat while it was still open in the status fold.
-There the key's last status transition must be a resolved line closing that exact key and carrying the `answered:` marker that `bin/fm-send.sh` writes when a captain's answer is delivered.
-A bare `resolved [key=...]` line without it is a mate closing its own keyed phase, which `bin/fm-brief.sh` tells mates to do when a phase fizzles or a blocker clears on its own, so it is not proof anyone answered.
-The `captain-held` transfer line is not answer proof either, because `complete` writes one for every reviewed key that is still open.
-This route is never required and can never stand alone as proof of something the close paths did not do; it only adds a case the `answered_keys` record cannot reach.
+The status log used to offer a second route, where a resolved line carrying the `answered:` marker that `bin/fm-send.sh` writes on delivery stood in as proof. That route was removed.
+A worker writes its own status lines: `bin/fm-brief.sh` tells a crewmate or scout to append its own `resolved [key=<slug>]: <why it is no longer active>` line whenever a keyed phase fizzles or a blocker clears without a firstmate reply.
+Nothing stops that same worker from writing the marker too, so the route was forgeable by the very agent whose source deletion this gate guards, and a check an agent can satisfy by writing a sentence about itself is no check at all.
+The marker still exists as a human-readable annotation on the delivered line; it is simply never read back as evidence.
 
-A key is stable and reusable, so a decision answered in one round can be asked again, and neither route may outrank a live question.
-Both are therefore checked against the same open-decision fold `complete` and `verify` already gate on: a key a later `needs-decision` or `blocked` line re-opened counts as unanswered again, even with a durable `answered_keys` record standing.
-A reviewed key with neither proof, whether still open, re-opened, self-closed, or never seen anywhere, must still have a present, durable hold, so an absent hold with no answer evidence keeps failing the gate.
+A key is stable and reusable, so a decision answered in one round can be asked again, and a standing record may not outrank a live question.
+`answered_keys` is therefore checked against the same open-decision fold `complete` and `verify` already gate on: a key a later `needs-decision` or `blocked` line re-opened counts as unanswered again, even with a durable `answered_keys` record standing.
+A reviewed key with no such record, whether still open, re-opened, closed by a mate itself, or never seen anywhere, must still have a present, durable hold, so an absent hold with no answer evidence keeps failing the gate.
 The hold must be proven gone, and that takes a `tasks-axi` `NOT_FOUND` read out of a backlog that is still intact.
 `tasks-axi` answers `NOT_FOUND` for a backlog that is missing, empty, or no longer structured exactly as it does for a hold retention trimmed, so a wiped backlog cannot stand in for archival.
 Retention only removes entries and leaves the file's section headings behind, so a readable backlog still carrying a Done heading is a real backlog that simply no longer lists this hold.
