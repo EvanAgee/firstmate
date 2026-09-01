@@ -42,7 +42,10 @@
 # `verify` is read-only and is called by scout teardown so teardown cannot erase a
 # source before this gate has succeeded. A reviewed key whose hold was answered and
 # then trimmed out of the backlog by Done-history retention still passes, but only on
-# positive evidence: the key's LAST status transition must be a resolved line closing
+# positive evidence on two counts. The key must already be recorded in the origin's
+# decision_keys, which only happens after an earlier `complete` found its hold durable,
+# because tasks-axi reports the same not-found for a hold that was trimmed and one that
+# never existed. And the key's LAST status transition must be a resolved line closing
 # that exact key AND carrying the `answered:` marker that fm-send.sh writes when a
 # captain's answer is delivered. A bare resolved line without that marker is a mate's
 # own self-close, written when a keyed phase fizzles or a blocker clears on its own,
@@ -585,15 +588,27 @@ verify_hold_durable() {  # <hold-id> [prior-read_hold-output]
 # reviewed key that never appeared in the status stream, is still open, or was
 # re-opened after an earlier answer does not end resolved, so an absent hold for it
 # stays a hard failure and a genuinely unanswered decision keeps blocking teardown.
-# Absence itself must be proven too: only a tasks-axi NOT_FOUND counts (hold_is_absent).
-# A backlog that cannot be read is not an archived hold, so any other failure falls
-# through to verify_hold_durable and fails loudly, the way it did before this tolerance
-# existed. This gate is the last thing standing between scout teardown and deleting a
-# source, so an unreadable backlog must never be mistaken for a trimmed one.
-verify_reviewed_hold() {  # <hold-id> <status-file> <key>
-  local id=$1 status_file=$2 key=$3 read_out
+# Absence itself must be proven too: only a tasks-axi NOT_FOUND counts (read_hold's
+# absent verdict). A backlog that cannot be read is not an archived hold, so any other
+# failure falls through to verify_hold_durable and fails loudly, the way it did before
+# this tolerance existed. This gate is the last thing standing between scout teardown
+# and deleting a source, so an unreadable backlog must never be mistaken for a trimmed
+# one.
+# Nor may a hold that NEVER EXISTED be mistaken for one retention trimmed: tasks-axi
+# reports NOT_FOUND for both, and an answered status line proves only that the captain
+# answered in the status channel, which fm-send.sh does without any hold existing. So
+# the caller must vouch that this key was durably held before, by passing held_before=1
+# only for a key already recorded in the origin's decision_keys - a key gets recorded
+# there only after an earlier `complete` verified its hold was durable. A key being
+# inventoried for the first time has no such history, so an absent hold for it stays a
+# hard failure.
+# A hold closed through this script's own answer/resolve/decline path writes no status
+# line at all, so once archived it carries no evidence here and is attested via `repair`.
+verify_reviewed_hold() {  # <hold-id> <status-file> <key> <held-before>
+  local id=$1 status_file=$2 key=$3 held_before=$4 read_out
   read_out=$(read_hold "$id")
-  if [ "$(hold_read_verdict "$read_out")" = absent ] \
+  if [ "$held_before" = 1 ] \
+    && [ "$(hold_read_verdict "$read_out")" = absent ] \
     && status_key_answered "$status_file" "$key"; then
     return 0
   fi
@@ -858,7 +873,8 @@ command_complete() {
   if [ -n "$keys" ]; then
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      verify_reviewed_hold "$(hold_id "$origin" "$key")" "$status_file" "$key"
+      verify_reviewed_hold "$(hold_id "$origin" "$key")" "$status_file" "$key" \
+        "$(list_has_key "$previous" "$key" && echo 1 || echo 0)"
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
@@ -915,9 +931,11 @@ command_verify() {
   keys=$(meta_value "$meta" decision_keys)
   status_file="$STATE/$origin.status"
   if [ -n "$keys" ]; then
+    # Every key here was read back out of decision_keys, which `complete` writes only
+    # after verifying that key's hold was durable, so all of them were held before.
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      verify_reviewed_hold "$(hold_id "$origin" "$key")" "$status_file" "$key"
+      verify_reviewed_hold "$(hold_id "$origin" "$key")" "$status_file" "$key" 1
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF

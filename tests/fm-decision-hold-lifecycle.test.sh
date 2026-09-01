@@ -1752,6 +1752,52 @@ test_verify_refuses_a_mate_self_close_as_an_answer() {
   pass "verify refuses a mate's own self-close but accepts a delivered captain answer"
 }
 
+# tasks-axi reports the same not-found for a hold retention trimmed and a hold that
+# was never written at all, and a captain can answer a keyed status decision through
+# fm-send without any hold existing. So an answered status line alone cannot stand in
+# for a durable backlog record. The origin's recorded decision_keys is what tells the
+# two apart: `complete` writes a key there only after finding its hold durable.
+test_completion_refuses_a_key_that_was_never_held() {
+  local home id
+  home=$(make_home never-held)
+  id=sample-never-held-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the never-held sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create never-held origin"
+  write_origin_meta "$home" "$id"
+  printf '# Sample never-held review\n\nA choice was answered but never held.\n' \
+    > "$home/data/$id/report.md"
+  # The captain answered in the status channel. bin/fm-send.sh writes this line
+  # whenever --resolve-key closes a keyed decision, with no hold involved.
+  {
+    printf 'needs-decision [key=choice]: choose sample option A or option B\n'
+    printf 'resolved [key=choice]: answered: captain picked A\n'
+    printf 'done: report complete\n'
+  } > "$home/state/$id.status"
+  if tasks_in "$home" show "$id-decision-choice" --full >/dev/null 2>&1; then
+    fail "the never-held fixture already has a hold, so it proves nothing"
+  fi
+
+  if run_decisions "$home" complete "$id" choice \
+    > "$home/never-held.out" 2> "$home/never-held.err"; then
+    fail "complete accepted a key whose hold was never registered"
+  fi
+  assert_contains "$(cat "$home/never-held.err")" "$id-decision-choice" \
+    "the never-held refusal did not name the missing hold"
+  if grep -q '^decision_keys=' "$home/state/$id.meta"; then
+    fail "a refused completion still recorded the never-held key as inventoried"
+  fi
+
+  # Registering the hold first is what makes the same call succeed, so the refusal
+  # above is about the missing hold and not about the fixture being malformed.
+  run_decisions "$home" hold "$id" choice \
+    --title "Choose the sample option" --reason "captain sample choice pending" --repo sample >/dev/null \
+    || fail "could not register the hold for the never-held origin"
+  run_decisions "$home" complete "$id" choice >/dev/null 2> "$home/held.err" \
+    || fail "complete refused a key whose hold was registered: $(cat "$home/held.err")"
+  pass "completion refuses a key whose hold was never registered, and accepts it once held"
+}
+
 test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
@@ -1776,3 +1822,4 @@ test_chat_channel_feeds_the_same_keyed_answer_intake
 test_verify_tolerates_answered_hold_archived_out_of_backlog
 test_verify_refuses_when_the_backlog_cannot_be_read
 test_verify_refuses_a_mate_self_close_as_an_answer
+test_completion_refuses_a_key_that_was_never_held

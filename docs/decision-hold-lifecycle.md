@@ -22,7 +22,10 @@ For an open keyed status decision, it appends a `captain-held [key=<key>]: ...` 
 `bin/fm-classify-lib.sh` recognizes that transfer as closing the live status copy without claiming that the captain has answered it.
 
 Scout teardown calls the script's read-only `verify` subcommand after checking for the report and before removing any source state.
-A hold that was answered and marked Done is eventually trimmed out of the backlog by Done-history retention, so `verify` treats a reviewed key whose hold is gone as satisfied only on positive evidence: the key's last status transition must be a resolved line closing that exact key and carrying the `answered:` marker.
+A hold that was answered and marked Done is eventually trimmed out of the backlog by Done-history retention, so `verify` treats a reviewed key whose hold is gone as satisfied only on positive evidence, on two counts.
+First, the key must already be listed in the origin's recorded `decision_keys`, which `complete` writes only after it has found that key's hold durable.
+`tasks-axi` reports the same not-found for a hold retention trimmed and a hold that never existed, so that record is what tells the two apart, and a key being inventoried for the first time can never use the tolerance.
+Second, the key's last status transition must be a resolved line closing that exact key and carrying the `answered:` marker.
 That marker is what `bin/fm-send.sh` writes when a captain's answer is delivered.
 A bare `resolved [key=...]` line without it is a mate closing its own keyed phase, which `bin/fm-brief.sh` tells mates to do when a phase fizzles or a blocker clears on its own, so it is not proof anyone answered.
 The `captain-held` transfer line is not answer proof either, because `complete` writes one for every reviewed key that is still open.
