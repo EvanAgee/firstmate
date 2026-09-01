@@ -347,7 +347,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    An unkeyed line lands under the shared key \`default\`, so a second unkeyed decision silently overwrites the first and only the last one is ever seen.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself, reusing the exact key you opened it with, as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
@@ -509,7 +509,7 @@ $RULE1
    An unkeyed line lands under the shared key \`default\`, so a second unkeyed decision silently overwrites the first and only the last one is ever seen.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself, reusing the exact key you opened it with, as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.

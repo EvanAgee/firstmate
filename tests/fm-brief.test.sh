@@ -921,15 +921,20 @@ test_scout_and_secondmate_scaffold
 #   2. Ending a turn with a validation gate open makes no progress.
 #   3. Appending `resolved` records an answer; it does not do the work.
 #   4. A local dependency or environment failure is the worker's own to fix.
-# Every backticked needs-decision:/blocked: example in a generated brief must
-# carry a [key=...] token, so the brief never contradicts the MUST it states.
+# Every copyable status template in a generated brief must carry a [key=...]
+# token, so the brief never contradicts the MUST it states.
+# A template is a backticked example a worker appends verbatim. The opening
+# verbs count whatever their body; a `resolved` example counts only when it
+# carries a {placeholder} body, since bare `resolved` is a prose verb reference.
 assert_every_example_keyed() {  # <generated-brief> <label>
-  local brief=$1 label=$2 unkeyed
+  local brief=$1 label=$2 unkeyed templates
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-  unkeyed=$(grep -o '`\(needs-decision\|blocked\): [^`]*`' "$brief" \
-    | grep -v '\[key=' || true)
+  templates=$(grep -o '`\(needs-decision\|blocked\): [^`]*`' "$brief" || true)
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  templates="$templates"$'\n'$(grep -o '`resolved: [^`]*{[^`]*`' "$brief" || true)
+  unkeyed=$(printf '%s\n' "$templates" | grep -v '\[key=' | grep . || true)
   [ -z "$unkeyed" ] \
-    || fail "$label must key every needs-decision/blocked example, found: $unkeyed"
+    || fail "$label must key every appendable status template, found: $unkeyed"
 }
 
 test_status_protocol_closes_worker_silence_gaps() {
@@ -953,6 +958,8 @@ test_status_protocol_closes_worker_silence_gaps() {
       "$id: ship brief must not repeat the false claim that an unkeyed line never opens a decision"
     assert_every_example_keyed "$brief" \
       "$id: ship brief"
+    assert_no_grep "if you opened it with one" "$brief" \
+      "$id: ship brief must not make the resolved key conditional now that keys are required"
     assert_grep 'needs-decision [key=' "$brief" \
       "$id: ship brief must show the keyed form in its needs-decision example"
     assert_grep 'blocked [key=' "$brief" \
@@ -988,6 +995,8 @@ test_status_protocol_closes_worker_silence_gaps() {
     "scout brief must not repeat the false claim that an unkeyed line never opens a decision"
   assert_every_example_keyed "$brief" \
     "scout brief"
+  assert_no_grep "if you opened it with one" "$brief" \
+    "scout brief must not make the resolved key conditional now that keys are required"
   assert_grep 'needs-decision [key=' "$brief" \
     "scout brief must show the keyed form in its needs-decision example"
   assert_grep 'blocked [key=' "$brief" \
