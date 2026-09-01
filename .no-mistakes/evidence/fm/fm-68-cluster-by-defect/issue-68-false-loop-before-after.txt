@@ -1,0 +1,172 @@
+firstmate issue #68 - review loops must be keyed by DEFECT IDENTITY, not file path.
+Every line below is a real run of bin/fm-review-loop-stop.sh.
+
+====================================================================
+CASE 1: three DIFFERENT defects, each fixed once, all in ONE file.
+Work is converging. This is not a loop and must not stop the run.
+====================================================================
+
+--- BEFORE: helper at base commit 6e89ead (cluster keyed by file) ---
+
+$ fm-review-loop-stop.sh record demo --run r1 --head head-a --changed Fixed the approval replay identity bug. --cluster file:src/lib/serve/exec-bridge.ts
+  continue: review round 1 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r1 --head head-b --changed Fixed the unrelated timeout default. --cluster file:src/lib/serve/exec-bridge.ts
+  continue: review round 2 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r1 --head head-c --changed Fixed the unrelated log-prefix typo. --cluster file:src/lib/serve/exec-bridge.ts
+  # Repeated review clusters
+  
+  Run: `r1`
+  Threshold: 3 consecutive review rounds
+  
+  ## What each cluster returned against
+  
+  ### `file:src/lib/serve/exec-bridge.ts`
+  
+  - Round 1 reviewed `head-a`: Fixed the approval replay identity bug.
+  - Round 2 reviewed `head-b`: Fixed the unrelated timeout default.
+  - Round 3 reviewed `head-c`: Fixed the unrelated log-prefix typo.
+  
+  ## Decision
+  
+  - Fix at root. Repair the owning design before another review round.
+  - Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+  
+  Firstmate chooses under the task's existing authority rules.
+  
+  stop: report=/tmp/ev-b/state/review-loops/demo-r1-1.md
+  -> exit 20
+
+BEFORE result: exit 20, a FALSE STOP. Three unrelated defects sharing
+one file were counted as three rounds of the same cluster.
+
+--- AFTER: helper on this branch (cluster keyed by defect identity) ---
+
+$ fm-review-loop-stop.sh record demo --run r1 --head head-a --changed Fixed the approval replay identity bug. --cluster defect:approval-replay-identity
+  continue: review round 1 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r1 --head head-b --changed Fixed the unrelated timeout default. --cluster defect:serve-timeout-default
+  continue: review round 2 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r1 --head head-c --changed Fixed the unrelated log-prefix typo. --cluster defect:log-prefix-typo
+  continue: review round 3 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+AFTER result: exit 0 every round. No false stop. Work keeps going.
+
+====================================================================
+CASE 2: ONE defect surviving three fixes aimed at it, moving files.
+This is a genuine loop and must still stop.
+====================================================================
+
+$ fm-review-loop-stop.sh record demo --run r2 --head h1 --changed Fixed the model-memory leak in loader.ts. --cluster defect:model-memory-leak --targeted defect:model-memory-leak
+  continue: review round 1 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r2 --head h2 --changed Fixed the same leak surfacing in cache.ts. --cluster defect:model-memory-leak --targeted defect:model-memory-leak
+  continue: review round 2 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r2 --head h3 --changed Fixed the same leak surfacing in serve.ts. --cluster defect:model-memory-leak --targeted defect:model-memory-leak
+  # Repeated review clusters
+  
+  Run: `r2`
+  Threshold: 3 consecutive review rounds
+  
+  ## What each cluster returned against
+  
+  ### `defect:model-memory-leak`
+  
+  - Round 1 reviewed `h1`: Fixed the model-memory leak in loader.ts.
+  - Round 2 reviewed `h2`: Fixed the same leak surfacing in cache.ts.
+  - Round 3 reviewed `h3`: Fixed the same leak surfacing in serve.ts.
+  
+  ## Decision
+  
+  - Fix at root. Repair the owning design before another review round.
+  - Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+  
+  Firstmate chooses under the task's existing authority rules.
+  
+  stop: report=/tmp/ev-c/state/review-loops/demo-r2-1.md
+  -> exit 20
+
+Result: exit 20. The same defect surviving three targeted rounds still stops,
+even though the file changed every round.
+
+====================================================================
+CASE 3: --targeted. A defect that merely REAPPEARS while a different
+one is being fixed is recorded but does not count toward a stop.
+Threshold here is 2 to keep the transcript short.
+====================================================================
+
+$ fm-review-loop-stop.sh record demo --run r3 --head h1 --changed Fixed defect alpha. --cluster defect:alpha --cluster defect:beta --targeted defect:alpha --threshold 2
+  continue: review round 1 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r3 --head h2 --changed Fixed defect gamma; beta still reported. --cluster defect:beta --cluster defect:gamma --targeted defect:gamma
+  continue: review round 2 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+beta returned in BOTH rounds but was never targeted, so no stop (exit 0).
+
+$ fm-review-loop-stop.sh record demo --run r3 --head h3 --changed Now aimed at beta. --cluster defect:beta --targeted defect:beta
+  continue: review round 3 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+$ fm-review-loop-stop.sh record demo --run r3 --head h4 --changed Aimed at beta again. --cluster defect:beta --targeted defect:beta
+  # Repeated review clusters
+  
+  Run: `r3`
+  Threshold: 2 consecutive review rounds
+  
+  ## What each cluster returned against
+  
+  ### `defect:beta`
+  
+  - Round 3 reviewed `h3`: Now aimed at beta.
+  - Round 4 reviewed `h4`: Aimed at beta again.
+  
+  ## Decision
+  
+  - Fix at root. Repair the owning design before another review round.
+  - Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+  
+  Firstmate chooses under the task's existing authority rules.
+  
+  stop: report=/tmp/ev-d/state/review-loops/demo-r3-1.md
+  -> exit 20
+
+Two consecutive rounds actually AIMED at beta trip the stop at exit 20.
+
+====================================================================
+CASE 4: same-head retry. Identical payload is a safe replay.
+A retry that widens the request is refused with a named remedy.
+====================================================================
+
+$ fm-review-loop-stop.sh record demo --run r4 --head h1 --changed Round one, aimed at x. --cluster defect:x --cluster defect:y --targeted defect:x --threshold 3
+  continue: review round 1 recorded; no cluster reached 3 rounds
+  -> exit 0
+
+# crash-recovery replay of the exact same call:
+$ fm-review-loop-stop.sh record demo --run r4 --head h1 --changed Round one, aimed at x. --cluster defect:x --cluster defect:y --targeted defect:x
+  continue: reviewed head h1 was already recorded
+  -> exit 0
+
+# same head, but now it also wants to target defect:y:
+$ fm-review-loop-stop.sh record demo --run r4 --head h1 --changed Round one, aimed at x. --cluster defect:x --cluster defect:y --targeted defect:x --targeted defect:y
+  error: reviewed head h1 is already recorded and a same-head retry cannot add clusters or change targeting; record targeting for defect:y against the current head instead
+  -> exit 1
+
+# same request spelled by OMITTING --targeted (which means target all):
+$ fm-review-loop-stop.sh record demo --run r4 --head h1 --changed Round one. --cluster defect:x --cluster defect:y
+  error: reviewed head h1 is already recorded and a same-head retry cannot add clusters or change targeting; record targeting for defect:y against the current head instead
+  -> exit 1
+
+Both spellings of the widened request get the same answer: exit 1, and the
+message names what was new and where to record it.
