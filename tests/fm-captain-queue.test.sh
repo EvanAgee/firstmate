@@ -758,6 +758,50 @@ test_legacy_backlog_done_history_reconstructs_dashboard_delivery() {
   pass "legacy backlog-done migration reconstructs dashboard delivery"
 }
 
+assert_consumed_legacy_reply_is_not_redelivered() {  # <name> <consumed-json>
+  local home out
+  home=$(make_home "$1")
+  jq -n '{
+    updated_at: "2026-08-27T18:00:00Z",
+    items: [],
+    resolved: [{
+      id: "legacy-card",
+      num: 1,
+      question: "Old question?",
+      asked_at: "2026-08-27T10:00:00Z",
+      answer: "already acted on",
+      resolved_at: "2026-08-27T11:00:00Z",
+      status: "resolved"
+    }]
+  }' > "$home/data/captain-queue.json"
+  printf '%s\n' "$2" > "$home/state/captain-replies.jsonl"
+  printf '1\n' > "$home/state/captain-replies.cursor"
+  jq -nc \
+    --arg answer "already acted on" \
+    --arg at "$NOW" \
+    '{id: "legacy-card", generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+
+  out=$(run_q "$home" reconcile)
+  assert_not_contains "$out" "handled: [id=legacy-card]" \
+    "an answer already consumed under the legacy contract must not run again"
+  jq -e '
+    [.delivered_reply_winners[] | select(.id == "legacy-card")]
+    | length == 1 and .[0].line == 1
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "consumed legacy reply was not reconstructed as delivered history"
+}
+
+test_consumed_legacy_reply_never_redelivers() {
+  assert_consumed_legacy_reply_is_not_redelivered \
+    legacy-consumed-bad-generation \
+    '{"id":"legacy-card","answer":"already acted on","generation":"one"}'
+  assert_consumed_legacy_reply_is_not_redelivered \
+    legacy-consumed-bad-receipt \
+    '{"id":"legacy-card","answer":"already acted on","at":"nonsense"}'
+  pass "consumed legacy replies are not redelivered after upgrade"
+}
+
 test_manual_park_rejects_backed_and_unknown_cards() {
   local home id out rc
   home=$(make_home manual-park-guards)
@@ -1097,18 +1141,51 @@ test_conflict_ranking_sees_winner_after_orphan() {
   rc=0
   out=$(run_q "$home" reconcile) || rc=$?
   [ "$rc" -eq 1 ] || fail "orphan-separated conflict should exit 1, got $rc"
-  assert_contains "$out" \
-    "superseded: [id=card-a] [generation=1] [winner-line=3] older answer" \
-    "the orphan must not hide the later winning answer"
-  assert_not_contains "$out" "handled: [id=card-a] older answer" \
-    "the earlier losing answer must not be delivered"
+  assert_contains "$out" "handled: [id=card-a] older answer" \
+    "the reply before the orphan must be delivered in order"
+  assert_not_contains "$out" "winner-line=3" \
+    "a blocker must delimit the conflict group"
   assert_contains "$out" "orphan: [id=missing-card] orphan answer" \
     "the orphan should still stop cursor progress"
   [ "$(cursor_value "$home")" = 1 ] \
     || fail "cursor should stop before the orphan, got $(cursor_value "$home")"
-  [ "$(active_ids "$home")" = card-a ] \
-    || fail "the winner after the orphan should remain pending"
-  pass "conflict ranking sees a later winner without crossing an orphan"
+  [ "$(active_ids "$home")" = "" ] \
+    || fail "the answered card should have cleared, got $(active_ids "$home")"
+  [ "$(jq -r '[.records[] | select(.id == "card-a")] | first | .answer' \
+    "$home/data/captain-queue.json")" = "older answer" ] \
+    || fail "card-a should record the delivered answer"
+  pass "a blocker delimits the conflict group and the earlier reply is delivered"
+}
+
+test_reply_behind_orphan_delivers_after_orphan_clears() {
+  local home out rc
+  home=$(make_home reply-behind-orphan)
+  run_q "$home" add --id card-a --question "A?" >/dev/null
+  run_q "$home" add --id card-b --question "B?" >/dev/null
+  append_reply "$home" missing-card "orphan answer"
+  append_reply "$home" card-b "later answer"
+
+  rc=0
+  out=$(run_q "$home" reconcile) || rc=$?
+  [ "$rc" -eq 1 ] || fail "orphan should exit 1, got $rc"
+  assert_not_contains "$out" "card-b" "reconcile must not jump past the orphan"
+  [ "$(cursor_value "$home")" = 0 ] \
+    || fail "cursor should stay before the orphan, got $(cursor_value "$home")"
+
+  run_q "$home" resolve --id missing-card >/dev/null 2>&1 || true
+  jq -c 'select(.id != "missing-card")' \
+    "$home/state/captain-replies.jsonl" > "$home/state/replies.tmp"
+  mv "$home/state/replies.tmp" "$home/state/captain-replies.jsonl"
+
+  rc=0
+  out=$(run_q "$home" reconcile) || rc=$?
+  [ "$rc" -eq 0 ] || fail "cleared log should exit 0, got $rc"
+  assert_contains "$out" "handled: [id=card-b] later answer" \
+    "the reply behind the cleared blocker must eventually deliver"
+  case "$(active_ids "$home")" in
+    *card-b*) fail "card-b stayed open after its answer was delivered" ;;
+  esac
+  pass "a reply behind a blocker still delivers once the blocker clears"
 }
 
 test_conflicting_replies_rank_timestamp_then_log_order() {
@@ -1771,7 +1848,7 @@ test_dashboard_reply_after_auto_clear_does_not_orphan() {
   pass "auto-cleared cards distinguish first replies from later superseding answers"
 }
 
-test_backlog_done_winner_after_orphan_is_not_superseding() {
+test_backlog_done_winner_after_orphan_supersedes_delivered_answer() {
   local home out rc queue_file next_file
   home=$(make_home backlog-done-orphan-conflict)
   run_q "$home" add --id card-c --question "Ship?" >/dev/null
@@ -1802,22 +1879,21 @@ test_backlog_done_winner_after_orphan_is_not_superseding() {
   rc=0
   out=$(run_q "$home" reconcile) || rc=$?
   [ "$rc" -eq 1 ] || fail "orphan-separated backlog conflict should exit 1, got $rc"
-  assert_contains "$out" \
-    "superseded: [id=card-c] [generation=1] [winner-line=3] older unseen answer" \
-    "the earlier backlog-done reply should be marked superseded"
-  assert_not_contains "$out" "handled: [id=card-c]" \
-    "the earlier backlog-done reply must not be delivered"
+  assert_contains "$out" "handled: [id=card-c] older unseen answer" \
+    "the reply before the orphan should be delivered in order"
+  assert_not_contains "$out" "winner-line=3" \
+    "the orphan must delimit the conflict group"
   run_q "$home" add --id missing-card --question "Recovered orphan?" >/dev/null
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=missing-card] orphan answer" \
     "the recovered orphan should advance"
   assert_contains "$out" "handled: [id=card-c] newer answer after orphan" \
     "the backlog-done winner should be delivered after the orphan"
-  assert_not_contains "$out" "superseding: [id=card-c]" \
-    "a superseded but unseen answer must not trigger a superseding marker"
+  assert_contains "$out" "superseding: [id=card-c]" \
+    "the later answer supersedes the answer already delivered before the orphan"
   [ "$(resolved_answer "$home" card-c)" = backlog-done ] \
     || fail "the backlog-done marker was overwritten"
-  pass "a backlog-done winner after an orphan does not supersede an unseen answer"
+  pass "a backlog-done winner after an orphan supersedes the delivered earlier answer"
 }
 
 test_dashboard_reply_still_clears_when_backlog_item_is_open() {
@@ -1903,12 +1979,14 @@ test_malformed_legacy_anchor_gets_one_fresh_window
 test_add_reconstructs_consumed_reply_history
 test_park_reconstructs_consumed_reply_history
 test_legacy_backlog_done_history_reconstructs_dashboard_delivery
+test_consumed_legacy_reply_never_redelivers
 test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_reconcile_handles_a_queue_larger_than_one_process_argument
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
 test_conflict_ranking_sees_winner_after_orphan
+test_reply_behind_orphan_delivers_after_orphan_clears
 test_conflicting_replies_rank_timestamp_then_log_order
 test_conflicting_reply_crash_replay_delivers_only_the_winner
 test_historical_conflict_preserves_pending_delivery
@@ -1931,7 +2009,7 @@ test_done_backlog_item_clears_card_without_a_reply
 test_legacy_missing_backing_ignores_done_collision_and_expires
 test_only_done_cards_auto_clear
 test_dashboard_reply_after_auto_clear_does_not_orphan
-test_backlog_done_winner_after_orphan_is_not_superseding
+test_backlog_done_winner_after_orphan_supersedes_delivered_answer
 test_dashboard_reply_still_clears_when_backlog_item_is_open
 test_parked_reply_resolves_and_preserves_history
 

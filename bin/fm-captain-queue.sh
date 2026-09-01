@@ -152,12 +152,30 @@ def fm_classified_replies($raw):
                and ($record.generation | floor) == $record.generation))
            and ((($record | has("at")) | not) or $receipt != null)
          end) as $valid
+      | (if ($record | type) != "object" then false
+         else
+           (($record.id | type) == "string" and ($record.id | length) > 0)
+           and (($record.answer | type) == "string")
+         end) as $legacy_valid
+      | (if $legacy_valid
+           and ($record.generation | type) == "number"
+           and $record.generation > 0
+           and ($record.generation | floor) == $record.generation
+         then $record.generation
+         elif $legacy_valid then 1
+         else 0
+         end) as $legacy_generation
       | . + {
           valid: $valid,
           id: (if $valid then $record.id else "" end),
           generation: (if $valid then ($record.generation // 1) else 0 end),
           answer: (if $valid then $record.answer else "" end),
-          receipt_ms: (if $valid then $receipt else null end)
+          receipt_ms: (if $valid then $receipt else null end),
+          legacy_valid: $legacy_valid,
+          legacy_id: (if $legacy_valid then $record.id else "" end),
+          legacy_generation: $legacy_generation,
+          legacy_answer: (if $legacy_valid then $record.answer else "" end),
+          legacy_receipt_ms: (if $legacy_valid then $receipt else null end)
         }
     );
 '
@@ -427,7 +445,13 @@ migrate_reply_delivery_tracking() {  # <queue-json> <cursor>
     "$ISO_EPOCH_JQ$REPLY_LOG_JQ"'
       . as $queue
       | (fm_classified_replies($raw)
-        | map(select(.valid and .line <= $cursor))) as $consumed
+        | map(select(.legacy_valid and .line <= $cursor))
+        | map(. + {
+            id: .legacy_id,
+            generation: .legacy_generation,
+            answer: .legacy_answer,
+            receipt_ms: .legacy_receipt_ms
+          })) as $consumed
       | ([$queue.records[] as $record
           | $consumed[]
           | . as $entry
@@ -1011,7 +1035,7 @@ build_reply_plan() {  # <queue-json> <cursor> -> plan JSON on stdout
       | {
           entries: ($processable | map(
             . as $entry
-            | ([$classified[]
+            | ([$processable[]
                 | select(.valid
                   and .id == $entry.id
                   and .generation == $entry.generation)]
