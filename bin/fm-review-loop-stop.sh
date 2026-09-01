@@ -29,8 +29,9 @@
 # its clusters are already in that round and its explicit --targeted values, if
 # any, are already targeted there. This is what makes a crash-recovery replay
 # safe. It is an error when it would add a cluster or new targeting, because a
-# fix round produces a new commit; record those clusters against the current
-# head instead. A recorded round is never rewritten.
+# fix round produces a new commit; record that cluster or targeting against the
+# current head instead. The error names what was new. A recorded round is never
+# rewritten.
 #
 # A cluster trips after the configured number of consecutive targeted-and-
 # returned rounds. --threshold sets that number for a new run. Otherwise
@@ -158,7 +159,7 @@ record_round() { # <task-id> <args...>
   local task=$1 run='' head='' changed='' requested_threshold='' targeted_given=0
   local clusters='[]' targeted='[]' explicit_targeted='[]'
   local state_file state_json threshold existing_run existing_threshold
-  local new_state triggers generation key report round_count missing_target
+  local new_state triggers generation key report round_count missing_target added
   shift
   command -v jq >/dev/null 2>&1 || die "jq is required"
   while [ "$#" -gt 0 ]; do
@@ -277,7 +278,16 @@ record_round() { # <task-id> <args...>
       printf 'continue: reviewed head %s was already recorded\n' "$head"
       return 0
     fi
-    die "reviewed head $head is already recorded with different clusters; record new clusters against the current head"
+    added=$(printf '%s' "$state_json" | jq -r --arg head "$head" \
+      --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
+      [.rounds[] | select(.head == $head)][-1] as $round
+      | (($round.clusters + ($round.resolved // []))) as $recorded
+      | (($round.targeted // []) + ($round.resolved // [])) as $aimed
+      | [ (($clusters - $recorded) | map("cluster " + .))[],
+          (($targeted - $aimed) | map("targeting for " + .))[] ]
+      | join(", ")
+    ')
+    die "reviewed head $head is already recorded and a same-head retry cannot add clusters or change targeting; record $added against the current head instead"
   else
     new_state=$(printf '%s' "$state_json" | jq -c \
       --arg head "$head" --arg changed "$changed" \

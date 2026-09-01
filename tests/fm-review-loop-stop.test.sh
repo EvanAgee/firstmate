@@ -73,7 +73,9 @@ test_expanded_same_head_retry_is_rejected() {
   rc=$?
   set -e
   expect_code 1 "$rc" "an expanded same-head retry must be rejected"
-  assert_contains "$out" "record new clusters against the current head" \
+  assert_contains "$out" "cluster defect:o" \
+    "the rejection did not name the cluster that was new"
+  assert_contains "$out" "against the current head" \
     "the rejection did not tell the caller what to do"
   after=$(cat "$home/state/review-loops/$task.json")
   [ "$before" = "$after" ] || fail "a rejected retry still mutated the round"
@@ -86,6 +88,31 @@ test_expanded_same_head_retry_is_rejected() {
   set -e
   expect_code 0 "$rc" "targeting already recorded must stay idempotent"
   pass "review-loop stop: an expanded same-head retry is rejected"
+}
+
+test_targeting_only_same_head_expansion_is_rejected() {
+  local task=targeting-reject run=run-targeting-reject home out rc before after
+  home=$(make_home targeting-reject "$task")
+  record "$home" "$task" "$run" head-a "Round one, aimed at x." "defect:x" \
+    --cluster "defect:y" --targeted "defect:x" --threshold 3 >/dev/null \
+    || fail "first round should continue"
+  before=$(cat "$home/state/review-loops/$task.json")
+
+  # The cluster set is unchanged and only the targeting grows, so the error must
+  # name the targeting rather than claim the clusters differ.
+  set +e
+  out=$(record "$home" "$task" "$run" head-a "Round one, aimed at x." "defect:x" \
+    --cluster "defect:y" --targeted "defect:x" --targeted "defect:y" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "a targeting-only same-head expansion must be rejected"
+  assert_contains "$out" "targeting for defect:y" \
+    "the rejection did not name the targeting that was new"
+  assert_not_contains "$out" "cluster defect:" \
+    "the rejection blamed clusters that did not change"
+  after=$(cat "$home/state/review-loops/$task.json")
+  [ "$before" = "$after" ] || fail "a rejected retry still mutated the round"
+  pass "review-loop stop: a targeting-only same-head expansion is rejected"
 }
 
 test_retry_after_a_decision_cannot_re_surface_it() {
@@ -448,6 +475,7 @@ test_untargeted_recurrence_does_not_advance_count
 test_multiple_severities_all_recorded
 test_identical_same_head_retry_is_a_no_op
 test_expanded_same_head_retry_is_rejected
+test_targeting_only_same_head_expansion_is_rejected
 test_retry_after_a_decision_cannot_re_surface_it
 test_threshold_is_configurable
 test_ambient_threshold_does_not_override_a_pinned_run
