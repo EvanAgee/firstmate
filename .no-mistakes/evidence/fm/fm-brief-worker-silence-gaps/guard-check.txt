@@ -1,0 +1,39 @@
+=== GUARD CHECK ===
+Revert each fact in the scaffold one at a time; the test must FAIL each time.
+
+--- 1. un-key the needs-decision example (back to the pre-change form)
+  mutated 2 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must key every appendable status template, found: `needs-decision: {summary of options}`
+
+--- 2. restore the retracted false claim about unkeyed lines
+  mutated 2 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must give the real reason a key is required
+
+--- 3. delete the gate fact from the no-mistakes definition of done
+  mutated 1 occurrence(s)
+not ok - no-mistakes DOD must say an open gate leaves the turn unfinished
+
+--- 4. delete the 'recording is not acting' fact
+  mutated 2 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must separate recording an answer from doing the work
+
+--- 5. delete the 'local env failure is yours to fix' fact
+  mutated 2 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must make local environment failures the worker's own to fix
+
+--- 6. delete the 'never hide a blocker in a working: line' fact
+  mutated 2 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must forbid hiding a real blocker in a working line
+
+--- 7. un-key the resolved close example
+  mutated 2 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must key every appendable status template, found: `resolved: {how it cleared}`
+
+--- 8. un-key the worktree-isolation blocked example
+  mutated 1 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must key every appendable status template, found: `blocked: launched in primary checkout, not an isolated worktree`
+
+--- 9. un-key the daemon-error blocked example
+  mutated 2 occurrence(s)
+not ok - brief-silence-no-mistakes: ship brief must key every appendable status template, found: `blocked: {the daemon error}`
+

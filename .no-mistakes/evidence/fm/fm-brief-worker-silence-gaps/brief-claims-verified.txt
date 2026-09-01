@@ -1,0 +1,45 @@
+=== CLAIM 1: an unkeyed line lands under the shared key 'default',
+===          so a SECOND unkeyed decision silently overwrites the first.
+--- two UNKEYED questions (what the old scaffold's example produced)
+    worker's status file:
+      needs-decision: do we drop the legacy column or keep it
+      needs-decision: should the export be CSV or JSON
+    firstmate sees as OPEN DECISIONS:
+      default	needs-decision	should the export be CSV or JSON
+
+--- same two questions KEYED (what the new scaffold's example produces)
+    worker's status file:
+      needs-decision [key=legacy-column]: do we drop the legacy column or keep it
+      needs-decision [key=export-format]: should the export be CSV or JSON
+    firstmate sees as OPEN DECISIONS:
+      legacy-column	needs-decision	do we drop the legacy column or keep it
+      export-format	needs-decision	should the export be CSV or JSON
+
+=== CLAIM 2: an unkeyed 'resolved' does NOT close a keyed blocker.
+--- keyed blocker + UNKEYED resolved (the old close example)
+    worker's status file:
+      blocked [key=dep]: npm install fails on sharp
+      resolved: fixed it
+    firstmate sees as OPEN DECISIONS:
+      dep	blocked	npm install fails on sharp
+
+--- keyed blocker + KEYED resolved (the new close example)
+    worker's status file:
+      blocked [key=dep]: npm install fails on sharp
+      resolved [key=dep]: rebuilt sharp for arm64
+    firstmate sees as OPEN DECISIONS:
+      (nothing)
+
+=== CLAIM 3: a real blocker written as a 'working:' line is invisible.
+--- real blocker hidden in a working: line (the stall the brief forbids)
+    worker's status file:
+      working: stuck, npm install keeps failing on sharp
+    firstmate sees as OPEN DECISIONS:
+      (nothing)
+
+--- same problem escalated the way the brief now says
+    worker's status file:
+      blocked [key=sharp-install]: npm install fails on sharp: node-gyp ENOENT
+    firstmate sees as OPEN DECISIONS:
+      sharp-install	blocked	npm install fails on sharp: node-gyp ENOENT
+

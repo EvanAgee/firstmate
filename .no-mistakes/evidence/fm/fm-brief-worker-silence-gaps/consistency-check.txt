@@ -1,0 +1,30 @@
+=== ONE-OWNER / CONSISTENCY CHECK on the GENERATED briefs ===
+
+--- Each of the three shared facts appears EXACTLY ONCE per brief (no duplicated protocol):
+  generated-ship-brief.md
+    MUST carry                                    1
+    lands under the shared key                    1
+    Recording a decision is not acting on it      1
+    yours to fix, not a reason to stop            1
+    Never write a real blocker                    1
+  generated-scout-brief.md
+    MUST carry                                    1
+    lands under the shared key                    1
+    Recording a decision is not acting on it      1
+    yours to fix, not a reason to stop            1
+    Never write a real blocker                    1
+
+--- The three shared facts are WORD-FOR-WORD identical between ship and scout:
+    same: MUST carry
+    same: lands under the shared key
+    same: Recording a decision is not acting on it
+    same: yours to fix, not a reason to stop
+    same: Never write a real blocker
+
+--- The gate fact is ship-only (approved asymmetry: scouts run no pipeline):
+    ship  : 1
+    scout : 0
+
+--- No unkeyed appendable template survives in either brief:
+    generated-ship-brief.md: clean
+    generated-scout-brief.md: clean
