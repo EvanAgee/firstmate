@@ -26,9 +26,11 @@
 #
 # --head identifies the reviewed commit, and a record against an already recorded
 # head has exactly two outcomes. It is an idempotent no-op when it adds nothing:
-# its clusters are already in that round and its explicit --targeted values, if
-# any, are already targeted there. This is what makes a crash-recovery replay
-# safe. It is an error when it would add a cluster or new targeting, because a
+# its clusters are already in that round and the clusters it targets are already
+# targeted there. Targeting counts the same whether --targeted names it or an
+# omitted --targeted implies it, so both spellings of one request get the same
+# answer. This is what makes a crash-recovery replay safe. It is an error when
+# it would add a cluster or new targeting, because a
 # fix round produces a new commit; record that cluster or targeting against the
 # current head instead. The error names what was new. A recorded round is never
 # rewritten.
@@ -157,7 +159,7 @@ write_report() { # <path> <state-json> <clusters-json>
 
 record_round() { # <task-id> <args...>
   local task=$1 run='' head='' changed='' requested_threshold='' targeted_given=0
-  local clusters='[]' targeted='[]' explicit_targeted='[]'
+  local clusters='[]' targeted='[]'
   local state_file state_json threshold existing_run existing_threshold
   local new_state triggers generation key report round_count missing_target added
   shift
@@ -215,9 +217,7 @@ record_round() { # <task-id> <args...>
   # names. An explicit --targeted set must name only this call's clusters.
   if [ "$targeted_given" -eq 0 ]; then
     targeted=$clusters
-    explicit_targeted='[]'
   else
-    explicit_targeted=$targeted
     missing_target=$(jq -rn --argjson clusters "$clusters" --argjson targeted "$targeted" \
       '($targeted - $clusters) | join(", ")')
     [ -z "$missing_target" ] || die "--targeted names clusters that are not --cluster values: $missing_target"
@@ -268,7 +268,7 @@ record_round() { # <task-id> <args...>
     # cluster or targeting, because a fix round produces a new head to record
     # against instead.
     if printf '%s' "$state_json" | jq -e --arg head "$head" \
-      --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
+      --argjson clusters "$clusters" --argjson targeted "$targeted" '
       [.rounds[] | select(.head == $head)][-1] as $round
       | (($round.clusters + ($round.resolved // []))) as $recorded
       | (($round.targeted // []) + ($round.resolved // [])) as $aimed
@@ -279,7 +279,7 @@ record_round() { # <task-id> <args...>
       return 0
     fi
     added=$(printf '%s' "$state_json" | jq -r --arg head "$head" \
-      --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
+      --argjson clusters "$clusters" --argjson targeted "$targeted" '
       [.rounds[] | select(.head == $head)][-1] as $round
       | (($round.clusters + ($round.resolved // []))) as $recorded
       | (($round.targeted // []) + ($round.resolved // [])) as $aimed

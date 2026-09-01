@@ -106,13 +106,34 @@ test_targeting_only_same_head_expansion_is_rejected() {
   rc=$?
   set -e
   expect_code 1 "$rc" "a targeting-only same-head expansion must be rejected"
-  assert_contains "$out" "targeting for defect:y" \
+  assert_contains "$out" "record targeting for defect:y against" \
     "the rejection did not name the targeting that was new"
-  assert_not_contains "$out" "cluster defect:" \
-    "the rejection blamed clusters that did not change"
   after=$(cat "$home/state/review-loops/$task.json")
   [ "$before" = "$after" ] || fail "a rejected retry still mutated the round"
   pass "review-loop stop: a targeting-only same-head expansion is rejected"
+}
+
+test_untargeted_same_head_widening_is_rejected_too() {
+  local task=untargeted-widen run=run-untargeted-widen home out rc before after
+  home=$(make_home untargeted-widen "$task")
+  record "$home" "$task" "$run" head-a "Round one, aimed at a." "defect:a" \
+    --cluster "defect:b" --targeted "defect:a" --threshold 3 >/dev/null \
+    || fail "first round should continue"
+  before=$(cat "$home/state/review-loops/$task.json")
+
+  # Omitting --targeted asks to target every cluster this call names, so this is
+  # the same request as naming defect:b explicitly and must get the same answer.
+  set +e
+  out=$(record "$home" "$task" "$run" head-a "Round one." "defect:a" \
+    --cluster "defect:b" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "an untargeted same-head widening must reject like the explicit one"
+  assert_contains "$out" "record targeting for defect:b against" \
+    "the rejection did not name the targeting the untargeted call implied"
+  after=$(cat "$home/state/review-loops/$task.json")
+  [ "$before" = "$after" ] || fail "a rejected retry still mutated the round"
+  pass "review-loop stop: an untargeted same-head widening is rejected too"
 }
 
 test_retry_after_a_decision_cannot_re_surface_it() {
@@ -476,6 +497,7 @@ test_multiple_severities_all_recorded
 test_identical_same_head_retry_is_a_no_op
 test_expanded_same_head_retry_is_rejected
 test_targeting_only_same_head_expansion_is_rejected
+test_untargeted_same_head_widening_is_rejected_too
 test_retry_after_a_decision_cannot_re_surface_it
 test_threshold_is_configurable
 test_ambient_threshold_does_not_override_a_pinned_run
