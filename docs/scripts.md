@@ -106,7 +106,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for optional health checks                    |
 | `fm-chrome-devtools-axi-lib.sh` | Shared `chrome-devtools-axi` compatibility floor and open-and-snapshot probe   |
-| `fm-chrome-devtools-mcp.js` | Pinned chrome-devtools-mcp launcher for chrome-devtools-axi                       |
+| `fm-chrome-devtools-mcp.js` | Version-aware pinned chrome-devtools-mcp launcher for chrome-devtools-axi         |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Present durable watcher wakes, unread informational status lines, and OPEN DECISIONS, consume acknowledged rows through their sequence, retire only the matching recovery generation, then assert supervision health |
 | `fm-anchor-lib.sh`       | Heartbeat ANCHOR block and session odometer for long-lived primary sessions |

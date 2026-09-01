@@ -3,31 +3,56 @@
 // Usage: node bin/fm-chrome-devtools-mcp.js [chrome-devtools-mcp args...]
 //        node bin/fm-chrome-devtools-mcp.js --fm-print-spec
 //
-// chrome-devtools-axi 0.1.29 and 0.1.30 spawn `npx -y chrome-devtools-mcp@latest`
-// and omit pageId on page-scoped MCP calls. Chrome DevTools MCP 1.8.0 requires
-// pageId when --pageIdRouting is on, which is the default. This file is the
+// chrome-devtools-axi through 0.1.30 omits pageId on page-scoped MCP calls.
+// Chrome DevTools MCP 1.8.0 requires pageId when --pageIdRouting is on, which
+// is the default. AXI 0.1.31 and newer sends pageId itself. This file is the
 // CHROME_DEVTOOLS_AXI_MCP_PATH target: axi runs `node <this> <mcp-args>`, and
-// we replace the floating @latest spawn with a pinned package plus
-// --no-page-id-routing. Do not write to stdout except for --fm-print-spec;
-// axi speaks MCP over this process's stdio.
+// we replace the floating @latest spawn with a pinned package. The launcher
+// adds --no-page-id-routing only for AXI versions through 0.1.30. Do not write
+// to stdout except for --fm-print-spec; axi speaks MCP over this process's
+// stdio.
 "use strict";
 
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const { existsSync, readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const PINNED_PACKAGE = "chrome-devtools-mcp";
 const PINNED_VERSION = "1.8.0";
 const ROUTING_FLAG = "--no-page-id-routing";
+const AXI_PAGE_ID_MIN_VERSION = [0, 1, 31];
 
 function printSpec() {
   process.stdout.write(`package=${PINNED_PACKAGE}@${PINNED_VERSION}\n`);
   process.stdout.write(`flag=${ROUTING_FLAG}\n`);
+  process.stdout.write(`axi-page-id-min=${AXI_PAGE_ID_MIN_VERSION.join(".")}\n`);
 }
 
-function forwardedArgs(argv) {
+function installedAxiVersion() {
+  try {
+    const output = execFileSync("chrome-devtools-axi", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const match = output.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/);
+    return match ? match.slice(1).map(Number) : null;
+  } catch {
+    return null;
+  }
+}
+
+function versionAtLeast(actual, minimum) {
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] > minimum[index]) return true;
+    if (actual[index] < minimum[index]) return false;
+  }
+  return true;
+}
+
+function forwardedArgs(argv, axiVersion) {
   const forwarded = argv.filter((arg) => arg !== "--fm-print-spec");
   if (
+    !versionAtLeast(axiVersion, AXI_PAGE_ID_MIN_VERSION) &&
     !forwarded.includes(ROUTING_FLAG) &&
     !forwarded.includes("--pageIdRouting=false")
   ) {
@@ -39,12 +64,10 @@ function forwardedArgs(argv) {
 function globalMcpPath() {
   let prefix = "";
   try {
-    prefix = require("node:child_process")
-      .execFileSync("npm", ["prefix", "-g"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-      .trim();
+    prefix = execFileSync("npm", ["prefix", "-g"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
     return "";
   }
@@ -78,7 +101,14 @@ function main(argv) {
     printSpec();
     return 0;
   }
-  const invocation = resolveInvocation(forwardedArgs(argv));
+  const axiVersion = installedAxiVersion();
+  if (!axiVersion) {
+    process.stderr.write(
+      "fm-chrome-devtools-mcp: cannot read chrome-devtools-axi version\n",
+    );
+    return 1;
+  }
+  const invocation = resolveInvocation(forwardedArgs(argv, axiVersion));
   const child = spawn(invocation.command, invocation.args, {
     stdio: "inherit",
   });
@@ -101,4 +131,5 @@ function main(argv) {
   return undefined;
 }
 
-main(process.argv.slice(2));
+const status = main(process.argv.slice(2));
+if (status !== undefined) process.exitCode = status;
