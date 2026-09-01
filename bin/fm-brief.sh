@@ -367,7 +367,7 @@ fi
 # its own feedback path. Local-only has no PR.
 IFS= read -r -d '' PR_WATCH <<EOF || true
 
-Reporting done does not end your ownership of this PR - it stays yours until it merges.
+Reporting done does not end your ownership of this PR - it stays yours until the task lands, normally by the PR merging, or by firstmate landing it locally if GitHub is down.
 Stay on watch after reporting done.
 After addressing new reviewer feedback, re-report status.
 EOF

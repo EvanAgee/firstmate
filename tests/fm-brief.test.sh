@@ -273,8 +273,8 @@ test_pr_producing_modes_own_feedback_until_merge() {
     esac
     assert_grep "$watch_entry" "$brief" \
       "$mode: done report did not enter the PR watch"
-    assert_grep "Reporting done does not end your ownership of this PR - it stays yours until it merges." "$brief" \
-      "$mode: brief did not keep PR ownership past the done report"
+    assert_grep "Reporting done does not end your ownership of this PR - it stays yours until the task lands, normally by the PR merging, or by firstmate landing it locally if GitHub is down." "$brief" \
+      "$mode: brief did not keep PR ownership until the task lands, including the outage local landing path"
     assert_grep "$expected_action" "$brief" \
       "$mode: brief did not use its own late-feedback path"
     assert_no_grep "$forbidden_action" "$brief" \
@@ -291,14 +291,14 @@ test_pr_producing_modes_own_feedback_until_merge() {
       "$mode: post-done watch weakened the never-merge prohibition"
   done
 
-  # local-only produces no PR, so the watch-until-merge block must not appear.
+  # local-only produces no PR, so the post-done PR-watch block must not appear.
   id="brief-pr-watch-local-only"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1 \
     || fail "local-only: ship brief failed to scaffold"
   brief="$home/data/$id/brief.md"
-  assert_no_grep "it stays yours until it merges" "$brief" \
+  assert_no_grep "it stays yours until the task lands" "$brief" \
     "local-only brief added a PR-watch contract it has no PR for"
-  pass "fm-brief.sh: PR-producing modes own review feedback until merge; local-only stays out"
+  pass "fm-brief.sh: PR-producing modes own review feedback until the task lands; local-only stays out"
 }
 
 test_matt_flow_is_explicit_and_thin() {
