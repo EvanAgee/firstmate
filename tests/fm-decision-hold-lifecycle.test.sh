@@ -1847,12 +1847,16 @@ test_verify_refuses_a_mate_self_close_as_an_answer() {
   assert_contains "$(cat "$home/selfclose.err")" "$hold" \
     "the self-close refusal did not name the absent hold, so a different gate refused it"
 
-  # The same origin with a delivered answer on that line passes, so the refusal above
-  # is about the missing answer marker and not about the fixture being broken.
+  # Even hand-writing the exact delivered-answer marker a mate could forge does not
+  # rescue it: the status-log route was removed as forgeable, so only a real close
+  # path's answered_keys record counts, and this origin never went through one.
   printf 'resolved [key=choice]: answered: captain chose option A\n' >> "$home/state/$id.status"
-  run_decisions "$home" verify "$id" >/dev/null 2> "$home/selfclose-answered.err" \
-    || fail "verify rejected the same archived hold once a delivered answer was recorded: $(cat "$home/selfclose-answered.err")"
-  pass "verify refuses a mate's own self-close but accepts a delivered captain answer"
+  if run_decisions "$home" verify "$id" > "$home/selfclose-forged.out" 2> "$home/selfclose-forged.err"; then
+    fail "verify accepted a forged answered marker that no close path ever recorded"
+  fi
+  assert_contains "$(cat "$home/selfclose-forged.err")" "$hold" \
+    "the forged-marker refusal did not name the absent hold, so a different gate refused it"
+  pass "verify refuses a mate's own self-close and a forged answered marker with no durable record"
 }
 
 # tasks-axi reports the same not-found for a hold retention trimmed and a hold that
