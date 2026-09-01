@@ -71,6 +71,33 @@ find_chrome() {
   return 1
 }
 
+# Render a local HTML file to its post-script DOM with headless Chrome, writing the
+# result to $2. Returns 0 only when the dumped DOM reaches its closing </html>.
+# Headless Chrome on a machine with no usable display or GPU can stall partway
+# through a heavy interactive page and never finish the dump, so the caller uses a
+# minimal control render to tell "this Chrome cannot render here" (skip) apart from
+# "the real export is broken" (fail).
+render_dom() {  # <chrome> <src-html> <out-dom> [profile-suffix]
+  local chrome=$1 src=$2 out=$3 suffix=${4:-} pid iter=0
+  "$chrome" \
+    --headless=new \
+    --disable-gpu \
+    --no-sandbox \
+    --user-data-dir="$TMP_ROOT/chrome-profile$suffix" \
+    --virtual-time-budget=2000 \
+    --dump-dom \
+    "file://$src" >"$out" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ "$iter" -lt 100 ]; do
+    grep -Fq '</html>' "$out" 2>/dev/null && break
+    sleep 0.1
+    iter=$((iter + 1))
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  grep -Fq '</html>' "$out" 2>/dev/null
+}
+
 test_home_resolution() {
   local fixture out status version
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
@@ -3087,7 +3114,7 @@ JS
 }
 
 test_interactive_terminal_e2e() {
-  local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot export_settled_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_pid chrome_wait active_wait active_screen_wait boat_frame_one boat_frame_two boat_resized_snapshot boat_focus_snapshot boat_cleared_snapshot boat_hull_line boat_sail_line boat_column_one boat_column_two boat_line boat_color_snapshot boat_color_line boat_water_snapshot boat_water_line boat_water_first boat_water_changed boat_narrow_snapshot boat_narrow_sails boat_freeze_snapshot boat_resume_snapshot boat_freeze_column boat_freeze_sail boat_resume_column boat_resume_sail
+  local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot export_settled_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome control_html control_dom dom_rendered active_wait active_screen_wait boat_frame_one boat_frame_two boat_resized_snapshot boat_focus_snapshot boat_cleared_snapshot boat_hull_line boat_sail_line boat_column_one boat_column_two boat_line boat_color_snapshot boat_color_line boat_water_snapshot boat_water_line boat_water_first boat_water_changed boat_narrow_snapshot boat_narrow_sails boat_freeze_snapshot boat_resume_snapshot boat_freeze_column boat_freeze_sail boat_resume_column boat_resume_sail
   if ! command -v pi >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
     echo "skip: pi or tmux not found for Pi calm interactive E2E"
     return 0
@@ -3535,26 +3562,26 @@ const synthetic = entries.find((entry) => entry.type === "custom_message" && ent
 if (!synthetic || synthetic.display) process.exit(1);
 JS
   chrome=$(find_chrome) || fail "Chrome or Chromium is required for rendered export DOM assertions"
-  "$chrome" \
-    --headless=new \
-    --disable-gpu \
-    --no-sandbox \
-    --user-data-dir="$TMP_ROOT/chrome-profile" \
-    --virtual-time-budget=2000 \
-    --dump-dom \
-    "file://$export_file" >"$export_dom" 2>/dev/null &
-  chrome_pid=$!
-  chrome_wait=0
-  while kill -0 "$chrome_pid" 2>/dev/null && [ "$chrome_wait" -lt 100 ]; do
-    grep -Fq '</html>' "$export_dom" 2>/dev/null && break
-    sleep 0.1
-    chrome_wait=$((chrome_wait + 1))
-  done
-  kill "$chrome_pid" 2>/dev/null || true
-  wait "$chrome_pid" 2>/dev/null || true
-  grep -Fq '</html>' "$export_dom" 2>/dev/null \
-    || fail "could not render calm-mode HTML export DOM"
-  node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
+  dom_rendered=1
+  if ! render_dom "$chrome" "$export_file" "$export_dom"; then
+    # The dump did not finish. Before treating that as a Calm regression, confirm
+    # this Chrome can render anything at all here: a machine with no usable display
+    # or GPU (a headless CI box, a locked-out laptop) stalls even a trivial page.
+    # If a minimal control page also fails to render, the environment cannot run
+    # the rendered-DOM assertion, so skip only that one check loudly instead of
+    # asserting a DOM the browser never produced; the rest of this test continues.
+    # If the control DOES render but the real export did not, that is a genuine
+    # export regression and still fails.
+    control_html="$TMP_ROOT/chrome-control.html"
+    control_dom="$TMP_ROOT/chrome-control-dom.html"
+    printf '%s\n' '<!DOCTYPE html><html><head></head><body>CALM_CHROME_CONTROL</body></html>' >"$control_html"
+    if render_dom "$chrome" "$control_html" "$control_dom" -control; then
+      fail "could not render calm-mode HTML export DOM"
+    fi
+    echo "skip: headless Chrome cannot render a DOM in this environment (even a minimal control page failed); the rendered-export DOM assertion requires a working display/GPU"
+    dom_rendered=0
+  fi
+  [ "$dom_rendered" -eq 0 ] || node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
 const dom = require("node:fs").readFileSync(process.argv[2], "utf8");
 const messages = dom.match(/<div id="messages">([\s\S]*?)<\/main>/)?.[1];
 const tree = dom.match(/<div[^>]*id="tree-container"[^>]*>([\s\S]*?)<div[^>]*id="tree-status"/)?.[1];
