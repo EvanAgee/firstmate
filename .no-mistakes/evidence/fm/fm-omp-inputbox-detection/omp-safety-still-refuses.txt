@@ -1,0 +1,19 @@
+==================== OMP input-box safety cases ====================
+--- the real live OMP composer, with the task's bound Bun and OMP paths ---
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                          ─╯
+  verdict: empty   (empty means firstmate may type here and can confirm delivery)
+
+--- the same live OMP pane, but WITHOUT the task's bound identity paths ---
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                          ─╯
+  verdict: unknown   (no proof this bun process is this task's OMP, so it must refuse)
+
+--- a FINISHED-turn OMP box with transcript below it, not the live input area ---
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                          ─╯
+    earlier transcript output from the finished turn
+  verdict: unknown   (the box is not the bottom of the pane, so it must refuse)
+

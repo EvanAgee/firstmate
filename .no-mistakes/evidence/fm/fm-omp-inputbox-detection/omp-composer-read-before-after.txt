@@ -1,0 +1,43 @@
+OMP input box: before and after
+===============================
+
+A real tmux pane runs a real `bun <omp-entry>` process that draws OMP's
+two-row composer. Firstmate's own composer reader (fm_tmux_composer_state,
+the same call the send path makes) is asked what it sees. Same pane, same
+process, only the firstmate code differs.
+
+==================== BEFORE ====================
+OMP worker process in the pane: /Users/evanagee/.bun/bin/bun /tmp/omp-e2e/fake-omp-cli.js
+
+--- idle OMP worker, empty input box  (delivery can be confirmed only if this reads 'empty') ---
+  what the OMP worker's pane actually shows:
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                          ─╯
+  firstmate's composer verdict: unknown
+
+--- OMP worker with text typed but not yet sent ---
+  what the OMP worker's pane actually shows:
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─ steer after current turn ─╯
+  firstmate's composer verdict: unknown
+
+
+==================== AFTER ====================
+OMP worker process in the pane: /Users/evanagee/.bun/bin/bun /tmp/omp-e2e/fake-omp-cli.js
+
+--- idle OMP worker, empty input box  (delivery can be confirmed only if this reads 'empty') ---
+  what the OMP worker's pane actually shows:
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                          ─╯
+  firstmate's composer verdict: empty
+
+--- OMP worker with text typed but not yet sent ---
+  what the OMP worker's pane actually shows:
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─ steer after current turn ─╯
+  firstmate's composer verdict: pending
+

@@ -1,0 +1,45 @@
+Steering an OMP worker: does firstmate know the message landed?
+===============================================================
+
+This drives the real send path (fm_backend_tmux_send_text_submit ->
+fm_tmux_submit_core) against a real tmux pane running a real
+`bun <omp-entry>` process whose input box accepts typing and clears on
+Enter. The printed verdict IS the delivery confirmation.
+
+==================== BEFORE ====================
+OMP worker process in the pane: /Users/evanagee/.bun/bin/bun /tmp/omp-e2e/fake-omp-tty.js
+
+OMP worker before the steer:
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                                          ─╯
+
+steering the OMP worker with: "switch to the smaller model"
+
+OMP worker after the steer:
+    transcript: previous turn output
+    delivered to OMP: switch to the smaller model
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                                          ─╯
+
+delivery verdict from firstmate: unknown
+  -> firstmate could NOT confirm delivery; it fails closed and refuses.
+
+==================== AFTER ====================
+OMP worker process in the pane: /Users/evanagee/.bun/bin/bun /tmp/omp-e2e/fake-omp-tty.js
+
+OMP worker before the steer:
+    transcript: previous turn output
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                                          ─╯
+
+steering the OMP worker with: "switch to the smaller model"
+
+OMP worker after the steer:
+    transcript: previous turn output
+    delivered to OMP: switch to the smaller model
+    ╭── π > GLM 5.3 Flash > firstmate > ⑂ main ▶─3%─────────┃──1M──╮
+    ╰─                                          ─╯
+
+delivery verdict from firstmate: empty
+  -> firstmate CONFIRMED the message landed (it watched the input box clear).
