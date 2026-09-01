@@ -63,10 +63,13 @@ cat > "$REMOTE_ROOT/bin/fm-shutdown-job.sh" <<'SH'
 #!/bin/bash
 # Waits for a release file the test creates only after teardown has finished,
 # so the mutation below can appear only if this command truly outlived the
-# worker. A fixed sleep would instead race the test's own teardown work.
+# worker. A fixed sleep would instead race the test's own teardown work. The
+# wait is capped at about thirty seconds so a command that escapes the worker's
+# kill still exits on its own instead of spinning forever.
 trap '' HUP INT TERM
 printf 'started\n' > "$1"
-while [ ! -e "$3" ]; do
+for _ in $(seq 1 600); do
+  [ -e "$3" ] && break
   sleep 0.05
 done
 printf 'ran\n' > "$2"
