@@ -182,10 +182,23 @@ absent_field() {  # <dir> <field>
   sed -n "s/^$2=//p" "$1/state/.claude-notifier-absent" 2>/dev/null | head -1
 }
 
-# Stand in for a notifier that delivers: advance the surfaced high-water mark the
-# way bin/fm-claude-watch-notifier.sh does in advance_surfaced.
-surface_seq() {  # <dir> <seq>
-  printf '%s\n' "$2" > "$1/state/.claude-notifier-surfaced-seq"
+# True when the durable queue still holds an unacked row at or below <seq>. Reads
+# the queue's own row shape (tab-separated, sequence in field 2) so a test can
+# tell a delivered-but-unacked wake from one that was drained.
+fm_wake_queue_has_seq_at_or_below() {  # <dir> <seq>
+  awk -F '\t' -v max="$2" '
+    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 + 0) <= (max + 0) { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$1/state/.wake-queue" 2>/dev/null
+}
+
+# True when the durable queue holds an unacked row strictly above <low> and at or
+# below <high>: a wake the notifier has NOT delivered.
+fm_wake_queue_has_seq_in_range() {  # <dir> <low-exclusive> <high-inclusive>
+  awk -F '\t' -v low="$2" -v high="$3" '
+    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 + 0) > (low + 0) && ($2 + 0) <= (high + 0) { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$1/state/.wake-queue" 2>/dev/null
 }
 
 # Two in-flight tasks so supervision need persists while the coordinator watches
@@ -814,13 +827,13 @@ test_coordinator_stands_down_after_successor_timeout_streak() {
 # The gap this task closes: a coordinator that keeps supervision alive while
 # nothing consumes its ready records used to go silently half-dead, and wakes
 # piled up unread in the durable queue (issue #80). The observable symptom is
-# exactly that: the published ready_seq stays above the notifier's surfaced
-# high-water mark while a real unacked wake sits at or below it. Once that has
-# held past the bound the coordinator must write the durable
-# .claude-notifier-absent marker and leave a notifier-absent breadcrumb in the
-# cycle-exit ledger, without ever writing the notifier's own state.
+# exactly that: an UNDELIVERED wake, one whose sequence sits above the notifier's
+# surfaced high-water mark and at or below the published ready_seq, stays unacked
+# past the bound. Once it has, the coordinator must write the durable
+# .claude-notifier-absent marker and leave exactly one notifier-absent breadcrumb
+# in the cycle-exit ledger, without ever writing the notifier's own state.
 test_records_notifier_absent_when_ready_record_goes_unconsumed() {
-  local dir coord seq fs gen owner
+  local dir coord seq fs gen owner lines
   dir=$(make_home notifier-unconsumed)
   start_lock_holder "$dir"
   seed_two_tasks "$dir"
@@ -836,6 +849,11 @@ test_records_notifier_absent_when_ready_record_goes_unconsumed() {
   # sequence. Nothing ever advances surfaced-seq, so no notifier is consuming it.
   seq=$(publish_actionable "$dir" "$seq") \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never republished after a real actionable close"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+
+  # The queued wake is genuinely UNDELIVERED: above the surfaced mark (0 here,
+  # since no notifier ever ran) and at or below the published sequence.
+  fm_wake_queue_has_seq_in_range "$dir" 0 "$seq" \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "no undelivered wake was queued, so this is not the issue #80 symptom"; }
 
   wait_file "$dir/state/.claude-notifier-absent" 400 \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator left a ready record unconsumed past the bound but never recorded the missing notifier"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
@@ -876,45 +894,76 @@ test_records_notifier_absent_when_ready_record_goes_unconsumed() {
   [ "$fs2" = "$fs" ] \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "first_seen changed across a rewrite ($fs -> $fs2) instead of surviving"; }
 
+  # One ledger line per outage episode, not one per rewrite. The coordinator
+  # rewrites the marker every couple of seconds and cannot trim this log, so a
+  # per-rewrite breadcrumb would bury the arm's own per-cycle rows.
+  lines=$(grep -c 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null || echo 0)
+  [ "$lines" -eq 1 ] \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "expected exactly one notifier-absent ledger line for the episode, found $lines"; }
+
   stop_bg "$coord" "$HOLDER_PID"
   pass "coordinator: records the notifier as absent once a ready record sits unconsumed past the bound"
 }
 
-# --- 10a. a notifier that keeps delivering must NEVER be marked ----------------
-# The false positive to avoid: a healthy home. A delivering notifier advances its
-# surfaced high-water mark to each published ready_seq, so no record is ever left
-# unconsumed and the clock never runs. Marking that home would report a fully
-# working supervision chain as half dead. Cover far longer than the bound.
-test_no_marker_when_notifier_keeps_consuming() {
-  local dir coord seq i
-  dir=$(make_home notifier-consuming)
+# --- 10a. a real handling turn must NEVER be marked ----------------------------
+# The false positive to avoid: a healthy home mid-turn. The notifier is a Stop
+# hook. It delivers one wake, advances surfaced-seq to that sequence exactly once,
+# exits 2, and is then wholly ABSENT for the whole handling turn. The wake it
+# delivered stays unacked until the user drains it after the turn, so every
+# re-check the coordinator makes during that turn sees an unacked row. That
+# delivered-but-unacked row is an ordinary turn in progress, not a notifier
+# failure, so no marker may appear. Drives the REAL notifier through that exact
+# lifecycle rather than a stand-in that keeps writing surfaced-seq.
+test_no_marker_during_a_real_handling_turn() {
+  local dir coord notif seq surfaced j
+  dir=$(make_home notifier-handling-turn)
   start_lock_holder "$dir"
   seed_two_tasks "$dir"
 
+  # A short bound, so a false marker would land well inside the observed window.
   coord=$(start_coordinator "$dir" coord FM_CLAUDE_COORD_UNCONSUMED_SECONDS=2) \
     || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
   seq=$(ready_field "$dir" ready_seq)
-  surface_seq "$dir" "$seq"
 
-  seq=$(publish_actionable "$dir" "$seq") \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never republished after a real actionable close"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
-  # A delivering notifier keeps its mark level with each publish.
-  i=0
-  while [ "$i" -lt 100 ]; do
-    surface_seq "$dir" "$(ready_field "$dir" ready_seq)"
-    [ -e "$dir/state/.claude-notifier-absent" ] \
-      && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator marked a notifier that was consuming every ready record"; }
-    sleep 0.1
-    i=$((i + 1))
+  # Park the real notifier, then drive a real actionable close so it delivers.
+  notif=$(start_notifier "$dir" notif FM_CLAUDE_NOTIFIER_COORD_WAIT=60) \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "session never started the parked notifier"; }
+  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
+  j=0
+  while [ "$j" -lt 200 ] && kill -0 "$notif" 2>/dev/null; do
+    sleep 0.25
+    j=$((j + 1))
   done
+  if kill -0 "$notif" 2>/dev/null; then
+    stop_notifier "$dir" notif "$notif"
+    stop_bg "$coord" "$HOLDER_PID"
+    fail "notifier never delivered the wake, so no handling turn was under way"
+  fi
+  expect_code 2 "$(session_child_rc "$dir" notif)" "the notifier must exit 2 to open the handling turn"
+  surfaced=$(cat "$dir/state/.claude-notifier-surfaced-seq" 2>/dev/null)
+  case "$surfaced" in ''|*[!0-9]*) stop_bg "$coord" "$HOLDER_PID"; fail "notifier never advanced surfaced-seq" ;; esac
+  # The delivered row stays unacked: the user has not drained it yet.
+  fm_wake_queue_has_seq_at_or_below "$dir" "$surfaced" \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "the delivered wake was already acked, so this is not a handling turn"; }
 
+  # The turn now runs with no notifier parked. The delivered row stays unacked for
+  # its whole length, so every re-check the coordinator makes sees an unacked row
+  # at or below the published sequence. Reading that as an outage is the false
+  # positive: only a wake ABOVE the delivered mark is evidence the notifier
+  # stopped, and there is none here.
+  seq=$(ready_field "$dir" ready_seq)
+  fm_wake_queue_has_seq_in_range "$dir" "$surfaced" "$seq" \
+    && { stop_bg "$coord" "$HOLDER_PID"; fail "an undelivered wake was queued, so this is no longer the delivered-but-unacked case"; }
+
+  stays_absent "$dir/state/.claude-notifier-absent" 150 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator marked a healthy home mid-handling-turn (surfaced=$surfaced ready=$seq)"; }
   grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
-    && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator logged a notifier-absent breadcrumb for a delivering notifier"; }
+    && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator logged a notifier-absent breadcrumb during a healthy handling turn"; }
 
   stop_bg "$coord" "$HOLDER_PID"
-  pass "coordinator: a notifier that keeps consuming ready records is never marked absent"
+  pass "coordinator: a delivered-but-unacked wake during a real handling turn is never marked absent"
 }
 
 # --- 10b. no real wake pending -> nothing to prove, so nothing is marked -------
@@ -1005,6 +1054,6 @@ test_coordinator_lock_does_not_satisfy_guard
 test_coordinator_stands_down_on_session_handover
 test_coordinator_stands_down_after_successor_timeout_streak
 test_records_notifier_absent_when_ready_record_goes_unconsumed
-test_no_marker_when_notifier_keeps_consuming
+test_no_marker_during_a_real_handling_turn
 test_no_marker_when_no_unacked_wake_is_pending
 test_unconsumed_bound_gates_the_marker

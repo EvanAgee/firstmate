@@ -332,11 +332,14 @@ notifier_surfaced_seq() {
 # into the void leaves a durable trace instead of going half-dead in silence.
 #
 # The signal is the symptom itself, not a guess about why the notifier stopped.
-# The notifier consumes a ready record by advancing its surfaced-seq high-water
-# mark to the published sequence as it delivers the wake. So a published sequence
-# that stays ABOVE that mark, while the durable queue still holds an unacked wake
-# at or below it, means wakes are piling up unread. Whether the notifier was
-# killed, wedged, or never parked at all does not change the incident.
+# The notifier advances its surfaced-seq high-water mark to a wake's sequence at
+# the exact moment it DELIVERS that wake. That mark is the delivered/undelivered
+# boundary, and only the undelivered side is evidence of an outage:
+#   - seq at or below the mark was delivered. It stays unacked for the whole
+#     handling turn, until the user drains it, so a delivered-but-unacked row is
+#     an ordinary turn in progress and must never count toward absence.
+#   - seq above the mark was never delivered. An undelivered wake that persists
+#     is the wakes-piling-up symptom of issue #80.
 #
 # Inferring liveness from the notifier's lock cannot work here. The notifier is a
 # Stop hook: it exits 2 to hand each wake over and its EXIT trap drops the lock,
@@ -352,14 +355,16 @@ notifier_surfaced_seq() {
 # Fail-open bias: whenever the signal cannot prove wakes are piling up, this
 # writes nothing and clears what it found. READ ONLY on the notifier's own state.
 record_notifier_presence() {  # <ready_seq>
-  local ready_seq=$1 tmp now first_seen
+  local ready_seq=$1 tmp now first_seen surfaced was_marked
   case "$ready_seq" in ''|*[!0-9]*) return ;; esac
   now=$(date +%s)
-  # Delivered, or nothing real is pending: the notifier is doing its job, or
-  # there is no wake for it to miss. Either way the clock resets and any marker
-  # from an earlier outage is cleared, because this is recovery.
-  if [ "$ready_seq" -le "$(notifier_surfaced_seq)" ] \
-    || ! fm_wake_has_unacked_at_or_below "$ready_seq"; then
+  surfaced=$(notifier_surfaced_seq)
+  # Delivered, or nothing undelivered is pending: the notifier is doing its job,
+  # or the only unacked rows are ones it already handed over and the turn they
+  # started is still running. Either way the clock resets and any marker from an
+  # earlier outage is cleared, because this is recovery, not an incident.
+  if [ "$ready_seq" -le "$surfaced" ] \
+    || ! fm_wake_has_unacked_in_range "$surfaced" "$ready_seq"; then
     UNCONSUMED_SEQ=
     UNCONSUMED_SINCE=0
     rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
@@ -378,7 +383,8 @@ record_notifier_presence() {  # <ready_seq>
   # Preserve first_seen across rewrites so a one-cycle blip is distinguishable
   # from a real outage. A missing or malformed marker starts a fresh outage.
   first_seen=$(sed -n 's/^first_seen=//p' "$NOTIFIER_ABSENT" 2>/dev/null | head -1)
-  case "$first_seen" in ''|*[!0-9]*) first_seen=$now ;; esac
+  was_marked=1
+  case "$first_seen" in ''|*[!0-9]*) first_seen=$now; was_marked=0 ;; esac
   tmp="$NOTIFIER_ABSENT.tmp.$$"
   if {
     printf 'first_seen=%s\n' "$first_seen"
@@ -387,9 +393,13 @@ record_notifier_presence() {  # <ready_seq>
     printf 'coordinator_generation=%s\n' "$COORD_GENERATION"
     printf 'session_owner=%s\n' "$SESSION_OWNER"
   } > "$tmp" 2>/dev/null && mv -f "$tmp" "$NOTIFIER_ABSENT" 2>/dev/null; then
-    # Only breadcrumb an absence the marker actually records, so an operator
-    # following the ledger never hunts for a marker that was never written.
-    cycle_ledger_note notifier-absent
+    # One ledger line per outage episode, on the transition into the marked
+    # state. The marker's last_seen keeps ticking while the outage runs, but the
+    # ledger does not: this loop rewrites every couple of seconds and cannot trim
+    # that log itself, so breadcrumbing each rewrite would bury the arm's own
+    # per-cycle rows an operator needs. Only breadcrumb an absence the marker
+    # actually records, so nobody hunts for a marker that was never written.
+    [ "$was_marked" -eq 1 ] || cycle_ledger_note notifier-absent
   fi
   rm -f "$tmp" 2>/dev/null || true
 }
