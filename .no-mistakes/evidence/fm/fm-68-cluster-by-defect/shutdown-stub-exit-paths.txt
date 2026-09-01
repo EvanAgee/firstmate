@@ -1,0 +1,22 @@
+Shutdown test stub: the two exit paths, verified by running the shipped stub body.
+Cap shortened from 600 to 20 iterations only so the timeout path is observable.
+
+CASE 1  release file never appears (worker kill worked, cap expires)
+        -> side effect ABSENT. An expired wait proves nothing, it does not fabricate a leak.
+
+CASE 2  release file appears (command truly outlived the worker)
+        -> side effect PRESENT. A real escape is still detected.
+
+CASE 3  no release file at all
+        -> stub self-terminated on its own. No runaway process.
+
+Quarantine call site now passes a real release path as the third argument:
+606:  fm-shutdown-job.sh "$QUARANTINE_STARTED" "$QUARANTINE_SIDE_EFFECT" "$QUARANTINE_RELEASE" \
+607-  < /dev/null > /dev/null
+608-JOB_ID=$FM_REMOTE_JOB_ID
+
+and drives it the same way the other call sites do:
+634-kill -KILL -- "-$GROUP_PID" 2>/dev/null || true
+635:: > "$QUARANTINE_RELEASE"
+636-fm_remote_job_settle_release "$QUARANTINE_SIDE_EFFECT"
+637-assert_absent "$QUARANTINE_SIDE_EFFECT" "the quarantined command mutated after explicit termination"

@@ -1,0 +1,192 @@
+
+==============================================================
+
+ISSUE #68 -- cluster review loops by DEFECT, not by FILE PATH
+
+==============================================================
+
+--- SCENARIO A: the false trip that issue #68 reports ---
+Three DIFFERENT defects are each fixed once, all in the SAME file.
+Old behavior: three rounds naming the same file = a tripped loop.
+Required behavior: three different defect keys, so no loop. Work is converging.
+Threshold is 2 here, so an old file-keyed rule would have tripped on round 2.
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-a --head c001 --changed 'Fixed the null check in auth.ts.' --cluster 'defect:auth-null-deref' --threshold 2
+continue: review round 1 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-a --head c002 --changed 'Fixed the off-by-one in auth.ts.' --cluster 'defect:auth-off-by-one'
+continue: review round 2 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-a --head c003 --changed 'Fixed the missing await in auth.ts.' --cluster 'defect:auth-missing-await'
+continue: review round 3 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+RESULT: three rounds on one file, every call exited 0 (continue).
+No false stop. This is the issue #68 fix working.
+
+--- SCENARIO B: a GENUINE loop still trips ---
+The SAME defect key survives repeated rounds aimed at it. That must stop.
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-b --head d001 --changed 'First attempt at the retry bug.' --cluster 'defect:retry-storm' --threshold 2
+continue: review round 1 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-b --head d002 --changed 'Second attempt at the same retry bug.' --cluster 'defect:retry-storm'
+# Repeated review clusters
+
+Run: `run-b`
+Threshold: 2 consecutive review rounds
+
+## What each cluster returned against
+
+### `defect:retry-storm`
+
+- Round 1 reviewed `d001`: First attempt at the retry bug.
+- Round 2 reviewed `d002`: Second attempt at the same retry bug.
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm68-demo.IOhjse/state/review-loops/demo-task-run-b-1.md
+  -> exit 20
+
+RESULT: exit 20 = a real loop was caught and surfaced for a decision.
+
+--- SCENARIO C: --targeted keeps a bystander defect from counting ---
+defect:bystander keeps reappearing, but no round is AIMED at it.
+It must be recorded, yet must never advance toward a stop.
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-c --head e001 --changed 'Aimed at the parser only.' --cluster 'defect:parser' --cluster 'defect:bystander' --targeted 'defect:parser' --threshold 2
+continue: review round 1 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-c --head e002 --changed 'Aimed at the parser again.' --cluster 'defect:parser2' --cluster 'defect:bystander' --targeted 'defect:parser2'
+continue: review round 2 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-c --head e003 --changed 'Aimed at the parser a third time.' --cluster 'defect:parser3' --cluster 'defect:bystander' --targeted 'defect:parser3'
+continue: review round 3 recorded; no cluster reached 2 rounds
+  -> exit 0
+
+RESULT: bystander returned 3 times under a threshold of 2 and never tripped,
+because no round targeted it. Recorded, not counted.
+
+--- SCENARIO D: same-head retry contract (captain decision, item 3) ---
+Replaying an identical payload on a recorded head = idempotent no-op.
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-c --head e003 --changed 'Aimed at the parser a third time.' --cluster 'defect:parser3' --cluster 'defect:bystander' --targeted 'defect:parser3'
+continue: reviewed head e003 was already recorded
+  -> exit 0
+
+Adding a NEW cluster to that same recorded head = rejected, naming what was new.
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record demo-task --run run-c --head e003 --changed 'Aimed at the parser a third time.' --cluster 'defect:parser3' --cluster 'defect:bystander' --cluster 'defect:brand-new' --targeted 'defect:parser3'
+error: reviewed head e003 is already recorded and a same-head retry cannot add clusters or change targeting; record cluster defect:brand-new against the current head instead
+  -> exit 1
+
+RESULT: exit 0 for the replay, exit 1 with a naming error for the expansion.
+
+==============================================================
+
+--- SCENARIO E: the NEW fix in this change (intent item 6) ---
+
+==============================================================
+A LEGACY round was written before --targeted existed. It stores only clusters.
+Its meaning: every cluster it returned WAS targeted.
+Bug: resolving one cluster read the missing targeted field as EMPTY,
+which silently wiped every OTHER cluster's streak in those legacy rounds.
+
+Legacy state on disk (no 'targeted' field anywhere):
+{"version":1,"task":"legacy-task","run":"run-legacy","threshold":3,"generation":1,
+ "rounds":[
+   {"round":1,"head":"legacy-a","changed":"Legacy round one.","clusters":["defect:x","defect:y"]},
+   {"round":2,"head":"legacy-b","changed":"Legacy round two.","clusters":["defect:x","defect:y"]}
+ ],
+ "surfaced":{"clusters":["defect:x"],"report":"/tmp/fm68-demo.IOhjse/state/review-loops/legacy.md"}}
+
+Both defect:x and defect:y carry a streak of 2 under a threshold of 3.
+Now resolve ONLY defect:x.
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh resolve legacy-task --run run-legacy --decision root
+resolved: review-loop stop for run-legacy recorded as root
+  -> exit 0
+
+defect:y's streak must be untouched, so one more targeted y round is its THIRD and must trip.
+
+$ /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1F6XW51RFSPQT64FDA1Z1AK/bin/fm-review-loop-stop.sh record legacy-task --run run-legacy --head legacy-c --changed 'Aimed at y a third time.' --cluster 'defect:y'
+# Repeated review clusters
+
+Run: `run-legacy`
+Threshold: 3 consecutive review rounds
+
+## What each cluster returned against
+
+### `defect:y`
+
+- Round 1 reviewed `legacy-a`: Legacy round one.
+- Round 2 reviewed `legacy-b`: Legacy round two.
+- Round 3 reviewed `legacy-c`: Aimed at y a third time.
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm68-demo.IOhjse/state/review-loops/legacy-task-run-legacy-2.md
+  -> exit 20
+
+RESULT: exit 20. defect:y kept its legacy streak across the resolve.
+Before this fix that call exited 0, because y's streak had been silently reset to zero.
+
+--- Persisted state after the resolve (defect:y targeting preserved) ---
+
+$ jq . <state>/review-loops/legacy-task.json
+[
+  {
+    "round": 1,
+    "head": "legacy-a",
+    "changed": "Legacy round one.",
+    "clusters": [
+      "defect:y"
+    ],
+    "resolved": [
+      "defect:x"
+    ],
+    "targeted": [
+      "defect:y"
+    ]
+  },
+  {
+    "round": 2,
+    "head": "legacy-b",
+    "changed": "Legacy round two.",
+    "clusters": [
+      "defect:y"
+    ],
+    "resolved": [
+      "defect:x"
+    ],
+    "targeted": [
+      "defect:y"
+    ]
+  },
+  {
+    "round": 3,
+    "head": "legacy-c",
+    "changed": "Aimed at y a third time.",
+    "clusters": [
+      "defect:y"
+    ],
+    "targeted": [
+      "defect:y"
+    ]
+  }
+]
