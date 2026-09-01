@@ -20,6 +20,7 @@ Firstmate applies it when briefing delegated investigation and evaluating the re
 
 A claim written by a triage post, an alert body, an issue comment, a worker status line, a report, or a prior session is an assertion, not an observation.
 Verify it against the live system, the run history, or the code before repeating it to the captain, carrying it into an issue, or reasoning from it.
+A worker status line is a wake event rather than current state, so verify it with `bin/fm-crew-state.sh`, which owns current-state reconciliation.
 This applies to any factual claim, including one you wrote yourself in an earlier turn.
 
 Three checks, each cheap, each earned by a real failure:
