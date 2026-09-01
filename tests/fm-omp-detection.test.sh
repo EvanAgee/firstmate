@@ -46,28 +46,23 @@ detect_with() {
 }
 
 # Independent evidence for the no-marker skip below: walk THIS test's own parent
-# process chain and report the first harness found, or nothing. This reads the
-# live ancestry directly (ps + ppid) rather than asking the detector under test,
-# so it is not fooled by a detector regression: it is a separate witness that a
-# real harness process launched the run.
+# process chain and report the first harness process found, or nothing. This
+# reads the live ancestry directly (ps + ppid) rather than asking the detector
+# under test, so it is not fooled by a detector regression: it is a separate
+# witness that a real harness process launched the run.
 #
-# It recognizes every harness bin/fm-harness.sh can identify, not only the ones
-# whose command NAME is a harness. That means cursor, which runs as a bundled
-# node/agent process identified by its structured argv[0]; OMP, which runs as a
-# `bun` process identified by its launch-bound executable paths; and any harness
-# installed as a node or python SCRIPT rather than a native binary. If this
-# witness saw fewer harnesses than the detector, a developer inside one of the
-# missed harnesses would get a hard failure instead of the loud skip.
+# It proves only one thing: that SOME harness process sits in this run's
+# ancestry, so the "no harness launched this run" premise the no-marker
+# assertion depends on is false. It deliberately does NOT prove launch validity.
+# It matches presence by the same names and patterns bin/fm-harness.sh detect_own
+# layer 2 recognizes, and nothing stricter, so it cannot drift finding by
+# finding as OMP's identity proofs change.
 #
-# The witness deliberately reuses the shared cursor and OMP process-identity
-# primitives (bin/fm-cursor-lib.sh, bin/fm-omp-process-lib.sh) that
-# bin/fm-harness.sh itself sources, so it cannot drift from the detector's own
-# rules. It never calls the detector under test, so it stays an independent
-# second signal.
+# Cursor is the one shape whose name alone cannot decide it, so cursor reuses the
+# shared bin/fm-cursor-lib.sh primitives the detector itself uses. The witness
+# never calls the detector under test, so it stays an independent second signal.
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$ROOT/bin/fm-cursor-lib.sh"
-# shellcheck source=bin/fm-omp-process-lib.sh
-. "$ROOT/bin/fm-omp-process-lib.sh"
 
 ambient_harness_in_ancestry() {
   local pid=$$ comm bc args argv0
@@ -80,19 +75,7 @@ ambient_harness_in_ancestry() {
     fi
     bc=$(basename -- "$comm")
     case "$bc" in
-      bun|omp)
-        # OMP runs under bun, so its identity comes from the launch-bound paths,
-        # not the command name. Mirror both evidence modes the detector uses.
-        args=$(ps -o args= -p "$pid" 2>/dev/null)
-        if fm_omp_process_identity_available && fm_omp_process_matches "$comm" "$args" "$pid"; then
-          printf '%s\n' omp
-          return 0
-        fi
-        if [ "${FM_OMP_HARNESS:-}" = omp ] && fm_omp_launch_argv_shape "$args"; then
-          printf '%s\n' omp
-          return 0
-        fi ;;
-      *claude*|*codex*|*opencode*|*grok*|kimi|muse|muse-bin-*|pi|pi-signed)
+      *claude*|*codex*|*opencode*|*grok*|kimi|muse|muse-bin-*|pi|pi-signed|omp|bun)
         printf '%s\n' "$bc"
         return 0 ;;
       node*|python*)
