@@ -242,12 +242,12 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
-# The worker that opens a PR owns its review feedback until the PR merges,
+# The worker that opens a PR owns its review feedback until the task lands,
 # including feedback that arrives AFTER the done report (a late review-bot pass,
 # a human thread, a requested change). Both PR-producing modes share the watch
 # timing but use their own feedback path. Neither path may weaken the
 # never-merge prohibition. local-only has no PR, so it stays out.
-test_pr_producing_modes_own_feedback_until_merge() {
+test_pr_producing_modes_own_feedback_until_landing() {
   local home id mode brief watch_entry expected_action forbidden_action
   home="$TMP_ROOT/pr-watch-home"
   mkdir -p "$home/data"
@@ -892,7 +892,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
-test_pr_producing_modes_own_feedback_until_merge
+test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry

@@ -375,7 +375,7 @@ Tell the captain the PR's full URL, always the complete `https://...` link rathe
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine authority.
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
 
-Until the PR lands, reviewer feedback on it routes back to the worker that opened it, not a fresh agent; the ship brief owns that worker's post-done duty.
+Until the task lands, reviewer feedback on its PR routes back to the worker that opened it, not a fresh agent; the ship brief owns that worker's post-done duty.
 Tear down a ship task only after landing is confirmed.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
 Never force teardown without explicit discard authority.
