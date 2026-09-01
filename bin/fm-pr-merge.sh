@@ -3,10 +3,14 @@
 # bin/fm-pr-check.sh, so teardown can verify landed work after squash merges.
 # The full canonical GitHub PR URL is parsed by bin/fm-pr-lib.sh and the derived
 # owner/repository and PR number are passed to gh-axi as separate arguments.
+# After a successful merge, available task and no-mistakes timing is appended to
+# the home-local data/delivery-log.jsonl without changing the merge result.
 #
 # Merge method defaults to --squash when the caller passes none of --squash,
 # --merge, --rebase, or --method after the optional -- separator. Extra args
 # must not include --repo or -R because the repository comes only from the URL.
+# They also must not include --auto because this command records delivery timing
+# only after GitHub confirms the pull request has merged.
 #
 # A project whose data/projects.md bracket list contains the exact
 # captain-merge token requires --captain-approved <pr-url>. The approval URL
@@ -49,7 +53,9 @@ usage() {
     '' \
     '  --captain-approved <pr-url>  Bypass the captain-merge refusal only when this' \
     '                               value exactly matches the canonical PR URL.' \
-    '  --allow-unresolved-threads   Bypass only the review-thread refusal.'
+    '  --allow-unresolved-threads   Bypass only the review-thread refusal.' \
+    '' \
+    'Extra merge arguments must not include --repo, -R, or --auto.'
 }
 
 case "${1:-}" in
@@ -118,6 +124,14 @@ caller_has_merge_method() {
   return 1
 }
 
+caller_uses_auto_merge() {
+  local arg
+  for arg in "$@"; do
+    [ "$arg" = --auto ] && return 0
+  done
+  return 1
+}
+
 reject_repo_overrides() {
   local arg
   for arg in "$@"; do
@@ -179,6 +193,10 @@ require_resolved_threads() {
 }
 
 reject_repo_overrides "$@" || exit 1
+if caller_uses_auto_merge "$@"; then
+  echo "error: --auto is unsupported because delivery timing requires a completed merge" >&2
+  exit 2
+fi
 
 # Task-derived paths are constructed only after the canonical ID validation.
 META="$STATE/$ID.meta"
@@ -246,3 +264,56 @@ if ! caller_has_merge_method "$@"; then
 fi
 
 gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
+
+# The merge command accepted the request. Delivery timing is record-only, so an
+# API or ledger failure never changes that result.
+PR_FACTS=
+PR_MERGED=
+PR_OPENED_AT=
+MERGED_AT=
+MERGED_VALUE=
+PR_LOOKUP_OK=1
+if ! PR_FACTS=$(gh-axi api GET "/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" \
+  --jq '{merged:.merged,pr_opened_at:.created_at,merged_at:.merged_at}'); then
+  echo "warning: could not read pull request timestamps for $URL" >&2
+  PR_LOOKUP_OK=0
+else
+  PR_MERGED=$(printf '%s\n' "$PR_FACTS" | sed -n 's/^merged: //p')
+  PR_OPENED_AT=$(printf '%s\n' "$PR_FACTS" \
+    | sed -n 's/^pr_opened_at: "\([^"]*\)"$/\1/p')
+  MERGED_VALUE=$(printf '%s\n' "$PR_FACTS" | sed -n 's/^merged_at: //p')
+  case "$PR_MERGED" in
+    true|false) ;;
+    *) PR_LOOKUP_OK=0 ;;
+  esac
+  case "$PR_OPENED_AT" in
+    ????-??-??T??:??:??Z) ;;
+    *) PR_OPENED_AT=; PR_LOOKUP_OK=0 ;;
+  esac
+  case "$MERGED_VALUE" in
+    null) MERGED_AT= ;;
+    '"'????-??-??T??:??:??Z'"') MERGED_AT=${MERGED_VALUE#\"}; MERGED_AT=${MERGED_AT%\"} ;;
+    *) MERGED_AT=; PR_LOOKUP_OK=0 ;;
+  esac
+  [ "$PR_MERGED" != true ] || [ -n "$MERGED_AT" ] || PR_LOOKUP_OK=0
+  if [ "$PR_LOOKUP_OK" -eq 0 ]; then
+    echo "warning: could not parse pull request timestamps for $URL" >&2
+  fi
+fi
+
+if [ "$PR_MERGED" = false ]; then
+  echo "error: $URL is not merged after the merge command completed" >&2
+  exit 1
+fi
+
+delivery_args=(
+  "$ID"
+  --repo "$PROJECT"
+  --project-path "$PROJECT_PATH"
+  --pr-url "$URL"
+)
+[ -z "$PR_OPENED_AT" ] || delivery_args+=(--pr-opened-at "$PR_OPENED_AT")
+[ -z "$MERGED_AT" ] || delivery_args+=(--merged-at "$MERGED_AT")
+if ! "$SCRIPT_DIR/fm-delivery-record.sh" "${delivery_args[@]}"; then
+  echo "warning: delivery timing was not recorded for $ID after merging $URL" >&2
+fi

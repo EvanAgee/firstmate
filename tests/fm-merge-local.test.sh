@@ -20,6 +20,8 @@
 #       (the second-review gate), and the default branch is left untouched
 #   (f) a yolo=off outage landing is captain-approved and lands WITHOUT the review
 #       gate (the captain is the authority for a yolo=off landing)
+#   (g) every successful landing appends delivery timing, and a ledger failure
+#       is logged without changing the landing result
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -50,8 +52,11 @@ make_project_ff() {  # <name> <lane-branch>
 }
 
 run_merge() {  # <state> [args...]
-  local state=$1; shift
-  FM_ROOT_OVERRIDE="$INERT_ROOT" FM_STATE_OVERRIDE="$state" "$MERGE" "$@"
+  local state=$1 data; shift
+  data="${state%/state}/data"
+  mkdir -p "$data"
+  FM_ROOT_OVERRIDE="$INERT_ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" \
+    "$MERGE" "$@"
 }
 
 test_pr_bound_refused_without_outage_flag() {
@@ -192,13 +197,16 @@ test_diverged_branch_escalates_not_forces() {
   pass "fm-merge-local escalates a diverged branch during an outage rather than forcing"
 }
 
-test_local_only_still_lands_no_ledger() {
-  local state proj lane before after
+test_local_only_lands_without_outage_ledger() {
+  local state proj lane before after record
   state="$TMP_ROOT/local-only/state"
   mkdir -p "$state"
   # A local-only task's lane is the legacy fm/<id> name.
   IFS=$(printf '\t') read -r proj lane < <(make_project_ff local-only fm/tloc)
-  fm_write_meta "$state/tloc.meta" "project=$proj" "mode=local-only"
+  fm_write_meta "$state/tloc.meta" \
+    "project=$proj" \
+    "mode=local-only" \
+    'spawn_gen=s1756150000.123.456'
   before=$(git -C "$proj" rev-parse main)
 
   run_merge "$state" tloc > "$TMP_ROOT/local-only/out" 2> "$TMP_ROOT/local-only/err" \
@@ -208,12 +216,89 @@ test_local_only_still_lands_no_ledger() {
   [ "$before" != "$after" ] || fail "local-only: main did not advance"
   assert_absent "$state/outage-landings/proj.log" \
     "local-only: a local-only landing must not write an outage ledger entry"
-  pass "fm-merge-local still lands a local-only task with no ledger entry (back-compat)"
+  record=$(cat "$TMP_ROOT/local-only/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "tloc" and
+    .repo == "proj" and
+    .pr_url == null and
+    .dispatched_at == "2025-08-25T19:26:40Z" and
+    .pr_opened_at == null and
+    .merged_at != null
+  ' >/dev/null || fail "local-only: landing wrote the wrong delivery record: $record"
+  pass "fm-merge-local lands a local-only task and records its delivery timing"
+}
+
+test_delivery_failure_does_not_block_local_landing() {
+  local state proj lane rc
+  state="$TMP_ROOT/delivery-failure/state"
+  mkdir -p "$state" "$TMP_ROOT/delivery-failure/data"
+  IFS=$(printf '\t') read -r proj lane < <(make_project_ff delivery-failure fm/tfail)
+  fm_write_meta "$state/tfail.meta" "project=$proj" "mode=local-only"
+  ln -s /dev/null "$TMP_ROOT/delivery-failure/data/delivery-log.jsonl"
+
+  set +e
+  run_merge "$state" tfail > "$TMP_ROOT/delivery-failure/out" 2> "$TMP_ROOT/delivery-failure/err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "delivery-failure: ledger failure must not fail the local landing"
+  git -C "$proj" merge-base --is-ancestor "$lane" main \
+    || fail "delivery-failure: lane did not land on main"
+  assert_grep 'warning: delivery timing was not recorded for tfail' \
+    "$TMP_ROOT/delivery-failure/err" \
+    "delivery-failure: ledger failure was not logged"
+  pass "fm-merge-local logs a ledger failure without changing landing success"
+}
+
+test_timestamp_failure_does_not_block_local_landing() {
+  local state proj lane fakebin record ledger rc
+  local landed_at task_id ledger_project ledger_branch before after deferred review
+  state="$TMP_ROOT/timestamp-failure/state"
+  fakebin="$TMP_ROOT/timestamp-failure/fakebin"
+  mkdir -p "$state" "$fakebin"
+  IFS=$(printf '\t') read -r proj lane < <(make_project_ff timestamp-failure fm/ttime)
+  fm_write_meta "$state/ttime.meta" "project=$proj" "mode=no-mistakes" "yolo=off"
+  touch "$state/.github-down"
+  cat > "$fakebin/date" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/date"
+
+  set +e
+  PATH="$fakebin:$PATH" run_merge "$state" ttime \
+    > "$TMP_ROOT/timestamp-failure/out" 2> "$TMP_ROOT/timestamp-failure/err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "timestamp-failure: timestamp failure must not fail the local landing"
+  git -C "$proj" merge-base --is-ancestor "$lane" main \
+    || fail "timestamp-failure: lane did not land on main"
+  assert_grep 'warning: could not determine the local landing timestamp for ttime' \
+    "$TMP_ROOT/timestamp-failure/err" \
+    "timestamp-failure: timestamp failure was not reported"
+  record=$(cat "$TMP_ROOT/timestamp-failure/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '.task_id == "ttime" and .merged_at == null' >/dev/null \
+    || fail "timestamp-failure: local landing did not preserve a partial record: $record"
+  ledger="$state/outage-landings/proj.log"
+  assert_present "$ledger" "timestamp-failure: outage landing ledger was not written"
+  IFS=$(printf '\t') read -r \
+    landed_at task_id ledger_project ledger_branch before after deferred review < "$ledger"
+  [ "$landed_at" = unknown ] \
+    || fail "timestamp-failure: outage ledger lacks its unavailable timestamp marker"
+  [ "$task_id" = ttime ] && [ "$ledger_project" = "$proj" ] \
+    && [ "$ledger_branch" = "$lane" ] && [ -n "$before" ] \
+    && [ "$after" = "$(git -C "$proj" rev-parse main)" ] \
+    && [ -z "$deferred" ] && [ -z "$review" ] \
+    || fail "timestamp-failure: outage ledger fields shifted after the missing timestamp"
+  pass "fm-merge-local preserves outage ledger fields after timestamp failure"
 }
 
 test_pr_bound_refused_without_outage_flag
 test_pr_bound_accepted_during_outage_records_ledger
 test_diverged_branch_escalates_not_forces
-test_local_only_still_lands_no_ledger
+test_local_only_lands_without_outage_ledger
 test_yolo_on_auto_land_refused_without_review
 test_yolo_off_lands_without_review_gate
+test_delivery_failure_does_not_block_local_landing
+test_timestamp_failure_does_not_block_local_landing

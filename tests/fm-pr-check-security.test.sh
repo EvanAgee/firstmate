@@ -758,7 +758,8 @@ run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
   perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
-    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
+    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_GH_HEALTH_PROBE_CMD=: \
+      FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 
@@ -904,7 +905,7 @@ SH
 }
 
 test_concurrent_watcher_sees_only_complete_publication() {
-  local n dir direct_pid rc i
+  local n dir direct_pid watcher_pid rc i
   n=1
   while [ "$n" -le 3 ]; do
     dir=$(make_case "concurrent-$n")
@@ -912,7 +913,8 @@ test_concurrent_watcher_sees_only_complete_publication() {
     cat > "$dir/fakebin/cp" <<SH
 #!/usr/bin/env bash
 '$REAL_CP' "\$@" || exit 1
-sleep 0.3
+touch '$dir/copy-staged'
+while [ ! -e '$dir/release-copy' ]; do sleep 0.01; done
 SH
     chmod +x "$dir/fakebin/cp"
 
@@ -920,17 +922,40 @@ SH
       run_check_entry "$dir" task-a https://github.com/o/r/pull/1 > "$dir/direct.out" 2> "$dir/direct.err" &
     direct_pid=$!
     i=0
-    while [ "$i" -lt 100 ] && ! find "$dir/home/state" -name '.fm-pr-poll-check.*' -print | grep . >/dev/null; do
+    while [ "$i" -lt 100 ] && [ ! -e "$dir/copy-staged" ]; do
       sleep 0.01
       i=$((i + 1))
     done
-    [ "$i" -lt 100 ] || fail "atomic publication did not reach staged check"
+    if [ ! -e "$dir/copy-staged" ]; then
+      touch "$dir/release-copy"
+      wait "$direct_pid" || true
+      fail "atomic publication did not reach staged copy"
+    fi
 
+    FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
+      > "$dir/watch.out" 2> "$dir/watch.err" &
+    watcher_pid=$!
+    i=0
+    while [ "$i" -lt 100 ] && [ ! -e "$dir/home/state/.last-watcher-beat" ]; do
+      kill -0 "$watcher_pid" 2>/dev/null || break
+      sleep 0.01
+      i=$((i + 1))
+    done
+    if [ ! -e "$dir/home/state/.last-watcher-beat" ]; then
+      touch "$dir/release-copy"
+      wait "$direct_pid" || true
+      wait "$watcher_pid" || true
+      fail "concurrent watcher did not start before publication"
+    fi
+    touch "$dir/release-copy"
+    if ! wait "$direct_pid"; then
+      wait "$watcher_pid" || true
+      fail "concurrent direct arming failed"
+    fi
     set +e
-    FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+    wait "$watcher_pid"
     rc=$?
     set -e
-    wait "$direct_pid" || fail "concurrent direct arming failed"
     [ "$rc" -eq 0 ] || fail "concurrent watcher did not complete"
     [ ! -s "$dir/watch.err" ] || fail "concurrent watcher observed a partial artifact error"
     # The watcher may finish its current check scan before publication.

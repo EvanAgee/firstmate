@@ -32,6 +32,10 @@
 #   (x) a mismatched approval still refuses for an unguarded project
 #   (y) project metadata must contain one nonempty project identity
 #   (z) duplicate captain approval flags refuse before policy lookup
+#   (aa) a successful merge appends its delivery-timing record
+#   (ab) pull request timestamp failures are logged without failing the merge
+#   (ac) auto-merge is rejected before changing pull request state
+#   (ad) a delivery-ledger failure is logged without failing the merge
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -82,6 +86,24 @@ if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
     *totalCount*) printf '%s\n' "${FM_TEST_THREADS_TOTAL:-0}" ;;
     *) exit 1 ;;
   esac
+  exit 0
+fi
+if [ "${1:-}" = api ] && [ "${2:-}" = GET ]; then
+  if [ "${FM_TEST_PR_LOOKUP_FAIL:-0}" -eq 1 ]; then
+    echo 'error: pull request lookup failed' >&2
+    exit 1
+  fi
+  if [ "${FM_TEST_PR_FACTS_GARBLED:-0}" -eq 1 ]; then
+    printf '%s\n' 'unreadable pull request facts'
+    exit 0
+  fi
+  printf 'merged: %s\n' "${FM_TEST_PR_MERGED:-true}"
+  if [ -n "${FM_TEST_PR_MERGED_AT:-}" ]; then
+    printf 'merged_at: "%s"\n' "$FM_TEST_PR_MERGED_AT"
+  else
+    printf '%s\n' 'merged_at: null'
+  fi
+  printf 'pr_opened_at: "%s"\n' "${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}"
   exit 0
 fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
@@ -179,6 +201,11 @@ run_pr_merge() {
   FM_TEST_GH_AXI_API_LOG="$case_dir/gh-axi-api.log" \
   FM_TEST_THREADS_TOTAL="${FM_TEST_THREADS_TOTAL:-0}" \
   FM_TEST_THREADS_UNRESOLVED="${FM_TEST_THREADS_UNRESOLVED:-0}" \
+  FM_TEST_PR_OPENED_AT="${FM_TEST_PR_OPENED_AT:-2025-08-25T12:00:00Z}" \
+  FM_TEST_PR_MERGED_AT="${FM_TEST_PR_MERGED_AT-2025-08-25T12:10:00Z}" \
+  FM_TEST_PR_MERGED="${FM_TEST_PR_MERGED:-true}" \
+  FM_TEST_PR_LOOKUP_FAIL="${FM_TEST_PR_LOOKUP_FAIL:-0}" \
+  FM_TEST_PR_FACTS_GARBLED="${FM_TEST_PR_FACTS_GARBLED:-0}" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -849,6 +876,128 @@ test_allow_flag_after_separator_does_not_bypass() {
   pass "fm-pr-merge does not treat --allow-unresolved-threads after -- as a gate bypass"
 }
 
+test_successful_merge_appends_delivery_record() {
+  local case_dir record
+  case_dir=$(make_case delivery-record)
+  mkdir -p "$case_dir/wt"
+  printf '%s\n' 'spawn_gen=s1756150000.123.456' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" 2121212121212121212121212121212121212121
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/57 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "delivery-record: successful merge failed"
+
+  record=$(cat "$case_dir/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-x1" and
+    .repo == "project" and
+    .pr_url == "https://github.com/example/repo/pull/57" and
+    .dispatched_at == "2025-08-25T19:26:40Z" and
+    .pr_opened_at == "2025-08-25T12:00:00Z" and
+    .merged_at == "2025-08-25T12:10:00Z"
+  ' >/dev/null || fail "delivery-record: merge wrote the wrong record: $record"
+  pass "fm-pr-merge appends delivery timing after a successful merge"
+}
+
+test_timestamp_lookup_failure_warns_and_records_partial_timing() {
+  local case_dir record rc
+  case_dir=$(make_case timestamp-lookup-failure)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222220
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_PR_LOOKUP_FAIL=1 \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/58 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "timestamp-lookup-failure: lookup failure must not fail the merge"
+  assert_grep 'warning: could not read pull request timestamps' "$case_dir/stderr" \
+    "timestamp-lookup-failure: lookup failure was not reported"
+  record=$(cat "$case_dir/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-x1" and
+    .pr_opened_at == null and
+    .merged_at == null
+  ' >/dev/null || fail "timestamp-lookup-failure: partial record has the wrong values: $record"
+  pass "fm-pr-merge reports timestamp lookup failure and records partial timing"
+}
+
+test_timestamp_parse_failure_warns_and_records_partial_timing() {
+  local case_dir record rc
+  case_dir=$(make_case timestamp-parse-failure)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222222
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_PR_FACTS_GARBLED=1 \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/59 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "timestamp-parse-failure: parse failure must not fail the merge"
+  assert_grep 'warning: could not parse pull request timestamps' "$case_dir/stderr" \
+    "timestamp-parse-failure: parse failure was not reported"
+  record=$(cat "$case_dir/data/delivery-log.jsonl")
+  printf '%s\n' "$record" | jq -e '
+    .task_id == "task-x1" and
+    .pr_opened_at == null and
+    .merged_at == null
+  ' >/dev/null || fail "timestamp-parse-failure: partial record has the wrong values: $record"
+  pass "fm-pr-merge reports timestamp parse failure and records partial timing"
+}
+
+test_auto_merge_is_rejected_before_merge() {
+  local case_dir rc
+  case_dir=$(make_case auto-merge-rejected)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222223
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/60 --auto \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 2 "$rc" "auto-merge-rejected: auto-merge should be unsupported"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "auto-merge-rejected: gh-axi changed pull request state"
+  assert_absent "$case_dir/data/delivery-log.jsonl" \
+    "auto-merge-rejected: an unlanded task was recorded"
+  assert_grep '--auto is unsupported because delivery timing requires a completed merge' \
+    "$case_dir/stderr" \
+    "auto-merge-rejected: refusal did not explain the completed-merge requirement"
+  pass "fm-pr-merge rejects auto-merge before changing pull request state"
+}
+
+test_delivery_failure_does_not_block_pr_merge() {
+  local case_dir rc
+  case_dir=$(make_case delivery-record-failure)
+  mkdir -p "$case_dir/wt"
+  ln -s /dev/null "$case_dir/data/delivery-log.jsonl"
+  add_gh_mocks "$case_dir" 2222222222222222222222222222222222222221
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/58 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "delivery-record-failure: ledger failure must not fail the merge"
+  grep -qxF 'pr merge 58 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "delivery-record-failure: gh-axi merge did not succeed"
+  assert_grep 'warning: delivery timing was not recorded for task-x1' "$case_dir/stderr" \
+    "delivery-record-failure: ledger failure was not logged"
+  pass "fm-pr-merge logs a ledger failure without changing merge success"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -877,3 +1026,8 @@ test_registry_parser_failure_refuses_before_merge
 test_unguarded_project_refuses_mismatched_approval
 test_project_metadata_requires_one_nonempty_identity
 test_duplicate_captain_approval_refuses
+test_successful_merge_appends_delivery_record
+test_timestamp_lookup_failure_warns_and_records_partial_timing
+test_timestamp_parse_failure_warns_and_records_partial_timing
+test_auto_merge_is_rejected_before_merge
+test_delivery_failure_does_not_block_pr_merge
