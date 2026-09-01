@@ -65,14 +65,18 @@ cat > "$REMOTE_ROOT/bin/fm-shutdown-job.sh" <<'SH'
 # so the mutation below can appear only if this command truly outlived the
 # worker. A fixed sleep would instead race the test's own teardown work. The
 # wait is capped at about thirty seconds so a command that escapes the worker's
-# kill still exits on its own instead of spinning forever.
+# kill still exits on its own instead of spinning forever. The cap only ends the
+# process; it never writes the mutation, so an expired wait proves nothing
+# rather than fabricating a leak.
 trap '' HUP INT TERM
 printf 'started\n' > "$1"
 for _ in $(seq 1 600); do
-  [ -e "$3" ] && break
+  if [ -e "$3" ]; then
+    printf 'ran\n' > "$2"
+    break
+  fi
   sleep 0.05
 done
-printf 'ran\n' > "$2"
 SH
 cat > "$REMOTE_ROOT/bin/fm-output-job.sh" <<'SH'
 #!/bin/bash
@@ -596,9 +600,11 @@ pass "the worker refuses symlinked job fields before command execution"
 
 QUARANTINE_STARTED="$TMP_ROOT/quarantine-started"
 QUARANTINE_SIDE_EFFECT="$TMP_ROOT/quarantine-side-effect"
+QUARANTINE_RELEASE="$TMP_ROOT/quarantine-release"
 FM_REMOTE_JOB_TIMEOUT=5
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-shutdown-job.sh "$QUARANTINE_STARTED" "$QUARANTINE_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-shutdown-job.sh "$QUARANTINE_STARTED" "$QUARANTINE_SIDE_EFFECT" "$QUARANTINE_RELEASE" \
+  < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 for _ in $(seq 1 100); do
@@ -626,7 +632,8 @@ set -e
 [ "$REPLACEMENT_RC" -ne 0 ] || fail "a replacement worker ignored quarantined ownership"
 assert_present "$STATE_ROOT/worker.lock/quarantine" "a replacement removed quarantined ownership"
 kill -KILL -- "-$GROUP_PID" 2>/dev/null || true
-sleep 3
+: > "$QUARANTINE_RELEASE"
+fm_remote_job_settle_release "$QUARANTINE_SIDE_EFFECT"
 assert_absent "$QUARANTINE_SIDE_EFFECT" "the quarantined command mutated after explicit termination"
 pass "failed shutdown quarantines ownership against replacement workers"
 
