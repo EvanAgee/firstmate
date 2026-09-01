@@ -23,6 +23,13 @@ record() { # <home> <task-id> <run-id> <head> <changed> <cluster> [extra args...
     --changed "$changed" --cluster "$cluster" "$@"
 }
 
+record_raw() { # <home> <task-id> <run-id> <head> <changed> [args...]
+  local home=$1 task=$2 run=$3 head=$4 changed=$5
+  shift 5
+  FM_HOME="$home" "$STOP" record "$task" --run "$run" --head "$head" \
+    --changed "$changed" "$@"
+}
+
 hold_lock() { # <home> <lock> <ready>
   local home=$1 lock=$2 ready=$3
   local FM_HOME=$home STATE="$home/state"
@@ -32,6 +39,165 @@ hold_lock() { # <home> <lock> <ready>
   fm_lock_try_acquire "$lock" || return 1
   : > "$ready"
   while :; do sleep 1; done
+}
+
+test_identical_same_head_retry_is_a_no_op() {
+  local task=same-head-noop run=run-same-head-noop home out before after
+  home=$(make_home same-head-noop "$task")
+  record "$home" "$task" "$run" head-a "Round one." "defect:m" \
+    --cluster "defect:n" --targeted "defect:m" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  before=$(cat "$home/state/review-loops/$task.json")
+
+  # A replay of the same head with the same payload must change nothing.
+  out=$(record "$home" "$task" "$run" head-a "Round one." "defect:m" \
+    --cluster "defect:n" --targeted "defect:m" 2>&1) \
+    || fail "an identical same-head retry should exit zero"
+  assert_contains "$out" "already recorded" "the no-op did not report the replay"
+  after=$(cat "$home/state/review-loops/$task.json")
+  [ "$before" = "$after" ] || fail "an identical same-head retry changed the state"
+  pass "review-loop stop: an identical same-head retry is a no-op"
+}
+
+test_expanded_same_head_retry_is_rejected() {
+  local task=same-head-reject run=run-same-head-reject home out rc before after
+  home=$(make_home same-head-reject "$task")
+  record "$home" "$task" "$run" head-a "Round one." "defect:m" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  before=$(cat "$home/state/review-loops/$task.json")
+
+  # A retry that adds a cluster must be refused, not absorbed and not dropped.
+  set +e
+  out=$(record "$home" "$task" "$run" head-a "Round one, plus another defect." \
+    "defect:m" --cluster "defect:o" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "an expanded same-head retry must be rejected"
+  assert_contains "$out" "cluster defect:o" \
+    "the rejection did not name the cluster that was new"
+  assert_contains "$out" "against the current head" \
+    "the rejection did not tell the caller what to do"
+  after=$(cat "$home/state/review-loops/$task.json")
+  [ "$before" = "$after" ] || fail "a rejected retry still mutated the round"
+
+  # Targeting the round already carries stays idempotent.
+  set +e
+  record "$home" "$task" "$run" head-a "Round one." "defect:m" \
+    --targeted "defect:m" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "targeting already recorded must stay idempotent"
+  pass "review-loop stop: an expanded same-head retry is rejected"
+}
+
+test_targeting_only_same_head_expansion_is_rejected() {
+  local task=targeting-reject run=run-targeting-reject home out rc before after
+  home=$(make_home targeting-reject "$task")
+  record "$home" "$task" "$run" head-a "Round one, aimed at x." "defect:x" \
+    --cluster "defect:y" --targeted "defect:x" --threshold 3 >/dev/null \
+    || fail "first round should continue"
+  before=$(cat "$home/state/review-loops/$task.json")
+
+  # The cluster set is unchanged and only the targeting grows, so the error must
+  # name the targeting rather than claim the clusters differ.
+  set +e
+  out=$(record "$home" "$task" "$run" head-a "Round one, aimed at x." "defect:x" \
+    --cluster "defect:y" --targeted "defect:x" --targeted "defect:y" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "a targeting-only same-head expansion must be rejected"
+  assert_contains "$out" "record targeting for defect:y against" \
+    "the rejection did not name the targeting that was new"
+  after=$(cat "$home/state/review-loops/$task.json")
+  [ "$before" = "$after" ] || fail "a rejected retry still mutated the round"
+  pass "review-loop stop: a targeting-only same-head expansion is rejected"
+}
+
+test_untargeted_same_head_widening_is_rejected_too() {
+  local task=untargeted-widen run=run-untargeted-widen home out rc before after
+  home=$(make_home untargeted-widen "$task")
+  record "$home" "$task" "$run" head-a "Round one, aimed at a." "defect:a" \
+    --cluster "defect:b" --targeted "defect:a" --threshold 3 >/dev/null \
+    || fail "first round should continue"
+  before=$(cat "$home/state/review-loops/$task.json")
+
+  # Omitting --targeted asks to target every cluster this call names, so this is
+  # the same request as naming defect:b explicitly and must get the same answer.
+  set +e
+  out=$(record "$home" "$task" "$run" head-a "Round one." "defect:a" \
+    --cluster "defect:b" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "an untargeted same-head widening must reject like the explicit one"
+  assert_contains "$out" "record targeting for defect:b against" \
+    "the rejection did not name the targeting the untargeted call implied"
+  after=$(cat "$home/state/review-loops/$task.json")
+  [ "$before" = "$after" ] || fail "a rejected retry still mutated the round"
+  pass "review-loop stop: an untargeted same-head widening is rejected too"
+}
+
+test_retry_after_a_decision_cannot_re_surface_it() {
+  local task=post-resolve run=run-post-resolve home rc
+  home=$(make_home post-resolve "$task")
+  record "$home" "$task" "$run" head-a "Round one." "defect:x" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  set +e
+  record "$home" "$task" "$run" head-b "Round two." "defect:x" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "two targeted rounds must stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root resolution should succeed"
+
+  # Replaying both decided heads must not revive the cluster or re-surface it.
+  record "$home" "$task" "$run" head-a "Round one." "defect:x" >/dev/null \
+    || fail "a replay of a decided head should be a no-op"
+  set +e
+  record "$home" "$task" "$run" head-b "Round two." "defect:x" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "replaying decided rounds must not re-surface the stop"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 1 ] \
+    || fail "a replay after a decision appended a duplicate needs-decision event"
+  pass "review-loop stop: replaying decided heads cannot re-surface a stop"
+}
+
+test_resolving_one_cluster_keeps_a_legacy_rounds_other_streak() {
+  local task=legacy-round run=run-legacy home rc out report state
+  home=$(make_home legacy-round "$task")
+  mkdir -p "$home/state/review-loops"
+  state="$home/state/review-loops/$task.json"
+  # Rounds recorded before the targeted field existed carry only clusters. Their
+  # implicit meaning is that every returned cluster was targeted, which the
+  # trailing count honors through the `.targeted // .clusters` fallback. Two such
+  # legacy rounds each returned x and y, so both clusters carry a streak of two
+  # under a threshold of three.
+  cat > "$state" <<JSON
+{"version":1,"task":"$task","run":"$run","threshold":3,"generation":1,
+ "rounds":[
+   {"round":1,"head":"legacy-a","changed":"Legacy round one.","clusters":["defect:x","defect:y"]},
+   {"round":2,"head":"legacy-b","changed":"Legacy round two.","clusters":["defect:x","defect:y"]}
+ ],
+ "surfaced":{"clusters":["defect:x"],"report":"$home/state/review-loops/legacy.md"}}
+JSON
+
+  # Resolve only x. The bug: resolve turned the missing targeted field into an
+  # empty set, wiping y's implicit targeting in both legacy rounds so y's streak
+  # restarted from zero. y must instead keep its streak of two.
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "resolving x should succeed"
+
+  # One more targeted y round is y's third, so it must trip. If the legacy
+  # targeting had been wiped this would only be y's first and would continue.
+  set +e
+  out=$(record "$home" "$task" "$run" head-c "Aimed at y a third time." "defect:y" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "y's streak from the legacy rounds must survive resolving x"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "y's preserved streak did not write its report"
+  assert_grep "defect:y" "$report" "the report omitted the cluster whose streak survived"
+  pass "review-loop stop: resolving one cluster keeps a legacy round's other streak"
 }
 
 test_third_round_surfaces_once() {
@@ -262,8 +428,116 @@ test_dead_lock_owner_is_recovered() {
   pass "review-loop stop: dead lock owners are recovered"
 }
 
+test_distinct_defects_in_one_file_do_not_trip() {
+  local task=onefile-loop run=run-onefile home
+  home=$(make_home distinct-defects "$task")
+  # Three different defects, each fixed once, all living in the same file. The
+  # file is constant; only the defect identity should decide the count.
+  record "$home" "$task" "$run" head-a "Fixed root resolution." \
+    "defect:root-resolution" >/dev/null \
+    || fail "first distinct defect should continue"
+  record "$home" "$task" "$run" head-b "Fixed cluster grouping." \
+    "defect:cluster-grouping" >/dev/null \
+    || fail "second distinct defect should continue"
+  record "$home" "$task" "$run" head-c "Fixed lock recovery." \
+    "defect:lock-recovery" >/dev/null \
+    || fail "third distinct defect should continue"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "three different defects in one file tripped the rule"
+  pass "review-loop stop: different defects in one file do not trip"
+}
+
+test_same_defect_across_files_trips() {
+  local task=moving-loop run=run-moving home rc out report
+  home=$(make_home moving-symptom "$task")
+  # One defect whose symptom moves to a different file each round, each round
+  # aimed at closing that same defect.
+  record "$home" "$task" "$run" head-a "Fixed the model-memory leak in loader.ts." \
+    "defect:model-memory-leak" --targeted "defect:model-memory-leak" >/dev/null \
+    || fail "first targeted round should continue"
+  record "$home" "$task" "$run" head-b "Fixed the same leak surfacing in cache.ts." \
+    "defect:model-memory-leak" --targeted "defect:model-memory-leak" >/dev/null \
+    || fail "second targeted round should continue"
+
+  set +e
+  out=$(record "$home" "$task" "$run" head-c "Fixed the same leak surfacing in serve.ts." \
+    "defect:model-memory-leak" --targeted "defect:model-memory-leak" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the same defect surviving three targeted fixes must stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the moving-symptom defect did not write its report"
+  assert_grep "defect:model-memory-leak" "$report" \
+    "report omitted the moving-symptom defect"
+  pass "review-loop stop: same defect trips even as symptoms move across files"
+}
+
+test_untargeted_recurrence_does_not_advance_count() {
+  local task=untargeted-loop run=run-untargeted home rc
+  home=$(make_home untargeted-recurrence "$task")
+  # The defect keeps reappearing, but each round is aimed at a different one.
+  # An unfixed defect that merely reappears must not advance toward a stop.
+  record_raw "$home" "$task" "$run" head-a "Fixed defect alpha." \
+    --cluster "defect:alpha" --cluster "defect:beta" \
+    --targeted "defect:alpha" --threshold 2 >/dev/null \
+    || fail "first mixed round should continue"
+  record_raw "$home" "$task" "$run" head-b "Fixed defect gamma; beta still reported." \
+    --cluster "defect:beta" --cluster "defect:gamma" \
+    --targeted "defect:gamma" >/dev/null \
+    || fail "an untargeted recurrence must not trip at threshold two"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "an untargeted recurring defect tripped the rule"
+
+  # Now aim two consecutive rounds at beta: it must trip at threshold two.
+  set +e
+  record_raw "$home" "$task" "$run" head-c "Aimed at beta." \
+    --cluster "defect:beta" --targeted "defect:beta" >/dev/null 2>&1
+  record_raw "$home" "$task" "$run" head-d "Aimed at beta again." \
+    --cluster "defect:beta" --targeted "defect:beta" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "two consecutive targeted beta rounds must stop"
+  pass "review-loop stop: untargeted recurrence does not advance the count"
+}
+
+test_multiple_severities_all_recorded() {
+  local task=severity-loop run=run-severity home rc out report
+  home=$(make_home multi-severity "$task")
+  # A gate returning findings at different severities must record every cluster,
+  # not only the blocking one. Both survive two targeted rounds and both surface.
+  record_raw "$home" "$task" "$run" head-a "Round one touched both defects." \
+    --cluster "defect:blocking-null-deref" --cluster "defect:advisory-naming" \
+    --targeted "defect:blocking-null-deref" --targeted "defect:advisory-naming" \
+    --threshold 2 >/dev/null || fail "first severity round should continue"
+
+  set +e
+  out=$(record_raw "$home" "$task" "$run" head-b "Round two touched both defects." \
+    --cluster "defect:blocking-null-deref" --cluster "defect:advisory-naming" \
+    --targeted "defect:blocking-null-deref" --targeted "defect:advisory-naming" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "both severities repeated twice must stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "multi-severity round did not write its report"
+  assert_grep "defect:blocking-null-deref" "$report" \
+    "report omitted the blocking-severity cluster"
+  assert_grep "defect:advisory-naming" "$report" \
+    "report omitted the advisory-severity cluster"
+  pass "review-loop stop: every returned severity is recorded"
+}
+
 test_third_round_surfaces_once
 test_distinct_areas_do_not_trip
+test_distinct_defects_in_one_file_do_not_trip
+test_same_defect_across_files_trips
+test_untargeted_recurrence_does_not_advance_count
+test_multiple_severities_all_recorded
+test_identical_same_head_retry_is_a_no_op
+test_expanded_same_head_retry_is_rejected
+test_targeting_only_same_head_expansion_is_rejected
+test_untargeted_same_head_widening_is_rejected_too
+test_retry_after_a_decision_cannot_re_surface_it
+test_resolving_one_cluster_keeps_a_legacy_rounds_other_streak
 test_threshold_is_configurable
 test_ambient_threshold_does_not_override_a_pinned_run
 test_root_decision_starts_a_fresh_count

@@ -61,10 +61,22 @@ printf 'ran\n' > "$1"
 SH
 cat > "$REMOTE_ROOT/bin/fm-shutdown-job.sh" <<'SH'
 #!/bin/bash
+# Waits for a release file the test creates only after teardown has finished,
+# so the mutation below can appear only if this command truly outlived the
+# worker. A fixed sleep would instead race the test's own teardown work. The
+# wait is capped at about thirty seconds so a command that escapes the worker's
+# kill still exits on its own instead of spinning forever. The cap only ends the
+# process; it never writes the mutation, so an expired wait proves nothing
+# rather than fabricating a leak.
 trap '' HUP INT TERM
 printf 'started\n' > "$1"
-sleep 3
-printf 'ran\n' > "$2"
+for _ in $(seq 1 600); do
+  if [ -e "$3" ]; then
+    printf 'ran\n' > "$2"
+    break
+  fi
+  sleep 0.05
+done
 SH
 cat > "$REMOTE_ROOT/bin/fm-output-job.sh" <<'SH'
 #!/bin/bash
@@ -74,6 +86,17 @@ head -c 1200000 < /dev/zero >&2
 exit 23
 SH
 chmod +x "$REMOTE_ROOT/bin"/*.sh
+
+# After a released gate, give any command that outlived its worker time to write
+# its side effect. Returns as soon as the file appears, so a real leak is caught
+# quickly and a clean teardown costs the full bound only once.
+fm_remote_job_settle_release() { # <side-effect-path>
+  local _
+  for _ in $(seq 1 60); do
+    [ -e "$1" ] && return 0
+    sleep 0.05
+  done
+}
 cat > "$RUNTIME_BIN/perl" <<'SH'
 #!/bin/bash
 printf 'invoked\n' >> "$FM_FAKE_PERL_LOG"
@@ -339,10 +362,18 @@ pass "the worker expires queued jobs before they can mutate"
 
 FIRST_DELAYED_SIDE_EFFECT="$TMP_ROOT/first-delayed-side-effect"
 SECOND_DELAYED_SIDE_EFFECT="$TMP_ROOT/second-delayed-side-effect"
-FM_REMOTE_JOB_QUEUE_TIMEOUT=5
-FM_REMOTE_JOB_TIMEOUT=3
+# A command receives less wall time than the nominal execution timeout: the
+# deadline is stored in whole seconds, so a claim landing just after a second
+# boundary loses up to a second, and job setup (command validation, fifos, output
+# readers) spends about another. Those two costs are fixed, so the separation
+# between a fresh window and one charged for queue time widens with the timeout
+# and the queue wait. The earlier 3s timeout behind a 1.8s wait left only about
+# 0.15s of slack over the sleep below, which a loaded runner erased. A 12s timeout
+# behind a 5s wait leaves a 4s band instead.
+FM_REMOTE_JOB_QUEUE_TIMEOUT=30
+FM_REMOTE_JOB_TIMEOUT=12
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 1.8 "$FIRST_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-delay-job.sh 5 "$FIRST_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
 FIRST_JOB_ID=$FM_REMOTE_JOB_ID
 FIRST_JOB_DIR="$STATE_ROOT/jobs/$FIRST_JOB_ID"
 for _ in $(seq 1 100); do
@@ -351,8 +382,11 @@ for _ in $(seq 1 100); do
 done
 [ "$(fm_remote_job_read_state "$FIRST_JOB_DIR" 2>/dev/null || true)" = running ] \
   || fail "the first delayed job did not begin running"
+# This sleep sits inside the band: it outlasts the roughly 6s a window charged for
+# the 5s queue wait would allow, and finishes inside the roughly 10s a fresh window
+# leaves after the fixed overhead. So it can only pass if the window started fresh.
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 1.8 "$SECOND_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-delay-job.sh 8 "$SECOND_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 fm_remote_job_wait "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
@@ -441,9 +475,10 @@ pass "sibling polls never preempt each other into a re-arm churn loop"
 
 STARTED="$TMP_ROOT/shutdown-started"
 SHUTDOWN_SIDE_EFFECT="$TMP_ROOT/shutdown-side-effect"
+SHUTDOWN_RELEASE="$TMP_ROOT/shutdown-release"
 FM_REMOTE_JOB_TIMEOUT=5
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-shutdown-job.sh "$STARTED" "$SHUTDOWN_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-shutdown-job.sh "$STARTED" "$SHUTDOWN_SIDE_EFFECT" "$SHUTDOWN_RELEASE" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 for _ in $(seq 1 100); do
   [ -f "$STARTED" ] && break
@@ -467,16 +502,19 @@ done
 assert_present "$STATE_ROOT/worker.ready" "the replacement worker did not become ready"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 [ "$FM_REMOTE_JOB_EXIT" -eq 125 ] || fail "the interrupted job did not publish an unknown-completion result"
-sleep 3
+# Teardown is done, so release the gate: a surviving command would now mutate.
+: > "$SHUTDOWN_RELEASE"
+fm_remote_job_settle_release "$SHUTDOWN_SIDE_EFFECT"
 assert_absent "$SHUTDOWN_SIDE_EFFECT" "the active command mutated after worker shutdown"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the interrupted job could not be reaped"
 pass "worker shutdown terminates the active command tree before replacement"
 
 CRASH_STARTED="$TMP_ROOT/crash-started"
 CRASH_SIDE_EFFECT="$TMP_ROOT/crash-side-effect"
+CRASH_RELEASE="$TMP_ROOT/crash-release"
 FM_REMOTE_JOB_TIMEOUT=5
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-shutdown-job.sh "$CRASH_STARTED" "$CRASH_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-shutdown-job.sh "$CRASH_STARTED" "$CRASH_SIDE_EFFECT" "$CRASH_RELEASE" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 for _ in $(seq 1 100); do
   [ -f "$CRASH_STARTED" ] && break
@@ -494,7 +532,9 @@ done
   || fail "the Linux supervisor did not restart a crashed worker"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 [ "$FM_REMOTE_JOB_EXIT" -eq 125 ] || fail "worker crash recovery did not publish unknown completion"
-sleep 3
+# Teardown is done, so release the gate: an orphan would now mutate.
+: > "$CRASH_RELEASE"
+fm_remote_job_settle_release "$CRASH_SIDE_EFFECT"
 assert_absent "$CRASH_SIDE_EFFECT" "an orphaned command mutated after worker crash recovery"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the crash-recovered job could not be reaped"
 fm_remote_job_probe "$ACCOUNT_HOME" || fail "the restarted worker did not remain ready"
@@ -560,9 +600,11 @@ pass "the worker refuses symlinked job fields before command execution"
 
 QUARANTINE_STARTED="$TMP_ROOT/quarantine-started"
 QUARANTINE_SIDE_EFFECT="$TMP_ROOT/quarantine-side-effect"
+QUARANTINE_RELEASE="$TMP_ROOT/quarantine-release"
 FM_REMOTE_JOB_TIMEOUT=5
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-shutdown-job.sh "$QUARANTINE_STARTED" "$QUARANTINE_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-shutdown-job.sh "$QUARANTINE_STARTED" "$QUARANTINE_SIDE_EFFECT" "$QUARANTINE_RELEASE" \
+  < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 for _ in $(seq 1 100); do
@@ -590,7 +632,8 @@ set -e
 [ "$REPLACEMENT_RC" -ne 0 ] || fail "a replacement worker ignored quarantined ownership"
 assert_present "$STATE_ROOT/worker.lock/quarantine" "a replacement removed quarantined ownership"
 kill -KILL -- "-$GROUP_PID" 2>/dev/null || true
-sleep 3
+: > "$QUARANTINE_RELEASE"
+fm_remote_job_settle_release "$QUARANTINE_SIDE_EFFECT"
 assert_absent "$QUARANTINE_SIDE_EFFECT" "the quarantined command mutated after explicit termination"
 pass "failed shutdown quarantines ownership against replacement workers"
 
