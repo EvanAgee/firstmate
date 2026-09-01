@@ -52,10 +52,18 @@ fm_backend_tmux_send_key() {  # <target> <key>
 
 # fm_backend_tmux_send_text_submit: type <text> into <target> once, then
 # submit with Enter, retried (Enter only, never retyped) until the composer
-# clears. Re-exports fm_tmux_submit_core (bin/fm-tmux-lib.sh) verbatim; see
-# that file for the composer-verification contract and echoed verdicts.
-fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
-  fm_tmux_submit_core "$@"
+# clears. Delegates to fm_tmux_submit_core (bin/fm-tmux-lib.sh); see that file
+# for the composer-verification contract and echoed verdicts.
+# The shared backend signature carries an [expected-label] slot that tmux does
+# not use (herdr/cursor do), followed by [harness] [omp-bun] [omp-bin]. tmux
+# needs the harness and, for OMP, its task-bound Bun/OMP entry paths so the
+# composer read can attribute OMP's bun-hosted foreground process; drop the
+# unused label and pass the identity args on to the submit core.
+fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle> [expected-label] [harness] [omp-bun] [omp-bin]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5
+  local harness=${7:-} omp_bun=${8:-} omp_bin=${9:-}
+  fm_tmux_submit_core "$target" "$text" "$retries" "$sleep_s" "$settle" \
+    "$harness" "$omp_bun" "$omp_bin"
 }
 
 # fm_backend_tmux_container_ensure: reuse the current tmux session when

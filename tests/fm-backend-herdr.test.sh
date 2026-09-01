@@ -3253,50 +3253,51 @@ test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
   pass "fm_backend_herdr_composer_state: exact OMP structure uses the bound Bun despite PATH drift and distinguishes empty, pending, and bounded multi-line input"
 }
 
-test_composer_state_omp_malformed_short_stale_working_and_unreadable_are_unknown() {
-  local dir log resp fb out top width case_id content agent_status bun
-  if ! command -v bun >/dev/null 2>&1; then
-    pass "OMP Herdr unsafe-composer subtest skipped: bun not found"
-    return
-  fi
-  bun=$(command -v bun)
+# The shared classifier now knows OMP's two-row shape, so the herdr adapter
+# reads a real OMP composer through native `agent get` identity plus structure
+# (no width measurement - the fork classifies by content, not by measuring the
+# bottom rule to the top border). This pins the safe boundary: genuinely
+# unidentifiable shapes stay unknown, while a real typed or empty composer is
+# read. Herdr supplies identity natively, so the trailing `omp <bun>` args are
+# ignored here.
+test_composer_state_omp_shape_verdicts_are_safe() {
+  local dir log resp fb out top case_id bottom agent status want
   top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
-  width=$(fm_composer_terminal_width "$top" "$bun" "") || fail "could not measure unsafe OMP Herdr fixture width"
-  for case_id in short malformed width-mismatch stale working blocked unreadable non-omp; do
-    dir="$TMP_ROOT/composer-omp-unsafe-$case_id"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-    case "$case_id" in
-      short) printf '%s\n╰─ short ─╯\n' "$top" > "$resp/1.out" ;;
-      malformed) printf '%s\nmissing OMP closing row\n' "$top" > "$resp/1.out" ;;
-      width-mismatch) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\n' "$((width - 5))" ' ' >> "$resp/1.out" ;;
-      stale) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\ntranscript continued after stale composer\n' "$((width - 4))" ' stale input' >> "$resp/1.out" ;;
-      *) printf '%s\n' "$top" > "$resp/1.out"; printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$resp/1.out" ;;
-    esac
-    agent_status=idle
-    case "$case_id" in
-      working|blocked) agent_status=$case_id ;;
-    esac
-    if [ "$case_id" = unreadable ]; then
-      printf '1\n' > "$resp/2.exit"
-    elif [ "$case_id" = non-omp ]; then
-      printf '{"result":{"agent":{"agent":"pi","agent_status":"idle"}}}\n' > "$resp/2.out"
+
+  # one_case <case-id> <bottom-rows-printf-fmt> <agent-or-UNREADABLE> <status> <want>
+  # A real OMP pane always renders its bottom rule the full width of the top
+  # border; the classifier reads the interior content (not a measured width),
+  # and the identity gate already proved this is live OMP, so an empty interior
+  # is empty and typed text is pending. Malformed (no closing row), stale
+  # (transcript below the pair), unreadable identity, and a non-pi-family
+  # identity all stay unknown so the injection guard defers.
+  one_case() {
+    local cid=$1 rows=$2 ag=$3 st=$4 wnt=$5 d l r fbn o
+    d="$TMP_ROOT/composer-omp-safe-$cid"; mkdir -p "$d/responses"; l="$d/log"; r="$d/responses"; : > "$l"
+    {
+      printf '%s\n' "$top"
+      printf '%b\n' "$rows"
+    } > "$r/1.out"
+    if [ "$ag" = UNREADABLE ]; then
+      printf '1\n' > "$r/2.exit"
     else
-      printf '{"result":{"agent":{"agent":"omp","agent_status":"%s"}}}\n' "$agent_status" > "$resp/2.out"
+      printf '{"result":{"agent":{"agent":"%s","agent_status":"%s"}}}\n' "$ag" "$st" > "$r/2.out"
     fi
-    fb=$(make_herdr_fakebin "$dir")
-    out=$( PATH="$fb:$PATH" FM_OMP_BUN="$bun" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2 omp "$FM_OMP_BUN"' "$ROOT" )
-    [ "$out" = unknown ] || fail "unsafe OMP Herdr composer case '$case_id' must remain unknown, got '$out'"
-  done
-  dir="$TMP_ROOT/composer-omp-missing-bun"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  printf '%s\n' "$top" > "$resp/1.out"
-  printf '╰─%-*s─╯\n' "$((width - 4))" ' ' >> "$resp/1.out"
-  printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}' > "$resp/2.out"
-  fb=$(make_herdr_fakebin "$dir")
-  # shellcheck disable=SC2016  # expansion belongs to the inner bash
-  out=$( env -u FM_OMP_BUN PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2 omp "$1"' "$ROOT" "" )
-  [ "$out" = unknown ] || fail "OMP Herdr geometry without a task-bound Bun must remain unknown, got '$out'"
-  pass "fm_backend_herdr_composer_state: OMP short, malformed, width-mismatched, stale, working, blocked, unreadable, missing-Bun, and inexact-identity shapes remain unknown"
+    fbn=$(make_herdr_fakebin "$d")
+    o=$( PATH="$fbn:$PATH" FM_HERDR_LOG="$l" FM_HERDR_RESPONSES="$r" \
+      bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2' "$ROOT" )
+    [ "$o" = "$wnt" ] || fail "OMP Herdr composer case '$cid' expected '$wnt', got '$o'"
+  }
+
+  one_case empty         '╰─          ─╯'                                            omp        idle    empty
+  one_case typed         '╰─ steer after current turn ─╯'                            omp        idle    pending
+  one_case working-empty '╰─          ─╯'                                            omp        working empty
+  one_case blocked-empty '╰─          ─╯'                                            omp        blocked empty
+  one_case malformed     'missing OMP closing row'                                  omp        idle    unknown
+  one_case stale         '╰─ stale input ─╯\ntranscript continued after stale composer' omp    idle    unknown
+  one_case unreadable    '╰─          ─╯'                                            UNREADABLE idle    unknown
+  one_case non-pi-family '╰─          ─╯'                                            claude     idle    unknown
+  pass "fm_backend_herdr_composer_state: OMP reads empty/typed through native identity, and malformed, stale, unreadable, and non-pi-family shapes stay unknown"
 }
 
 # Real Pi 0.80.7 on Herdr 0.7.3 renders no prompt glyph and no side border.
@@ -5045,7 +5046,7 @@ test_composer_state_popup_placeholder_fill_is_pending
 test_composer_state_unknown_on_capture_failure
 test_composer_state_unknown_when_no_composer_row_found
 test_composer_state_omp_structure_classifies_empty_pending_and_multiline
-test_composer_state_omp_malformed_short_stale_working_and_unreadable_are_unknown
+test_composer_state_omp_shape_verdicts_are_safe
 test_composer_state_pi_separator_idle_is_empty
 test_composer_state_pi_separator_real_text_is_pending
 test_composer_state_pi_incomplete_separator_below_stale_generic_is_unknown

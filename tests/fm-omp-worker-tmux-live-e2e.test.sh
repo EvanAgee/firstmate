@@ -35,7 +35,10 @@ remove_clean_worktree() {
 }
 
 cleanup() {
-  local cleanup_ok=1
+  # Preserve the exit status the run is exiting WITH: a fail()'s `exit 1` must
+  # survive this trap, or a failing guard would report success (the trap's own
+  # last command otherwise resets $?). This guard exists to fail loudly.
+  local status=$? cleanup_ok=1
   "$REAL_TMUX" -L "$SOCKET" kill-server 2>/dev/null || true
   sleep 1
   remove_clean_worktree "$WORKER_WT" worker || cleanup_ok=0
@@ -45,7 +48,9 @@ cleanup() {
     rm -rf "$LAB"
   else
     printf 'not ok - OMP live fixture cleanup incomplete; preserving %s\n' "$LAB" >&2
+    [ "$status" -ne 0 ] || status=1
   fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -71,6 +76,14 @@ git init -q "$PROJECT"
 fm_git_identity fmtest fmtest@example.invalid
 git -C "$PROJECT" add .
 git -C "$PROJECT" commit -qm init
+# fm-spawn refreshes a spawn worktree's base from origin before launch, so the
+# fixture project needs a real origin to fetch. A local bare clone stands in for
+# the remote; the worker/scout branches track it so the pre-launch freshen finds
+# a current base instead of refusing on a missing remote.
+ORIGIN="$LAB/origin.git"
+git clone -q --bare "$PROJECT" "$ORIGIN"
+git -C "$PROJECT" remote add origin "$ORIGIN"
+git -C "$PROJECT" fetch -q origin
 git -C "$PROJECT" worktree add -q -b fm/omp-live-worker "$WORKER_WT"
 git -C "$PROJECT" worktree add -q -b fm/omp-live-scout "$SCOUT_WT"
 
@@ -169,7 +182,15 @@ run_send() {
 
 spawn_omp() {
   local id=$1 kind=$2 args=()
-  [ "$kind" = scout ] && args+=(--scout)
+  # A scout carries its own delivery semantics; a ship spawn must state its
+  # delivery contract (--mode/--yolo). This guard only exercises the composer
+  # and steering, so the lightest ship contract that avoids the no-mistakes
+  # pipeline is used.
+  if [ "$kind" = scout ]; then
+    args+=(--scout)
+  else
+    args+=(--mode local-only --yolo off)
+  fi
   FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" FM_STATE_OVERRIDE="$HOME_DIR/state" \
     FM_DATA_OVERRIDE="$HOME_DIR/data" FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" \
     FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 \
