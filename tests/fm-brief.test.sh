@@ -242,6 +242,65 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+# The worker that opens a PR owns its review feedback until the task lands,
+# including feedback that arrives AFTER the done report (a late review-bot pass,
+# a human thread, a requested change). Both PR-producing modes share the watch
+# timing but use their own feedback path. Neither path may weaken the
+# never-merge prohibition. local-only has no PR, so it stays out.
+test_pr_producing_modes_own_feedback_until_landing() {
+  local home id mode brief watch_entry expected_action forbidden_action
+  home="$TMP_ROOT/pr-watch-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR; do
+    id="brief-pr-watch-${mode}"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    case "$mode" in
+      no-mistakes)
+        # shellcheck disable=SC2016
+        watch_entry='append `done: PR {url} checks green` and enter the PR watch below.'
+        expected_action='Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.'
+        forbidden_action='fix and push on your `fm/'"$id"'` branch'
+        ;;
+      direct-PR)
+        # shellcheck disable=SC2016
+        watch_entry='append `done: PR {url}` to the status file and enter the PR watch below.'
+        expected_action='Apply rule 8 directly to late reviewer feedback: fix and push on your `fm/'"$id"'` branch'
+        forbidden_action='Drive late reviewer feedback back through no-mistakes'
+        ;;
+    esac
+    assert_grep "$watch_entry" "$brief" \
+      "$mode: done report did not enter the PR watch"
+    assert_grep "Reporting done does not end your ownership of this PR - it stays yours until the task lands, normally by the PR merging, or by firstmate landing it locally if GitHub is down." "$brief" \
+      "$mode: brief did not keep PR ownership until the task lands, including the outage local landing path"
+    assert_grep "$expected_action" "$brief" \
+      "$mode: brief did not use its own late-feedback path"
+    assert_no_grep "$forbidden_action" "$brief" \
+      "$mode: brief included the other mode's late-feedback path"
+    assert_grep "After addressing new reviewer feedback, re-report status." "$brief" \
+      "$mode: brief did not require a fresh status report after late feedback"
+    if [ "$mode" = no-mistakes ]; then
+      assert_grep "If a gate is waiting, respond there and let the pipeline handle the finding." "$brief" \
+        "$mode: active monitor did not route late feedback through its gate"
+      assert_grep "If the monitor has ended, rerun /no-mistakes." "$brief" \
+        "$mode: ended monitor did not restart the pipeline for late feedback"
+    fi
+    assert_grep "Never merge the PR and never arm auto-merge; the configured merge authority owns that." "$brief" \
+      "$mode: post-done watch weakened the never-merge prohibition"
+  done
+
+  # local-only produces no PR, so the post-done PR-watch block must not appear.
+  id="brief-pr-watch-local-only"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1 \
+    || fail "local-only: ship brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "it stays yours until the task lands" "$brief" \
+    "local-only brief added a PR-watch contract it has no PR for"
+  pass "fm-brief.sh: PR-producing modes own review feedback until the task lands; local-only stays out"
+}
+
 test_matt_flow_is_explicit_and_thin() {
   local home id brief status
   home="$TMP_ROOT/matt-flow-home"
@@ -833,6 +892,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry

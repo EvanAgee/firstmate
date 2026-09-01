@@ -362,6 +362,17 @@ fi
 # delivery mode, validated above. The generated DOD opens with the fixed
 # "Delivery contract: mode=<mode>" line that bin/fm-spawn.sh checks against its own
 # explicit --mode before launching.
+#
+# PR_WATCH owns the shared timing for both PR-producing modes. Each mode adds
+# its own feedback path. Local-only has no PR.
+IFS= read -r -d '' PR_WATCH <<EOF || true
+
+Reporting done does not end your ownership of this PR - it stays yours until the task lands, normally by the PR merging, or by firstmate landing it locally if GitHub is down.
+Stay on watch after reporting done.
+After addressing new reviewer feedback, re-report status.
+EOF
+PR_WATCH=${PR_WATCH%$'\n'}
+PR_WATCH_GUARD='Never merge the PR and never arm auto-merge; the configured merge authority owns that.'
 case "$MODE" in
   direct-PR)
     SETUP2=""
@@ -371,8 +382,11 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
+When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and enter the PR watch below.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+$PR_WATCH
+Apply rule 8 directly to late reviewer feedback: fix and push on your \`fm/$ID\` branch, resolve the threads, or reply with a concrete reason a finding is not valid.
+$PR_WATCH_GUARD
 EOF
     ;;
   local-only)
@@ -413,7 +427,13 @@ Two firstmate-specific rules layer on top of that guidance:
   Its resolved Firstmate code root is \`$FM_ROOT\`.
   Use \`$FM_ROOT/bin/fm-review-loop-stop.sh\` for every record and resolve call.
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
+After /no-mistakes reports CI green (the CI-ready return point), append \`done: PR {url} checks green\` and enter the PR watch below.
+Do not wait for no-mistakes to keep monitoring in the background.
+$PR_WATCH
+Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.
+If a gate is waiting, respond there and let the pipeline handle the finding.
+If the monitor has ended, rerun /no-mistakes.
+$PR_WATCH_GUARD
 EOF
     ;;
 esac
