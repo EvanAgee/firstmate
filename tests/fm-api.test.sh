@@ -887,6 +887,49 @@ test_captain_reply_refuses_a_malformed_existing_log() {
   pass "captain replies fail closed on a malformed existing log"
 }
 
+test_captain_reply_accepts_only_consumed_legacy_records() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (consumed legacy captain replies)"; return 0; }
+
+  local home port token out before after
+  home=$(fm_test_api_home api-captain-reply-consumed-legacy)
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-09-01T18:00:00Z \
+    "$ROOT/bin/fm-captain-queue.sh" add \
+    --id consumed-legacy-card --question "Can this answer append?" >/dev/null
+  printf '%s\n' \
+    '{"id":"old-generation","answer":"old","generation":"one","extra":true}' \
+    '{"id":"old-offset","answer":"old","at":"2026-08-20T12:59:59.500-05:00","extra":true}' \
+    > "$home/state/captain-replies.jsonl"
+  printf '2\n' > "$home/state/captain-replies.cursor"
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+
+  post_captain_reply "$port" "$token" \
+    '{"id":"consumed-legacy-card","generation":1,"answer":"accepted after legacy"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "consumed legacy reply status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')" = 3 ] \
+    || fail "valid reply was not appended after consumed legacy records"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-09-01T18:00:00Z \
+    "$ROOT/bin/fm-captain-queue.sh" reconcile) \
+    || fail "reply after consumed legacy records did not reconcile: $out"
+  assert_contains "$out" "handled: [id=consumed-legacy-card] accepted after legacy" \
+    "consumed legacy records should not block the appended answer"
+
+  printf '%s\n' \
+    '{"id":"unconsumed-invalid","answer":"bad","generation":"one"}' \
+    >> "$home/state/captain-replies.jsonl"
+  before=$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')
+  post_captain_reply "$port" "$token" \
+    '{"id":"consumed-legacy-card","generation":1,"answer":"blocked after invalid"}'
+  [ "$HTTP_CODE" = 500 ] \
+    || fail "unconsumed malformed reply status $HTTP_CODE, wanted 500: $HTTP_BODY"
+  after=$(wc -l < "$home/state/captain-replies.jsonl" | tr -d ' ')
+  [ "$after" = "$before" ] || fail "API appended behind an unconsumed malformed record"
+  fm_test_api_stop "$home"
+  pass "captain reply API preserves only consumed legacy records"
+}
+
 test_conflicting_api_replies_deliver_only_the_latest_receipt() {
   command -v jq >/dev/null 2>&1 \
     || { echo "skip: jq not found (conflicting captain replies)"; return 0; }
@@ -1577,6 +1620,7 @@ test_captain_reply_uses_legacy_reopen_generation
 test_captain_reply_appends_after_newline_less_record_and_reconciles
 test_captain_reply_retry_after_wake_failure_appends_once
 test_captain_reply_refuses_a_malformed_existing_log
+test_captain_reply_accepts_only_consumed_legacy_records
 test_conflicting_api_replies_deliver_only_the_latest_receipt
 test_later_conflicting_reply_explicitly_supersedes_a_handled_answer
 test_worker_relay_without_token_is_unauthorized

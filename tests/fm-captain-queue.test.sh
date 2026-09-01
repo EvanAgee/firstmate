@@ -559,6 +559,38 @@ test_future_legacy_anchor_gets_one_fresh_window() {
   pass "future legacy anchors receive one persisted seven-day window"
 }
 
+test_malformed_legacy_anchor_gets_one_fresh_window() {
+  local home out
+  home=$(make_home malformed-legacy-anchor)
+  jq -n '{
+    updated_at: "2026-08-27T18:00:00Z",
+    items: [{
+      id: "malformed-legacy-card",
+      num: 1,
+      question: "Malformed legacy question?",
+      asked_at: "not-a-date",
+      status: "open"
+    }],
+    resolved: []
+  }' > "$home/data/captain-queue.json"
+
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "malformed legacy anchor should start a fresh quiet window: $out"
+  jq -e --arg now "$NOW" '
+    .records[0].state == "open"
+    and .records[0].asked_at == $now
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "malformed legacy anchor was not clamped to migration time"
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "repeat migration restarted or expired the malformed anchor: $out"
+  [ "$(jq -r '.records[0].asked_at' "$home/data/captain-queue.json")" = "$NOW" ] \
+    || fail "repeat migration changed the repaired expiry anchor"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-09-03T18:00:00Z "$Q" reconcile)
+  assert_contains "$out" "parked: [id=malformed-legacy-card] expired-legacy-backing" \
+    "the repaired legacy card should expire after its fresh seven-day window"
+  pass "malformed legacy anchors receive one persisted seven-day window"
+}
+
 test_add_reconstructs_consumed_reply_history() {
   local home out
   home=$(make_home add-reconstructs-history)
@@ -1867,6 +1899,7 @@ test_legacy_duplicate_id_prefers_visible_state_over_timestamp
 test_legacy_same_state_duplicate_compares_offset_timestamps
 test_legacy_reopen_uses_successor_generation
 test_future_legacy_anchor_gets_one_fresh_window
+test_malformed_legacy_anchor_gets_one_fresh_window
 test_add_reconstructs_consumed_reply_history
 test_park_reconstructs_consumed_reply_history
 test_legacy_backlog_done_history_reconstructs_dashboard_delivery

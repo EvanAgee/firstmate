@@ -521,7 +521,22 @@ function captainReplyReceiptValid(value) {
   return true;
 }
 
-function classifyCaptainReply(file, reply) {
+function captainReplyCursor(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") return 0;
+    throw error;
+  }
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (!digits) return 0;
+  const cursor = Number(digits);
+  if (!Number.isSafeInteger(cursor)) throw new Error("reply cursor is malformed");
+  return cursor;
+}
+
+function classifyCaptainReply(file, cursor, reply) {
   let raw;
   try {
     raw = fs.readFileSync(file, "utf8");
@@ -540,22 +555,24 @@ function classifyCaptainReply(file, reply) {
     } catch {
       throw new Error("reply log is malformed");
     }
+    const consumed = index + 1 <= cursor;
+    const legacyRecord =
+      record &&
+      typeof record === "object" &&
+      !Array.isArray(record) &&
+      typeof record.id === "string" &&
+      typeof record.answer === "string";
+    if (!legacyRecord) throw new Error("reply log is malformed");
     const hasGeneration = Object.prototype.hasOwnProperty.call(record || {}, "generation");
     const generation = hasGeneration ? record.generation : 1;
-    if (
-      !record ||
-      typeof record !== "object" ||
-      Array.isArray(record) ||
-      typeof record.id !== "string" ||
-      !record.id ||
-      typeof record.answer !== "string" ||
-      !Number.isInteger(generation) ||
-      generation < 1 ||
-      (Object.prototype.hasOwnProperty.call(record, "at") && !captainReplyReceiptValid(record.at))
-    ) {
+    const generationValid = Number.isInteger(generation) && generation >= 1;
+    const receiptValid =
+      !Object.prototype.hasOwnProperty.call(record, "at") || captainReplyReceiptValid(record.at);
+    if (!consumed && (!record.id || !generationValid || !receiptValid)) {
       throw new Error("reply log is malformed");
     }
     if (
+      generationValid &&
       record.id === reply.id &&
       generation === reply.generation &&
       record.answer === reply.answer
@@ -576,7 +593,8 @@ function queueCaptainReply(home, stateDir, reply) {
     } catch (error) {
       if (!error || error.code !== "ENOENT") throw error;
     }
-    if (classifyCaptainReply(file, reply) === "append") {
+    const cursor = captainReplyCursor(path.join(state, "captain-replies.cursor"));
+    if (classifyCaptainReply(file, cursor, reply) === "append") {
       const record = { ...reply, at: new Date().toISOString() };
       let separator = "";
       let handle;

@@ -347,9 +347,9 @@ read_queue() {
           | map(
               ([.asked_at | fm_iso_epoch][0] // null) as $asked_epoch
               | ([$migration_stamp | fm_iso_epoch][0] // null) as $migration_epoch
-              | if $asked_epoch != null
+              | if .state == "open"
                   and $migration_epoch != null
-                  and $asked_epoch > $migration_epoch
+                  and ($asked_epoch == null or $asked_epoch > $migration_epoch)
               then .asked_at = $migration_stamp
               else .
               end)
