@@ -72,6 +72,14 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 GRACE=${FM_GUARD_GRACE:-300}
 COORD_LOCK="$STATE/.claude-coordinator.lock"
+# The parked notifier holds this lock the whole time it is parked
+# (bin/fm-claude-watch-notifier.sh acquires it and tags it role "notifier"). A
+# live holder here is the proof a notifier exists to consume the ready record.
+# READ ONLY: the coordinator never acquires, writes to, or releases this lock -
+# it belongs to the notifier. Named differently from the notifier's own
+# OWNER_LOCK so a stray reference cannot crash the notifier under set -u.
+NOTIFIER_LOCK="$STATE/.claude-autoarm.lock"
+NOTIFIER_ABSENT="$STATE/.claude-notifier-absent"
 READY="$STATE/.claude-ready-to-notify"
 GEN_FILE="$STATE/.claude-coordinator-generation"
 WAKE_SEQ="$STATE/.wake-queue.seq"
@@ -298,6 +306,54 @@ publish_ready() {  # <ready_seq> <predecessor_arm_pid>
   rm -f "$tmp" 2>/dev/null || true
 }
 
+# Record whether a notifier is parked, so a coordinator publishing into the void
+# leaves a durable trace instead of going silently half-dead. Called after every
+# successful publish_ready. READ ONLY against the notifier lock: this never
+# acquires, writes, or releases it.
+#
+# Fail-open bias: when lsof is unavailable the check cannot prove a notifier is
+# missing, so it writes nothing and leaves healthy supervision undisturbed. A false
+# "notifier missing" is worse than a missed one.
+#
+# When lsof IS available, the recorded pid is the liveness proof. The notifier's
+# lock is a mkdir+pid directory (state/.claude-autoarm.lock/pid), not a descriptor a
+# process keeps open, so a parked notifier holds nothing lsof can see. An open-fd
+# scan (fm_lock_has_live_holder) therefore reads a HEALTHY parked notifier as absent,
+# and reads an entirely absent lock as uncertain-so-assume-present; it cannot
+# separate the two. Checking the recorded pid with fm_pid_alive is the same liveness
+# test fm_lock_try_acquire uses, and it correctly tells a live notifier from a stale
+# or absent lock. So the lsof-availability decision uses `command -v lsof` directly
+# and the liveness decision uses the pid, rather than fm_lock_has_live_holder.
+record_notifier_presence() {  # <ready_seq>
+  local ready_seq=$1 tmp now first_seen holder_pid
+  # Fail-open availability gate. Without lsof the check cannot prove a notifier is
+  # missing, so it writes nothing and leaves the marker as it found it.
+  command -v lsof >/dev/null 2>&1 || return
+  # lsof is available. The recorded pid decides (see the header note above on why
+  # an open-fd scan cannot serve as the liveness signal for this directory lock).
+  holder_pid=$(cat "$NOTIFIER_LOCK/pid" 2>/dev/null || true)
+  if [ -n "$holder_pid" ] && fm_pid_alive "$holder_pid"; then
+    rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
+    return
+  fi
+  # No lock dir, no recorded pid, or a dead one: no notifier is parked.
+  now=$(date +%s)
+  # Preserve first_seen across rewrites so a one-cycle blip is distinguishable from
+  # a real outage. A missing or malformed existing marker starts a fresh outage.
+  first_seen=$(sed -n 's/^first_seen=//p' "$NOTIFIER_ABSENT" 2>/dev/null | head -1)
+  case "$first_seen" in ''|*[!0-9]*) first_seen=$now ;; esac
+  tmp="$NOTIFIER_ABSENT.tmp.$$"
+  {
+    printf 'first_seen=%s\n' "$first_seen"
+    printf 'last_seen=%s\n' "$now"
+    printf 'ready_seq=%s\n' "$ready_seq"
+    printf 'coordinator_generation=%s\n' "$COORD_GENERATION"
+    printf 'session_owner=%s\n' "$SESSION_OWNER"
+  } > "$tmp" 2>/dev/null && mv -f "$tmp" "$NOTIFIER_ABSENT" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null || true
+  cycle_ledger_note notifier-absent
+}
+
 # Stand down when this session no longer owns state/.lock: a new session
 # generation has taken over and owns its own coordinator.
 session_still_owns() {
@@ -346,6 +402,7 @@ while :; do
   if wait_for_successor_ready "$OUT"; then
     SUCCESSOR_TIMEOUT_STREAK=0
     publish_ready "$READY_SEQ" "$PREDECESSOR_ARM_PID"
+    record_notifier_presence "$READY_SEQ"
     cycle_ledger_note successor-ready
   else
     # Readiness failed or the arm died before confirming a live watcher. Leave no

@@ -178,6 +178,33 @@ fm_lock_role_of() {  # <dir>
   cat "$1/state/.claude-coordinator.lock/role" 2>/dev/null || true
 }
 
+absent_field() {  # <dir> <field>
+  sed -n "s/^$2=//p" "$1/state/.claude-notifier-absent" 2>/dev/null | head -1
+}
+
+# Build a PATH directory that mirrors every executable on the current PATH EXCEPT
+# lsof, so `command -v lsof` inside the coordinator genuinely fails on any platform
+# (lsof lives in /usr/sbin on macOS and /usr/bin on Linux, so filtering by
+# directory is not portable - symlinking every tool but lsof is). Echoes the dir.
+make_nolsof_path() {
+  local d f base seen
+  d=$(mktemp -d "$TMP_ROOT/nolsof.XXXXXX")
+  seen=" "
+  local IFS=:
+  for pdir in $PATH; do
+    [ -d "$pdir" ] || continue
+    for f in "$pdir"/*; do
+      [ -x "$f" ] && [ ! -d "$f" ] || continue
+      base=${f##*/}
+      [ "$base" = lsof ] && continue
+      case "$seen" in *" $base "*) continue ;; esac
+      seen="$seen$base "
+      ln -s "$f" "$d/$base" 2>/dev/null || true
+    done
+  done
+  printf '%s\n' "$d"
+}
+
 wait_file() {  # <path> <limit-tenths>
   local path=$1 limit=${2:-300} i=0
   while [ "$i" -lt "$limit" ]; do
@@ -757,6 +784,184 @@ test_coordinator_stands_down_after_successor_timeout_streak() {
   pass "coordinator: stands down after a bounded successor-timeout streak so the guard blocks an idle Stop"
 }
 
+# --- 10. no parked notifier -> the coordinator records the absence -------------
+# The gap this task closes: a live coordinator publishing ready records with no
+# notifier to consume them used to go silently half-dead. With no notifier parked
+# (nothing holds .claude-autoarm.lock), the coordinator must write the durable
+# .claude-notifier-absent marker and leave a notifier-absent breadcrumb in the
+# cycle-exit ledger, WITHOUT ever touching the notifier lock.
+test_records_notifier_absent_when_no_notifier() {
+  local dir coord fs seq gen owner i
+  dir=$(make_home notifier-absent)
+  start_lock_holder "$dir"
+  printf 'window=x\n' > "$dir/state/task.meta"
+  printf 'working: go\n' > "$dir/state/task.status"
+  prime_seen "$dir" "$dir/state/task.status"
+
+  # No notifier is ever started, so nothing holds .claude-autoarm.lock.
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
+  wait_file "$dir/state/.claude-ready-to-notify" 400 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+
+  wait_file "$dir/state/.claude-notifier-absent" 200 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator published ready but never recorded the missing notifier"; }
+
+  fs=$(absent_field "$dir" first_seen)
+  case "$fs" in ''|*[!0-9]*) stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker has no numeric first_seen" ;; esac
+  seq=$(absent_field "$dir" ready_seq)
+  case "$seq" in ''|*[!0-9]*) stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker has no numeric ready_seq" ;; esac
+  gen=$(absent_field "$dir" coordinator_generation)
+  case "$gen" in coord-*) : ;; *) stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker has no coordinator_generation token" ;; esac
+  owner=$(absent_field "$dir" session_owner)
+  [ "$owner" = "$(cat "$dir/state/.lock")" ] \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker session_owner does not match the current session lock"; }
+
+  grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator did not leave a notifier-absent breadcrumb in the cycle-exit ledger"; }
+
+  # The coordinator must never acquire the notifier lock: it belongs to the notifier.
+  [ ! -e "$dir/state/.claude-autoarm.lock" ] \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator acquired or created the notifier's lock"; }
+
+  # first_seen must survive a later rewrite while last_seen advances.
+  local fs2 ls1 ls2 j
+  ls1=$(absent_field "$dir" last_seen)
+  j=0
+  while [ "$j" -lt 120 ]; do
+    ls2=$(absent_field "$dir" last_seen)
+    [ -n "$ls2" ] && [ "$ls2" -gt "$ls1" ] 2>/dev/null && break
+    sleep 0.25
+    j=$((j + 1))
+  done
+  fs2=$(absent_field "$dir" first_seen)
+  [ "$fs2" = "$fs" ] \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "first_seen changed across a rewrite ($fs -> $fs2) instead of surviving"; }
+
+  stop_bg "$coord" "$HOLDER_PID"
+  pass "coordinator: records the missing notifier durably and never touches the notifier lock"
+}
+
+# --- 11. a live notifier holder -> no marker, and an existing one is cleared ----
+# When a notifier is genuinely parked it holds .claude-autoarm.lock with a live pid.
+# The coordinator must then produce no marker, and clear any stale marker left from
+# an earlier outage. The real notifier exits 2 the instant a wake advances the ready
+# record - the exact event that forces the coordinator to re-check - so running it
+# would race its own teardown against the check. Fabricate a live lock holder (a
+# long-lived process whose pid sits in the lock, the coordinator's exact "parked
+# notifier" signal) so the healthy state is stable across the re-check, the same
+# fabrication test 7 uses for a coordinator lock.
+test_no_marker_when_notifier_parked_and_clears_stale() {
+  local dir coord holder first_seq new_seq i
+  dir=$(make_home notifier-present)
+  start_lock_holder "$dir"
+  # Two tasks so need persists and the coordinator keeps cycling.
+  printf 'window=x\n' > "$dir/state/one.meta"
+  printf 'working: go\n' > "$dir/state/one.status"
+  printf 'window=y\n' > "$dir/state/two.meta"
+  printf 'working: still busy\n' > "$dir/state/two.status"
+  prime_seen "$dir" "$dir/state/one.status"
+  prime_seen "$dir" "$dir/state/two.status"
+
+  # Seed a stale marker from a supposed earlier outage. The coordinator must clear
+  # it once it confirms a live notifier.
+  printf 'first_seen=1\nlast_seen=1\nready_seq=0\ncoordinator_generation=coord-old\nsession_owner=0\n' \
+    > "$dir/state/.claude-notifier-absent"
+
+  # A live process standing in for the parked notifier, holding the notifier lock.
+  sleep 120 &
+  holder=$!
+  mkdir -p "$dir/state/.claude-autoarm.lock"
+  printf '%s\n' "$holder" > "$dir/state/.claude-autoarm.lock/pid"
+  printf 'notifier\n' > "$dir/state/.claude-autoarm.lock/role"
+
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$holder" "$HOLDER_PID"; fail "session never started the coordinator"; }
+  wait_file "$dir/state/.claude-ready-to-notify" 400 \
+    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+  first_seq=$(ready_field "$dir" ready_seq)
+
+  # The coordinator re-checks the notifier only when it publishes a fresh ready
+  # record, so drive a real actionable close to force at least one more cycle. With
+  # a live holder on the lock, that cycle must remove the stale marker.
+  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
+  i=0
+  new_seq=$first_seq
+  while [ "$i" -lt 400 ]; do
+    new_seq=$(ready_field "$dir" ready_seq)
+    [ -n "$new_seq" ] && [ "$new_seq" -gt "$first_seq" ] 2>/dev/null \
+      && [ ! -e "$dir/state/.claude-notifier-absent" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ ! -e "$dir/state/.claude-notifier-absent" ] \
+    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator kept the notifier-absent marker while a live notifier held the lock"; }
+  # The live holder must be untouched: the coordinator is read-only on this lock.
+  kill -0 "$holder" 2>/dev/null \
+    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator killed the notifier lock holder"; }
+  [ "$(cat "$dir/state/.claude-autoarm.lock/pid" 2>/dev/null)" = "$holder" ] \
+    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator rewrote the notifier lock pid"; }
+
+  stop_bg "$holder" "$coord" "$HOLDER_PID"
+  pass "coordinator: a live notifier holder leaves no marker, and an existing marker is cleared"
+}
+
+# --- 12. no lsof on PATH -> no marker at all -----------------------------------
+# The check must stay silent when it cannot prove anything: with lsof missing, a
+# false "notifier missing" would disturb healthy supervision. This test pins both
+# directions so it cannot pass vacuously. First a POSITIVE CONTROL with lsof present
+# and no notifier, where the marker MUST appear (this half is what goes red against
+# an unfixed coordinator). Then, with lsof removed from PATH and the same missing
+# notifier, the marker must NOT appear.
+test_no_marker_when_lsof_unavailable() {
+  local dir cc coord nolsof i
+
+  # Positive control: lsof present, no notifier -> the marker is produced. This is
+  # the same fixture as test 10, isolated here to prove the lsof-free half below is
+  # a real gate and not just an absent feature.
+  cc=$(make_home lsof-control)
+  start_lock_holder "$cc"
+  printf 'window=x\n' > "$cc/state/task.meta"
+  printf 'working: go\n' > "$cc/state/task.status"
+  prime_seen "$cc" "$cc/state/task.status"
+  coord=$(start_coordinator "$cc" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the control coordinator"; }
+  wait_file "$cc/state/.claude-notifier-absent" 400 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "positive control: coordinator with lsof present never wrote the marker for a missing notifier"$'\n'"$(cat "$cc/coord.out" 2>/dev/null)"; }
+  stop_bg "$coord" "$HOLDER_PID"
+
+  # The gate: identical missing-notifier setup, but lsof removed from PATH.
+  dir=$(make_home no-lsof)
+  start_lock_holder "$dir"
+  printf 'window=x\n' > "$dir/state/task.meta"
+  printf 'working: go\n' > "$dir/state/task.status"
+  prime_seen "$dir" "$dir/state/task.status"
+
+  nolsof=$(make_nolsof_path)
+  command -v lsof >/dev/null 2>&1 && [ ! -e "$nolsof/lsof" ] \
+    || { stop_bg "$HOLDER_PID"; fail "test harness could not build an lsof-free PATH (lsof present in shim)"; }
+
+  # Run the coordinator with the lsof-free PATH (fakebin kept first for the fake
+  # harness/crew-state tools the real watcher layer resolves).
+  coord=$(start_coordinator "$dir" coord "PATH=$dir/fakebin:$nolsof") \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator on the lsof-free PATH"; }
+  wait_file "$dir/state/.claude-ready-to-notify" 400 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record on the lsof-free PATH"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+
+  # Give the coordinator several more cycles: it must never write the marker while
+  # lsof cannot prove the notifier is missing.
+  i=0
+  while [ "$i" -lt 30 ]; do
+    [ -e "$dir/state/.claude-notifier-absent" ] \
+      && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator wrote a notifier-absent marker with no lsof to prove the notifier is gone"; }
+    sleep 0.1
+    i=$((i + 1))
+  done
+
+  stop_bg "$coord" "$HOLDER_PID"
+  pass "coordinator: writes the marker with lsof present, but stays silent with no lsof on PATH"
+}
+
 test_successor_verified_before_ready_publish
 test_live_watcher_across_long_turn
 test_actionable_close_rearms_and_republishes
@@ -767,3 +972,6 @@ test_single_coordinator_owner
 test_coordinator_lock_does_not_satisfy_guard
 test_coordinator_stands_down_on_session_handover
 test_coordinator_stands_down_after_successor_timeout_streak
+test_records_notifier_absent_when_no_notifier
+test_no_marker_when_notifier_parked_and_clears_stale
+test_no_marker_when_lsof_unavailable
