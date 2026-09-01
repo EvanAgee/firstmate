@@ -463,27 +463,49 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
 }
 
 test_marker_publish_failure_retains_recovery_evidence() {
-  local dir home state fakebin first_arm watcher_pid armout
+  local dir home state fakebin first_arm watcher_pid armout status
+  local FM_TEST_REAL_MV FM_TEST_PUBLISH_MARKER FM_TEST_DELIVERY_LOG FM_TEST_PUBLISH_REFUSED
   dir=$(make_case downtime-marker-publish-failure)
   home="$dir/home"
   state="$dir/state"
   fakebin="$dir/fakebin"
   mkdir -p "$home/data"
+  FM_TEST_REAL_MV=$(command -v mv)
+  FM_TEST_PUBLISH_MARKER="$state/.watcher-down"
+  FM_TEST_DELIVERY_LOG="$state/.watch-deliveries.log"
+  FM_TEST_PUBLISH_REFUSED="$state/.test-cleanup-publish-refused"
+  export FM_TEST_REAL_MV FM_TEST_PUBLISH_MARKER FM_TEST_DELIVERY_LOG FM_TEST_PUBLISH_REFUSED
+  cat > "$fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+last=
+for arg in "$@"; do last=$arg; done
+if [ "$last" = "${FM_TEST_PUBLISH_MARKER:-}" ] && [ -s "${FM_TEST_DELIVERY_LOG:-}" ]; then
+  : > "$FM_TEST_PUBLISH_REFUSED"
+  exit 1
+fi
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$fakebin/mv"
 
   start_rearm_arm "$home" "$state" "$fakebin" "$dir/first-arm.out"
   first_arm=$ARM_PID
   is_live_non_zombie "$first_arm" || fail "marker-failure fixture watcher did not stay live"
   watcher_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
-  mkdir "$state/.watcher-down"
-  kill -TERM "$watcher_pid" 2>/dev/null || fail "could not stop marker-failure fixture watcher"
-  wait "$first_arm" 2>/dev/null || true
+  printf 'done: marker publication fixture finished\n' > "$state/marker.status"
+  wait_for_exit "$first_arm" 120
+  status=$?
+  [ "$status" -ne 124 ] || fail "marker-failure fixture watcher did not exit after its wake"
+  grep "$(printf '\tsignal\tmarker.status\t')" "$state/.wake-queue" >/dev/null \
+    || fail "marker-failure fixture watcher did not reach its cleanup boundary"
+  [ -e "$FM_TEST_PUBLISH_REFUSED" ] \
+    || fail "marker-failure fixture did not reject the cleanup publication"
 
   [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$watcher_pid" ] \
     || fail "marker publication failure discarded stale-lock recovery evidence"
   ! is_live_non_zombie "$watcher_pid" \
     || fail "marker-failure fixture watcher remained live"
 
-  rmdir "$state/.watcher-down"
+  rm -f "$fakebin/mv"
   armout="$dir/recovery-arm.out"
   start_rearm_arm "$home" "$state" "$fakebin" "$armout"
   wait_for_exit "$ARM_PID" 80 || fail "stale-lock recovery did not surface downtime"

@@ -932,8 +932,10 @@ SH
     set -e
     wait "$direct_pid" || fail "concurrent direct arming failed"
     [ "$rc" -eq 0 ] || fail "concurrent watcher did not complete"
-    grep -q '^check: .*: merged$' "$dir/watch.out" || fail "concurrent watcher never saw complete poll"
     [ ! -s "$dir/watch.err" ] || fail "concurrent watcher observed a partial artifact error"
+    # The watcher may finish its current check scan before publication.
+    # Either it retires the merged poll, or publication leaves a complete poll
+    # for the next scan; the artifact assertions below accept only those states.
     if [ -e "$dir/home/state/task-a.check.sh" ]; then
       cmp -s "$POLL" "$dir/home/state/task-a.check.sh" || fail "concurrent publication check bytes changed"
       [ "$(file_mode "$dir/home/state/task-a.check.sh")" = 600 ] || fail "concurrent check mode was not private"
@@ -947,7 +949,7 @@ SH
     fi
     n=$((n + 1))
   done
-  pass "concurrent watchers observe only complete private poll publications"
+  pass "concurrent watchers never observe partial private poll publications"
 }
 
 test_migration_excludes_older_watcher_before_scan() {
