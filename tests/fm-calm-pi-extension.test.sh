@@ -72,11 +72,11 @@ find_chrome() {
 }
 
 # Render a local HTML file to its post-script DOM with headless Chrome, writing the
-# result to $2. Returns 0 only when the dumped DOM reaches its closing </html>.
-# Headless Chrome on a machine with no usable display or GPU can stall partway
-# through a heavy interactive page and never finish the dump, so the caller uses a
-# minimal control render to tell "this Chrome cannot render here" (skip) apart from
-# "the real export is broken" (fail).
+# result to the out path. Returns 0 only when the dumped DOM reaches its closing
+# </html>. Headless Chrome on a machine with no usable display or GPU can stall
+# partway through a render and never finish the dump, so the caller renders a minimal
+# control page first to tell "this Chrome cannot render here" (skip) apart from "the
+# real export is broken" (fail).
 render_dom() {  # <chrome> <src-html> <out-dom> [profile-suffix]
   local chrome=$1 src=$2 out=$3 suffix=${4:-} pid iter=0
   "$chrome" \
@@ -3561,25 +3561,32 @@ if (!serialized.includes("firstmate-synthetic-input") || !serialized.includes("/
 const synthetic = entries.find((entry) => entry.type === "custom_message" && entry.customType === "firstmate-synthetic-input");
 if (!synthetic || synthetic.display) process.exit(1);
 JS
-  chrome=$(find_chrome) || fail "Chrome or Chromium is required for rendered export DOM assertions"
+  # The rendered-export DOM assertion needs a working headless browser. Treat a
+  # missing browser and a browser that cannot render here the same way: an
+  # unavailable DOM capability that skips only this one assertion loudly while the
+  # rest of the end-to-end test still runs. Only when the browser CAN render is a
+  # broken export a real failure.
   dom_rendered=1
-  if ! render_dom "$chrome" "$export_file" "$export_dom"; then
-    # The dump did not finish. Before treating that as a Calm regression, confirm
-    # this Chrome can render anything at all here: a machine with no usable display
-    # or GPU (a headless CI box, a locked-out laptop) stalls even a trivial page.
-    # If a minimal control page also fails to render, the environment cannot run
-    # the rendered-DOM assertion, so skip only that one check loudly instead of
-    # asserting a DOM the browser never produced; the rest of this test continues.
-    # If the control DOES render but the real export did not, that is a genuine
-    # export regression and still fails.
+  if ! chrome=$(find_chrome); then
+    echo "skip: no Chrome or Chromium found; the rendered-export DOM assertion requires a browser, the rest of the E2E still runs"
+    dom_rendered=0
+  else
+    # Probe a minimal control page FIRST, before touching the heavy export, so a
+    # stalled heavy render can never poison the capability decision. If the control
+    # cannot render, this machine has no usable display or GPU (a headless CI box, a
+    # locked-out laptop), so skip only the DOM assertion loudly and continue. If the
+    # control renders, the browser works here, so the real export MUST render too -
+    # a stall there is a genuine export regression and fails loudly.
     control_html="$TMP_ROOT/chrome-control.html"
     control_dom="$TMP_ROOT/chrome-control-dom.html"
     printf '%s\n' '<!DOCTYPE html><html><head></head><body>CALM_CHROME_CONTROL</body></html>' >"$control_html"
-    if render_dom "$chrome" "$control_html" "$control_dom" -control; then
-      fail "could not render calm-mode HTML export DOM"
+    if ! render_dom "$chrome" "$control_html" "$control_dom" -control; then
+      echo "skip: headless Chrome cannot render even a minimal control page in this environment; the rendered-export DOM assertion requires a working display/GPU, the rest of the E2E still runs"
+      dom_rendered=0
+    else
+      render_dom "$chrome" "$export_file" "$export_dom" \
+        || fail "could not render calm-mode HTML export DOM"
     fi
-    echo "skip: headless Chrome cannot render a DOM in this environment (even a minimal control page failed); the rendered-export DOM assertion requires a working display/GPU"
-    dom_rendered=0
   fi
   [ "$dom_rendered" -eq 0 ] || node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
 const dom = require("node:fs").readFileSync(process.argv[2], "utf8");

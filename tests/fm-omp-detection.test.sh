@@ -16,9 +16,11 @@
 #   6. Grok marker still detected (unchanged precedence).
 #   7. No markers: unknown (ancestry walk, no omp process to match). This one
 #      reads the live parent-process chain, so it only holds when no harness
-#      launched the run; under an ambient harness (a developer running the suite
-#      from inside claude/pi) that walk correctly finds the harness, and the test
-#      skips loudly rather than assert a verdict the environment controls.
+#      launched the run. Under an ambient harness (a developer running the suite
+#      from inside claude/pi) the test skips loudly instead - but only on
+#      independent evidence: the detector ran cleanly AND a separate ancestry walk
+#      confirms a harness process is present, so a genuine detector regression on
+#      clean CI still fails rather than passing as a skip.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -39,6 +41,28 @@ detect_with() {
   env -u CLAUDECODE -u OMPCODE -u PI_CODING_AGENT -u GROK_AGENT \
       -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u FM_PI_HARNESS \
       "$@" "$HARNESS"
+}
+
+# Independent evidence for the no-marker skip below: walk THIS test's own parent
+# process chain and report the first harness command name found, or nothing. This
+# reads the live ancestry directly (ps + ppid) rather than asking the detector
+# under test, so it is not fooled by a detector regression: it is a separate
+# witness that a real harness process launched the run. The command-name set
+# mirrors bin/fm-harness.sh's layer-2 walk.
+ambient_harness_in_ancestry() {
+  local pid=$$ comm bc
+  for _ in 1 2 3 4 5 6 7 8; do
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+    bc=$(basename -- "$comm")
+    case "$bc" in
+      *claude*|*codex*|*opencode*|*grok*|kimi|muse|muse-bin-*|pi|pi-signed|omp)
+        printf '%s\n' "$bc"
+        return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
+  done
+  return 1
 }
 
 test_ompcodes_outranks_claudecode() {
@@ -79,20 +103,26 @@ test_grok_marker_still_detected() {
 }
 
 test_no_markers_is_unknown() {
-  local result
+  local result status ambient
   result=$(detect_with)
+  status=$?
   # With every env marker cleared, detection falls through to the layer-2 process
   # ancestry walk (bin/fm-harness.sh detect_own). That walk climbs this test's own
   # parent chain, so it only reads "unknown" when no harness process launched the
   # run - true in CI (a bare shell) but false when a developer runs the suite from
   # inside an ambient harness (claude, pi, ...), whose process sits in the ancestry
-  # regardless of the cleared markers. That ancestry hit is the walk working as
-  # designed, not a detection bug, so skip this one assertion loudly rather than
-  # asserting a verdict the environment controls. Every other test in this suite
-  # sets an explicit marker that short-circuits before the walk, so they stay fully
-  # assertive here.
-  if [ "$result" != "unknown" ]; then
-    echo "skip: ambient harness ($result) in this run's process ancestry; the no-marker walk cannot bottom out at unknown here"
+  # regardless of the cleared markers.
+  #
+  # Skip this one assertion ONLY on independent evidence that a harness really is in
+  # the ancestry: the detector command must have succeeded, and a separate ancestry
+  # walk (ambient_harness_in_ancestry) must itself find a harness process. That way a
+  # genuine detector regression on clean CI - which would return "claude" or empty
+  # from a broken or crashed detector with no harness actually present - still fails
+  # here instead of masquerading as a skip. Every other test in this suite sets an
+  # explicit marker that short-circuits before the walk, so they stay fully assertive.
+  ambient=$(ambient_harness_in_ancestry || true)
+  if [ "$status" -eq 0 ] && [ -n "$ambient" ] && [ "$result" != "unknown" ]; then
+    echo "skip: ambient harness ($ambient) confirmed in this run's process ancestry; the no-marker walk cannot bottom out at unknown here"
     return 0
   fi
   assert_contains "$result" "unknown" "no markers should detect unknown, got: $result"
