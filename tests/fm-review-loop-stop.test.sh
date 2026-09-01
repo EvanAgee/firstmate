@@ -162,6 +162,44 @@ test_retry_after_a_decision_cannot_re_surface_it() {
   pass "review-loop stop: replaying decided heads cannot re-surface a stop"
 }
 
+test_resolving_one_cluster_keeps_a_legacy_rounds_other_streak() {
+  local task=legacy-round run=run-legacy home rc out report state
+  home=$(make_home legacy-round "$task")
+  mkdir -p "$home/state/review-loops"
+  state="$home/state/review-loops/$task.json"
+  # Rounds recorded before the targeted field existed carry only clusters. Their
+  # implicit meaning is that every returned cluster was targeted, which the
+  # trailing count honors through the `.targeted // .clusters` fallback. Two such
+  # legacy rounds each returned x and y, so both clusters carry a streak of two
+  # under a threshold of three.
+  cat > "$state" <<JSON
+{"version":1,"task":"$task","run":"$run","threshold":3,"generation":1,
+ "rounds":[
+   {"round":1,"head":"legacy-a","changed":"Legacy round one.","clusters":["defect:x","defect:y"]},
+   {"round":2,"head":"legacy-b","changed":"Legacy round two.","clusters":["defect:x","defect:y"]}
+ ],
+ "surfaced":{"clusters":["defect:x"],"report":"$home/state/review-loops/legacy.md"}}
+JSON
+
+  # Resolve only x. The bug: resolve turned the missing targeted field into an
+  # empty set, wiping y's implicit targeting in both legacy rounds so y's streak
+  # restarted from zero. y must instead keep its streak of two.
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "resolving x should succeed"
+
+  # One more targeted y round is y's third, so it must trip. If the legacy
+  # targeting had been wiped this would only be y's first and would continue.
+  set +e
+  out=$(record "$home" "$task" "$run" head-c "Aimed at y a third time." "defect:y" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "y's streak from the legacy rounds must survive resolving x"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "y's preserved streak did not write its report"
+  assert_grep "defect:y" "$report" "the report omitted the cluster whose streak survived"
+  pass "review-loop stop: resolving one cluster keeps a legacy round's other streak"
+}
+
 test_third_round_surfaces_once() {
   local task=sample-loop run=run-a home rc out report
   home=$(make_home tripping "$task")
@@ -499,6 +537,7 @@ test_expanded_same_head_retry_is_rejected
 test_targeting_only_same_head_expansion_is_rejected
 test_untargeted_same_head_widening_is_rejected_too
 test_retry_after_a_decision_cannot_re_surface_it
+test_resolving_one_cluster_keeps_a_legacy_rounds_other_streak
 test_threshold_is_configurable
 test_ambient_threshold_does_not_override_a_pinned_run
 test_root_decision_starts_a_fresh_count

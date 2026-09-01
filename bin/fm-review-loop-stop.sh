@@ -270,7 +270,7 @@ record_round() { # <task-id> <args...>
       --argjson clusters "$clusters" --argjson targeted "$targeted" '
       [.rounds[] | select(.head == $head)][-1] as $round
       | (($round.clusters + ($round.resolved // []))) as $recorded
-      | (($round.targeted // []) + ($round.resolved // [])) as $aimed
+      | (($round.targeted // $round.clusters) + ($round.resolved // [])) as $aimed
       | ((($clusters - $recorded) | length) == 0)
         and ((($targeted - $aimed) | length) == 0)
     ' >/dev/null; then
@@ -281,7 +281,7 @@ record_round() { # <task-id> <args...>
       --argjson clusters "$clusters" --argjson targeted "$targeted" '
       [.rounds[] | select(.head == $head)][-1] as $round
       | (($round.clusters + ($round.resolved // []))) as $recorded
-      | (($round.targeted // []) + ($round.resolved // [])) as $aimed
+      | (($round.targeted // $round.clusters) + ($round.resolved // [])) as $aimed
       | [ (($clusters - $recorded) | map("cluster " + .))[],
           (($targeted - $aimed) | map("targeting for " + .))[] ]
       | join(", ")
@@ -383,7 +383,7 @@ resolve_stop() { # <task-id> <args...>
         .resolved = (((.resolved // []) + (.clusters - (.clusters - $resolved)))
                      | unique)
         | .clusters = (.clusters - $resolved)
-        | .targeted = ((.targeted // []) - $resolved))
+        | .targeted = ((.targeted // .clusters) - $resolved))
     | .surfaced = null
   ')
   atomic_write "$state_file" "$state_json" || die "could not save review-loop resolution"
