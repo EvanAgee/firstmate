@@ -22,6 +22,8 @@ For an open keyed status decision, it appends a `captain-held [key=<key>]: ...` 
 `bin/fm-classify-lib.sh` recognizes that transfer as closing the live status copy without claiming that the captain has answered it.
 
 Scout teardown calls the script's read-only `verify` subcommand after checking for the report and before removing any source state.
+A hold that was answered and marked Done is eventually trimmed out of the backlog by Done-history retention, so `verify` treats a reviewed key whose hold is gone as satisfied only on positive evidence: the status log must carry an explicit resolved or captain-held line that closed that exact key.
+A reviewed key with no such answer line, whether still open or never seen in the status log, must still have a present, durable hold, so an absent hold with no answer evidence keeps failing the gate.
 The `--force` path remains the explicit captain-approved discard escape hatch.
 
 The `resolve`, `answer`, and `decline` subcommands close active holds, while `repair` attests a hold already closed outside the script.

@@ -466,6 +466,79 @@ test_incremental_agrees_with_full_fold_across_appends() {
   pass "the incremental fold matches the full fold across appends in both key positions"
 }
 
+# status_key_answered is affirmative answer evidence for one key: it returns true
+# ONLY when an explicit resolved or captain-held line closed that exact key, not
+# when the key is merely absent from the open set. fm-decision-hold verify uses it
+# so an answered hold trimmed out of the backlog still passes while a key that was
+# never answered fails.
+test_status_key_answered_requires_an_explicit_answer_line() {
+  local dir
+  dir=$(case_dir key-answered)
+
+  printf 'needs-decision [key=choice]: pick A or B\n' > "$dir/resolved.status"
+  printf 'resolved [key=choice]: captain picked A\n' >> "$dir/resolved.status"
+  status_key_answered "$dir/resolved.status" choice \
+    || fail "a resolved line was not read as an answer for its key"
+
+  printf 'needs-decision: [key=choice] pick A or B\n' > "$dir/colon-first.status"
+  printf 'resolved: [key=choice] captain picked A\n' >> "$dir/colon-first.status"
+  status_key_answered "$dir/colon-first.status" choice \
+    || fail "a colon-first resolved line was not read as an answer"
+
+  printf 'needs-decision [key=choice]: pick A or B\n' > "$dir/held.status"
+  printf 'captain-held [key=choice]: tracked by origin-decision-choice\n' >> "$dir/held.status"
+  status_key_answered "$dir/held.status" choice \
+    || fail "a captain-held transfer was not read as an answer"
+
+  # Still open: no answer line for the key.
+  printf 'needs-decision [key=choice]: pick A or B\ndone: report complete\n' > "$dir/open.status"
+  if status_key_answered "$dir/open.status" choice; then
+    fail "an open decision with a trailing done line was read as answered"
+  fi
+
+  # Never mentioned: the key does not appear in the status log at all.
+  printf 'needs-decision [key=other]: pick X or Y\nresolved [key=other]: chose X\n' > "$dir/absent.status"
+  if status_key_answered "$dir/absent.status" choice; then
+    fail "a key that never appears in the status log was read as answered"
+  fi
+
+  # Missing status file: no evidence.
+  if status_key_answered "$dir/nope.status" choice; then
+    fail "a missing status file was read as answer evidence"
+  fi
+
+  # A resolved line for a different key must not answer this one.
+  printf 'needs-decision [key=choice]: pick A or B\nresolved [key=elsewhere]: chose that\n' \
+    > "$dir/wrong-key.status"
+  if status_key_answered "$dir/wrong-key.status" choice; then
+    fail "a resolved line for a different key was read as answering this one"
+  fi
+  pass "status_key_answered needs an explicit answer line for the exact key"
+}
+
+# The reserved-namespace guard the fold applies must apply here too: a resolved
+# line whose note does not speak a reserved key's own vocabulary is not a valid
+# transition and must not count as an answer.
+test_status_key_answered_honors_the_reserved_key_guard() {
+  local dir
+  dir=$(case_dir key-answered-reserved)
+
+  printf 'needs-decision [key=pending-reply-42]: pending-reply-42: awaiting the mate\n' \
+    > "$dir/good.status"
+  printf 'resolved [key=pending-reply-42]: pending-reply-42: the mate answered\n' \
+    >> "$dir/good.status"
+  status_key_answered "$dir/good.status" pending-reply-42 \
+    || fail "a reserved-namespace resolution in its own vocabulary was not read as an answer"
+
+  printf 'needs-decision [key=pending-reply-42]: pending-reply-42: awaiting the mate\n' \
+    > "$dir/bad.status"
+  printf 'resolved [key=pending-reply-42]: some unrelated note\n' >> "$dir/bad.status"
+  if status_key_answered "$dir/bad.status" pending-reply-42; then
+    fail "a reserved-key resolution with a foreign note was read as an answer"
+  fi
+  pass "status_key_answered applies the reserved-key namespace guard the fold uses"
+}
+
 test_stated_key_is_honored_in_both_positions
 test_bare_keyless_line_still_folds_to_default
 test_resolution_closes_across_positions
@@ -491,3 +564,5 @@ test_blocked_unique_mid_note_key_is_stated
 test_invalid_lookalike_before_valid_mid_note_key_is_ignored
 test_v7_cursor_that_skipped_valid_key_is_rebuilt
 test_v8_cursor_that_chose_one_punctuated_key_is_rebuilt
+test_status_key_answered_requires_an_explicit_answer_line
+test_status_key_answered_honors_the_reserved_key_guard

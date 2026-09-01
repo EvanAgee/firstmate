@@ -529,6 +529,37 @@ status_open_decisions() {  # <status-file>
   printf '%s' "$open"
 }
 
+# Positive answer evidence for ONE decision key: return 0 only when the status
+# stream carries an explicit resolve or captain-held line that CLOSES <key>,
+# applying the same resolve/captain-held verbs, key extraction, and reserved-key
+# guard the fold above uses, so the two can never disagree on what "answered"
+# means. This is affirmative, not the inverse of the open set: a key that never
+# appeared in the stream is NOT answered here, unlike merely being absent from
+# status_open_decisions. A consumer that must prove a decision was answered - not
+# just that it is no longer open - uses this.
+status_key_answered() {  # <status-file> <key>
+  local f=$1 key=$2 line resolve held verb line_key
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+  resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+  held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *[![:space:]]*) ;;
+      *) continue ;;
+    esac
+    verb=$(status_line_verb "$line")
+    case "$verb" in
+      "$resolve"|"$held") ;;
+      *) continue ;;
+    esac
+    line_key=$(_fm_decision_key "$line") || continue
+    [ "$line_key" = "$key" ] || continue
+    _fm_decision_key_transition_allowed "$key" "$(status_line_note "$line")" || continue
+    return 0
+  done < "$f"
+  return 1
+}
+
 # Fleet-wide wrapper around status_open_decisions: scans every task's status
 # log under <state> and prefixes each still-open decision with its owning task
 # id, so a per-wake or per-session surface can print the consolidated open set

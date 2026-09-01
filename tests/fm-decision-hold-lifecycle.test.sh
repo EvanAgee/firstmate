@@ -104,10 +104,8 @@ EOF
       and (.reports | any(.id == "sample-route-review"))
   ' >/dev/null || fail "the pre-policy omission shape was not reproduced: $json"
 
-  set +e
   run_teardown "$home" "$id" > "$home/teardown.out" 2> "$home/teardown.err"
   rc=$?
-  set -e
   [ "$rc" -ne 0 ] || fail "completed investigation teardown erased a report-only unresolved decision"
   assert_present "$home/state/$id.meta" "refused completion must preserve investigation metadata"
   assert_grep "REFUSED" "$home/teardown.err" "refusal must be explicit"
@@ -1022,7 +1020,7 @@ EOF
   park_rc=$?
   wait "$answer_pid"
   answer_rc=$?
-  set -e
+  set +e
 
   [ "$park_rc" -eq 0 ] || fail "serialized park failed: $(cat "$home/concurrent-park.err")"
   [ "$answer_rc" -ne 0 ] || fail "a concurrent answer replaced the serialized deferral"
@@ -1302,7 +1300,7 @@ SH
   out=$(run_lavish "$home" answers "$result" \
     | run_decisions "$home" answers "$id" --source "the captured result fixture-src sequence 1" 2>&1)
   rc=$?
-  set -e
+  set +e
   [ "$rc" -ne 0 ] || fail "a run that skipped a hold reported success"
   assert_contains "$out" "closed: $id-decision-diversified-membership" \
     "replaying an identical capture was not idempotent: $out"
@@ -1355,7 +1353,7 @@ EOF
   set +e
   out=$(run_decisions "$home" binding "$sid" 2>&1)
   rc=$?
-  set -e
+  set +e
   [ "$rc" -ne 0 ] || fail "an unbound source reported a decision origin"
   [ -z "$out" ] || fail "an unbound source printed an origin: $out"
   show=$(tasks_in "$home" show "$id-decision-only-choice" --full)
@@ -1492,6 +1490,91 @@ SH
   pass "the chat channel feeds the same keyed-answer intake a captured review does"
 }
 
+# Done history is trimmed to a bounded recent window, so a captain hold that was
+# answered and marked Done is eventually dropped from the backlog. The answer was
+# durably attested when it was recorded and the status log's resolved line proves
+# it, so verify must treat the archived hold as satisfied. A hold that is absent
+# while its decision is still open (never answered) must still fail.
+test_verify_tolerates_answered_hold_archived_out_of_backlog() {
+  local home id hold
+  home=$(make_home archived-answered)
+  id=sample-archived-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the archived sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-answered origin"
+  write_origin_meta "$home" "$id"
+  cat > "$home/state/$id.status" <<'EOF'
+needs-decision [key=choice]: choose sample option A or option B
+resolved [key=choice]: captain chose option A
+done: report complete
+EOF
+  printf '# Sample archived review\n\nOne choice remained and was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the archived-answered hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed before the hold was answered"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the sample choice"
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "verify failed while the answered hold was still in the backlog"
+
+  # Reproduce retention archival: the answered Done hold is trimmed out of the backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+    fail "the archival step did not remove the answered hold from the backlog"
+  fi
+  run_decisions "$home" verify "$id" > "$home/archived-verify.out" 2> "$home/archived-verify.err" \
+    || fail "verify rejected an answered hold that retention archived: $(cat "$home/archived-verify.err")"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/archived-teardown.err" \
+    || fail "teardown refused after the answered hold was archived: $(cat "$home/archived-teardown.err")"
+
+  # An absent hold whose decision is still open (never answered) must still fail.
+  local open_home open_id
+  open_home=$(make_home archived-open)
+  open_id=sample-open-archived
+  mkdir -p "$open_home/data/$open_id"
+  tasks_in "$open_home" add "$open_id" "Investigate an open sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-open origin"
+  write_origin_meta "$open_home" "$open_id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$open_home/state/$open_id.status"
+  printf '# Sample open review\n\nThe captain has not chosen yet.\n' > "$open_home/data/$open_id/report.md"
+  fm_write_meta "$open_home/state/$open_id.meta" \
+    "window=firstmate:fm-$open_id" "worktree=$open_home/projects/missing-$open_id" \
+    "project=$open_home/projects/sample" "harness=codex" "kind=scout" "mode=scout" \
+    "decisions_reviewed=1" "decision_keys=choice"
+  if run_decisions "$open_home" verify "$open_id" \
+    > "$open_home/open-verify.out" 2> "$open_home/open-verify.err"; then
+    fail "verify accepted an unanswered open decision with no backlog hold"
+  fi
+
+  # No answer line at all: a reviewed key whose status log never records an
+  # explicit resolved or captain-held line, and whose hold is absent, has no
+  # positive evidence it was answered. Absence of the key from the open set is
+  # not proof of an answer, so verify must still fail.
+  local silent_home silent_id
+  silent_home=$(make_home archived-no-evidence)
+  silent_id=sample-silent-archived
+  mkdir -p "$silent_home/data/$silent_id"
+  tasks_in "$silent_home" add "$silent_id" "Investigate a silent sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-no-evidence origin"
+  write_origin_meta "$silent_home" "$silent_id"
+  printf 'done: report complete\n' > "$silent_home/state/$silent_id.status"
+  printf '# Sample silent review\n\nNo answer was ever recorded.\n' > "$silent_home/data/$silent_id/report.md"
+  fm_write_meta "$silent_home/state/$silent_id.meta" \
+    "window=firstmate:fm-$silent_id" "worktree=$silent_home/projects/missing-$silent_id" \
+    "project=$silent_home/projects/sample" "harness=codex" "kind=scout" "mode=scout" \
+    "decisions_reviewed=1" "decision_keys=choice"
+  if run_decisions "$silent_home" verify "$silent_id" \
+    > "$silent_home/silent-verify.out" 2> "$silent_home/silent-verify.err"; then
+    fail "verify accepted an absent hold with no answer line in the status log"
+  fi
+  pass "verify tolerates an answered hold archived out of the backlog but still fails one with no answer evidence"
+}
+
 test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
@@ -1513,3 +1596,4 @@ test_bound_channel_answers_close_their_holds_at_answer_time
 test_unbound_source_closes_no_hold
 test_answer_preserves_every_unrouted_close_guard
 test_chat_channel_feeds_the_same_keyed_answer_intake
+test_verify_tolerates_answered_hold_archived_out_of_backlog

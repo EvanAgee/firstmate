@@ -40,7 +40,12 @@
 # metadata inventory is unioned idempotently. A post-teardown visual review can
 # complete against the surviving report and holds without recreating task state.
 # `verify` is read-only and is called by scout teardown so teardown cannot erase a
-# source before this gate has succeeded.
+# source before this gate has succeeded. A reviewed key whose hold was answered and
+# then trimmed out of the backlog by Done-history retention still passes, but only on
+# positive evidence: the status log must carry an explicit resolved or captain-held
+# line that closed that exact key. A reviewed key with no such answer line - one still
+# open, or one that never appeared in the status log at all - must keep a present
+# durable hold, so an absent hold with no answer evidence keeps failing.
 #
 # `resolve`, `answer`, and `decline` close active holds; `repair` attests a hold
 # already closed outside this script. All four paths require a non-empty captain
@@ -526,6 +531,24 @@ verify_hold_durable() {  # <hold-id>
   fail "captain decision $id is neither active, durably deferred, nor durably resolved"
 }
 
+# The reviewed-inventory check for `complete` and `verify`. It is `verify_hold_durable`
+# with one added tolerance: a hold that is ABSENT from the backlog passes only when the
+# status log carries POSITIVE answer evidence for its key - an explicit resolve or
+# captain-held line that closed it (status_key_answered). Done-history retention
+# eventually trims an answered, Done hold out of the backlog, and that surviving status
+# line is what proves the decision was answered, so archival must not fail the gate.
+# The evidence is affirmative on purpose, not the inverse of the open set: a reviewed
+# key that never appeared in the status stream, or is still open, has no answer line,
+# so an absent hold for it stays a hard failure and a genuinely unanswered decision
+# keeps blocking teardown.
+verify_reviewed_hold() {  # <hold-id> <key-answered>
+  local id=$1 key_answered=$2
+  if [ "$key_answered" = 1 ] && ! task_show "$id" >/dev/null 2>&1; then
+    return 0
+  fi
+  verify_hold_durable "$id"
+}
+
 verify_parked_hold() {  # <hold-id> <mode> <until-or-empty> <reason> [allow-expired]
   local id=$1 mode=$2 until=$3 reason=$4 allow_expired=${5:-0}
   local show state held kind hold_kind hold_until
@@ -779,18 +802,20 @@ command_complete() {
     previous=$(meta_value "$meta" decision_keys)
   fi
   keys=$(sorted_key_union "$previous" "$supplied")
+
+  status_file="$STATE/$origin.status"
+  raw_open=$(status_open_decisions "$status_file")
+  open=$(origin_open_decisions "$origin")
   if [ -n "$keys" ]; then
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      verify_hold_durable "$(hold_id "$origin" "$key")"
+      verify_reviewed_hold "$(hold_id "$origin" "$key")" \
+        "$(status_key_answered "$status_file" "$key" && echo 1 || echo 0)"
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
   fi
 
-  status_file="$STATE/$origin.status"
-  raw_open=$(status_open_decisions "$status_file")
-  open=$(origin_open_decisions "$origin")
   while IFS=$'\t' read -r key _verb _summary; do
     [ -n "$key" ] || continue
     list_has_key "$keys" "$key" \
@@ -829,7 +854,7 @@ EOF
 }
 
 command_verify() {
-  local origin=${1:-} meta reviewed keys key open
+  local origin=${1:-} meta reviewed keys key open status_file
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   meta="$STATE/$origin.meta"
@@ -838,15 +863,17 @@ command_verify() {
   reviewed=$(meta_value "$meta" decisions_reviewed)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed unresolved-decision inventory"
   keys=$(meta_value "$meta" decision_keys)
+  status_file="$STATE/$origin.status"
+  open=$(origin_open_decisions "$origin")
   if [ -n "$keys" ]; then
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      verify_hold_durable "$(hold_id "$origin" "$key")"
+      verify_reviewed_hold "$(hold_id "$origin" "$key")" \
+        "$(status_key_answered "$status_file" "$key" && echo 1 || echo 0)"
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
   fi
-  open=$(origin_open_decisions "$origin")
   while IFS=$'\t' read -r key _verb _summary; do
     [ -n "$key" ] || continue
     list_has_key "$keys" "$key" \
