@@ -8,11 +8,16 @@
 #   - FM_CHROME_DEVTOOLS_AXI_MIN follows the axi-family floor policy owned
 #     beside the floor constants in bin/fm-bootstrap.sh.
 #   - bin/fm-chrome-devtools-mcp.js is the CHROME_DEVTOOLS_AXI_MCP_PATH
-#     launcher. It pins chrome-devtools-mcp and adds --no-page-id-routing.
+#     launcher. It pins chrome-devtools-mcp. It adds --no-page-id-routing
+#     through axi 0.1.30, then keeps MCP's default routing for axi 0.1.31+.
+#     It reads that generation by running chrome-devtools-axi --version, so
+#     chrome-devtools-axi must be resolvable on the launcher's PATH or the
+#     launcher exits 1 without starting MCP.
 #   - Compatible means the installed chrome-devtools-axi meets that floor,
-#     the launcher prints the expected pin and flag, and (unless the live
-#     probe is skipped) `chrome-devtools-axi open` against a process-unique
-#     session returns a snapshot instead of the pageId schema error.
+#     the launcher prints the expected pin, flag, and version boundary, and
+#     (unless the live probe is skipped) `chrome-devtools-axi open` against a
+#     process-unique session returns a snapshot instead of a pageId schema
+#     error.
 #     The probe drops attach, profile, and port vars and stops that session
 #     after open and on EXIT so it cannot join the user's Chrome or a sibling
 #     probe.
@@ -64,7 +69,8 @@ fm_chrome_devtools_mcp_launcher_ok() {
   local spec
   spec=$(fm_chrome_devtools_mcp_launcher_spec) || return 1
   printf '%s\n' "$spec" | grep -Eq '^package=chrome-devtools-mcp@[0-9]+\.[0-9]+\.[0-9]+$' || return 1
-  printf '%s\n' "$spec" | grep -Fxq 'flag=--no-page-id-routing'
+  printf '%s\n' "$spec" | grep -Fxq 'flag=--no-page-id-routing' || return 1
+  printf '%s\n' "$spec" | grep -Fxq 'axi-page-id-min=0.1.31'
 }
 
 fm_chrome_devtools_axi_version_parts() {

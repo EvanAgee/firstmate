@@ -3,9 +3,10 @@
 #
 # A stub can only confirm the classifier already written into the stub. This
 # opens a page in a named session through firstmate's pinned MCP launcher and
-# requires a snapshot, which is the contract Chrome DevTools MCP 1.8.0 broke
-# when axi stopped sending pageId. Run it after an axi or chrome-devtools-mcp
-# upgrade and before trusting the pin in bin/fm-chrome-devtools-mcp.js.
+# requires a snapshot. The launcher disables pageId routing through axi 0.1.30
+# and keeps routing enabled for axi 0.1.31 and newer. Run this after an axi or
+# chrome-devtools-mcp upgrade and before trusting the pin and version boundary
+# in bin/fm-chrome-devtools-mcp.js.
 set -u
 
 if [ "${FM_CHROME_DEVTOOLS_AXI_LIVE_E2E:-0}" != 1 ]; then

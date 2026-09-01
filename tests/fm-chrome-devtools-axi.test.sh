@@ -19,11 +19,11 @@ unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH \
   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_SOCKET_PATH CMUX_TAB_ID CMUX_PANEL_ID 2>/dev/null || true
 
 add_snapshot_axi() {
-  local fakebin=$1 mode=$2
+  local fakebin=$1 mode=$2 version=${3:-0.1.30}
   cat > "$fakebin/chrome-devtools-axi" <<SH
 #!/usr/bin/env bash
 if [ "\${1:-}" = --version ]; then
-  printf '%s\\n' '0.1.30'
+  printf '%s\\n' '$version'
   exit 0
 fi
 if [ "\${1:-}" = stop ]; then
@@ -122,15 +122,123 @@ test_launcher_prints_pin_and_routing_flag() {
     || fail "launcher did not print a pinned chrome-devtools-mcp package: $spec"
   printf '%s\n' "$spec" | grep -Fxq 'flag=--no-page-id-routing' \
     || fail "launcher did not print --no-page-id-routing: $spec"
+  printf '%s\n' "$spec" | grep -Fxq 'axi-page-id-min=0.1.31' \
+    || fail "launcher did not print the axi pageId boundary: $spec"
   printf '%s\n' "$spec" | grep -Fq '@latest' \
     && fail "launcher still names @latest: $spec"
-  pass "launcher prints a pinned MCP package and --no-page-id-routing"
+  pass "launcher prints its MCP pin and axi pageId boundary"
 }
 
 test_launcher_ok_accepts_the_shipped_script() {
   command -v node >/dev/null 2>&1 || fail "node is required to check the launcher"
   fm_chrome_devtools_mcp_launcher_ok || fail "shipped launcher spec was rejected"
   pass "shipped launcher satisfies the compatibility spec check"
+}
+
+write_launcher_test_tools() {
+  local fakebin=$1 dump=$2
+  cat > "$fakebin/chrome-devtools-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  printf '%s\n' "${FM_FAKE_CHROME_DEVTOOLS_AXI_VERSION:?}"
+  exit 0
+fi
+exit 1
+SH
+  cat > "$fakebin/npm" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = prefix ] && [ "${2:-}" = -g ]; then
+  printf '%s\n' '/nonexistent/fm-chrome-devtools-mcp-test'
+  exit 0
+fi
+exit 1
+SH
+  cat > "$fakebin/npx" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$dump"
+SH
+  chmod +x "$fakebin/chrome-devtools-axi" "$fakebin/npm" "$fakebin/npx"
+}
+
+test_launcher_matches_axi_page_id_generation() {
+  local version case_dir fakebin dump
+  case_dir="$TMP_ROOT/launcher-routing"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  dump="$case_dir/invocation"
+  write_launcher_test_tools "$fakebin" "$dump"
+
+  for version in 0.1.29 0.1.30; do
+    PATH="$fakebin:$PATH" FM_FAKE_CHROME_DEVTOOLS_AXI_VERSION=$version \
+      node "$ROOT/bin/fm-chrome-devtools-mcp.js" --isolated \
+      || fail "launcher failed for chrome-devtools-axi $version"
+    grep -Fxq -- '--no-page-id-routing' "$dump" \
+      || fail "launcher did not disable pageId routing for axi $version: $(cat "$dump")"
+  done
+
+  PATH="$fakebin:$PATH" FM_FAKE_CHROME_DEVTOOLS_AXI_VERSION=0.1.33 \
+    node "$ROOT/bin/fm-chrome-devtools-mcp.js" --isolated \
+    || fail "launcher failed for chrome-devtools-axi 0.1.33"
+  if grep -Fxq -- '--no-page-id-routing' "$dump"; then
+    fail "launcher disabled pageId routing for axi 0.1.33: $(cat "$dump")"
+  fi
+  grep -Fxq -- 'chrome-devtools-mcp@1.8.0' "$dump" \
+    || fail "launcher dropped its MCP pin for axi 0.1.33: $(cat "$dump")"
+  grep -Fxq -- '--isolated' "$dump" \
+    || fail "launcher dropped an MCP argument for axi 0.1.33: $(cat "$dump")"
+  pass "launcher disables pageId routing only for axi versions that omit pageId"
+}
+
+test_launcher_gives_up_on_a_hanging_axi_version_read() {
+  local case_dir fakebin started elapsed status
+  case_dir="$TMP_ROOT/launcher-hanging-axi"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  cat > "$fakebin/chrome-devtools-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  sleep 120
+  exit 0
+fi
+exit 1
+SH
+  chmod +x "$fakebin/chrome-devtools-axi"
+
+  started=$SECONDS
+  status=0
+  PATH="$fakebin:$PATH" node "$ROOT/bin/fm-chrome-devtools-mcp.js" --isolated \
+    >/dev/null 2>&1 || status=$?
+  elapsed=$((SECONDS - started))
+  [ "$status" -eq 1 ] \
+    || fail "launcher did not exit 1 when the axi version read hung: $status"
+  [ "$elapsed" -lt 30 ] \
+    || fail "launcher waited ${elapsed}s on a hanging axi version read"
+  pass "launcher gives up on a hanging chrome-devtools-axi version read"
+}
+
+test_compatibility_probe_accepts_both_axi_generations() {
+  local version case_dir fakebin
+  for version in 0.1.30 0.1.33; do
+    case_dir="$TMP_ROOT/compatible-$version"
+    mkdir -p "$case_dir/state"
+    fakebin=$(fm_fakebin "$case_dir")
+    add_snapshot_axi "$fakebin" ok "$version"
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$case_dir/state" \
+      FM_BOOTSTRAP_DETECT_ONLY=1 FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE=0 \
+      fm_chrome_devtools_axi_compatible_probe \
+      || fail "compatibility probe rejected chrome-devtools-axi $version"
+  done
+
+  case_dir="$TMP_ROOT/below-floor-0.1.29"
+  mkdir -p "$case_dir/state"
+  fakebin=$(fm_fakebin "$case_dir")
+  add_snapshot_axi "$fakebin" ok 0.1.29
+  if PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$case_dir/state" \
+    FM_BOOTSTRAP_DETECT_ONLY=1 FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE=0 \
+    fm_chrome_devtools_axi_compatible_probe; then
+    fail "compatibility probe accepted chrome-devtools-axi 0.1.29 below its floor"
+  fi
+  pass "compatibility probe accepts legacy and pageId-aware axi generations"
 }
 
 test_snapshot_classifier_accepts_a_named_session_page() {
@@ -375,6 +483,9 @@ test_session_start_prints_mcp_path_export() {
 
 test_launcher_prints_pin_and_routing_flag
 test_launcher_ok_accepts_the_shipped_script
+test_launcher_matches_axi_page_id_generation
+test_launcher_gives_up_on_a_hanging_axi_version_read
+test_compatibility_probe_accepts_both_axi_generations
 test_snapshot_classifier_accepts_a_named_session_page
 test_snapshot_classifier_rejects_pageid_schema_error
 test_bootstrap_reports_pageid_probe_failure
