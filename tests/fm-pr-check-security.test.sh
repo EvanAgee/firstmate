@@ -2852,9 +2852,11 @@ SH
     || fail "teardown left task metadata after clearing a legacy receipt"
 
   # A VALID current retirement receipt must not be cashed in before the teardown
-  # refusal gates. A task with an unsafe PR-check artifact makes teardown refuse,
-  # and on that refusal the poll files and the receipt must all still be on disk
-  # for a plain rerun. This fails when the pre-gate step is the full
+  # refusal gates. The refusal here is a world-readable quarantine entry, whose
+  # gate runs AFTER the legacy-receipt discard inside validate_pr_poll_cleanup,
+  # so the discard is genuinely executed before teardown gives up. On that
+  # refusal the poll files and the receipt must all still be on disk for a plain
+  # rerun. This goes red if the discard is widened to the full
   # fm_pr_poll_retirement_recover_one, which deletes them before the refusal.
   dir=$(make_case teardown-valid-receipt-survives-refusal)
   fakebin="$dir/fakebin"
@@ -2871,8 +2873,10 @@ SH
     || fail "could not snapshot refusal-survival receipt fixture"
   fm_pr_poll_retirement_publish "$dir/home/state" task-a "$POLL" merged \
     || fail "could not publish refusal-survival receipt fixture"
-  mkdir "$dir/home/state/task-a.pr-review-chase"
-  printf 'directory sentinel\n' > "$dir/home/state/task-a.pr-review-chase/sentinel"
+  mkdir -p "$dir/home/state/.pr-check-quarantine"
+  chmod 0700 "$dir/home/state/.pr-check-quarantine"
+  printf 'unsafe entry\n' > "$dir/home/state/.pr-check-quarantine/task-a.check.abc123"
+  chmod 0644 "$dir/home/state/.pr-check-quarantine/task-a.check.abc123"
   before=$(poll_artifact_snapshot "$dir/home/state" task-a)
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -2885,7 +2889,7 @@ SH
     "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "teardown accepted a directory-shaped PR review chase"
+  [ "$rc" -ne 0 ] || fail "teardown accepted a world-readable quarantine entry"
   [ "$(poll_artifact_snapshot "$dir/home/state" task-a)" = "$before" ] \
     || fail "teardown consumed a valid retirement receipt before its refusal gate"
 
@@ -2936,7 +2940,9 @@ SH
     || fail "teardown left the parent task after clearing a child's legacy receipt"
 
   # Second: a VALID current receipt on a child must survive a teardown refusal,
-  # so the child's poll files are still there for a plain rerun.
+  # so the child's poll files are still there for a plain rerun. As above the
+  # refusal is a world-readable quarantine entry, whose gate runs after the
+  # legacy-receipt discard, so the discard really runs before teardown refuses.
   dir=$(make_case teardown-child-valid-receipt-survives-refusal)
   fakebin="$dir/fakebin"
   child_home="$dir/secondmate-home"
@@ -2966,8 +2972,10 @@ SH
     || fail "could not snapshot child refusal-survival fixture"
   fm_pr_poll_retirement_publish "$child_state" child-a "$POLL" merged \
     || fail "could not publish child refusal-survival fixture"
-  mkdir "$child_state/child-a.pr-review-chase"
-  printf 'directory sentinel\n' > "$child_state/child-a.pr-review-chase/sentinel"
+  mkdir -p "$child_state/.pr-check-quarantine"
+  chmod 0700 "$child_state/.pr-check-quarantine"
+  printf 'unsafe entry\n' > "$child_state/.pr-check-quarantine/child-a.check.abc123"
+  chmod 0644 "$child_state/.pr-check-quarantine/child-a.check.abc123"
   before=$(poll_artifact_snapshot "$child_state" child-a)
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -2980,7 +2988,7 @@ SH
     "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "teardown accepted a directory-shaped child PR review chase"
+  [ "$rc" -ne 0 ] || fail "teardown accepted a world-readable child quarantine entry"
   [ "$(poll_artifact_snapshot "$child_state" child-a)" = "$before" ] \
     || fail "teardown consumed a valid child retirement receipt before its refusal gate"
 
