@@ -1,0 +1,7 @@
+Same three tests run with bin/fm-pr-lib.sh, bin/fm-teardown.sh and bin/fm-pr-check-migrate.sh reverted to base commit 1ff361b (tests kept at e20a4d5):
+
+not ok - armed poll went dormant after a simulated device reassignment
+
+--- second run, core reboot test removed, to show the teardown test also fails on the old code ---
+ok - a legacy retirement receipt is discarded while a tampered current one is refused
+not ok - a stale pre-fix retirement receipt blocked teardown: REFUSED: invalid PR-poll retirement receipt; preserving task state.

@@ -1,0 +1,5 @@
+ok - an armed poll survives a device-number change without an actual reboot
+ok - a rebooted armed watch is detected and re-armed with a visible signal
+ok - an unrebuildable stale record is quarantined unarmed with a visible signal
+ok - a legacy retirement receipt is discarded while a tampered current one is refused
+ok - teardown removes safe poll artifacts and refuses quarantine-directory symlinks without traversal

@@ -1,0 +1,40 @@
+=== 1. A PR merge watch is armed and healthy ===
+
+$ fm PR watch armed for task-a -> https://github.com/o/r/pull/81
+WATCH STATUS: armed and trusted (the poller will fire)
+
+=== 2. The Mac reboots. On APFS the device number is reassigned. ===
+(simulated: the state directory now reports a different device number)
+The on-disk record still looks armed to the user:
+  state/task-a.check.sh
+  state/task-a.meta
+  state/task-a.pr-poll
+  state/task-a.pr-poll-registration
+
+--- BEHAVIOR BEFORE THE FIX (old device:inode record) ---
+WATCH STATUS: UNTRUSTED -> the watch is silently dormant.
+The files are still on disk and the agent-pr-watched label is still set,
+so nothing tells the user the merge watch stopped firing. This is issue #81.
+
+=== 3. With the fix, the next run announces the recovery out loud ===
+
+$ fm-pr-check-migrate.sh
+  PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home
+
+WATCH STATUS after recovery: armed and trusted again (fires on the next poll)
+Record format now on disk: fm-pr-poll-registration-v3
+
+=== 4. A stale record that cannot be rebuilt is quarantined, not hidden ===
+
+$ fm-pr-check-migrate.sh
+  PR_CHECK_MIGRATION: quarantined polls remain unarmed; review state/.pr-check-migration.log before rearming
+Armed check script left behind? no, it is unarmed
+
+=== 5. Teardown after a reboot no longer jams on an old receipt ===
+A pre-fix merge receipt survived the reboot: fm-pr-poll-retirement-v1
+
+$ fm-teardown.sh task-a --force
+  teardown task-a complete (window firstmate:fm-task-a, worktree /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-pr-demo.a2LVPN/demo-teardown/missing-worktree)
+  Backlog: task-a just finished. Update data/backlog.md - move task-a to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+teardown exit code: 0
+poll files left behind? no, cleaned up
