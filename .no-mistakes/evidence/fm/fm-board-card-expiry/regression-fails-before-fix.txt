@@ -1,0 +1,17 @@
+Red/green check for the newest fix (e36a85e: older replies must not supersede a delivered answer).
+
+The new test file was run against the OLD script (commit e36a85e~1).
+
+--- BEFORE the fix ---
+$ bash tests/fm-captain-queue.test.sh   (old script, new tests)
+not ok - an older receipt must not be delivered after a newer answer was handled (unexpected: 'handled: [id=card-x] earlier answer')
+
+The old code re-delivered a STALE answer. Firstmate acts on every 'handled:' line,
+so it would have run the superseded command a second time.
+
+--- AFTER the fix (this branch, e36a85e) ---
+$ bash tests/fm-captain-queue.test.sh
+ok - an older receipt cannot supersede an already delivered answer
+ok - a retry of a superseded reply is not redelivered
+ok - a newer receipt still supersedes an already delivered answer
+(all 55 assertions in this file passed)

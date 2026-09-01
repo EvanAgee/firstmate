@@ -1,0 +1,348 @@
+
+================================================================
+THE BUG THIS FIXES
+================================================================
+Before: `add --id <x>` accepted any id. The only way a card ever left the board
+was its backing backlog item reporting `done`. An id with no backing item can
+never report done, so that card asked forever. Six were stuck on the live board.
+
+================================================================
+SETUP - a real backlog holding two real items
+================================================================
+$ tasks-axi list --file data/backlog.md
+  count: 2
+  tasks[2]{id,state,kind,repo,title}:
+    real-item-1,queued,captain,sample,Ship the regional rollout
+    real-item-2,queued,captain,sample,Tune the cache window
+  help[2]:
+    - Run `tasks-axi show <id> --file=/tmp/fm-e2e-AfXxC4/data/backlog.md` for full notes on a task
+    - Run `tasks-axi ready --file=/tmp/fm-e2e-AfXxC4/data/backlog.md` to see unblocked queued work
+
+================================================================
+DAY 0 (2026-08-26) - the captain asks four questions
+================================================================
+$ fm-captain-queue.sh add --id ghost-card-1 --question "Rename the deploy flag?" ...   (NO backlog item)
+added: ghost-card-1
+
+$ fm-captain-queue.sh add --id ghost-card-2 --question "Retire the old dashboard?" ...   (NO backlog item)
+added: ghost-card-2
+
+$ fm-captain-queue.sh add --id real-item-1 --question "Which region first?" ...   (REAL backlog item)
+added: real-item-1
+
+$ fm-captain-queue.sh add --id real-item-2 --question "How long should the cache live?" ...   (REAL backlog item)
+added: real-item-2
+
+Board groups now:
+  items(open):  ghost-card-1, ghost-card-2, real-item-1, real-item-2
+  parked:       (none)
+  resolved:     (none)
+
+================================================================
+CRITERION 7 - add records at creation time whether the id had a backing item
+================================================================
+  ghost-card-1: backlog_backed=false  asked_at=2026-08-26T09:00:00Z  state=open
+  ghost-card-2: backlog_backed=false  asked_at=2026-08-26T09:00:00Z  state=open
+  real-item-1: backlog_backed=true  asked_at=2026-08-26T09:00:00Z  state=open
+  real-item-2: backlog_backed=true  asked_at=2026-08-26T09:00:00Z  state=open
+
+The two real ids are TRUE. The two ghost ids are FALSE.
+Expiry never has to re-guess later what kind of card it was.
+
+================================================================
+DAY 3 (2026-08-29) - reconcile runs. Nothing is 7 days old yet.
+================================================================
+$ fm-captain-queue.sh reconcile
+(exit 0)
+Board groups now:
+  items(open):  ghost-card-1, ghost-card-2, real-item-1, real-item-2
+  parked:       (none)
+  resolved:     (none)
+
+CRITERION 1: the unbacked cards are still asking at day 3. They do not expire early.
+CRITERION 5: expiry is evaluated inside reconcile. No new polling loop was added.
+
+================================================================
+CRITERION 4 - the captain answers ghost-card-2 from the dashboard
+================================================================
+The dashboard appends one JSON line to state/captain-replies.jsonl:
+  {"id":"ghost-card-2","generation":1,"answer":"Retire it","at":"2026-08-29T10:00:00Z"}
+
+$ fm-captain-queue.sh reconcile
+handled: [id=ghost-card-2] Retire it
+(exit 0)
+Board groups now:
+  items(open):  ghost-card-1, real-item-1, real-item-2
+  parked:       (none)
+  resolved:     ghost-card-2
+
+The unbacked card left items and became resolved on the answer alone.
+
+================================================================
+CRITERION 4 - the captain answers real-item-1 while its work is STILL OPEN
+================================================================
+The backing item is still in flight, not done:
+  task:
+    id: real-item-1
+    title: Ship the regional rollout
+    state: queued
+    blocked: no
+    blocked_by: none
+    held: no
+    hold_reason: "-"
+    hold_kind: "-"
+    hold_until: "-"
+    kind: captain
+    repo: sample
+    priority: "-"
+    created: 2026-09-01
+    closed: "-"
+    deps: none
+    links: none
+    body: ""
+
+  {"id":"real-item-1","generation":1,"answer":"us-east","at":"2026-08-29T11:00:00Z"}
+
+$ fm-captain-queue.sh reconcile
+handled: [id=real-item-1] us-east
+(exit 0)
+Board groups now:
+  items(open):  ghost-card-1, real-item-2
+  parked:       (none)
+  resolved:     ghost-card-2, real-item-1
+
+The card cleared on the captain's answer even though the backing work is still open.
+
+================================================================
+DAY 8 (2026-09-03) - ghost-card-1 and real-item-2 are both 8 days old and unanswered
+================================================================
+  ghost-card-1: backlog_backed=false asked_at=2026-08-26T09:00:00Z (8 days old)
+  real-item-2: backlog_backed=true asked_at=2026-08-26T09:00:00Z (8 days old)
+
+$ fm-captain-queue.sh reconcile
+parked: [id=ghost-card-1] expired-unbacked
+(exit 0)
+Board groups now:
+  items(open):  real-item-2
+  parked:       ghost-card-1
+  resolved:     ghost-card-2, real-item-1
+
+CRITERION 1 + 2: ghost-card-1 is UNBACKED, so it left items and landed in parked.
+CRITERION 1: real-item-2 is the same age but BACKED, so it keeps today's behavior and stays open.
+
+================================================================
+CRITERION 1 - the backed card retires the old way, when its item reports done
+================================================================
+$ tasks-axi done real-item-2 --file data/backlog.md
+  task:
+    id: real-item-2
+    title: Tune the cache window
+    state: done
+    blocked: no
+    blocked_by: none
+    held: no
+    hold_reason: "-"
+    hold_kind: "-"
+    hold_until: "-"
+    kind: captain
+    repo: sample
+    priority: "-"
+    created: "-"
+    closed: 2026-09-01
+    deps: none
+    links: none
+    body: ""
+
+$ fm-captain-queue.sh reconcile
+cleared: [id=real-item-2] backlog-done
+(exit 0)
+Board groups now:
+  items(open):  (none)
+  parked:       ghost-card-1
+  resolved:     ghost-card-2, real-item-1, real-item-2
+
+It cleared, and it printed 'cleared:' not 'handled:' - no dashboard answer to act on.
+
+================================================================
+CRITERION 2 - the parked card kept its whole body, nothing was dropped
+================================================================
+{
+  "asked_at": "2026-08-26T09:00:00Z",
+  "backlog_backed": false,
+  "commands": [],
+  "context": "Two crews use the old name.",
+  "generation": 1,
+  "id": "ghost-card-1",
+  "num": 1,
+  "options": [
+    "Rename now  (recommended)",
+    "Keep the old name"
+  ],
+  "parked_at": "2026-09-03T09:00:00Z",
+  "parked_note": "Expired after 7 days without a backing backlog item",
+  "parked_reason": "expired-unbacked",
+  "project": "fleet",
+  "question": "Rename the deploy flag?",
+  "state": "parked"
+}
+
+question, context, options, project, and the ORIGINAL asked_at (2026-08-26) are all intact.
+
+================================================================
+CRITERION 3 - a reader can tell parked apart from resolved
+================================================================
+  ghost-card-1
+    state=parked
+    aged out UNANSWERED -> expired-unbacked: Expired after 7 days without a backing backlog item
+  ghost-card-2
+    state=resolved
+    captain ANSWERED -> Retire it
+  real-item-1
+    state=resolved
+    captain ANSWERED -> us-east
+  real-item-2
+    state=resolved
+    captain ANSWERED -> backlog-done
+
+================================================================
+CRITERION 9 - a parked card is never re-parked or resurrected
+================================================================
+$ fm-captain-queue.sh reconcile     (run again at day 8)
+(exit 0)
+$ fm-captain-queue.sh reconcile     (and again)
+(exit 0)
+parked records byte-identical across three reconciles: YES
+  ghost-card-1 parked_at=2026-09-03T09:00:00Z reason=expired-unbacked
+
+================================================================
+MANUAL PARK - the captain defers an unbacked card at any age, and it is repeat-safe
+================================================================
+added: ghost-card-3
+$ fm-captain-queue.sh park --id ghost-card-3 --note "Deferred until after the migration"
+parked: [id=ghost-card-3] manual
+$ fm-captain-queue.sh park --id ghost-card-3 --note "Deferred until after the migration"    (again)
+parked: [id=ghost-card-3] already-parked
+
+A BACKED card cannot be manually parked:
+$ fm-captain-queue.sh park --id real-item-1 --note "try to park a backed card"
+fm-captain-queue: manual park requires an unbacked or legacy card: real-item-1
+(exit 1)
+Board groups now:
+  items(open):  real-item-1
+  parked:       ghost-card-1, ghost-card-3
+  resolved:     ghost-card-2, real-item-2
+
+================================================================
+CRITERION 6 - the expiry window is one named constant, stated in the header
+================================================================
+  `add` records backlog_backed as true, false, or null when the backlog cannot
+  be read. False, null, and legacy records without the field expire after
+  UNBACKED_CARD_EXPIRY_DAYS (7) days without dropping their content.
+
+The only place the number lives:
+  92:UNBACKED_CARD_EXPIRY_DAYS=7
+  93:UNBACKED_CARD_EXPIRY_SECONDS=$((UNBACKED_CARD_EXPIRY_DAYS * 24 * 60 * 60))
+
+================================================================
+CRITERION 8 - the live board in this checkout was NOT touched
+================================================================
+  This checkout has no data/captain-queue.json. Nothing live to touch.
+  Every step above ran against a throwaway home: /tmp/fm-e2e-AfXxC4
+
+================================================================
+FINAL BOARD - data/captain-queue.json records
+================================================================
+[
+  {
+    "asked_at": "2026-08-26T09:00:00Z",
+    "backlog_backed": false,
+    "commands": [],
+    "context": "Two crews use the old name.",
+    "generation": 1,
+    "id": "ghost-card-1",
+    "num": 1,
+    "options": [
+      "Rename now  (recommended)",
+      "Keep the old name"
+    ],
+    "parked_at": "2026-09-03T09:00:00Z",
+    "parked_note": "Expired after 7 days without a backing backlog item",
+    "parked_reason": "expired-unbacked",
+    "project": "fleet",
+    "question": "Rename the deploy flag?",
+    "state": "parked"
+  },
+  {
+    "answer": "Retire it",
+    "asked_at": "2026-08-26T09:00:00Z",
+    "backlog_backed": false,
+    "commands": [],
+    "context": "",
+    "generation": 1,
+    "id": "ghost-card-2",
+    "num": 2,
+    "options": [
+      "Retire it  (recommended)",
+      "Leave it up"
+    ],
+    "project": "",
+    "question": "Retire the old dashboard?",
+    "resolved_at": "2026-08-29T09:00:00Z",
+    "state": "resolved"
+  },
+  {
+    "asked_at": "2026-08-26T09:00:00Z",
+    "backlog_backed": true,
+    "commands": [],
+    "context": "",
+    "generation": 2,
+    "id": "real-item-1",
+    "num": 3,
+    "options": [
+      "us-east  (recommended)",
+      "eu-west"
+    ],
+    "project": "",
+    "question": "Reopened: which region?",
+    "state": "open"
+  },
+  {
+    "answer": "backlog-done",
+    "asked_at": "2026-08-26T09:00:00Z",
+    "backlog_backed": true,
+    "commands": [],
+    "context": "",
+    "generation": 1,
+    "id": "real-item-2",
+    "num": 4,
+    "options": [
+      "Five minutes  (recommended)",
+      "One hour"
+    ],
+    "project": "",
+    "question": "How long should the cache live?",
+    "resolved_at": "2026-09-03T09:00:00Z",
+    "state": "resolved"
+  },
+  {
+    "asked_at": "2026-09-03T09:00:00Z",
+    "backlog_backed": false,
+    "commands": [],
+    "context": "",
+    "generation": 1,
+    "id": "ghost-card-3",
+    "num": 5,
+    "options": [
+      "Drop it  (recommended)",
+      "Keep it"
+    ],
+    "parked_at": "2026-09-03T09:00:00Z",
+    "parked_note": "Deferred until after the migration",
+    "parked_reason": "manual",
+    "project": "",
+    "question": "Drop the legacy import?",
+    "state": "parked"
+  }
+]
+
+throwaway home used: /tmp/fm-e2e-AfXxC4

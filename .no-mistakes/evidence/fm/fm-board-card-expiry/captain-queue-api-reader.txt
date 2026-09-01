@@ -1,0 +1,120 @@
+
+================================================================
+BEFORE EXPIRY - GET /captain-queue on day 0
+================================================================
+$ curl http://127.0.0.1:$PORT/captain-queue
+{
+  "items": [
+    {
+      "askedAt": "2026-08-26T09:00:00Z",
+      "id": "ghost-card-1",
+      "question": "Rename the deploy flag?"
+    },
+    {
+      "askedAt": "2026-08-26T09:00:00Z",
+      "id": "real-item-1",
+      "question": "Which region first?"
+    }
+  ],
+  "parked": []
+}
+
+ghost-card-1 and real-item-1 are in items. Nothing is parked yet.
+
+================================================================
+RUN THE EXPIRY SWEEP - reconcile at day 8
+================================================================
+$ fm-captain-queue.sh reconcile
+parked: [id=ghost-card-1] expired-unbacked
+
+================================================================
+AFTER EXPIRY - GET /captain-queue on day 8
+================================================================
+$ curl http://127.0.0.1:$PORT/captain-queue
+{
+  "items": [
+    {
+      "askedAt": "2026-08-26T09:00:00Z",
+      "commands": [],
+      "context": "",
+      "generation": 1,
+      "id": "real-item-1",
+      "num": 3,
+      "options": [
+        "us-east  (recommended)",
+        "eu-west"
+      ],
+      "project": "",
+      "question": "Which region first?",
+      "recommended": "us-east  (recommended)",
+      "status": "open"
+    }
+  ],
+  "ok": true,
+  "parked": [
+    {
+      "askedAt": "2026-08-26T09:00:00Z",
+      "commands": [],
+      "context": "Two crews use the old name.",
+      "generation": 1,
+      "id": "ghost-card-1",
+      "num": 1,
+      "options": [
+        "Rename now  (recommended)",
+        "Keep the old name"
+      ],
+      "parkedAt": "2026-09-03T09:00:00Z",
+      "parkedNote": "Expired after 7 days without a backing backlog item",
+      "parkedReason": "expired-unbacked",
+      "project": "fleet",
+      "question": "Rename the deploy flag?",
+      "recommended": "Rename now  (recommended)",
+      "status": "parked"
+    }
+  ],
+  "updatedAt": "2026-09-03T09:00:00Z"
+}
+
+================================================================
+WHAT THE DASHBOARD CAN NOW TELL APART
+================================================================
+  ACTIVE questions the captain still has to answer:
+    - real-item-1: Which region first?
+
+  PARKED - aged out unanswered, still visible, never deleted:
+    - ghost-card-1: Rename the deploy flag?
+      asked 2026-08-26T09:00:00Z, parked 2026-09-03T09:00:00Z because expired-unbacked
+
+  ghost-card-2 was ANSWERED, so it is resolved and appears in neither list.
+  ghost-card-1 AGED OUT, so it appears under parked with its reason.
+  These are separate sets. A reader can tell answered from aged-out.
+
+================================================================
+PARKED CARDS KEEP THEIR OPTIONS BYTE FOR BYTE
+================================================================
+  ghost-card-1 options:
+    [Rename now  (recommended)]
+    [Keep the old name]
+
+  Note the two-space gap inside "Rename now  (recommended)" is preserved exactly.
+
+================================================================
+A REPLY TO A PARKED CARD IS STILL ACCEPTED (never a dead end)
+================================================================
+$ curl -X POST http://127.0.0.1:$PORT/captain-queue/reply -H 'Authorization: Bearer <token>' -d '{"id":"ghost-card-1","generation":1,"answer":"Rename now"}'
+  HTTP 200
+  {
+    "ok": true
+  }
+
+$ fm-captain-queue.sh reconcile
+handled: [id=ghost-card-1] Rename now
+
+GET /captain-queue now:
+{
+  "items": [
+    "real-item-1"
+  ],
+  "parked": []
+}
+The parked card was answered, so it left parked and became resolved. Nothing was lost.
