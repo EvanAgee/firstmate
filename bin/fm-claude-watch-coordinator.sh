@@ -73,12 +73,14 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 GRACE=${FM_GUARD_GRACE:-300}
 COORD_LOCK="$STATE/.claude-coordinator.lock"
 # The parked notifier holds this lock the whole time it is parked
-# (bin/fm-claude-watch-notifier.sh acquires it and tags it role "notifier"). A
-# live holder here is the proof a notifier exists to consume the ready record.
-# READ ONLY: the coordinator never acquires, writes to, or releases this lock -
-# it belongs to the notifier. Named differently from the notifier's own
-# OWNER_LOCK so a stray reference cannot crash the notifier under set -u.
+# (bin/fm-claude-watch-notifier.sh acquires it and tags it role "notifier"), and
+# records what it is doing in the epoch ledger beside it. Together they say
+# whether a notifier exists to consume the ready record. READ ONLY: the
+# coordinator never acquires, writes to, or releases either - they belong to the
+# notifier. The lock is named differently from the notifier's own OWNER_LOCK so a
+# stray reference cannot crash the notifier under set -u.
 NOTIFIER_LOCK="$STATE/.claude-autoarm.lock"
+NOTIFIER_EPOCH="$STATE/.claude-autoarm-epoch"
 NOTIFIER_ABSENT="$STATE/.claude-notifier-absent"
 READY="$STATE/.claude-ready-to-notify"
 GEN_FILE="$STATE/.claude-coordinator-generation"
@@ -306,52 +308,63 @@ publish_ready() {  # <ready_seq> <predecessor_arm_pid>
   rm -f "$tmp" 2>/dev/null || true
 }
 
-# Record whether a notifier is parked, so a coordinator publishing into the void
-# leaves a durable trace instead of going silently half-dead. Called after every
-# successful publish_ready. READ ONLY against the notifier lock: this never
-# acquires, writes, or releases it.
+# Record when the notifier has silently died, so a coordinator publishing into
+# the void leaves a durable trace instead of going half-dead in silence. Called
+# after every successful publish_ready. READ ONLY against the notifier lock and
+# the epoch ledger: this never acquires, writes, or releases either.
 #
-# Fail-open bias: when lsof is unavailable the check cannot prove a notifier is
-# missing, so it writes nothing and leaves healthy supervision undisturbed. A false
-# "notifier missing" is worse than a missed one.
+# The signal is the notifier's own recorded belief plus its liveness, not lock
+# presence. The notifier is a Stop hook: it exits 2 to deliver each wake and its
+# EXIT trap drops the lock, and no replacement parks until the next Stop. So an
+# empty lock during a handling turn is normal and healthy, and treating it as an
+# outage would write the false marker this check exists to avoid.
 #
-# When lsof IS available, the recorded pid is the liveness proof. The notifier's
-# lock is a mkdir+pid directory (state/.claude-autoarm.lock/pid), not a descriptor a
-# process keeps open, so a parked notifier holds nothing lsof can see. An open-fd
-# scan (fm_lock_has_live_holder) therefore reads a HEALTHY parked notifier as absent,
-# and reads an entirely absent lock as uncertain-so-assume-present; it cannot
-# separate the two. Checking the recorded pid with fm_pid_alive is the same liveness
-# test fm_lock_try_acquire uses, and it correctly tells a live notifier from a stale
-# or absent lock. So the lsof-availability decision uses `command -v lsof` directly
-# and the liveness decision uses the pid, rather than fm_lock_has_live_holder.
+# Fail-open bias: only a notifier that recorded "parked" and then died without
+# releasing its lock is provably gone. Anything uncertain writes nothing.
 record_notifier_presence() {  # <ready_seq>
-  local ready_seq=$1 tmp now first_seen holder_pid
-  # Fail-open availability gate. Without lsof the check cannot prove a notifier is
-  # missing, so it writes nothing and leaves the marker as it found it.
-  command -v lsof >/dev/null 2>&1 || return
-  # lsof is available. The recorded pid decides (see the header note above on why
-  # an open-fd scan cannot serve as the liveness signal for this directory lock).
+  local ready_seq=$1 tmp now first_seen holder_pid holder_role epoch_outcome epoch_owner
   holder_pid=$(cat "$NOTIFIER_LOCK/pid" 2>/dev/null || true)
+  holder_role=$(cat "$NOTIFIER_LOCK/role" 2>/dev/null || true)
+  # A live holder only counts as a parked notifier when the lock says so. The
+  # turn-end guard takes this same lock with role "terminal-check", and that
+  # holder must not be mistaken for a notifier.
   if [ -n "$holder_pid" ] && fm_pid_alive "$holder_pid"; then
+    case "$holder_role" in
+      notifier|autoarm)
+        rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
+        return
+        ;;
+    esac
+  fi
+  # No parked notifier holds the lock. Ask the epoch ledger what the last
+  # notifier believed it was doing, and whether that process still exists.
+  epoch_outcome=$(sed -n 's/^.*outcome=\([a-z][a-z-]*\).*$/\1/p' "$NOTIFIER_EPOCH" 2>/dev/null | head -1)
+  epoch_owner=$(sed -n 's/^.*owner_pid=\([0-9][0-9]*\).*$/\1/p' "$NOTIFIER_EPOCH" 2>/dev/null | head -1)
+  # Only "parked" plus a dead owner proves a silent death. A missing or malformed
+  # ledger, a stand-down outcome, a rewake, a failure the turn-end guard already
+  # owns, or a parked owner still alive are all left unmarked.
+  if [ "$epoch_outcome" != parked ] || fm_pid_alive "$epoch_owner"; then
     rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
     return
   fi
-  # No lock dir, no recorded pid, or a dead one: no notifier is parked.
   now=$(date +%s)
   # Preserve first_seen across rewrites so a one-cycle blip is distinguishable from
   # a real outage. A missing or malformed existing marker starts a fresh outage.
   first_seen=$(sed -n 's/^first_seen=//p' "$NOTIFIER_ABSENT" 2>/dev/null | head -1)
   case "$first_seen" in ''|*[!0-9]*) first_seen=$now ;; esac
   tmp="$NOTIFIER_ABSENT.tmp.$$"
-  {
+  if {
     printf 'first_seen=%s\n' "$first_seen"
     printf 'last_seen=%s\n' "$now"
     printf 'ready_seq=%s\n' "$ready_seq"
     printf 'coordinator_generation=%s\n' "$COORD_GENERATION"
     printf 'session_owner=%s\n' "$SESSION_OWNER"
-  } > "$tmp" 2>/dev/null && mv -f "$tmp" "$NOTIFIER_ABSENT" 2>/dev/null
+  } > "$tmp" 2>/dev/null && mv -f "$tmp" "$NOTIFIER_ABSENT" 2>/dev/null; then
+    # Only breadcrumb an absence the marker actually records, so an operator
+    # following the ledger never hunts for a marker that was never written.
+    cycle_ledger_note notifier-absent
+  fi
   rm -f "$tmp" 2>/dev/null || true
-  cycle_ledger_note notifier-absent
 }
 
 # Stand down when this session no longer owns state/.lock: a new session
