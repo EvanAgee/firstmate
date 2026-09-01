@@ -31,7 +31,10 @@ A bare `resolved [key=...]` line without it is a mate closing its own keyed phas
 The `captain-held` transfer line is not answer proof either, because `complete` writes one for every reviewed key that is still open.
 A key is stable and reusable, so an answer followed by a later `needs-decision` or `blocked` line re-opens it and it counts as unanswered again.
 A reviewed key without that final answered resolve, whether still open, re-opened, self-closed, or never seen in the status log, must still have a present, durable hold, so an absent hold with no answer evidence keeps failing the gate.
-The hold must be proven gone, not merely unreadable: only a `tasks-axi` `NOT_FOUND` counts as trimmed, so an unreadable or corrupt backlog fails the gate loudly instead of passing as archival.
+The hold must be proven gone, and that takes a `tasks-axi` `NOT_FOUND` read out of a backlog that is still intact.
+`tasks-axi` answers `NOT_FOUND` for a backlog that is missing, empty, or no longer structured exactly as it does for a hold retention trimmed, so a wiped backlog cannot stand in for archival.
+Retention only removes entries and leaves the file's section headings behind, so a readable backlog still carrying its `## Done` heading is a real backlog that simply no longer lists this hold.
+A backlog that is missing, empty, structurally destroyed, or unreadable fails the gate loudly instead of passing as archival.
 A hold answered through the direct `answer`, `resolve`, or `decline` path writes no status line, so once it is archived it is attested through the existing `repair` path.
 The `--force` path remains the explicit captain-approved discard escape hatch.
 

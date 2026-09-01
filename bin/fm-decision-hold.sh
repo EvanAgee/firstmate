@@ -288,6 +288,15 @@ task_show() {  # <id>
 # One read serves both the absence probe and the durability check: splitting them
 # into separate reads costs a second subprocess per key and lets the backlog change
 # between the two, which is how a caller ends up with no reason to report at all.
+# 0 when this home's backlog is a readable file that still has the structure
+# tasks-axi maintains. Retention only removes entries, never the section headings, so
+# a missing, empty, or structurally destroyed file is not a backlog whose contents can
+# be trusted to mean anything.
+backlog_is_intact() {
+  [ -s "$DATA/backlog.md" ] && [ -r "$DATA/backlog.md" ] \
+    && grep -qx -- '## Done' "$DATA/backlog.md" 2>/dev/null
+}
+
 read_hold() {  # <id>
   local id=$1 out
   if out=$(tasks_axi show "$id" --full 2>&1); then
@@ -295,10 +304,23 @@ read_hold() {  # <id>
     return 0
   fi
   if printf '%s\n' "$out" | grep -qx 'code: NOT_FOUND'; then
-    printf 'absent\tis absent from %s/data/backlog.md' "$FM_HOME"
+    # tasks-axi reports the same not-found whether ONE hold was trimmed out of a real
+    # backlog or the backlog itself is gone, empty, or unparseable, so its answer only
+    # means "the hold is not in what I read". Retention trims a Done entry out of an
+    # intact file and leaves its section headings behind, so a readable file still
+    # carrying the Done heading is a real backlog that simply no longer lists this
+    # hold. A file that is missing, empty, or has lost that structure is a destroyed
+    # backlog, and calling that archival would let teardown erase a source whose
+    # durable record was wiped rather than retired.
+    if backlog_is_intact; then
+      printf 'absent\tis absent from %s/backlog.md' "$DATA"
+    else
+      printf 'unreadable\tcould not be confirmed because %s/backlog.md is missing, empty, or not a backlog' \
+        "$DATA"
+    fi
   else
-    printf 'unreadable\tcould not be read from %s/data/backlog.md: %s' \
-      "$FM_HOME" "$(printf '%s' "$out" | tr '\n' ' ')"
+    printf 'unreadable\tcould not be read from %s/backlog.md: %s' \
+      "$DATA" "$(printf '%s' "$out" | tr '\n' ' ')"
   fi
 }
 
@@ -588,11 +610,14 @@ verify_hold_durable() {  # <hold-id> [prior-read_hold-output]
 # reviewed key that never appeared in the status stream, is still open, or was
 # re-opened after an earlier answer does not end resolved, so an absent hold for it
 # stays a hard failure and a genuinely unanswered decision keeps blocking teardown.
-# Absence itself must be proven too: only a tasks-axi NOT_FOUND counts (read_hold's
-# absent verdict). A backlog that cannot be read is not an archived hold, so any other
-# failure falls through to verify_hold_durable and fails loudly, the way it did before
-# this tolerance existed. This gate is the last thing standing between scout teardown
-# and deleting a source, so an unreadable backlog must never be mistaken for a trimmed
+# Absence itself must be proven too: it takes a tasks-axi NOT_FOUND read out of a
+# backlog that is still intact (read_hold's absent verdict). tasks-axi answers
+# NOT_FOUND for a wiped backlog exactly as it does for a trimmed hold, so a backlog
+# that is missing, empty, or no longer structured is not an archived hold, and neither
+# is one that cannot be read at all. Both fall through to verify_hold_durable and fail
+# loudly, the way they did before this tolerance existed. This gate is the last thing
+# standing between scout teardown and deleting a source, so a broken backlog must
+# never be mistaken for a trimmed
 # one.
 # Nor may a hold that NEVER EXISTED be mistaken for one retention trimmed: tasks-axi
 # reports NOT_FOUND for both, and an answered status line proves only that the captain

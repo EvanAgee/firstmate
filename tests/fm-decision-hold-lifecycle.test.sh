@@ -1709,6 +1709,65 @@ test_verify_refuses_when_the_backlog_cannot_be_read() {
   pass "verify treats only a real not-found as archival and refuses when the backlog cannot be read"
 }
 
+# tasks-axi answers "not found in this backlog" for a hold retention trimmed AND for a
+# backlog that is missing, empty, or no longer a backlog. Only the first is archival.
+# A destroyed backlog means the durable record is gone, not retired, so treating it as
+# archival would clear the last gate before teardown erases the source too.
+test_verify_refuses_when_the_backlog_was_destroyed() {
+  local home id hold mode err
+  home=$(make_home wiped-backlog)
+  id=sample-wiped-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the wiped sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create wiped-backlog origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample wiped review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the wiped sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the wiped-backlog hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the wiped-backlog origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the wiped-backlog choice"
+  # bin/fm-send.sh appends this delivered-answer line when the answer reaches the mate.
+  printf 'resolved [key=choice]: answered: captain chose option A\n' >> "$home/state/$id.status"
+  cp "$home/data/backlog.md" "$home/backlog.intact.md"
+
+  # Real archival first: the answered Done hold is trimmed out of an intact backlog.
+  grep -v "$hold" "$home/backlog.intact.md" > "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/trimmed.err" \
+    || fail "verify rejected a genuinely archived answered hold: $(cat "$home/trimmed.err")"
+
+  # Each destroyed backlog still lists the hold, so nothing was retired. tasks-axi
+  # reports the same not-found for all of them, and every one must refuse.
+  for mode in deleted empty junk; do
+    cp "$home/backlog.intact.md" "$home/data/backlog.md"
+    case "$mode" in
+      deleted) rm -f "$home/data/backlog.md" ;;
+      empty) : > "$home/data/backlog.md" ;;
+      junk) printf 'not a backlog at all\n' > "$home/data/backlog.md" ;;
+    esac
+    if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+      fail "the $mode backlog still resolved the hold, so this case proves nothing"
+    fi
+    if run_decisions "$home" verify "$id" > "$home/$mode.out" 2> "$home/$mode.err"; then
+      fail "verify accepted a $mode backlog as proof the hold was archived"
+    fi
+    err=$(cat "$home/$mode.err")
+    case "$err" in
+      *"is absent from"*)
+        fail "the $mode-backlog refusal claimed the hold was absent: $err"
+        ;;
+    esac
+    assert_contains "$err" "$hold" \
+      "the $mode-backlog refusal did not name the hold it could not confirm"
+  done
+  pass "verify refuses a deleted, empty, or unstructured backlog instead of reading it as archival"
+}
+
 # bin/fm-brief.sh tells a mate to append its own `resolved [key=<slug>]: <why it is no
 # longer active>` line when a keyed phase fizzles or a blocker clears without anyone
 # answering, into the very status file this gate reads. That line closes the key for
@@ -1859,3 +1918,4 @@ test_verify_refuses_when_the_backlog_cannot_be_read
 test_verify_refuses_a_mate_self_close_as_an_answer
 test_completion_refuses_a_key_that_was_never_held
 test_verify_accepts_an_archived_hold_whose_key_is_named_answered
+test_verify_refuses_when_the_backlog_was_destroyed
