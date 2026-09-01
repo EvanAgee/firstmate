@@ -1644,6 +1644,62 @@ EOF
   pass "verify tolerates an answered hold archived out of the backlog but still fails one with no answer evidence"
 }
 
+# Absence has to be proven, not inferred from a failed read. Retention trimming a
+# Done hold reports NOT_FOUND; a backlog that cannot be read reports a different
+# error. Only the first is archival. Treating a broken read as archival would let a
+# recorded answer wave through a gate that no longer knows what is in the backlog,
+# right before teardown deletes the source.
+test_verify_refuses_when_the_backlog_cannot_be_read() {
+  local home id hold answered_out unreadable_err
+  home=$(make_home unreadable-backlog)
+  id=sample-unreadable-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the unreadable sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create unreadable-backlog origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample unreadable review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the unreadable sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the unreadable-backlog hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the unreadable-backlog origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the unreadable-backlog choice"
+  # bin/fm-send.sh appends this resolved line when the captain's answer is delivered.
+  printf 'resolved [key=choice]: answered: captain picked A\n' >> "$home/state/$id.status"
+
+  # Real archival: retention trims the answered hold and tasks-axi reports NOT_FOUND.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  cp "$home/data/backlog.md" "$home/backlog.intact.md"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  answered_out=$(tasks_in "$home" show "$hold" --full 2>&1) && \
+    fail "the archival step left the answered hold readable in the backlog"
+  assert_contains "$answered_out" "code: NOT_FOUND" \
+    "archival did not surface as a not-found: $answered_out"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/archived-ok.err" \
+    || fail "verify rejected a genuinely archived answered hold: $(cat "$home/archived-ok.err")"
+
+  # A backlog that cannot be read is a different failure, and it must not pass.
+  cp "$home/backlog.intact.md" "$home/data/backlog.md"
+  chmod 000 "$home/data/backlog.md"
+  unreadable_err=$(tasks_in "$home" show "$hold" --full 2>&1)
+  case "$unreadable_err" in
+    *"code: NOT_FOUND"*)
+      chmod 644 "$home/data/backlog.md"
+      fail "an unreadable backlog reported not-found, so this case cannot tell the two apart"
+      ;;
+  esac
+  if run_decisions "$home" verify "$id" > "$home/unreadable.out" 2> "$home/unreadable.err"; then
+    chmod 644 "$home/data/backlog.md"
+    fail "verify passed while the backlog could not be read at all"
+  fi
+  chmod 644 "$home/data/backlog.md"
+  pass "verify treats only a real not-found as archival and refuses when the backlog cannot be read"
+}
+
 test_uninventoried_report_decision_refuses_completion
 
 test_scout_teardown_always_requires_inventory_verification
@@ -1666,3 +1722,4 @@ test_unbound_source_closes_no_hold
 test_answer_preserves_every_unrouted_close_guard
 test_chat_channel_feeds_the_same_keyed_answer_intake
 test_verify_tolerates_answered_hold_archived_out_of_backlog
+test_verify_refuses_when_the_backlog_cannot_be_read

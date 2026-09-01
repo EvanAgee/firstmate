@@ -271,6 +271,17 @@ task_show() {  # <id>
   tasks_axi show "$1" --full 2>/dev/null
 }
 
+# 0 only when tasks-axi says the hold is genuinely NOT in the backlog. Every other
+# failure - an unreadable or corrupt backlog, a transient error - returns nonzero, so
+# a caller that tolerates absence cannot mistake a broken read for a missing item and
+# must fall through to the loud verify_hold_durable failure instead.
+hold_is_absent() {  # <id>
+  local out rc=0
+  out=$(tasks_axi show "$1" --full 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || return 1
+  printf '%s\n' "$out" | grep -qx 'code: NOT_FOUND'
+}
+
 show_field() {  # <show-output> <field>
   local output=$1 field=$2
   printf '%s\n' "$output" | sed -n "s/^  $field: //p" | head -1
@@ -547,9 +558,14 @@ verify_hold_durable() {  # <hold-id>
 # reviewed key that never appeared in the status stream, is still open, or was
 # re-opened after an earlier answer does not end resolved, so an absent hold for it
 # stays a hard failure and a genuinely unanswered decision keeps blocking teardown.
+# Absence itself must be proven too: only a tasks-axi NOT_FOUND counts (hold_is_absent).
+# A backlog that cannot be read is not an archived hold, so any other failure falls
+# through to verify_hold_durable and fails loudly, the way it did before this tolerance
+# existed. This gate is the last thing standing between scout teardown and deleting a
+# source, so an unreadable backlog must never be mistaken for a trimmed one.
 verify_reviewed_hold() {  # <hold-id> <status-file> <key>
   local id=$1 status_file=$2 key=$3
-  if ! task_show "$id" >/dev/null 2>&1 && status_key_answered "$status_file" "$key"; then
+  if hold_is_absent "$id" && status_key_answered "$status_file" "$key"; then
     return 0
   fi
   verify_hold_durable "$id"
