@@ -1652,8 +1652,8 @@ test_replacement_provenance_negative_matrix() {
       forged-registration)
         write_manual_poll_pair "$state"
         printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
-          fm-pr-poll-registration-v2 task-a github https://github.com/o/r/pull/10 github.com o/r 10 \
-          "$zeros" "$zeros" 1:1 1:2 > "$state/task-a.pr-poll-registration"
+          fm-pr-poll-registration-v3 task-a github https://github.com/o/r/pull/10 github.com o/r 10 \
+          "$zeros" "$zeros" 1 2 > "$state/task-a.pr-poll-registration"
         chmod 0600 "$state/task-a.pr-poll-registration"
         ;;
       partial-publication)
@@ -1907,7 +1907,7 @@ test_failed_outcomes_block_every_retry_until_repaired() {
       || fail "$classification repaired migration retained a contradictory failure obligation"
     [ -f "$success" ] || fail "$classification repaired migration did not persist its success obligation"
     if [ "$classification" = canonical ]; then
-      [ "$(cat "$dir/migrate-3.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+      [ "$(cat "$dir/migrate-3.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
         || fail "canonical repaired retry did not report the armed outcome"
       fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "canonical repaired retry did not arm a valid poll pair"
     else
@@ -1955,7 +1955,7 @@ test_canonical_publication_failure_recovers_only_on_retry() {
 
   FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err" \
     || fail "canonical publication failure did not recover on a clean retry"
-  [ "$(cat "$dir/migrate-2.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+  [ "$(cat "$dir/migrate-2.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
     || fail "canonical publication retry did not report the armed outcome"
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "canonical publication retry did not arm a valid pair"
   assert_valid_migration_marker "$state/.pr-check-migration-v1"
@@ -2149,7 +2149,7 @@ test_nonexecuting_migration() {
 
   FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "canonical legacy migration failed"
-  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
     || fail "canonical migration stdout did not state that the rebuilt poll is armed"
   assert_grep 'task task-a: canonical legacy poll rebuilt and armed' "$state/.pr-check-migration.log" \
     "canonical migration log did not record the armed outcome"
@@ -2195,7 +2195,7 @@ test_nonexecuting_migration() {
   snap_before=$(cat "$state/task-x.meta")
   FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "X-linked migration failed"
-  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
     || fail "X-linked migration did not report an armed canonical poll"
   fm_pr_poll_artifacts_valid "$state" task-x "$POLL" || fail "X-linked migration did not arm a valid pair"
   snap_after=$(cat "$state/task-x.meta")
@@ -3489,6 +3489,110 @@ test_gitlab_merged_poll_retires() {
   pass "GitHub and GitLab exact merged results share one retirement path"
 }
 
+# Rewrite a current (v3, inode-only) registration into the pre-fix v2 format,
+# whose stored file identities were "<device>:<inode>". This is byte-faithful to
+# what an armed home on the previous release carries on disk. On APFS the device
+# reassigns across a macOS reboot, so the stored device would then stop matching
+# the live one; recording it here reproduces exactly that broken record without
+# needing an actual restart.
+downgrade_registration_to_v2_device_inode() {
+  local state=$1 id=$2 registration line n=0 data_inode check_inode
+  registration="$state/$id.pr-poll-registration"
+  [ -f "$registration" ] || fail "no v3 registration to downgrade"
+  data_inode=$(fm_pr_file_inode "$state/$id.pr-poll") || fail "could not read sidecar inode"
+  check_inode=$(fm_pr_file_inode "$state/$id.check.sh") || fail "could not read check inode"
+  : > "$registration.v2"
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$n" in
+      1) printf 'fm-pr-poll-registration-v2\n' >> "$registration.v2" ;;
+      # The pre-fix format stored data_identity and check_identity as
+      # device:inode. Use a device the live state directory will not have.
+      10) printf '4242424242:%s\n' "$data_inode" >> "$registration.v2" ;;
+      11) printf '4242424242:%s\n' "$check_inode" >> "$registration.v2" ;;
+      *) printf '%s\n' "$line" >> "$registration.v2" ;;
+    esac
+  done < "$registration"
+  mv "$registration.v2" "$registration"
+  chmod 0600 "$registration"
+}
+
+# The core regression: an armed watch must survive a device-number change (an
+# APFS reboot) without an actual restart, and a poll that genuinely cannot be
+# rebuilt must leave a visible signal rather than dying quietly.
+test_pr_watch_survives_device_reassignment() {
+  local dir state saved_dev out rc
+
+  # Post-fix immunity: with the current inode-only record, a different live
+  # device number must not make an armed poll read as untrusted. This is the
+  # assertion that goes red against the old device:inode record, where the
+  # durable comparison embedded a device that a reboot would change.
+  dir=$(make_case reboot-immune-current-record)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/10
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/10
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "freshly armed poll did not validate"
+  # Simulate the reboot: every live device read now returns a different number,
+  # exactly as APFS would after a restart. The same-device guard still sees a
+  # consistent value because both the state dir and its private files report the
+  # same (new) device, so only a record that durably bound the OLD device could
+  # break here.
+  saved_dev=$(declare -f fm_pr_file_device)
+  fm_pr_file_device() { printf '9999999999\n'; }
+  if ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL"; then
+    eval "$saved_dev"
+    fail "armed poll went dormant after a simulated device reassignment"
+  fi
+  eval "$saved_dev"
+  pass "an armed poll survives a device-number change without an actual reboot"
+
+  # Recovery path: a pre-fix v2 record carrying a now-stale device is detected
+  # and rebuilt from canonical metadata, and the rebuild is announced.
+  dir=$(make_case reboot-recovers-legacy-record)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/10
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/10
+  downgrade_registration_to_v2_device_inode "$state" task-a
+  # The stale record must first read as untrusted, proving the watch would have
+  # gone dormant on the unfixed code path.
+  ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "a stale device:inode record was silently trusted"
+  # Clear the completion markers so the migration re-scans this home.
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/recover.out" 2> "$dir/recover.err" \
+    || fail "migration did not recover a rebooted armed watch: $(cat "$dir/recover.err")"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "rebooted watch was not re-armed as a valid v3 poll"
+  grep -qxF 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' \
+    "$dir/recover.out" || fail "recovery did not announce the rebuilt watch"
+  grep -qxF 'fm-pr-poll-registration-v3' "$state/task-a.pr-poll-registration" \
+    || fail "rebuilt registration was not written in the inode-only format"
+  pass "a rebooted armed watch is detected and re-armed with a visible signal"
+
+  # Refusal-with-signal path: a stale record whose task no longer carries
+  # canonical PR metadata cannot be rebuilt, so it must be quarantined unarmed
+  # with a visible line rather than left looking healthy or silently dropped.
+  dir=$(make_case reboot-refuses-unrebuildable-record)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/10
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/10
+  downgrade_registration_to_v2_device_inode "$state" task-a
+  # Remove the canonical pr= line so no rebuild source remains.
+  grep -v '^pr=' "$state/task-a.meta" > "$state/task-a.meta.tmp"
+  mv "$state/task-a.meta.tmp" "$state/task-a.meta"
+  chmod 0600 "$state/task-a.meta"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/refuse.out" 2> "$dir/refuse.err" \
+    || fail "migration did not complete over an unrebuildable record: $(cat "$dir/refuse.err")"
+  [ ! -e "$state/task-a.check.sh" ] && [ ! -L "$state/task-a.check.sh" ] \
+    || fail "an unrebuildable stale record was left armed"
+  grep -qxF 'PR_CHECK_MIGRATION: quarantined polls remain unarmed; review state/.pr-check-migration.log before rearming' \
+    "$dir/refuse.out" || fail "an unrebuildable record was dropped without a visible signal"
+  pass "an unrebuildable stale record is quarantined unarmed with a visible signal"
+}
+
+test_pr_watch_survives_device_reassignment
 test_parser_matrix
 test_gitlab_merge_watch
 test_merged_poll_retires_once

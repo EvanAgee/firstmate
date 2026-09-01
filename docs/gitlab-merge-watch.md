@@ -104,7 +104,7 @@ The provenance record for the non-default host, showing the bumped version tag:
 
 ```
 $ cat state/e3.pr-poll-registration
-fm-pr-poll-registration-v2
+fm-pr-poll-registration-v3
 e3
 gitlab
 https://gitlab.example/group/subgroup/project/-/merge_requests/7
@@ -113,9 +113,13 @@ group/subgroup/project
 7
 514b7e04f0cca3e2c913c9fd504c54dfe54c8a51a7f5ebc57279bbd4db5d4a60
 1817b0f95db7148246434a4afa0b2c8e7b81fd8f74ef7d473bbd62023e47c439
-70:957243
-70:957244
+957243
+957244
 ```
+
+The last two lines are the sidecar and check inodes.
+The version moved to `-v3` when those file identities dropped their device number: APFS reassigns a device across a macOS reboot, so a stored device would stop matching the live one and silently disarm every watch.
+The inode is stable across a reboot, and the live same-device guard still confirms each file sits on the state directory's own device at check time.
 
 Running each published poll the way the watcher does, where an empty result means the poll stayed silent and produced no wake:
 
@@ -164,17 +168,18 @@ armed: state/e6.check.sh
 
 ## Upgrade path from an existing armed watch
 
-The stored record gained the provider tag, so its version moved to `fm-pr-poll-registration-v2` and a record written by the previous release no longer parses.
-The existing non-executing migration handles that: it never runs the old artifact, and rebuilds the poll from the task's recorded pull request URL.
-Starting from a poll armed exactly as the previous release wrote it:
+A registration written by an earlier release no longer parses, so the existing non-executing migration rebuilds the poll from the task's recorded pull request URL rather than running the old artifact.
+Two changes moved the version: the provider tag took it to `-v2`, and dropping the reboot-unstable device number from the stored file identity took it to `-v3`.
+A pre-`-v3` record is the one that matters most here: its stored device is what a macOS reboot reassigns, so without this rebuild the watch would keep its label and its files but silently never fire again.
+Starting from a poll armed by an earlier release, the migration re-arms it and announces the recovery:
 
 ```
 $ head -1 state/t1.pr-poll-registration
-fm-pr-poll-registration-v1
-$ fm-pr-check-migrate.sh --checks-safe
-PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home
-$ head -2 state/t1.pr-poll-registration
 fm-pr-poll-registration-v2
+$ fm-pr-check-migrate.sh --checks-safe
+PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home
+$ head -2 state/t1.pr-poll-registration
+fm-pr-poll-registration-v3
 t1
 $ cat state/.pr-check-migration.log
 task t1: migration outcome tracking started before legacy poll handling
