@@ -1,0 +1,40 @@
+BASE: no-mistakes completion instructions
+After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append `done: PR {url} checks green` and stop. You are finished.
+
+TARGET: no-mistakes completion and late-feedback instructions
+After /no-mistakes reports CI green (the CI-ready return point), append `done: PR {url} checks green` and enter the PR watch below.
+Do not wait for no-mistakes to keep monitoring in the background.
+
+Reporting done does not end your ownership of this PR - it stays yours until it merges.
+Stay on watch after reporting done.
+After addressing new reviewer feedback, re-report status.
+Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.
+If a gate is waiting, respond there and let the pipeline handle the finding.
+If the monitor has ended, rerun /no-mistakes.
+Never merge the PR and never arm auto-merge; the configured merge authority owns that.
+
+BASE: direct-PR completion instructions
+When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and stop.
+Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+
+TARGET: direct-PR completion and late-feedback instructions
+When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and enter the PR watch below.
+Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+
+Reporting done does not end your ownership of this PR - it stays yours until it merges.
+Stay on watch after reporting done.
+After addressing new reviewer feedback, re-report status.
+Apply rule 8 directly to late reviewer feedback: fix and push on your `fm/target-direct-PR` branch, resolve the threads, or reply with a concrete reason a finding is not valid.
+Never merge the PR and never arm auto-merge; the configured merge authority owns that.
+
+TARGET: local-only completion instructions
+# Definition of done
+Delivery contract: mode=local-only
+This task ships **local-only**: no remote, no PR, no pipeline.
+The task is complete only when committed on your branch `fm/target-local-only`. Do NOT push, do NOT open a PR, do NOT merge.
+Keep your branch a clean fast-forward onto the current default branch - if `main` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+When it is implemented and committed, append `done: ready in branch fm/target-local-only` to the status file and stop.
+The configured merge authority approves the ready branch, then firstmate merges it into local `main` through the guarded fast-forward path.
+
+LOCAL-ONLY WATCH CHECK
+PASS: local-only contains no PR watch text
