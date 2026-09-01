@@ -786,23 +786,58 @@ test_coordinator_stands_down_after_successor_timeout_streak() {
 # and leave a notifier-absent breadcrumb in the cycle-exit ledger, WITHOUT ever
 # touching the notifier lock.
 test_records_notifier_absent_when_notifier_died_parked() {
-  local dir coord fs seq gen owner
+  local dir coord holder fs seq gen owner
   dir=$(make_home notifier-absent)
   start_lock_holder "$dir"
-  printf 'window=x\n' > "$dir/state/task.meta"
-  printf 'working: go\n' > "$dir/state/task.status"
-  prime_seen "$dir" "$dir/state/task.status"
+  # Two tasks so need persists and the coordinator keeps cycling past the first
+  # publish, giving it a second cycle in which to notice the death.
+  printf 'window=x\n' > "$dir/state/one.meta"
+  printf 'working: go\n' > "$dir/state/one.status"
+  printf 'window=y\n' > "$dir/state/two.meta"
+  printf 'working: still busy\n' > "$dir/state/two.status"
+  prime_seen "$dir" "$dir/state/one.status"
+  prime_seen "$dir" "$dir/state/two.status"
 
-  # A notifier claimed it was parked and then vanished without releasing anything:
-  # nothing holds .claude-autoarm.lock and the recorded owner pid is dead.
-  seed_epoch "$dir" parked "$(dead_pid)"
+  # Stage a genuinely parked notifier first, because absence is only reportable
+  # for a notifier this coordinator watched go live. A long-lived process stands
+  # in for the parked notifier so the healthy state is stable while the
+  # coordinator confirms it, and its pid is what the epoch ledger records.
+  sleep 300 &
+  holder=$!
+  mkdir -p "$dir/state/.claude-autoarm.lock"
+  printf '%s\n' "$holder" > "$dir/state/.claude-autoarm.lock/pid"
+  printf 'notifier\n' > "$dir/state/.claude-autoarm.lock/role"
+  seed_epoch "$dir" parked "$holder"
 
   coord=$(start_coordinator "$dir" coord) \
-    || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
+    || { stop_bg "$holder" "$HOLDER_PID"; fail "session never started the coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
 
-  wait_file "$dir/state/.claude-notifier-absent" 200 \
+  # Let the coordinator confirm the live notifier at least once. While a notifier
+  # is parked there must be no marker, so an empty marker across these cycles is
+  # the observable proof it saw a healthy notifier.
+  local k
+  k=0
+  while [ "$k" -lt 30 ]; do
+    [ -e "$dir/state/.claude-notifier-absent" ] \
+      && { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator marked an absence while a notifier was genuinely parked"; }
+    sleep 0.1
+    k=$((k + 1))
+  done
+
+  # Now the parked notifier is killed without releasing anything: the lock goes,
+  # and the epoch ledger keeps saying "parked" naming a pid that is now dead.
+  # That is the silent death this check exists to record.
+  kill -9 "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  rm -rf "$dir/state/.claude-autoarm.lock"
+
+  # The coordinator only re-checks the notifier when it publishes a fresh ready
+  # record, so drive a real actionable close to force another cycle.
+  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
+
+  wait_file "$dir/state/.claude-notifier-absent" 400 \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator published ready but never recorded the notifier that died while parked"; }
 
   fs=$(absent_field "$dir" first_seen)
@@ -818,7 +853,7 @@ test_records_notifier_absent_when_notifier_died_parked() {
   grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator did not leave a notifier-absent breadcrumb in the cycle-exit ledger"; }
 
-  # The coordinator must never acquire the notifier lock: it belongs to the notifier.
+  # The coordinator must never re-create the notifier lock: it belongs to the notifier.
   [ ! -e "$dir/state/.claude-autoarm.lock" ] \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator acquired or created the notifier's lock"; }
 
@@ -837,7 +872,48 @@ test_records_notifier_absent_when_notifier_died_parked() {
     || { stop_bg "$coord" "$HOLDER_PID"; fail "first_seen changed across a rewrite ($fs -> $fs2) instead of surviving"; }
 
   stop_bg "$coord" "$HOLDER_PID"
-  pass "coordinator: records a notifier that died while parked, and never touches the notifier lock"
+  pass "coordinator: records a notifier it watched die while parked, and never touches the notifier lock"
+}
+
+# --- 10a. a parked record from an earlier session must NOT mark a fresh home ---
+# The epoch ledger is never cleared, so a notifier SIGKILLed while parked leaves a
+# "parked" line naming a dead pid behind forever. After a reboot, a brand new
+# session starts and the coordinator hook can reach its first publish before the
+# notifier hook finishes parking. Without a guard the coordinator reads that
+# ancient record, finds the named pid dead, and reports an outage on a home that
+# is perfectly healthy. Absence is only reportable for a notifier THIS coordinator
+# watched go live, so a cold start must stay silent no matter how old the record.
+test_no_marker_for_stale_parked_epoch_before_any_live_notifier() {
+  local dir coord i
+  dir=$(make_home notifier-stale-epoch)
+  start_lock_holder "$dir"
+  printf 'window=x\n' > "$dir/state/task.meta"
+  printf 'working: go\n' > "$dir/state/task.status"
+  prime_seen "$dir" "$dir/state/task.status"
+
+  # A parked record left by a long-dead notifier from a previous session, with an
+  # updated_at far in the past. Nothing holds the notifier lock.
+  printf 'epoch=42 owner_pid=%s outcome=parked updated_at=1600000000\n' "$(dead_pid)" \
+    > "$dir/state/.claude-autoarm-epoch"
+
+  coord=$(start_coordinator "$dir" coord) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
+  wait_file "$dir/state/.claude-ready-to-notify" 400 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+
+  i=0
+  while [ "$i" -lt 40 ]; do
+    [ -e "$dir/state/.claude-notifier-absent" ] \
+      && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator reported an outage from a parked record left by an earlier session"; }
+    sleep 0.1
+    i=$((i + 1))
+  done
+
+  grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
+    && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator logged a notifier-absent breadcrumb for a stale prior-session record"; }
+
+  stop_bg "$coord" "$HOLDER_PID"
+  pass "coordinator: a parked record from an earlier session never marks a fresh home"
 }
 
 # --- 10b. the healthy gap between Stop hooks must NOT be marked ----------------
@@ -951,37 +1027,63 @@ test_no_marker_when_notifier_parked_and_clears_stale() {
 # --- 12. a live holder in another role is not a notifier ------------------------
 # The turn-end guard takes this same lock and tags it role "terminal-check"
 # (bin/fm-turnend-guard.sh). A live holder in that role is not a parked notifier,
-# so it must not silence the check: with a parked-and-dead epoch beside it, the
-# coordinator must still record the absence.
+# so it must not silence the check. The coordinator first watches a real parked
+# notifier so absence becomes reportable at all, then the notifier dies and the
+# guard takes the lock in its own role. The marker must still appear, proving the
+# role is what decides and not the bare presence of a live pid.
 test_terminal_check_holder_is_not_a_notifier() {
-  local dir coord holder
+  local dir coord notifier guard i
   dir=$(make_home notifier-role)
   start_lock_holder "$dir"
-  printf 'window=x\n' > "$dir/state/task.meta"
-  printf 'working: go\n' > "$dir/state/task.status"
-  prime_seen "$dir" "$dir/state/task.status"
+  printf 'window=x\n' > "$dir/state/one.meta"
+  printf 'working: go\n' > "$dir/state/one.status"
+  printf 'window=y\n' > "$dir/state/two.meta"
+  printf 'working: still busy\n' > "$dir/state/two.status"
+  prime_seen "$dir" "$dir/state/one.status"
+  prime_seen "$dir" "$dir/state/two.status"
 
-  seed_epoch "$dir" parked "$(dead_pid)"
-
-  # A live holder wearing the turn-end guard's role, not the notifier's.
-  sleep 120 &
-  holder=$!
+  # A genuinely parked notifier, so this coordinator sees one alive.
+  sleep 300 &
+  notifier=$!
   mkdir -p "$dir/state/.claude-autoarm.lock"
-  printf '%s\n' "$holder" > "$dir/state/.claude-autoarm.lock/pid"
-  printf 'terminal-check\n' > "$dir/state/.claude-autoarm.lock/role"
+  printf '%s\n' "$notifier" > "$dir/state/.claude-autoarm.lock/pid"
+  printf 'notifier\n' > "$dir/state/.claude-autoarm.lock/role"
+  seed_epoch "$dir" parked "$notifier"
 
   coord=$(start_coordinator "$dir" coord) \
-    || { stop_bg "$holder" "$HOLDER_PID"; fail "session never started the coordinator"; }
+    || { stop_bg "$notifier" "$HOLDER_PID"; fail "session never started the coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+    || { stop_bg "$notifier" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
 
-  wait_file "$dir/state/.claude-notifier-absent" 200 \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator counted a live terminal-check holder as a parked notifier"; }
+  i=0
+  while [ "$i" -lt 30 ]; do
+    [ -e "$dir/state/.claude-notifier-absent" ] \
+      && { stop_bg "$notifier" "$coord" "$HOLDER_PID"; fail "coordinator marked an absence while a notifier was genuinely parked"; }
+    sleep 0.1
+    i=$((i + 1))
+  done
 
-  kill -0 "$holder" 2>/dev/null \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator killed the terminal-check lock holder"; }
+  # The notifier is killed, and the turn-end guard takes the same lock in its own
+  # role. A live pid now sits in the lock, but it is not a notifier.
+  kill -9 "$notifier" 2>/dev/null || true
+  wait "$notifier" 2>/dev/null || true
+  sleep 300 &
+  guard=$!
+  printf '%s\n' "$guard" > "$dir/state/.claude-autoarm.lock/pid"
+  printf 'terminal-check\n' > "$dir/state/.claude-autoarm.lock/role"
 
-  stop_bg "$holder" "$coord" "$HOLDER_PID"
+  # Force a fresh publish cycle so the coordinator re-checks the lock's role.
+  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
+
+  wait_file "$dir/state/.claude-notifier-absent" 400 \
+    || { stop_bg "$guard" "$coord" "$HOLDER_PID"; fail "coordinator counted a live terminal-check holder as a parked notifier"; }
+
+  kill -0 "$guard" 2>/dev/null \
+    || { stop_bg "$guard" "$coord" "$HOLDER_PID"; fail "coordinator killed the terminal-check lock holder"; }
+  [ "$(cat "$dir/state/.claude-autoarm.lock/role" 2>/dev/null)" = terminal-check ] \
+    || { stop_bg "$guard" "$coord" "$HOLDER_PID"; fail "coordinator rewrote the terminal-check lock role"; }
+
+  stop_bg "$guard" "$coord" "$HOLDER_PID"
   pass "coordinator: a live terminal-check holder does not count as a parked notifier"
 }
 
@@ -1033,6 +1135,7 @@ test_coordinator_lock_does_not_satisfy_guard
 test_coordinator_stands_down_on_session_handover
 test_coordinator_stands_down_after_successor_timeout_streak
 test_records_notifier_absent_when_notifier_died_parked
+test_no_marker_for_stale_parked_epoch_before_any_live_notifier
 test_no_marker_during_healthy_rewake_gap
 test_no_marker_when_notifier_parked_and_clears_stale
 test_terminal_check_holder_is_not_a_notifier

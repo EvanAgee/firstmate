@@ -308,6 +308,24 @@ publish_ready() {  # <ready_seq> <predecessor_arm_pid>
   rm -f "$tmp" 2>/dev/null || true
 }
 
+# Scoped to this coordinator's own run: absence is only reportable once this
+# coordinator has watched a notifier be alive, so a record left by a notifier that
+# died in an earlier session never marks a fresh healthy home.
+NOTIFIER_SEEN_LIVE=0
+
+# Confirm a notifier lock pid names a process that is genuinely running now.
+# A bare kill -0 is not enough: the notifier's lock records only a pid number, and
+# the OS recycles pid numbers, so an unrelated process that inherited the number
+# would otherwise pass as a parked notifier and silence a real outage. Resolving
+# the pid to its identity token (start time plus command line) is the repo's
+# existing defence against pid reuse, and a pid whose identity cannot be resolved
+# is treated as not present, matching the fail-toward-silence bias.
+notifier_holder_is_live() {  # <pid>
+  local pid=$1
+  fm_pid_alive "$pid" || return 1
+  fm_pid_identity "$pid" >/dev/null 2>&1
+}
+
 # Record when the notifier has silently died, so a coordinator publishing into
 # the void leaves a durable trace instead of going half-dead in silence. Called
 # after every successful publish_ready. READ ONLY against the notifier lock and
@@ -319,8 +337,16 @@ publish_ready() {  # <ready_seq> <predecessor_arm_pid>
 # empty lock during a handling turn is normal and healthy, and treating it as an
 # outage would write the false marker this check exists to avoid.
 #
-# Fail-open bias: only a notifier that recorded "parked" and then died without
-# releasing its lock is provably gone. Anything uncertain writes nothing.
+# Two guards keep an outage provable rather than merely plausible. First, only a
+# notifier THIS coordinator watched go live can be reported missing by it: the
+# epoch ledger is never cleared, so a "parked" line left by a notifier that died
+# in an earlier session would otherwise mark a fresh healthy home. A freshness cap
+# cannot serve here, because a notifier that parks and then dies leaves a record
+# as old as the turn it parked in, so an age bound would miss the real outage it
+# exists to catch. Second, a live lock holder must resolve to a running process
+# whose identity still holds, so a recycled pid number cannot pose as a notifier.
+#
+# Fail-open bias: anything uncertain writes nothing and clears what it found.
 record_notifier_presence() {  # <ready_seq>
   local ready_seq=$1 tmp now first_seen holder_pid holder_role epoch_outcome epoch_owner
   holder_pid=$(cat "$NOTIFIER_LOCK/pid" 2>/dev/null || true)
@@ -328,22 +354,26 @@ record_notifier_presence() {  # <ready_seq>
   # A live holder only counts as a parked notifier when the lock says so. The
   # turn-end guard takes this same lock with role "terminal-check", and that
   # holder must not be mistaken for a notifier.
-  if [ -n "$holder_pid" ] && fm_pid_alive "$holder_pid"; then
-    case "$holder_role" in
-      notifier|autoarm)
+  case "$holder_role" in
+    notifier|autoarm)
+      if notifier_holder_is_live "$holder_pid"; then
+        NOTIFIER_SEEN_LIVE=1
         rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
         return
-        ;;
-    esac
-  fi
+      fi
+      ;;
+  esac
   # No parked notifier holds the lock. Ask the epoch ledger what the last
   # notifier believed it was doing, and whether that process still exists.
   epoch_outcome=$(sed -n 's/^.*outcome=\([a-z][a-z-]*\).*$/\1/p' "$NOTIFIER_EPOCH" 2>/dev/null | head -1)
   epoch_owner=$(sed -n 's/^.*owner_pid=\([0-9][0-9]*\).*$/\1/p' "$NOTIFIER_EPOCH" 2>/dev/null | head -1)
-  # Only "parked" plus a dead owner proves a silent death. A missing or malformed
-  # ledger, a stand-down outcome, a rewake, a failure the turn-end guard already
-  # owns, or a parked owner still alive are all left unmarked.
-  if [ "$epoch_outcome" != parked ] || fm_pid_alive "$epoch_owner"; then
+  # Only "parked" plus a dead owner proves a silent death, and only for a notifier
+  # this coordinator already saw alive. A missing or malformed ledger, a
+  # stand-down outcome, a rewake, a failure the turn-end guard already owns, a
+  # parked owner still alive, or a record predating this coordinator's own run are
+  # all left unmarked.
+  if [ "$NOTIFIER_SEEN_LIVE" != 1 ] || [ "$epoch_outcome" != parked ] \
+    || fm_pid_alive "$epoch_owner"; then
     rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
     return
   fi
