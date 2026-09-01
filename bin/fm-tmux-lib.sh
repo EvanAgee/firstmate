@@ -177,7 +177,11 @@ fm_tmux_pane_is_bound_omp() {  # <target> <omp-bun> <omp-bin>
 # supplies them from the task meta. They are optional: a non-OMP read ignores
 # them, and an OMP read without them stays unknown (the strict posture).
 fm_tmux_composer_state() {  # <target> [harness] [omp-bun] [omp-bin] -> empty|pending|pending-unproven|unknown
-  local target=$1 harness=${2:-} omp_bun=${3:-} omp_bin=${4:-} cy pane verdict identity
+  # _unused_harness only holds the shared backend signature's slot so omp_bun and
+  # omp_bin land at 3 and 4. Nothing reads it, and callers do not reliably supply
+  # a harness there (bin/fm-spawn.sh passes a window), so do not wire behavior
+  # onto it without first fixing every caller.
+  local target=$1 _unused_harness=${2:-} omp_bun=${3:-} omp_bin=${4:-} cy pane verdict identity
   cy=$(fm_tmux_composer_cursor_row "$target") || { printf 'unknown'; return 0; }
   case "$cy" in ''|*[!0-9]*) printf 'unknown'; return 0 ;; esac
   pane=$(fm_tmux_composer_capture "$target") || { printf 'unknown'; return 0; }

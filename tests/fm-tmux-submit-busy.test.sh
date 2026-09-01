@@ -263,7 +263,7 @@ test_unrecognized_state_skips_busy_conversion() {
 test_omp_composer_and_submission_use_verified_two_row_structure() {
   local dir fakebin composer sent vfile top width bun
   if [ "${FM_OMP_SCREEN_DETECTION:-0}" != 1 ]; then
-    pass "OMP tmux composer subtest skipped: screen-based OMP composer detection is deferred; the fork reads OMP state from the omp-ext marker, and teaching the consolidated classifier OMP's two-row shape is a follow-up (set FM_OMP_SCREEN_DETECTION=1 once it lands)"
+    pass "OMP tmux composer subtest skipped: it pins the upstream fm_composer_terminal_width two-row MEASUREMENT design, which the fork did not take. The shared classifier now knows OMP's two-row shape; the live coverage is test_matrix_omp_two_row_input_border in tests/fm-composer-lib.test.sh and test_composer_state_omp_shape_verdicts_are_safe in tests/fm-backend-herdr.test.sh"
     return
   fi
   if ! command -v bun >/dev/null 2>&1; then
@@ -331,7 +331,7 @@ test_omp_composer_and_submission_use_verified_two_row_structure() {
 test_omp_idle_to_busy_transition_confirms_submission() {
   local dir fakebin composer busy_marker vfile
   if [ "${FM_OMP_SCREEN_DETECTION:-0}" != 1 ]; then
-    pass "OMP idle-to-busy submit subtest skipped: screen-based OMP composer detection is deferred; the fork reads OMP state from the omp-ext marker (set FM_OMP_SCREEN_DETECTION=1 once the consolidated classifier learns OMP's shape)"
+    pass "OMP idle-to-busy submit subtest skipped: it pins the upstream two-row MEASUREMENT design, which the fork did not take. The shared classifier now knows OMP's shape; the live composer coverage is test_matrix_omp_two_row_input_border in tests/fm-composer-lib.test.sh"
     return
   fi
   dir="$TMP_ROOT/omp-idle-to-busy"

@@ -3212,10 +3212,10 @@ test_composer_state_unknown_when_no_composer_row_found() {
 # OMP uses a status row followed by a bottom input row, not Pi's separator
 # composer and not the generic side-bordered or bare-prompt shapes above.
 # Herdr's native exact OMP identity is therefore part of the proof.
-test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
-  local dir log resp fb out top width case_id content middle bun idx=0
+test_composer_state_omp_structure_classifies_empty_and_pending() {
+  local dir log resp fb out top width case_id content bun idx=0
   if [ "${FM_OMP_SCREEN_DETECTION:-0}" != 1 ]; then
-    pass "OMP Herdr composer structure subtest skipped: screen-based OMP composer detection is deferred; the fork reads OMP state from the omp-ext marker, and teaching the consolidated classifier OMP's two-row shape is a follow-up (set FM_OMP_SCREEN_DETECTION=1 once it lands)"
+    pass "OMP Herdr composer structure subtest skipped: it pins the upstream fm_composer_terminal_width two-row MEASUREMENT design, which the fork did not take. The shared classifier now knows OMP's two-row shape and the live coverage is test_composer_state_omp_shape_verdicts_are_safe below plus test_matrix_omp_two_row_input_border in tests/fm-composer-lib.test.sh; this body stays skipped because it measures the bottom rule against the top border with bun"
     return
   fi
   if ! command -v bun >/dev/null 2>&1; then
@@ -3225,18 +3225,18 @@ test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
   bun=$(command -v bun)
   top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
   width=$(fm_composer_terminal_width "$top" "$bun" "") || fail "could not measure OMP Herdr fixture width"
-  for case_id in empty pending multiline; do
+  # The upstream `multiline` case (an unbordered continuation row between the two
+  # borders, expected `pending`) is dropped: OMP's pair must be ADJACENT, so that
+  # screen is not an OMP composer and the shared classifier answers `unknown`.
+  for case_id in empty pending; do
     idx=$((idx + 1))
     dir="$TMP_ROOT/composer-omp-$case_id"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
     content=
-    middle=
     case "$case_id" in
       pending) content=' steer after current turn' ;;
-      multiline) middle=$'follow the first constraint\nand preserve the second\n' ;;
     esac
     {
       printf '%s\n' "$top"
-      printf '%s' "$middle"
       printf '╰─%-*s─╯\n' "$((width - 4))" "$content"
     } > "$resp/1.out"
     printf '%s\n' '{"result":{"agent":{"agent":"omp","agent_status":"idle"}}}' > "$resp/2.out"
@@ -3246,11 +3246,11 @@ test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
     out=$( PATH="$fb:$PATH" FM_OMP_BUN="$bun" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
       bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2 omp "$FM_OMP_BUN"' "$ROOT" )
     case "$case_id:$out" in
-      empty:empty|pending:pending|multiline:pending) ;;
+      empty:empty|pending:pending) ;;
       *) fail "OMP Herdr composer case '$case_id' classified '$out'" ;;
     esac
   done
-  pass "fm_backend_herdr_composer_state: exact OMP structure uses the bound Bun despite PATH drift and distinguishes empty, pending, and bounded multi-line input"
+  pass "fm_backend_herdr_composer_state: exact OMP structure uses the bound Bun despite PATH drift and distinguishes empty from typed input"
 }
 
 # The shared classifier now knows OMP's two-row shape, so the herdr adapter
@@ -5063,7 +5063,7 @@ test_composer_state_real_text_is_pending
 test_composer_state_popup_placeholder_fill_is_pending
 test_composer_state_unknown_on_capture_failure
 test_composer_state_unknown_when_no_composer_row_found
-test_composer_state_omp_structure_classifies_empty_pending_and_multiline
+test_composer_state_omp_structure_classifies_empty_and_pending
 test_composer_state_omp_shape_verdicts_are_safe
 test_composer_state_pi_separator_idle_is_empty
 test_composer_state_pi_separator_real_text_is_pending
