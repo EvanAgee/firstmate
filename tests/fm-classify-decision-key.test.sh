@@ -519,6 +519,63 @@ test_status_key_answered_requires_an_explicit_answer_line() {
   pass "status_key_answered needs an explicit resolved line for the exact key"
 }
 
+# A decision key is stable and reusable, so the same key can be answered and then
+# opened again for a second round on the same hold id. Only the key's final
+# transition decides whether it is answered.
+test_status_key_answered_follows_the_last_transition() {
+  local dir
+  dir=$(case_dir key-answered-reopen)
+
+  {
+    printf 'needs-decision [key=choice]: pick A or B\n'
+    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'needs-decision [key=choice]: now pick C or D\n'
+    printf 'done: report complete\n'
+  } > "$dir/reopened.status"
+  if status_key_answered "$dir/reopened.status" choice; then
+    fail "a key re-opened after an earlier answer was still read as answered"
+  fi
+
+  {
+    printf 'needs-decision [key=choice]: pick A or B\n'
+    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'blocked [key=choice]: cannot proceed until the captain picks again\n'
+  } > "$dir/reopened-blocked.status"
+  if status_key_answered "$dir/reopened-blocked.status" choice; then
+    fail "a key re-opened by a blocked line was still read as answered"
+  fi
+
+  {
+    printf 'needs-decision [key=choice]: pick A or B\n'
+    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'needs-decision [key=choice]: now pick C or D\n'
+    printf 'resolved [key=choice]: captain picked C\n'
+    printf 'done: report complete\n'
+  } > "$dir/reanswered.status"
+  status_key_answered "$dir/reanswered.status" choice \
+    || fail "a key answered again after a re-open was not read as answered"
+
+  # A captain-held transfer is bookkeeping: it must neither answer the key nor
+  # erase an earlier real answer.
+  {
+    printf 'needs-decision [key=choice]: pick A or B\n'
+    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'captain-held [key=choice]: tracked by origin-decision-choice\n'
+  } > "$dir/answered-then-held.status"
+  status_key_answered "$dir/answered-then-held.status" choice \
+    || fail "a captain-held transfer erased an earlier real answer"
+
+  # A re-open of a different key must not disturb this key's answered verdict.
+  {
+    printf 'needs-decision [key=choice]: pick A or B\n'
+    printf 'resolved [key=choice]: captain picked A\n'
+    printf 'needs-decision [key=elsewhere]: pick X or Y\n'
+  } > "$dir/other-key-reopened.status"
+  status_key_answered "$dir/other-key-reopened.status" choice \
+    || fail "a re-open of a different key unset the answer for this key"
+  pass "status_key_answered follows the last transition, so a re-open unanswers a key"
+}
+
 # The reserved-namespace guard the fold applies must apply here too: a resolved
 # line whose note does not speak a reserved key's own vocabulary is not a valid
 # transition and must not count as an answer.
@@ -568,4 +625,5 @@ test_invalid_lookalike_before_valid_mid_note_key_is_ignored
 test_v7_cursor_that_skipped_valid_key_is_rebuilt
 test_v8_cursor_that_chose_one_punctuated_key_is_rebuilt
 test_status_key_answered_requires_an_explicit_answer_line
+test_status_key_answered_follows_the_last_transition
 test_status_key_answered_honors_the_reserved_key_guard

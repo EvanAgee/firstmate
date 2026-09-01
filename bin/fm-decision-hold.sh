@@ -42,13 +42,16 @@
 # `verify` is read-only and is called by scout teardown so teardown cannot erase a
 # source before this gate has succeeded. A reviewed key whose hold was answered and
 # then trimmed out of the backlog by Done-history retention still passes, but only on
-# positive evidence: the status log must carry an explicit resolved line that closed
-# that exact key. The captain-held transfer line is not answer proof - `complete`
-# writes it for every reviewed key that is still open. A reviewed key with no resolved
-# line - one still open, or one that never appeared in the status log at all - must
-# keep a present durable hold, so an absent hold with no answer evidence keeps
-# failing. A hold answered through the direct answer/resolve/decline path, which
-# writes no status line, and then archived is attested through `repair` as before.
+# positive evidence: the key's LAST status transition must be an explicit resolved
+# line that closed that exact key. The captain-held transfer line is not answer proof
+# - `complete` writes it for every reviewed key that is still open. A key answered in
+# round one and then re-opened by a later needs-decision or blocked line is not
+# answered either, because only its final transition counts. A reviewed key that does
+# not end resolved - one still open, one re-opened, or one that never appeared in the
+# status log at all - must keep a present durable hold, so an absent hold with no
+# answer evidence keeps failing. A hold answered through the direct
+# answer/resolve/decline path, which writes no status line, and then archived is
+# attested through `repair` as before.
 #
 # `resolve`, `answer`, and `decline` close active holds; `repair` attests a hold
 # already closed outside this script. All four paths require a non-empty captain
@@ -536,14 +539,14 @@ verify_hold_durable() {  # <hold-id>
 
 # The reviewed-inventory check for `complete` and `verify`. It is `verify_hold_durable`
 # with one added tolerance: a hold that is ABSENT from the backlog passes only when the
-# status log carries POSITIVE answer evidence for its key - an explicit resolve line
-# that closed it (status_key_answered). Done-history retention eventually trims an
-# answered, Done hold out of the backlog, and that surviving resolved line is what
-# proves the decision was answered, so archival must not fail the gate.
-# The evidence is affirmative on purpose, not the inverse of the open set: a reviewed
-# key that never appeared in the status stream, or is still open, has no resolved line,
-# so an absent hold for it stays a hard failure and a genuinely unanswered decision
-# keeps blocking teardown.
+# status log carries POSITIVE answer evidence for its key - its LAST transition is an
+# explicit resolve that closed it (status_key_answered). Done-history retention
+# eventually trims an answered, Done hold out of the backlog, and that surviving
+# resolved line is what proves the decision was answered, so archival must not fail
+# the gate. The evidence is affirmative on purpose, not the inverse of the open set: a
+# reviewed key that never appeared in the status stream, is still open, or was
+# re-opened after an earlier answer does not end resolved, so an absent hold for it
+# stays a hard failure and a genuinely unanswered decision keeps blocking teardown.
 verify_reviewed_hold() {  # <hold-id> <status-file> <key>
   local id=$1 status_file=$2 key=$3
   if ! task_show "$id" >/dev/null 2>&1 && status_key_answered "$status_file" "$key"; then

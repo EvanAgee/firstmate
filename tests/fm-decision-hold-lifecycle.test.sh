@@ -1600,6 +1600,47 @@ EOF
     > "$held_home/held-verify.out" 2> "$held_home/held-verify.err"; then
     fail "verify accepted an unanswered hold whose only status evidence was the captain-held transfer"
   fi
+
+  # A decision key is stable and reusable, so the same hold id can be answered in
+  # round one and opened again for round two. The stale round-one resolved line is
+  # not evidence for round two. The origin status ends in done, which empties the
+  # open set, so the reviewed-key check is the only gate left and it must fail.
+  local reopen_home reopen_id reopen_hold reopen_open
+  reopen_home=$(make_home archived-reopened)
+  reopen_id=sample-reopened-archived
+  mkdir -p "$reopen_home/data/$reopen_id"
+  tasks_in "$reopen_home" add "$reopen_id" "Investigate a re-opened sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-reopened origin"
+  write_origin_meta "$reopen_home" "$reopen_id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$reopen_home/state/$reopen_id.status"
+  printf '# Sample re-opened review\n\nRound two is still unanswered.\n' > "$reopen_home/data/$reopen_id/report.md"
+  reopen_hold=$(run_decisions "$reopen_home" hold "$reopen_id" choice \
+    --title "Choose the re-opened sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the re-opened hold"
+  run_decisions "$reopen_home" complete "$reopen_id" choice >/dev/null \
+    || fail "completion failed for the re-opened origin"
+  printf 'Captain chose option A.\n' > "$reopen_home/choice-decision.txt"
+  run_decisions "$reopen_home" answer "$reopen_id" choice --decision-file "$reopen_home/choice-decision.txt" >/dev/null \
+    || fail "could not answer round one of the re-opened choice"
+  # bin/fm-send.sh appends this resolved line when the captain's answer is delivered.
+  {
+    printf 'resolved [key=choice]: answered: captain picked A\n'
+    printf 'needs-decision [key=choice]: now choose option C or option D\n'
+    printf 'done: report complete\n'
+  } >> "$reopen_home/state/$reopen_id.status"
+  reopen_open=$(bash -c '. "$1"; status_open_decisions "$2"' _ \
+    "$ROOT/bin/fm-classify-lib.sh" "$reopen_home/state/$reopen_id.status")
+  assert_contains "$reopen_open" "choice" \
+    "the re-opened fixture did not leave the key open in the status fold: $reopen_open"
+  grep -v "$reopen_hold" "$reopen_home/data/backlog.md" > "$reopen_home/data/backlog.md.trimmed"
+  mv "$reopen_home/data/backlog.md.trimmed" "$reopen_home/data/backlog.md"
+  if run_decisions "$reopen_home" verify "$reopen_id" \
+    > "$reopen_home/reopen-verify.out" 2> "$reopen_home/reopen-verify.err"; then
+    fail "verify accepted a re-opened unanswered decision on a stale round-one resolved line"
+  fi
+  assert_contains "$(cat "$reopen_home/reopen-verify.err")" "$reopen_hold" \
+    "the re-open refusal did not name the absent hold, so a different gate refused it"
   pass "verify tolerates an answered hold archived out of the backlog but still fails one with no answer evidence"
 }
 

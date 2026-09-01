@@ -529,19 +529,22 @@ status_open_decisions() {  # <status-file>
   printf '%s' "$open"
 }
 
-# Positive answer evidence for ONE decision key: return 0 only when the status
-# stream carries an explicit resolve line that CLOSES <key>, applying the same
-# resolve verb, key extraction, and reserved-key guard the fold above uses, so
-# the two can never disagree on what a resolution looks like. The captain-held
-# transfer verb, which also closes a key for the fold, is NOT accepted here:
-# fm-decision-hold.sh writes it for every reviewed key that is still open, so it
-# records where the decision now lives, not that anyone answered it. This is
+# Positive answer evidence for ONE decision key: return 0 only when the key's
+# LAST transition in the status stream is an explicit resolve, applying the same
+# needs-decision/blocked-opens and resolve-closes rule, key extraction, and
+# reserved-key guard _fm_decision_fold_line uses, so the two can never disagree.
+# A key is stable and reusable, so a decision answered in round one and re-opened
+# by a later needs-decision or blocked line for the same key is NOT answered: only
+# the final transition counts. The captain-held transfer verb, which also closes a
+# key for the fold, is NOT an answer here: fm-decision-hold.sh writes it for every
+# reviewed key that is still open, so it records where the decision now lives, not
+# that anyone answered it, and it leaves an earlier verdict standing. This is
 # affirmative, not the inverse of the open set: a key that never appeared in the
 # stream is NOT answered here, unlike merely being absent from
 # status_open_decisions. A consumer that must prove a decision was answered - not
 # just that it is no longer open - uses this.
 status_key_answered() {  # <status-file> <key>
-  local f=$1 key=$2 line resolve verb line_key
+  local f=$1 key=$2 line resolve verb line_key answered=0
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
@@ -550,13 +553,19 @@ status_key_answered() {  # <status-file> <key>
       *) continue ;;
     esac
     verb=$(status_line_verb "$line")
-    [ "$verb" = "$resolve" ] || continue
+    case "$verb" in
+      needs-decision|blocked|"$resolve") ;;
+      *) continue ;;
+    esac
     line_key=$(_fm_decision_key "$line") || continue
     [ "$line_key" = "$key" ] || continue
     _fm_decision_key_transition_allowed "$key" "$(status_line_note "$line")" || continue
-    return 0
+    case "$verb" in
+      "$resolve") answered=1 ;;
+      *) answered=0 ;;
+    esac
   done < "$f"
-  return 1
+  [ "$answered" = 1 ]
 }
 
 # Fleet-wide wrapper around status_open_decisions: scans every task's status
