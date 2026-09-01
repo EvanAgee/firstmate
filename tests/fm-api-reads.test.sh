@@ -192,6 +192,58 @@ EOF
   pass "captain queue collapses a legacy id listed as both open and parked"
 }
 
+test_captain_queue_clamps_corrupt_legacy_anchor_like_the_writer() {
+  local home port resp served_question served_asked written_question
+  home=$(fm_test_api_home api-queue-legacy-corrupt-anchor)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [
+    {
+      "id": "corrupt-anchor-card",
+      "question": "Unreadable stamp ask?",
+      "options": ["Approve (recommended)", "Decline"],
+      "asked_at": "not-a-date",
+      "status": "open"
+    },
+    {
+      "id": "corrupt-anchor-card",
+      "question": "Readable stamp ask?",
+      "options": ["Approve (recommended)", "Decline"],
+      "asked_at": "2026-08-26T10:00:00Z",
+      "status": "open"
+    },
+    {
+      "id": "future-anchor-card",
+      "question": "Far future ask?",
+      "options": ["Approve (recommended)", "Decline"],
+      "asked_at": "2099-01-01T10:00:00Z",
+      "status": "open"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "corrupt anchor queue status $HTTP_CODE: $HTTP_BODY"
+  served_question=$(fm_test_json "$HTTP_BODY" \
+    'd.items.filter(c=>c.id==="corrupt-anchor-card").map(c=>c.question).join(",")')
+  served_asked=$(fm_test_json "$HTTP_BODY" \
+    'd.items.filter(c=>c.id==="future-anchor-card").map(c=>c.askedAt).join(",")')
+  [ "$served_asked" != "2099-01-01T10:00:00Z" ] \
+    || fail "a future legacy asked-at was served verbatim: $HTTP_BODY"
+  fm_test_api_stop "$home"
+
+  FM_HOME="$home" "$ROOT/bin/fm-captain-queue.sh" reconcile >/dev/null 2>&1 \
+    || fail "reconcile failed on the corrupt legacy anchor fixture"
+  written_question=$(fm_test_json "$(cat "$home/data/captain-queue.json")" \
+    'd.records.filter(c=>c.id==="corrupt-anchor-card").map(c=>c.question).join(",")')
+  [ "$served_question" = "$written_question" ] \
+    || fail "reader served '$served_question' but the writer kept '$written_question'"
+  pass "captain queue clamps a corrupt legacy anchor the way the writer does"
+}
+
 test_captain_queue_serves_parked_cards_separately() {
   local home port resp
   home=$(fm_test_api_home api-queue-parked)
@@ -812,6 +864,7 @@ test_captain_queue_ignores_worker_needs_decision
 test_captain_queue_serves_open_named_cards
 test_captain_queue_serves_legacy_reopen_generation
 test_captain_queue_collapses_legacy_duplicate_id
+test_captain_queue_clamps_corrupt_legacy_anchor_like_the_writer
 test_captain_queue_serves_parked_cards_separately
 test_captain_queue_keeps_parked_cards_without_active_options
 test_captain_queue_rejects_bad_options

@@ -15,7 +15,8 @@
 # keeps active or parked same-id rows ahead of resolved history.
 # Same-state duplicates use their newest state timestamp and stable tie-breaks.
 # A legacy active row paired with resolved history receives the next generation.
-# A future legacy asked-at is clamped to the first canonical migration time.
+# A future or unreadable legacy asked-at is corrupt data.
+# Both are clamped to the first canonical migration time for one fresh window.
 # The next successful write emits the canonical records shape.
 # `add` upserts an open card or reopens a resolved card without parked history.
 # Idempotent open-card retries with the same ask fields preserve generation;

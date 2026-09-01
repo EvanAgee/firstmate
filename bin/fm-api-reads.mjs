@@ -128,6 +128,13 @@ function legacyStateTouchEpoch(record) {
   return cardStampEpoch(record.asked_at);
 }
 
+function clampLegacyOpenAnchor(record, migrationStamp, migrationEpoch) {
+  if (record.state !== "open") return record;
+  const asked = cardStampEpoch(record.asked_at);
+  if (asked >= 0 && asked <= migrationEpoch) return record;
+  return { ...record, asked_at: migrationStamp };
+}
+
 function collapseLegacyRecordsById(records) {
   const bestByBucket = new Map();
   const order = [];
@@ -219,11 +226,15 @@ function captainQueueRecords(data) {
   if (Array.isArray(data.records)) {
     return data.records.map((row) => normalize(row)).filter((row) => row !== null);
   }
+  const migrationStamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const migrationEpoch = cardStampEpoch(migrationStamp);
   const records = [
     ...(Array.isArray(data.items) ? data.items.map((row) => normalize(row, "open")) : []),
     ...(Array.isArray(data.parked) ? data.parked.map((row) => normalize(row, "parked")) : []),
     ...(Array.isArray(data.resolved) ? data.resolved.map((row) => normalize(row, "resolved")) : []),
-  ].filter((row) => row !== null);
+  ]
+    .filter((row) => row !== null)
+    .map((row) => clampLegacyOpenAnchor(row, migrationStamp, migrationEpoch));
   const resolvedGenerationById = new Map();
   for (const record of records) {
     if (record.state !== "resolved") continue;
