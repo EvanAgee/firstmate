@@ -7,7 +7,8 @@
 // needs-decision is firstmate's to handle and never appears here.
 // This file also owns captain-card option handling; the contract is below.
 // Blocked tasks come from fm-classify-lib.sh's scan_open_decisions fold so
-// the API cannot disagree with firstmate.
+// the API cannot disagree with firstmate. A scan timeout is an expected
+// degraded read and returns { ok: false, blocked: [], error: "blocked scan timed out" }.
 // Rigs come from config/crew-dispatch.json, plus the dispatch note, per-rig
 // and default pins, and the crew and secondmate pin lines from
 // config/crew-harness and config/secondmate-harness. Consumers parse
@@ -391,10 +392,17 @@ export function captainQueueBody(home) {
 }
 
 export function blockedListBody(stateDir) {
-  const blocked = scanOpenDecisions(stateDir)
-    .filter((row) => row.verb === "blocked")
-    .map(asItem);
-  return { ok: true, blocked };
+  try {
+    const blocked = scanOpenDecisions(stateDir)
+      .filter((row) => row.verb === "blocked")
+      .map(asItem);
+    return { ok: true, blocked };
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ETIMEDOUT") {
+      return { ok: false, blocked: [], error: "blocked scan timed out" };
+    }
+    throw error;
+  }
 }
 
 function asRungs(value) {

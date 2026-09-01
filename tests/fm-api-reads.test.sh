@@ -474,6 +474,35 @@ test_blocked_list_returns_blocked_tasks() {
   pass "blocked list returns the fixture blocked task and not a worker decision"
 }
 
+test_blocked_list_timeout_is_structured() {
+  local home port resp fakebin real_bash
+  home=$(fm_test_api_home api-blocked-timeout)
+  fakebin="$home/fakebin"
+  real_bash=$(command -v bash)
+  mkdir -p "$fakebin"
+  cat > "$fakebin/bash" <<SH
+#!/bin/sh
+if [ "\${1:-}" = "-c" ]; then
+  sleep 6
+  exit 0
+fi
+exec "$real_bash" "\$@"
+SH
+  chmod +x "$fakebin/bash"
+  port=$(PATH="$fakebin:$PATH" fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /blocked GET 8000)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "timed out blocked status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.ok')" = false ] || \
+    fail "timed out blocked response should not be ok: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.error')" = "blocked scan timed out" ] || \
+    fail "timed out blocked response lost its error: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.blocked.length')" = 0 ] || \
+    fail "timed out blocked response should have no partial results: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "a blocked scan timeout is a structured read response"
+}
+
 test_empty_home_rigs_is_empty() {
   local home port resp
   home=$(fm_test_api_home api-rigs-empty)
@@ -872,6 +901,7 @@ test_captain_queue_moves_recommended_first
 test_captain_attention_hold_present_worker_absent
 test_empty_home_blocked_is_empty
 test_blocked_list_returns_blocked_tasks
+test_blocked_list_timeout_is_structured
 test_empty_home_rigs_is_empty
 test_rigs_returns_pools_and_rung_enabled_state
 test_rigs_returns_note_pins_and_harness_pins
