@@ -29,11 +29,10 @@
 # its clusters are already in that round and the clusters it targets are already
 # targeted there. Targeting counts the same whether --targeted names it or an
 # omitted --targeted implies it, so both spellings of one request get the same
-# answer. This is what makes a crash-recovery replay safe. It is an error when
-# it would add a cluster or new targeting, because a
-# fix round produces a new commit; record that cluster or targeting against the
-# current head instead. The error names what was new. A recorded round is never
-# rewritten.
+# answer. This is what makes a crash-recovery replay safe. It is an error when it
+# would add a cluster or new targeting, because a fix round produces a new
+# commit; record that cluster or targeting against the current head instead. The
+# error names what was new. A recorded round is never rewritten.
 #
 # A cluster trips after the configured number of consecutive targeted-and-
 # returned rounds. --threshold sets that number for a new run. Otherwise
