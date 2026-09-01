@@ -387,7 +387,35 @@ test_matrix_omp_two_row_input_border() {
   # stale one, so a finished-turn box above cannot fabricate pending.
   stale='╭── π > older turn ──╮'$'\n''╰─ stale echoed text ─╯'$'\n''transcript'$'\n'"$empty"
   assert_screen "omp bottom-most pair wins on herdr" empty "$CAPS_STYLED" "$stale" '' "$omp_idle"
-  pass "matrix: OMP's two-row input border needs identity + structure; its bottom rule carries the input"
+
+  # A bare (untitled) `╭╮`/`╰╯` pair is not an OMP composer: OMP's top border
+  # always carries its status bar, so an all-rule top with no title stays
+  # unknown even with a live OMP identity. Without this a plain empty box could
+  # be injected into.
+  local bare_pair
+  bare_pair='╭────────────────────────╮'$'\n''╰─                     ─╯'
+  assert_screen "omp bare untitled pair is unknown" unknown "$CAPS_STYLED" "$bare_pair" '' "$omp_idle"
+  assert_screen "omp bare untitled pair is unknown on tmux" unknown "$CAPS_TMUX" "$bare_pair" 1 "$omp_idle"
+
+  # A finished-turn OMP box followed by a BLANK spacer line and then transcript
+  # must stay unknown: the pair is not bottom-anchored. A next-row-only check
+  # would wave the blank line through, so the whole region below the close must
+  # be blank or structural.
+  local stale_spaced
+  stale_spaced="$top"$'\n''╰─                       ─╯'$'\n'$'\n''earlier transcript output'
+  assert_screen "omp stale pair with blank+transcript below is unknown" unknown "$CAPS_STYLED" "$stale_spaced" '' "$omp_idle"
+
+  # The cursor parked on the STATUS (top) row of a finished box is not editing;
+  # only the cursor on the bottom input row reads as the live composer.
+  assert_screen "omp cursor on the status row is not input" unknown "$CAPS_TMUX" "$stale_spaced" 0 "$omp_idle"
+
+  # A draft made only of rule glyphs is real typed input, not furniture: the
+  # extractor strips only the structural flanking rule run, so `───` reads
+  # pending rather than collapsing to a false empty.
+  local dash_draft
+  dash_draft="$top"$'\n''╰─ '"${ESC}[39m─── ${dimclose}"
+  assert_screen "omp dash-only draft is pending" pending "$CAPS_TMUX" "$dash_draft" 1 "$omp_idle"
+  pass "matrix: OMP's two-row input border needs a titled top, a bottom-anchored pair, cursor on the input row, and preserves rule-glyph input"
 }
 
 test_matrix_opencode_leftbar_signals() {

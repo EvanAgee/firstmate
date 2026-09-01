@@ -302,9 +302,32 @@ The shape is pinned two ways.
 The portable regression `test_matrix_omp_two_row_input_border` in `tests/fm-composer-lib.test.sh` classifies real byte captures (omp 18.0.7, Bun 1.3.14) across the tmux (cursor), herdr (styled cursorless), zellij, and plain capability profiles under both a UTF-8 locale and `LC_ALL=C`, proving empty, typed-pending, ghost-only-empty, the identity gate, and the ghost-stripped closing corner.
 The live guard is the opt-in real-omp E2E suite (`tests/fm-omp-worker-tmux-live-e2e.test.sh`, `FM_OMP_TMUX_LIVE_E2E=1`), whose `wait_idle` requires the real `fm_backend_composer_state` to reach `empty`; refresh it after an OMP upgrade (it needs valid OMP provider credentials to complete an agent turn).
 
-On 2026-08-31, against a live OMP 18.0.7 / Bun 1.3.14 worker in an isolated tmux server, the real send path was exercised directly.
-An idle OMP composer read `empty` through `fm_backend_composer_state tmux <window> omp <bun> <bin>`, and `fm-send <task> "<text>"` delivered the message and exited 0 with the composer confirmed empty afterward.
-The task's Bun/OMP identity was recorded from the meta and `fm_backend_agent_state` reported `alive` for the bun-hosted process, proving the tmux OMP identity threading end to end.
+On 2026-09-01, against a live OMP 18.0.7 / Bun 1.3.14 worker in an isolated tmux server, the real send path was exercised directly.
+A task meta bound the endpoint (`window=fm:fm-omp-live`, `harness=omp`, and the canonical `omp_bun`/`omp_bin` paths), then:
+
+```sh
+# probe: identity, agent state, and composer verdict on an idle OMP worker
+. bin/fm-backend.sh
+fm_backend_agent_record_identity tmux fm:fm-omp-live "$STATE/omp-live.meta"
+printf 'agent_state=%s\n' "$(fm_backend_agent_state tmux fm:fm-omp-live "$STATE/omp-live.meta")"
+printf 'composer_state=%s\n' "$(fm_backend_composer_state tmux fm:fm-omp-live omp \
+  "$FM_BACKEND_AGENT_OMP_BUN" "$FM_BACKEND_AGENT_OMP_BIN")"
+
+# delivery through the real send entrypoint
+bin/fm-send.sh omp-live "verify OMP composer delivery"; echo "fm-send exit=$?"
+```
+
+Observed output:
+
+```text
+agent_state=alive
+composer_state=empty
+fm-send exit=0
+```
+
+`fm-send` prints nothing on success, and the composer read `empty` again immediately after the send, confirming the message was delivered and the input box cleared.
+This proves the tmux OMP identity threading and the composer read end to end.
+Without the bound `omp_bin` the identity probe returns `probe-absent` and the composer stays `unknown`.
 
 An earlier upstream design for the same feature (the `fm_composer_terminal_width` two-row measurement and the `fm_backend_herdr_omp_session_*` session-file readers) is not the approach taken here; its portable subtests in `tests/fm-backend-herdr.test.sh` and `tests/fm-tmux-submit-busy.test.sh` self-skip behind `FM_OMP_SCREEN_DETECTION=1` and stay skipped, and the session-file readers remain a separate deferred item.
 

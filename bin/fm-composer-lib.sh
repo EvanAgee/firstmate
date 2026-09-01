@@ -748,7 +748,7 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
   # overwritten by a later one.
   FM_COMPOSER_SCAN_OMP_TOP=-1
   FM_COMPOSER_SCAN_OMP_BOTTOM=-1
-  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max
+  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max omp_top_titled=0
   pi_max=$FM_COMPOSER_PI_MAX_LINES
   case "$pi_max" in ''|*[!0-9]*|0) pi_max=8 ;; esac
   while IFS= read -r line; do
@@ -834,19 +834,34 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
         heavy) top_inner=${top_inner#┏}; top_inner=${top_inner%┓}; top_spaces=${top_inner//━/ } ;;
         ascii) top_inner=${top_inner#+}; top_inner=${top_inner%+}; top_spaces=${top_inner//-/ } ;;
       esac
+      # OMP proof: its top border is a TITLED status bar, never a bare box top.
+      # Record whether this top carries a title (non-rule interior content), so
+      # the OMP pair check can require a titled top. A bare `╭────╮` has an
+      # all-space interior and is not an OMP top. Width is NOT compared by
+      # character count: OMP's title replaces rule dashes with text of a
+      # different length, so an equal-visual-width top and bottom hold different
+      # character counts; the title, shared indent, shared family, adjacency,
+      # and OMP identity are the proof instead.
+      case "$top_spaces" in
+        *[![:space:]]*) omp_top_titled=1 ;;
+        *) omp_top_titled=0 ;;
+      esac
       case "$top_spaces" in
         *[![:space:]]*) geometry_check=0; geometry_ambiguous=1 ;;
       esac
     elif [ "$kind" = bottom ] || { [ "$kind" = ascii ] && [ "$top" -ge 0 ]; }; then
-      # OMP shape: a bottom border directly under a titled top border of the
-      # same family and indent, with no content rows between (content_rows == 0)
-      # and the two rows adjacent. OMP draws its status bar in the top rule and
-      # its input inside the bottom rule, so a normal box's "needs a content
+      # OMP shape: a bottom rule directly under a TITLED top border of the same
+      # family, indent, and width, with no content rows between (content_rows ==
+      # 0) and the two rows adjacent. OMP draws its status bar in the top rule
+      # and its input inside the bottom rule, so a normal box's "needs a content
       # row" test rejects it - this is the one shape whose content is IN the
-      # bottom border. The bottom-most such pair wins.
+      # bottom border. The title and equal width are what keep a bare `╭╮`/`╰╯`
+      # pair or a width-mismatched pair from being read as an OMP composer. The
+      # bottom-most such pair wins.
       if [ "$top" -ge 0 ] && [ "$family" = "$current_family" ] \
          && [ "$valid" = 1 ] && [ "$content_rows" -eq 0 ] \
-         && [ "$row" -eq "$((top + 1))" ] && [ "$indent" = "$current_indent" ]; then
+         && [ "$row" -eq "$((top + 1))" ] && [ "$indent" = "$current_indent" ] \
+         && [ "$omp_top_titled" = 1 ]; then
         FM_COMPOSER_SCAN_OMP_TOP=$top
         FM_COMPOSER_SCAN_OMP_BOTTOM=$row
       fi
@@ -1262,20 +1277,51 @@ _fm_composer_select_cursorless() {
         boundary=$next
       fi
     fi
-    # A non-blank, non-structural row directly below the closing border means
-    # the selected container is stale scrollback with live content beneath it,
-    # never the bottom-anchored live composer. For OMP this is what keeps a
-    # finished-turn `╰─...─╯` transcript box from being read as the live input.
-    next=$((boundary + 1))
-    raw=$(_fm_composer_screen_row "$next" "$plain")
-    trimmed=$raw
-    fm_composer_normalize_trim_var trimmed
-    if [ -n "$trimmed" ] && ! fm_composer_row_has_edge "$trimmed"; then
-      FM_COMPOSER_SELECTED_KIND=
-      return 1
+    # A non-blank, non-structural row below the closing border means the
+    # selected container is stale scrollback with live content beneath it, never
+    # the bottom-anchored live composer. OMP must be proven anchored against
+    # EVERY row below its close, not just the next one: a finished-turn
+    # `╰─...─╯` box can be followed by a blank line and then transcript, which a
+    # single-row check would wave through. box and leftbar keep the cheaper
+    # next-row check their existing shapes already rely on.
+    if [ "$FM_COMPOSER_SELECTED_KIND" = omp ]; then
+      if ! _fm_composer_omp_bottom_anchored "$plain" "$boundary"; then
+        FM_COMPOSER_SELECTED_KIND=
+        return 1
+      fi
+    else
+      next=$((boundary + 1))
+      raw=$(_fm_composer_screen_row "$next" "$plain")
+      trimmed=$raw
+      fm_composer_normalize_trim_var trimmed
+      if [ -n "$trimmed" ] && ! fm_composer_row_has_edge "$trimmed"; then
+        FM_COMPOSER_SELECTED_KIND=
+        return 1
+      fi
     fi
   fi
   [ -n "$FM_COMPOSER_SELECTED_KIND" ]
+}
+
+# _fm_composer_omp_bottom_anchored: 0 when EVERY row below <bottom-row> is blank
+# or a structural edge row, proving the OMP pair is the live bottom-anchored
+# composer rather than a finished-turn box with transcript beneath it. A single
+# blank spacer line followed by real transcript is exactly the case a next-row
+# check misses, so this scans to the end of the captured screen.
+_fm_composer_omp_bottom_anchored() {  # <plain-screen> <bottom-row>
+  local plain=$1 bottom=$2 total row line trimmed
+  total=$(printf '%s\n' "$plain" | wc -l)
+  row=$((bottom + 1))
+  while [ "$row" -lt "$total" ]; do
+    line=$(_fm_composer_screen_row "$row" "$plain")
+    trimmed=$line
+    fm_composer_normalize_trim_var trimmed
+    if [ -n "$trimmed" ] && ! fm_composer_row_has_edge "$trimmed"; then
+      return 1
+    fi
+    row=$((row + 1))
+  done
+  return 0
 }
 
 fm_composer_extract_selected_content() {  # <caps> <screen>
@@ -1417,15 +1463,19 @@ EOF
       _fm_composer_pi_verdict "$screen" "$styled" "$has_identity" "$identity"
       return 0
     fi
-    # OMP shape: the cursor sits on the pair's bottom rule row (its input) or on
-    # the titled top row. OMP is identity-provable exactly like pi, so the
-    # verdict resolves through _fm_composer_omp_verdict. This runs BEFORE the
-    # strict cursor-edge refusal because the OMP input row IS a bottom border
-    # row - an identified input, not the unidentifiable blank edge the strict
-    # rule guards against.
-    if [ "$FM_COMPOSER_SCAN_OMP_TOP" -ge 0 ] \
-       && [ "$cy" -ge "$FM_COMPOSER_SCAN_OMP_TOP" ] \
-       && [ "$cy" -le "$FM_COMPOSER_SCAN_OMP_BOTTOM" ]; then
+    # OMP shape: the cursor must sit on the pair's BOTTOM rule row, its input.
+    # The top row is the status bar, not an input row, so a cursor parked there
+    # is not editing and must not read as the live composer (a finished-turn box
+    # can leave the cursor on its top row). OMP is identity-provable exactly like
+    # pi, so the verdict resolves through _fm_composer_omp_verdict. This runs
+    # BEFORE the strict cursor-edge refusal because the OMP input row IS a bottom
+    # border row - an identified input, not the unidentifiable blank edge the
+    # strict rule guards against. The pair must also be bottom-anchored: nothing
+    # non-blank and non-structural below its closing border, or it is stale
+    # scrollback with live content beneath it.
+    if [ "$FM_COMPOSER_SCAN_OMP_BOTTOM" -ge 0 ] \
+       && [ "$cy" -eq "$FM_COMPOSER_SCAN_OMP_BOTTOM" ] \
+       && _fm_composer_omp_bottom_anchored "$plain" "$FM_COMPOSER_SCAN_OMP_BOTTOM"; then
       _fm_composer_omp_verdict "$screen" "$styled" "$has_identity" "$identity"
       return 0
     fi
@@ -1618,15 +1668,61 @@ _fm_composer_omp_bottom_content() {  # <raw-bottom-row> <styled> -> content on s
     else
       content=$plain
     fi
-    # Strip whatever border furniture survives on each end, tolerantly: the
-    # closing corner may already be gone (ghosted away) on a styled row.
+    # Strip only the structural furniture, and preserve rule glyphs the user
+    # typed. OMP's furniture is a corner, the rule run touching it, then the
+    # space it pads the interior with; the interior is whatever follows that
+    # boundary. Removing every trailing/leading rule glyph instead would eat a
+    # draft made of dashes ("───" would collapse to empty, so an injection could
+    # append over it or a swallowed Enter read as delivered).
+    #
+    # Strip an edge's furniture ONLY when that edge's corner is present on the
+    # row being read. OMP ghost-colors its closing ` ─╯`, so a styled read whose
+    # interior is real typed text loses the closing corner to the ghost strip;
+    # its trailing dashes are then typed input, not furniture, and must survive.
+    # The leading `╰─ ` stays bright, so its furniture is always strippable.
+    local had_open=0 had_close=0
+    case "$content" in "$open"*) had_open=1 ;; esac
+    case "$content" in *"$close") had_close=1 ;; esac
     content=${content#"$open"}
     content=${content%"$close"}
-    while [ "${content#"$dash"}" != "$content" ]; do content=${content#"$dash"}; done
-    while [ "${content%"$dash"}" != "$content" ]; do content=${content%"$dash"}; done
+    [ "$had_open" = 1 ] && content=$(_fm_composer_omp_strip_edge_rule "$content" "$dash" leading)
+    [ "$had_close" = 1 ] && content=$(_fm_composer_omp_strip_edge_rule "$content" "$dash" trailing)
   fi
   fm_composer_normalize_trim_var content
   printf '%s' "$content"
+}
+
+# _fm_composer_omp_strip_edge_rule: remove one structural rule-glyph run from the
+# named edge of an OMP interior, but only the furniture run - the dashes that sit
+# between a corner and the space OMP pads the interior with. Leading whitespace
+# is skipped first, then a dash run is removed only when it is followed by
+# whitespace (or consumes the whole string, an all-furniture blank interior).
+# A dash run that butts straight into non-space content is typed input, left
+# intact.
+_fm_composer_omp_strip_edge_rule() {  # <content> <dash> <leading|trailing> -> content
+  local content=$1 dash=$2 edge=$3 rest
+  [ -n "$dash" ] || { printf '%s' "$content"; return 0; }
+  if [ "$edge" = leading ]; then
+    rest=${content#"${content%%[![:space:]]*}"}   # drop leading whitespace
+    case "$rest" in
+      "$dash"*)
+        while [ "${rest#"$dash"}" != "$rest" ]; do rest=${rest#"$dash"}; done
+        # Only accept the strip when the run ended at whitespace or end of
+        # string; otherwise the dashes were typed input, so keep the original.
+        case "$rest" in ''|[[:space:]]*) printf '%s' "$rest"; return 0 ;; esac
+        ;;
+    esac
+    printf '%s' "$content"
+  else
+    rest=${content%"${content##*[![:space:]]}"}   # drop trailing whitespace
+    case "$rest" in
+      *"$dash")
+        while [ "${rest%"$dash"}" != "$rest" ]; do rest=${rest%"$dash"}; done
+        case "$rest" in ''|*[[:space:]]) printf '%s' "$rest"; return 0 ;; esac
+        ;;
+    esac
+    printf '%s' "$content"
+  fi
 }
 
 # The OMP composer verdict: an identity + structure conjunction, the same rule
