@@ -1572,6 +1572,34 @@ EOF
     > "$silent_home/silent-verify.out" 2> "$silent_home/silent-verify.err"; then
     fail "verify accepted an absent hold with no answer line in the status log"
   fi
+
+  # `complete` appends its own captain-held transfer line for every reviewed key
+  # that is still open, before the captain has answered anything. That line says
+  # where the decision now lives, not that it was answered, so an unanswered hold
+  # that later leaves the backlog must still fail.
+  local held_home held_id held_hold
+  held_home=$(make_home archived-held-only)
+  held_id=sample-held-archived
+  mkdir -p "$held_home/data/$held_id"
+  tasks_in "$held_home" add "$held_id" "Investigate a held sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-held-only origin"
+  write_origin_meta "$held_home" "$held_id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$held_home/state/$held_id.status"
+  printf '# Sample held review\n\nOne choice remained unanswered.\n' > "$held_home/data/$held_id/report.md"
+  held_hold=$(run_decisions "$held_home" hold "$held_id" choice \
+    --title "Choose the held sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the held-only hold"
+  run_decisions "$held_home" complete "$held_id" choice >/dev/null \
+    || fail "completion failed for the held-only origin"
+  grep -q "captain-held \[key=choice\]" "$held_home/state/$held_id.status" \
+    || fail "complete did not append its captain-held transfer line"
+  grep -v "$held_hold" "$held_home/data/backlog.md" > "$held_home/data/backlog.md.trimmed"
+  mv "$held_home/data/backlog.md.trimmed" "$held_home/data/backlog.md"
+  if run_decisions "$held_home" verify "$held_id" \
+    > "$held_home/held-verify.out" 2> "$held_home/held-verify.err"; then
+    fail "verify accepted an unanswered hold whose only status evidence was the captain-held transfer"
+  fi
   pass "verify tolerates an answered hold archived out of the backlog but still fails one with no answer evidence"
 }
 

@@ -467,8 +467,8 @@ test_incremental_agrees_with_full_fold_across_appends() {
 }
 
 # status_key_answered is affirmative answer evidence for one key: it returns true
-# ONLY when an explicit resolved or captain-held line closed that exact key, not
-# when the key is merely absent from the open set. fm-decision-hold verify uses it
+# ONLY when an explicit resolved line closed that exact key, not when the key is
+# merely absent from the open set and not for the captain-held transfer line. fm-decision-hold verify uses it
 # so an answered hold trimmed out of the backlog still passes while a key that was
 # never answered fails.
 test_status_key_answered_requires_an_explicit_answer_line() {
@@ -485,10 +485,13 @@ test_status_key_answered_requires_an_explicit_answer_line() {
   status_key_answered "$dir/colon-first.status" choice \
     || fail "a colon-first resolved line was not read as an answer"
 
+  # The captain-held transfer records where the decision now lives. It is written
+  # for every reviewed key that is still open, so it is not answer evidence.
   printf 'needs-decision [key=choice]: pick A or B\n' > "$dir/held.status"
   printf 'captain-held [key=choice]: tracked by origin-decision-choice\n' >> "$dir/held.status"
-  status_key_answered "$dir/held.status" choice \
-    || fail "a captain-held transfer was not read as an answer"
+  if status_key_answered "$dir/held.status" choice; then
+    fail "a captain-held transfer alone was read as an answer"
+  fi
 
   # Still open: no answer line for the key.
   printf 'needs-decision [key=choice]: pick A or B\ndone: report complete\n' > "$dir/open.status"
@@ -513,7 +516,7 @@ test_status_key_answered_requires_an_explicit_answer_line() {
   if status_key_answered "$dir/wrong-key.status" choice; then
     fail "a resolved line for a different key was read as answering this one"
   fi
-  pass "status_key_answered needs an explicit answer line for the exact key"
+  pass "status_key_answered needs an explicit resolved line for the exact key"
 }
 
 # The reserved-namespace guard the fold applies must apply here too: a resolved
