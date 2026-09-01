@@ -920,6 +920,17 @@ test_scout_and_secondmate_scaffold
 #   2. Ending a turn with a validation gate open makes no progress.
 #   3. Appending `resolved` records an answer; it does not do the work.
 #   4. A local dependency or environment failure is the worker's own to fix.
+# Every backticked needs-decision:/blocked: example in a generated brief must
+# carry a [key=...] token, so the brief never contradicts the MUST it states.
+assert_every_example_keyed() {  # <generated-brief> <label>
+  local brief=$1 label=$2 unkeyed
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  unkeyed=$(grep -o '`\(needs-decision\|blocked\): [^`]*`' "$brief" \
+    | grep -v '\[key=' || true)
+  [ -z "$unkeyed" ] \
+    || fail "$label must key every needs-decision/blocked example, found: $unkeyed"
+}
+
 test_status_protocol_closes_worker_silence_gaps() {
   local home id mode brief
   home="$TMP_ROOT/silence-home"
@@ -933,8 +944,14 @@ test_status_protocol_closes_worker_silence_gaps() {
     # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
     assert_grep 'MUST carry `[key=<slug>]`' "$brief" \
       "$id: ship brief must require a key on every needs-decision and blocked line"
-    assert_grep "An unkeyed line does not reach firstmate as an open decision" "$brief" \
-      "$id: ship brief must say plainly that an unkeyed line never opens a decision"
+    assert_grep "lands under the shared key" "$brief" \
+      "$id: ship brief must give the real reason a key is required"
+    assert_grep "silently overwrites the first" "$brief" \
+      "$id: ship brief must warn that a second unkeyed line overwrites the first"
+    assert_no_grep "does not reach firstmate as an open decision" "$brief" \
+      "$id: ship brief must not repeat the false claim that an unkeyed line never opens a decision"
+    assert_every_example_keyed "$brief" \
+      "$id: ship brief"
     assert_grep 'needs-decision [key=' "$brief" \
       "$id: ship brief must show the keyed form in its needs-decision example"
     assert_grep 'blocked [key=' "$brief" \
@@ -962,8 +979,14 @@ test_status_protocol_closes_worker_silence_gaps() {
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep 'MUST carry `[key=<slug>]`' "$brief" \
     "scout brief must require a key on every needs-decision and blocked line"
-  assert_grep "An unkeyed line does not reach firstmate as an open decision" "$brief" \
-    "scout brief must say plainly that an unkeyed line never opens a decision"
+  assert_grep "lands under the shared key" "$brief" \
+    "scout brief must give the real reason a key is required"
+  assert_grep "silently overwrites the first" "$brief" \
+    "scout brief must warn that a second unkeyed line overwrites the first"
+  assert_no_grep "does not reach firstmate as an open decision" "$brief" \
+    "scout brief must not repeat the false claim that an unkeyed line never opens a decision"
+  assert_every_example_keyed "$brief" \
+    "scout brief"
   assert_grep 'needs-decision [key=' "$brief" \
     "scout brief must show the keyed form in its needs-decision example"
   assert_grep 'blocked [key=' "$brief" \
