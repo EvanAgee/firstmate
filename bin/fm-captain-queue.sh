@@ -14,6 +14,8 @@
 # that field. The writer accepts the legacy items/resolved/parked shape and
 # keeps active or parked same-id rows ahead of resolved history.
 # Same-state duplicates use their newest state timestamp and stable tie-breaks.
+# A legacy active row paired with resolved history receives the next generation.
+# A future legacy asked-at is clamped to the first canonical migration time.
 # The next successful write emits the canonical records shape.
 # `add` upserts an open card or reopens a resolved card without parked history.
 # Idempotent open-card retries with the same ask fields preserve generation;
@@ -28,9 +30,12 @@
 # answer was handled also prints `superseding:` and replaces the recorded answer.
 # A matched winner changes the card's state to `resolved` and records a pending
 # delivery until `handled:` is emitted and the cursor advances past that line.
-# A reopen cannot discard this evidence. A reply without a generation is legacy
-# generation 1. A reply older than the current generation prints `stale:` and
-# advances without changing the card. Resolving the card is not doing the work:
+# A reopen cannot discard this evidence. Before the first canonical write,
+# consumed replies reconstruct delivered-winner evidence from the log and cursor.
+# A reply without a generation is legacy generation 1. A newer conflict for an
+# already delivered historical generation prints `superseding:` and `handled:`
+# without changing the current card; other old-generation replies print `stale:`.
+# Resolving the card is not doing the work:
 # each `handled:` line is the answer firstmate still has to act on. An `orphan:`
 # line matches no card; the cursor stays before it so the answer cannot be
 # skipped. Reconcile never advances past an answer that was neither matched nor
@@ -112,6 +117,49 @@ def fm_iso_epoch:
       | (($hours * 60 + $minutes) * 60) as $offset
       | ($local + $fraction + (if $parts.sign == "+" then -$offset else $offset end)))
     // empty;
+'
+REPLY_LOG_JQ='
+def fm_reply_receipt_ms:
+  if has("at") | not then -1
+  elif (.at | type) != "string" then null
+  elif (.at | test("\\.[0-9]{3}Z$")) then
+    (.at | capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})\\.(?<ms>[0-9]{3})Z$")) as $parts
+    | ([($parts.base + "Z" | fm_iso_epoch)][0] // null) as $epoch
+    | if $epoch == null then null
+      else ($epoch * 1000) + ($parts.ms | tonumber)
+      end
+  else
+    ([.at | fm_iso_epoch][0] // null) as $epoch
+    | if $epoch == null then null else $epoch * 1000 end
+  end;
+def fm_classified_replies($raw):
+  $raw
+  | split("\n")
+  | to_entries
+  | if length > 0 and .[-1].value == "" then .[:-1] else . end
+  | map({line: (.key + 1), raw: .value})
+  | map(
+      . as $line
+      | (try (.raw | fromjson) catch null) as $record
+      | (if ($record | type) == "object" then ($record | fm_reply_receipt_ms) else null end) as $receipt
+      | (if ($record | type) != "object" then false
+         else
+           (($record.id | type) == "string" and ($record.id | length) > 0)
+           and (($record.answer | type) == "string")
+           and ((($record | has("generation")) | not)
+             or (($record.generation | type) == "number"
+               and $record.generation > 0
+               and ($record.generation | floor) == $record.generation))
+           and ((($record | has("at")) | not) or $receipt != null)
+         end) as $valid
+      | . + {
+          valid: $valid,
+          id: (if $valid then $record.id else "" end),
+          generation: (if $valid then ($record.generation // 1) else 0 end),
+          answer: (if $valid then $record.answer else "" end),
+          receipt_ms: (if $valid then $receipt else null end)
+        }
+    );
 '
 
 usage() {
@@ -198,8 +246,10 @@ atomic_write() {  # <dest>  (stdin is the new contents)
 }
 
 read_queue() {
+  local migration_stamp
+  migration_stamp=$(now_stamp)
   if [ -f "$QUEUE" ]; then
-    jq -c "$ISO_EPOCH_JQ"'
+    jq -c --arg migration_stamp "$migration_stamp" "$ISO_EPOCH_JQ"'
       def objects: map(select(type == "object"));
       def with_state($state): . + {state: $state} | del(.status);
       def with_generation:
@@ -245,12 +295,35 @@ read_queue() {
             | map(select(valid_id))
             | sort_by(.id)
             | group_by(.id)
-            | map(max_by([
-                legacy_state_rank,
-                state_touch_epoch,
-                (.num // 0),
-                (.__fm_legacy_order // 0)
-              ])))
+            | map(
+                . as $group
+                | ($group | max_by([
+                    legacy_state_rank,
+                    state_touch_epoch,
+                    (.num // 0),
+                    (.__fm_legacy_order // 0)
+                  ])) as $selected
+                | ([$group[]
+                    | select(.state == "resolved")
+                    | if ((.generation | type) == "number"
+                        and .generation > 0
+                        and (.generation | floor) == .generation)
+                      then .generation else 1 end] | max // 0) as $resolved_generation
+                | if $selected.state != "resolved" and $resolved_generation > 0 then
+                    $selected
+                    + {generation: ([$selected.generation // 1, $resolved_generation + 1] | max)}
+                    + {__fm_legacy_resolved_answers: [$group[]
+                        | select(.state == "resolved" and (.answer | type) == "string")
+                        | {
+                            generation: (if ((.generation | type) == "number"
+                                and .generation > 0
+                                and (.generation | floor) == .generation)
+                              then .generation else 1 end),
+                            answer: .answer
+                          }]}
+                  else $selected
+                  end
+              ))
           + ($records | map(select(valid_id | not))))
         | sort_by([.num // 0, .id // ""])
         | map(del(.__fm_legacy_order));
@@ -271,6 +344,15 @@ read_queue() {
           ((((.resolved // []) | objects | map(with_state("resolved")))
           + ((.items // []) | objects | map(with_state("open")))
           + ((.parked // []) | objects | map(with_state("parked"))))
+          | map(
+              ([.asked_at | fm_iso_epoch][0] // null) as $asked_epoch
+              | ([$migration_stamp | fm_iso_epoch][0] // null) as $migration_epoch
+              | if $asked_epoch != null
+                  and $migration_epoch != null
+                  and $asked_epoch > $migration_epoch
+              then .asked_at = $migration_stamp
+              else .
+              end)
           | to_entries
           | map(.value + {__fm_legacy_order: .key})
           | latest_legacy_records)
@@ -299,13 +381,14 @@ read_queue() {
               records: $records,
               pending_reply_deliveries: $pending_reply_deliveries,
               delivered_reply_winners: $delivered_reply_winners,
-              reply_delivery_tracking: (.reply_delivery_tracking == true)
+              reply_delivery_tracking: (.reply_delivery_tracking == true),
+              __fm_needs_canonical_write: (has("records") | not)
             }
           end
       end
     ' "$QUEUE"
   else
-    printf '%s\n' '{"updated_at":"","records":[],"pending_reply_deliveries":[],"delivered_reply_winners":[],"reply_delivery_tracking":false}'
+    printf '%s\n' '{"updated_at":"","records":[],"pending_reply_deliveries":[],"delivered_reply_winners":[],"reply_delivery_tracking":false,"__fm_needs_canonical_write":false}'
   fi
 }
 
@@ -314,7 +397,7 @@ write_queue() {  # stdin: queue object
   stamp=$(now_stamp)
   json=$(jq -c --arg stamp "$stamp" '{
     updated_at: $stamp,
-    records: (.records // []),
+    records: [(.records // [])[] | del(.__fm_legacy_resolved_answers)],
     pending_reply_deliveries: (.pending_reply_deliveries // []),
     delivered_reply_winners: (.delivered_reply_winners // []),
     reply_delivery_tracking: true
@@ -329,6 +412,66 @@ read_cursor() {
     [ -n "$seen" ] || seen=0
   fi
   printf '%s\n' "$seen"
+}
+
+migrate_reply_delivery_tracking() {  # <queue-json> <cursor>
+  local queue=$1 cursor=$2 replies_file=$REPLIES
+  if [ "$(printf '%s\n' "$queue" | jq -r '.reply_delivery_tracking')" = true ]; then
+    printf '%s\n' "$queue"
+    return 0
+  fi
+  [ -f "$replies_file" ] || replies_file=/dev/null
+  jq -nc \
+    --rawfile raw "$replies_file" \
+    --argjson queue "$queue" \
+    --argjson cursor "$cursor" \
+    "$ISO_EPOCH_JQ$REPLY_LOG_JQ"'
+      (fm_classified_replies($raw)
+        | map(select(.valid and .line <= $cursor))) as $consumed
+      | ([$queue.records[] as $record
+          | $consumed[]
+          | . as $entry
+          | select(.id == $record.id)
+          | select(
+              if $record.state == "resolved" then
+                .generation == $record.generation
+              elif .generation < $record.generation then
+                any($record.__fm_legacy_resolved_answers[]?;
+                  .generation == $entry.generation and .answer == $entry.answer)
+                or (
+                  ([$record.asked_at | fm_iso_epoch][0] // null) as $asked_epoch
+                  |
+                  .receipt_ms >= 0
+                  and $asked_epoch != null
+                  and .receipt_ms <= ($asked_epoch * 1000)
+                )
+              else false
+              end)
+        ]
+        | sort_by([.id, .generation])
+        | group_by([.id, .generation])
+        | map(max_by([.receipt_ms, .line]))
+        | map(. as $winner
+            | ([$queue.records[] | select(.id == $winner.id)][0]) as $record
+            | select($record.state != "resolved"
+              or $record.answer == "backlog-done"
+              or $record.answer == $winner.answer)
+            | {
+                line: .line,
+                id: .id,
+                generation: .generation,
+                answer: .answer,
+                kind: "handled"
+              })) as $reconstructed
+      | $queue
+      | .delivered_reply_winners = (
+          ((.delivered_reply_winners // []) + $reconstructed)
+          | sort_by([.id, .generation])
+          | group_by([.id, .generation])
+          | map(max_by(.line))
+        )
+      | .reply_delivery_tracking = true
+    '
 }
 
 write_cursor() {  # <n>
@@ -395,9 +538,12 @@ cmd_add() {
     '($asked | fromdateiso8601) <= ($added | fromdateiso8601)' >/dev/null \
     || die 2 "add --asked-at cannot be later than the add time"
 
-  local queue options_json commands_json next_num item backlog_backed
+  local queue options_json commands_json next_num item backlog_backed cursor
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
+  cursor=$(read_cursor)
+  queue=$(migrate_reply_delivery_tracking "$queue" "$cursor") \
+    || die 1 "failed to migrate reply delivery tracking"
   if printf '%s\n' "$queue" | jq -e --arg id "$id" '
       any(.records[];
         .id == $id
@@ -508,7 +654,7 @@ apply_parked() {  # <queue-json> <id> <stamp> <reason> <note> -> new queue on st
 }
 
 cmd_park() {
-  local id="" note="" queue stamp
+  local id="" note="" queue stamp cursor
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --id)
@@ -536,6 +682,9 @@ cmd_park() {
 
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
+  cursor=$(read_cursor)
+  queue=$(migrate_reply_delivery_tracking "$queue" "$cursor") \
+    || die 1 "failed to migrate reply delivery tracking"
   if printf '%s\n' "$queue" | jq -e --arg id "$id" '
       any(.records[];
         .id == $id
@@ -838,47 +987,8 @@ build_reply_plan() {  # <queue-json> <cursor> -> plan JSON on stdout
     --rawfile raw "$REPLIES" \
     --argjson queue "$queue" \
     --argjson cursor "$cursor" \
-    "$ISO_EPOCH_JQ"'
-      def receipt_ms:
-        if has("at") | not then -1
-        elif (.at | type) != "string" then null
-        elif (.at | test("\\.[0-9]{3}Z$")) then
-          (.at | capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})\\.(?<ms>[0-9]{3})Z$")) as $parts
-          | ([($parts.base + "Z" | fm_iso_epoch)][0] // null) as $epoch
-          | if $epoch == null then null
-            else ($epoch * 1000) + ($parts.ms | tonumber)
-            end
-        else
-          ([.at | fm_iso_epoch][0] // null) as $epoch
-          | if $epoch == null then null else $epoch * 1000 end
-        end;
-      ($raw
-        | split("\n")
-        | to_entries
-        | if length > 0 and .[-1].value == "" then .[:-1] else . end
-        | map({line: (.key + 1), raw: .value})) as $lines
-      | ($lines | map(
-          . as $line
-          | (try (.raw | fromjson) catch null) as $record
-          | (if ($record | type) == "object" then ($record | receipt_ms) else null end) as $receipt
-          | (if ($record | type) != "object" then false
-             else
-               (($record.id | type) == "string" and ($record.id | length) > 0)
-               and (($record.answer | type) == "string")
-               and ((($record | has("generation")) | not)
-                 or (($record.generation | type) == "number"
-                   and $record.generation > 0
-                   and ($record.generation | floor) == $record.generation))
-               and ((($record | has("at")) | not) or $receipt != null)
-             end) as $valid
-          | . + {
-              valid: $valid,
-              id: (if $valid then $record.id else "" end),
-              generation: (if $valid then ($record.generation // 1) else 0 end),
-              answer: (if $valid then $record.answer else "" end),
-              receipt_ms: (if $valid then $receipt else null end)
-            }
-        )) as $classified
+    "$ISO_EPOCH_JQ$REPLY_LOG_JQ"'
+      (fm_classified_replies($raw)) as $classified
       | ($classified | map(
           select(.line > $cursor)
           | if (.valid | not) then . + {kind: "malformed"}
@@ -915,16 +1025,18 @@ build_reply_plan() {  # <queue-json> <cursor> -> plan JSON on stdout
 cmd_reconcile() {
   local cursor queue pruned plan blocker_line line entry n id generation answer stamp winner_line
   local delivery_kind delivered_kind prior_delivered_line prior_delivered_answer replacement_kind
+  local needs_migration
   local orphan=0 orphan_id="" orphan_answer=""
   acquire_queue_lock
   cursor=$(read_cursor)
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
-  if [ "$(printf '%s\n' "$queue" | jq -r '.reply_delivery_tracking')" != true ]; then
-    queue=$(printf '%s\n' "$queue" | jq -c '.reply_delivery_tracking = true') \
-      || die 1 "failed to enable reply delivery tracking"
-    if [ -f "$QUEUE" ]; then
-      printf '%s\n' "$queue" | write_queue || die 1 "failed to enable reply delivery tracking"
-    fi
+  needs_migration=$(printf '%s\n' "$queue" | jq -r '
+    (.reply_delivery_tracking != true) or (.__fm_needs_canonical_write == true)
+  ')
+  queue=$(migrate_reply_delivery_tracking "$queue" "$cursor") \
+    || die 1 "failed to migrate reply delivery tracking"
+  if [ "$needs_migration" = true ] && [ -f "$QUEUE" ]; then
+    printf '%s\n' "$queue" | write_queue || die 1 "failed to persist captain queue migration"
   fi
   pruned=$(drop_delivered_replies "$queue" "$cursor") || die 1 "failed to prune delivered replies"
   if [ "$pruned" != "$queue" ]; then
@@ -1010,6 +1122,12 @@ cmd_reconcile() {
         fi
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
         cursor=$n
+      elif [ "$prior_delivered_line" -gt 0 ] && [ "$prior_delivered_answer" = "$answer" ]; then
+        write_cursor "$n" || die 1 "failed to write captain-replies.cursor"
+        cursor=$n
+        queue=$(drop_delivered_replies "$queue" "$cursor") \
+          || die 1 "failed to clear duplicate delivered reply"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to clear duplicate delivered reply"
       elif [ -n "$delivery_kind" ] && { [ "$n" -eq "$winner_line" ] || printf '%s\n' "$queue" | jq -e \
           --arg id "$id" --argjson generation "$generation" \
           'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; }; then
@@ -1062,6 +1180,13 @@ cmd_reconcile() {
           || die 1 "failed to supersede $id"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
         finish_reply_delivery "$id" "$generation" "$answer" "$n" "$replacement_kind"
+      elif [ "$replacement_kind" = superseding ] && printf '%s\n' "$queue" | jq -e \
+          --arg id "$id" --argjson generation "$generation" \
+          'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; then
+        queue=$(record_reply_delivery "$queue" "$id" "$generation" "$answer" "$n" superseding) \
+          || die 1 "failed to retain historical supersession for $id"
+        printf '%s\n' "$queue" | write_queue || die 1 "failed to retain historical supersession for $id"
+        finish_reply_delivery "$id" "$generation" "$answer" "$n" superseding
       elif printf '%s\n' "$queue" | jq -e --arg id "$id" --argjson generation "$generation" \
           'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; then
         write_cursor "$n" || die 1 "failed to write captain-replies.cursor"

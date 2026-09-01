@@ -733,6 +733,51 @@ test_captain_reply_validates_card_and_generation_before_append() {
   pass "captain reply validation rejects ghosts and future generations"
 }
 
+test_captain_reply_uses_legacy_reopen_generation() {
+  command -v jq >/dev/null 2>&1 \
+    || { echo "skip: jq not found (legacy captain generation)"; return 0; }
+
+  local home port token resp generations
+  home=$(fm_test_api_home api-captain-reply-legacy-reopen)
+  cat > "$home/data/captain-queue.json" <<'EOF'
+{
+  "updated_at": "2026-08-31T18:00:00Z",
+  "items": [{
+    "id": "legacy-reopened-card",
+    "question": "New question?",
+    "asked_at": "2026-08-31T18:00:00Z",
+    "status": "open"
+  }],
+  "resolved": [{
+    "id": "legacy-reopened-card",
+    "question": "Old question?",
+    "answer": "old answer",
+    "resolved_at": "2026-08-30T18:00:00Z",
+    "status": "resolved"
+  }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  token=$(fm_test_api_token "$home")
+  post_captain_reply "$port" "$token" \
+    '{"id":"legacy-reopened-card","generation":3,"answer":"future"}'
+  [ "$HTTP_CODE" = 409 ] \
+    || fail "legacy future generation status $HTTP_CODE, wanted 409: $HTTP_BODY"
+  post_captain_reply "$port" "$token" \
+    '{"id":"legacy-reopened-card","generation":1,"answer":"delayed old answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "legacy prior generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  post_captain_reply "$port" "$token" \
+    '{"id":"legacy-reopened-card","generation":2,"answer":"new answer"}'
+  [ "$HTTP_CODE" = 200 ] \
+    || fail "legacy current generation status $HTTP_CODE, wanted 200: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  generations=$(jq -c '[.generation]' "$home/state/captain-replies.jsonl")
+  [ "$generations" = $'[1]\n[2]' ] \
+    || fail "legacy reply API persisted the wrong generations: $generations"
+  pass "captain reply API uses the legacy reopen successor generation"
+}
+
 test_captain_reply_appends_after_newline_less_record_and_reconciles() {
   command -v jq >/dev/null 2>&1 \
     || { echo "skip: jq not found (captain reply reconcile)"; return 0; }
@@ -1528,6 +1573,7 @@ test_reads_need_no_token
 test_question_back_note_does_not_close_a_hold
 test_captain_reply_requires_generation_and_persists_it
 test_captain_reply_validates_card_and_generation_before_append
+test_captain_reply_uses_legacy_reopen_generation
 test_captain_reply_appends_after_newline_less_record_and_reconciles
 test_captain_reply_retry_after_wake_failure_appends_once
 test_captain_reply_refuses_a_malformed_existing_log

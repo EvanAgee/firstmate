@@ -417,7 +417,7 @@ test_legacy_duplicate_id_prefers_visible_state_over_timestamp() {
     }],
     parked: []
   }' > "$home/data/captain-queue.json"
-  append_reply "$home" reused-legacy-card "Current answer"
+  append_reply "$home" reused-legacy-card "Current answer" 2
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=reused-legacy-card] Current answer" \
     "legacy duplicate migration should prefer the visible card despite its older asked-at"
@@ -428,6 +428,7 @@ test_legacy_duplicate_id_prefers_visible_state_over_timestamp() {
     and (has("parked") | not)
     and (.records | length) == 1
     and .records[0].id == "reused-legacy-card"
+    and .records[0].generation == 2
     and .records[0].state == "resolved"
     and .records[0].question == "Current board question?"
     and .records[0].context == "This is the card the board was showing."
@@ -477,6 +478,187 @@ test_legacy_same_state_duplicate_compares_offset_timestamps() {
   ' "$home/data/captain-queue.json" >/dev/null \
     || fail "legacy migration did not compare signed-offset timestamps chronologically"
   pass "legacy duplicate migration compares Z and signed-offset timestamps"
+}
+
+test_legacy_reopen_uses_successor_generation() {
+  local home out
+  home=$(make_home legacy-reopen-generation)
+  jq -n '{
+    updated_at: "2026-08-27T18:00:00Z",
+    items: [{
+      id: "legacy-reopened-card",
+      num: 1,
+      question: "New question?",
+      asked_at: "2026-08-27T18:00:00Z",
+      status: "open"
+    }],
+    resolved: [{
+      id: "legacy-reopened-card",
+      num: 1,
+      question: "Old question?",
+      asked_at: "2026-08-20T18:00:00Z",
+      resolved_at: "2026-08-21T18:00:00Z",
+      answer: "old answer",
+      status: "resolved"
+    }]
+  }' > "$home/data/captain-queue.json"
+  jq -nc \
+    --arg id legacy-reopened-card \
+    --arg answer "delayed old answer" \
+    --arg at "$NOW" \
+    '{id: $id, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" \
+    "stale: [id=legacy-reopened-card] [generation=1] delayed old answer" \
+    "a generation-less legacy reply must stay bound to the prior question"
+  jq -e '
+    .records == [{
+      id: "legacy-reopened-card",
+      num: 1,
+      question: "New question?",
+      asked_at: "2026-08-27T18:00:00Z",
+      state: "open",
+      generation: 2
+    }]
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "legacy reopen did not persist one generation-2 open card"
+  pass "legacy reopen migration keeps delayed answers on the prior generation"
+}
+
+test_future_legacy_anchor_gets_one_fresh_window() {
+  local home out
+  home=$(make_home future-legacy-anchor)
+  jq -n '{
+    updated_at: "2026-08-27T18:00:00Z",
+    items: [{
+      id: "future-legacy-card",
+      num: 1,
+      question: "Future legacy question?",
+      asked_at: "2099-01-01T00:00:00Z",
+      status: "open"
+    }],
+    resolved: []
+  }' > "$home/data/captain-queue.json"
+
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "future legacy anchor should start a fresh quiet window: $out"
+  jq -e --arg now "$NOW" '
+    .records[0].state == "open"
+    and .records[0].asked_at == $now
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "future legacy anchor was not clamped to migration time"
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "repeat migration restarted or expired the fresh window: $out"
+  [ "$(jq -r '.records[0].asked_at' "$home/data/captain-queue.json")" = "$NOW" ] \
+    || fail "repeat migration changed the clamped expiry anchor"
+  out=$(FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-09-03T18:00:00Z "$Q" reconcile)
+  assert_contains "$out" "parked: [id=future-legacy-card] expired-legacy-backing" \
+    "the clamped legacy card should expire after its fresh seven-day window"
+  pass "future legacy anchors receive one persisted seven-day window"
+}
+
+test_add_reconstructs_consumed_reply_history() {
+  local home out
+  home=$(make_home add-reconstructs-history)
+  jq -n '{
+    updated_at: "2026-08-26T18:00:00Z",
+    records: [{
+      id: "upgrade-card",
+      num: 1,
+      generation: 1,
+      question: "Old question?",
+      asked_at: "2026-08-20T18:00:00Z",
+      state: "resolved",
+      answer: "old answer",
+      resolved_at: "2026-08-21T18:00:00Z"
+    }]
+  }' > "$home/data/captain-queue.json"
+  jq -nc \
+    --arg id upgrade-card \
+    --arg answer "old answer" \
+    --arg at 2026-08-21T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  printf '1\n' > "$home/state/captain-replies.cursor"
+
+  run_q "$home" add --id upgrade-card --question "New question?" >/dev/null
+  jq -e '
+    .records[0].state == "open"
+    and .records[0].generation == 2
+    and .delivered_reply_winners == [{
+      line: 1,
+      id: "upgrade-card",
+      generation: 1,
+      answer: "old answer",
+      kind: "handled"
+    }]
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "add did not carry consumed reply history into the canonical queue"
+  jq -nc \
+    --arg id upgrade-card \
+    --arg answer "old answer" \
+    --arg at 2026-08-21T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  out=$(run_q "$home" reconcile)
+  assert_not_contains "$out" "handled: [id=upgrade-card] old answer" \
+    "add migration must not redeliver a consumed answer"
+  [ "$(cursor_value "$home")" = 2 ] \
+    || fail "the duplicate consumed answer did not advance the cursor"
+  pass "add reconstructs consumed reply history before canonical write"
+}
+
+test_park_reconstructs_consumed_reply_history() {
+  local home out
+  home=$(make_home park-reconstructs-history)
+  jq -n '{
+    updated_at: "2026-08-26T18:00:00Z",
+    items: [{
+      id: "park-target",
+      num: 1,
+      question: "Park this?",
+      asked_at: "2026-08-26T18:00:00Z",
+      backlog_backed: false,
+      status: "open"
+    }],
+    resolved: [{
+      id: "answered-card",
+      num: 2,
+      question: "Answered?",
+      asked_at: "2026-08-20T18:00:00Z",
+      answer: "first answer",
+      resolved_at: "2026-08-21T18:00:00Z",
+      status: "resolved"
+    }]
+  }' > "$home/data/captain-queue.json"
+  jq -nc \
+    --arg id answered-card \
+    --arg answer "first answer" \
+    --arg at 2026-08-21T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  printf '1\n' > "$home/state/captain-replies.cursor"
+
+  run_q "$home" park --id park-target --note "Verified migration" >/dev/null
+  jq -e '
+    .records[] | select(.id == "park-target" and .state == "parked")
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "park did not persist the requested card migration"
+  jq -nc \
+    --arg id answered-card \
+    --arg answer "replacement answer" \
+    --arg at "$NOW" \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" \
+    "superseding: [id=answered-card] [generation=1] replacement answer" \
+    "park migration should preserve the earlier delivered answer"
+  assert_contains "$out" "handled: [id=answered-card] replacement answer" \
+    "the later answer should be delivered as the superseding winner"
+  pass "park reconstructs consumed reply history before canonical write"
 }
 
 test_manual_park_rejects_backed_and_unknown_cards() {
@@ -903,7 +1085,7 @@ test_conflicting_reply_crash_replay_delivers_only_the_winner() {
   pass "conflicting crash replay delivers only its persisted winner"
 }
 
-test_stale_conflict_preserves_pending_delivery() {
+test_historical_conflict_preserves_pending_delivery() {
   local home out queue_file next_file
   home=$(make_home stale-conflict-delivery)
   run_q "$home" add --id card-a --question "First question?" >/dev/null
@@ -941,10 +1123,11 @@ test_stale_conflict_preserves_pending_delivery() {
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=card-a] persisted answer" \
     "the persisted answer should survive a later stale conflict"
-  assert_contains "$out" "stale: [id=card-a] [generation=1] later stale answer" \
-    "the later prior-generation conflict should remain stale"
-  assert_not_contains "$out" "handled: [id=card-a] later stale answer" \
-    "the stale conflict must not replace the pending delivery"
+  assert_contains "$out" \
+    "superseding: [id=card-a] [generation=1] later stale answer" \
+    "the later prior-generation conflict should supersede the delivered answer"
+  assert_contains "$out" "handled: [id=card-a] later stale answer" \
+    "the historical supersession should be delivered after the pending answer"
   [ "$(cursor_value "$home")" = 2 ] \
     || fail "stale conflict should advance through both lines"
   jq -e '
@@ -953,8 +1136,8 @@ test_stale_conflict_preserves_pending_delivery() {
     and .records[0].question == "Second question?"
     and (.pending_reply_deliveries | length) == 0
   ' "$queue_file" >/dev/null \
-    || fail "stale conflict changed the reopened card or retained delivered evidence"
-  pass "a stale conflict cannot erase a persisted prior-generation delivery"
+    || fail "historical conflict changed the reopened card or retained pending evidence"
+  pass "a historical conflict preserves and supersedes pending delivery"
 }
 
 test_pending_group_winner_is_not_superseding() {
@@ -1143,7 +1326,7 @@ test_reopened_card_delivers_a_reply_persisted_before_crash() {
   pass "a reopen preserves and delivers an answer persisted before a crash"
 }
 
-test_reopened_card_skips_a_delayed_stale_reply_without_blocking() {
+test_reopened_card_surfaces_a_historical_supersession_without_blocking() {
   local home out
   home=$(make_home reopened-delayed-reply)
   run_q "$home" add --id card-a --question "First question?" >/dev/null
@@ -1153,15 +1336,20 @@ test_reopened_card_skips_a_delayed_stale_reply_without_blocking() {
   append_reply "$home" card-a "late first answer" 1
   append_reply "$home" card-a "second answer" 2
   out=$(run_q "$home" reconcile)
-  assert_contains "$out" "stale: [id=card-a] [generation=1] late first answer" \
-    "the delayed prior-generation reply should be surfaced as stale"
+  assert_contains "$out" \
+    "superseding: [id=card-a] [generation=1] late first answer" \
+    "the newer historical answer should be marked superseding"
+  assert_contains "$out" "handled: [id=card-a] late first answer" \
+    "the historical supersession should be delivered once"
   assert_contains "$out" "handled: [id=card-a] second answer" \
     "the current reply should not stay blocked behind a stale reply"
   [ "$(cursor_value "$home")" = 3 ] \
     || fail "cursor should advance past stale and current replies, got $(cursor_value "$home")"
   [ "$(resolved_answer "$home" card-a)" = "second answer" ] \
-    || fail "the stale reply replaced the current generation answer"
-  pass "a delayed stale reply cannot block or settle a reopened card"
+    || fail "the historical supersession changed the current generation answer"
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "historical supersession was delivered more than once: $out"
+  pass "historical supersession is delivered without changing the reopened card"
 }
 
 test_replacing_an_open_ask_rotates_its_generation() {
@@ -1567,6 +1755,10 @@ test_manual_park_defers_a_fresh_unbacked_card
 test_legacy_card_waits_for_verified_migration
 test_legacy_duplicate_id_prefers_visible_state_over_timestamp
 test_legacy_same_state_duplicate_compares_offset_timestamps
+test_legacy_reopen_uses_successor_generation
+test_future_legacy_anchor_gets_one_fresh_window
+test_add_reconstructs_consumed_reply_history
+test_park_reconstructs_consumed_reply_history
 test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
 test_orphan_reply_does_not_advance_or_drop
@@ -1574,13 +1766,13 @@ test_orphan_stops_before_a_later_match
 test_conflict_ranking_sees_winner_after_orphan
 test_conflicting_replies_rank_timestamp_then_log_order
 test_conflicting_reply_crash_replay_delivers_only_the_winner
-test_stale_conflict_preserves_pending_delivery
+test_historical_conflict_preserves_pending_delivery
 test_pending_group_winner_is_not_superseding
 test_superseding_delivery_replay_keeps_marker
 test_repeat_answer_after_crash_advances_cursor
 test_reopened_card_skips_a_completed_reply_replay
 test_reopened_card_delivers_a_reply_persisted_before_crash
-test_reopened_card_skips_a_delayed_stale_reply_without_blocking
+test_reopened_card_surfaces_a_historical_supersession_without_blocking
 test_replacing_an_open_ask_rotates_its_generation
 test_partial_last_line_without_newline_is_handled
 test_parallel_adds_keep_both_cards

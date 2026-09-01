@@ -120,6 +120,40 @@ EOF
   pass "captain queue serves an open named card and hides a resolved one"
 }
 
+test_captain_queue_serves_legacy_reopen_generation() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-legacy-reopen)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [{
+    "id": "legacy-reopened-card",
+    "question": "New question?",
+    "options": ["Approve (recommended)", "Decline"],
+    "asked_at": "2026-08-27T18:00:00Z",
+    "status": "open"
+  }],
+  "resolved": [{
+    "id": "legacy-reopened-card",
+    "question": "Old question?",
+    "answer": "old answer",
+    "resolved_at": "2026-08-21T18:00:00Z",
+    "status": "resolved"
+  }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "legacy reopen queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] \
+    || fail "legacy reopen should serve one open card: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].generation')" = 2 ] \
+    || fail "legacy reopen should serve successor generation 2: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue serves legacy reopens with successor generations"
+}
+
 test_captain_queue_serves_parked_cards_separately() {
   local home port resp
   home=$(fm_test_api_home api-queue-parked)
@@ -738,6 +772,7 @@ EOF
 test_empty_home_queue_is_empty
 test_captain_queue_ignores_worker_needs_decision
 test_captain_queue_serves_open_named_cards
+test_captain_queue_serves_legacy_reopen_generation
 test_captain_queue_serves_parked_cards_separately
 test_captain_queue_keeps_parked_cards_without_active_options
 test_captain_queue_rejects_bad_options

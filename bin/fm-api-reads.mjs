@@ -5,8 +5,7 @@
 // GET /captain-queue reads data/captain-queue.json cards firstmate wrote for
 // the captain. It does not scan worker status files. An ordinary
 // needs-decision is firstmate's to handle and never appears here.
-// This file is also the one owner of captain-card option rules: every card
-// that ships must offer real named plain-English choices, recommended first.
+// This file also owns captain-card option handling; the contract is below.
 // Blocked tasks come from fm-classify-lib.sh's scan_open_decisions fold so
 // the API cannot disagree with firstmate.
 // Rigs come from config/crew-dispatch.json, plus the dispatch note, per-rig
@@ -74,12 +73,14 @@ function asItem(row) {
 
 // --- captain-card options ---------------------------------------------------
 //
-// One owner of the board-card options contract. A writer of
-// data/captain-queue.json and GET /captain-queue both use these helpers so a
-// card cannot ship with empty, generic-letter, or jargon options.
+// One owner of the board-card options contract. Writers of
+// data/captain-queue.json and GET /captain-queue both use these helpers.
+// An open card cannot ship with empty, generic-letter, or jargon options.
 // Each option is a short plain-English label naming the real choice.
 // The recommended option is marked and comes first. A plain "Something else"
 // may follow last. Generic "A" / "B" / "Option C" labels are refused.
+// Parked cards preserve their historical option arrays without validation,
+// trimming, filtering, or reordering.
 
 const GENERIC_LETTER = /^(option\s+)?[A-Z]$/i;
 const GENERIC_LETTER_PREFIX = /^(option\s+)?[A-Z]\s*[-.:)]\s*/i;
@@ -155,11 +156,36 @@ function captainQueueRecords(data) {
   if (Array.isArray(data.records)) {
     return data.records.map((row) => normalize(row)).filter((row) => row !== null);
   }
-  return [
+  const records = [
     ...(Array.isArray(data.items) ? data.items.map((row) => normalize(row, "open")) : []),
     ...(Array.isArray(data.parked) ? data.parked.map((row) => normalize(row, "parked")) : []),
     ...(Array.isArray(data.resolved) ? data.resolved.map((row) => normalize(row, "resolved")) : []),
   ].filter((row) => row !== null);
+  const resolvedGenerationById = new Map();
+  for (const record of records) {
+    if (record.state !== "resolved") continue;
+    const id = textField(record.id);
+    if (!id) continue;
+    const generation =
+      typeof record.generation === "number" &&
+      Number.isInteger(record.generation) &&
+      record.generation > 0
+        ? record.generation
+        : 1;
+    resolvedGenerationById.set(id, Math.max(resolvedGenerationById.get(id) || 0, generation));
+  }
+  return records.map((record) => {
+    if (record.state === "resolved") return record;
+    const resolvedGeneration = resolvedGenerationById.get(textField(record.id)) || 0;
+    if (resolvedGeneration === 0) return record;
+    const generation =
+      typeof record.generation === "number" &&
+      Number.isInteger(record.generation) &&
+      record.generation > 0
+        ? record.generation
+        : 1;
+    return { ...record, generation: Math.max(generation, resolvedGeneration + 1) };
+  });
 }
 
 function asCaptainCard(raw, expectedState = "open") {
