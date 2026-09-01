@@ -36,26 +36,11 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # marker from further up the chain.
 # Two evidence modes. `exact` requires the launch-bound Bun and OMP realpaths
 # published by the native primary (env pair or the loaded marker bound to the
-# PID). `launch-shape` proves only that the innermost harness ancestor is an
-# OMP process launched the way firstmate launches one - absolute Bun executable
-# followed by an absolute `omp` entrypoint - which is the evidence a spawned OMP
-# worker's own tree carries; it never runs on its own, only to qualify the
-# inherited FM_OMP_HARNESS launch-boundary marker.
-omp_launch_argv_shape() {  # <args>
-  local first second rest bun_path omp_path
-  read -r first second rest <<EOF
-$1
-EOF
-  [ -n "${first:-}" ] && [ -n "${second:-}" ] || return 1
-  case "$first" in /*) ;; *) return 1 ;; esac
-  case "$second" in */omp) ;; *) return 1 ;; esac
-  [ "$(basename -- "$first")" = bun ] || return 1
-  bun_path=$(fm_omp_process_resolve_path "$first") || return 1
-  omp_path=$(fm_omp_process_resolve_path "$second") || return 1
-  fm_omp_process_identity_path_valid "$bun_path" \
-    && fm_omp_process_identity_path_valid "$omp_path"
-}
-
+# PID), via fm_omp_process_matches. `launch-shape` proves only that the innermost
+# harness ancestor is an OMP process launched the way firstmate launches one, via
+# fm_omp_launch_argv_shape; that is the evidence a spawned OMP worker's own tree
+# carries, and it never runs on its own, only to qualify the inherited
+# FM_OMP_HARNESS launch-boundary marker.
 omp_ancestry_matches() {  # <exact|launch-shape>
   local mode=$1 pid=$$ comm args bc
   for _ in 1 2 3 4 5 6 7 8; do
@@ -67,7 +52,7 @@ omp_ancestry_matches() {  # <exact|launch-shape>
         if [ "$mode" = exact ]; then
           fm_omp_process_matches "$comm" "$args" "$pid" && return 0
         else
-          omp_launch_argv_shape "$args" && return 0
+          fm_omp_launch_argv_shape "$args" && return 0
         fi
         ;;
       *claude*|*codex*|*opencode*|*grok*|kimi|pi|pi-signed|muse|muse-bin-*) return 1 ;;

@@ -51,14 +51,23 @@ detect_with() {
 # so it is not fooled by a detector regression: it is a separate witness that a
 # real harness process launched the run.
 #
-# It recognizes every harness bin/fm-harness.sh's layer-2 walk can identify, not
-# only the ones whose command NAME is a harness. That means cursor, which runs as
-# a bundled node/agent process identified by its structured argv[0], and any
-# harness installed as a node or python SCRIPT rather than a native binary. If
-# this witness saw fewer harnesses than the detector, a developer inside one of
-# the missed harnesses would get a hard failure instead of the loud skip.
+# It recognizes every harness bin/fm-harness.sh can identify, not only the ones
+# whose command NAME is a harness. That means cursor, which runs as a bundled
+# node/agent process identified by its structured argv[0]; OMP, which runs as a
+# `bun` process identified by its launch-bound executable paths; and any harness
+# installed as a node or python SCRIPT rather than a native binary. If this
+# witness saw fewer harnesses than the detector, a developer inside one of the
+# missed harnesses would get a hard failure instead of the loud skip.
+#
+# The witness deliberately reuses the shared cursor and OMP process-identity
+# primitives (bin/fm-cursor-lib.sh, bin/fm-omp-process-lib.sh) that
+# bin/fm-harness.sh itself sources, so it cannot drift from the detector's own
+# rules. It never calls the detector under test, so it stays an independent
+# second signal.
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$ROOT/bin/fm-cursor-lib.sh"
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$ROOT/bin/fm-omp-process-lib.sh"
 
 ambient_harness_in_ancestry() {
   local pid=$$ comm bc args argv0
@@ -71,7 +80,19 @@ ambient_harness_in_ancestry() {
     fi
     bc=$(basename -- "$comm")
     case "$bc" in
-      *claude*|*codex*|*opencode*|*grok*|kimi|muse|muse-bin-*|pi|pi-signed|omp)
+      bun|omp)
+        # OMP runs under bun, so its identity comes from the launch-bound paths,
+        # not the command name. Mirror both evidence modes the detector uses.
+        args=$(ps -o args= -p "$pid" 2>/dev/null)
+        if fm_omp_process_identity_available && fm_omp_process_matches "$comm" "$args" "$pid"; then
+          printf '%s\n' omp
+          return 0
+        fi
+        if [ "${FM_OMP_HARNESS:-}" = omp ] && fm_omp_launch_argv_shape "$args"; then
+          printf '%s\n' omp
+          return 0
+        fi ;;
+      *claude*|*codex*|*opencode*|*grok*|kimi|muse|muse-bin-*|pi|pi-signed)
         printf '%s\n' "$bc"
         return 0 ;;
       node*|python*)
