@@ -1021,6 +1021,25 @@ fm_wake_queued_keys_locked() {
     "$FM_WAKE_QUEUE" 2>/dev/null || true
 }
 
+# fm_wake_has_unacked_at_or_below <ready_seq>
+# True when the durable queue still holds an unacked row whose sequence is at or
+# below <ready_seq>. A leftover .wake-queue.seq high-water mark with no such row
+# is not a supervision event. Both the notifier (deciding whether a ready record
+# covers a real wake) and the coordinator (deciding whether an unconsumed ready
+# record means wakes are piling up) ask this same question, so it has one owner.
+fm_wake_has_unacked_at_or_below() {  # <ready_seq>
+  local ready_seq=$1 found=1
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  if [ -f "$FM_WAKE_QUEUE" ] && awk -F '\t' -v max="$ready_seq" '
+    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 + 0) <= (max + 0) { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$FM_WAKE_QUEUE"; then
+    found=0
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$found"
+}
+
 fm_wake_restore_queue() {
   local drained=$1 restore
   restore="$STATE/.wake-queue.restore.$(fm_current_pid)"

@@ -72,15 +72,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 GRACE=${FM_GUARD_GRACE:-300}
 COORD_LOCK="$STATE/.claude-coordinator.lock"
-# The parked notifier holds this lock the whole time it is parked
-# (bin/fm-claude-watch-notifier.sh acquires it and tags it role "notifier"), and
-# records what it is doing in the epoch ledger beside it. Together they say
-# whether a notifier exists to consume the ready record. READ ONLY: the
-# coordinator never acquires, writes to, or releases either - they belong to the
-# notifier. The lock is named differently from the notifier's own OWNER_LOCK so a
-# stray reference cannot crash the notifier under set -u.
-NOTIFIER_LOCK="$STATE/.claude-autoarm.lock"
-NOTIFIER_EPOCH="$STATE/.claude-autoarm-epoch"
+# The notifier's high-water mark of ready records it has actually delivered
+# (bin/fm-claude-watch-notifier.sh advances it in advance_surfaced). A ready
+# sequence that stays above this is a record nothing consumed. READ ONLY: the
+# coordinator never writes it - it belongs to the notifier.
+NOTIFIER_SURFACED="$STATE/.claude-notifier-surfaced-seq"
 NOTIFIER_ABSENT="$STATE/.claude-notifier-absent"
 READY="$STATE/.claude-ready-to-notify"
 GEN_FILE="$STATE/.claude-coordinator-generation"
@@ -97,6 +93,12 @@ case "$READY_TIMEOUT" in ''|*[!0-9]*|0) READY_TIMEOUT=30 ;; esac
 # stands down so a live-but-failing owner cannot park the notifier forever.
 SUCCESSOR_TIMEOUT_LIMIT=${FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK:-3}
 case "$SUCCESSOR_TIMEOUT_LIMIT" in ''|*[!0-9]*|0) SUCCESSOR_TIMEOUT_LIMIT=3 ;; esac
+# How long a published ready record may sit unconsumed, with a real wake still
+# queued behind it, before the notifier is recorded as absent. A bound well above
+# the notifier's own park poll so a notifier that is merely slow to pick a record
+# up is never reported as missing.
+UNCONSUMED_LIMIT=${FM_CLAUDE_COORD_UNCONSUMED_SECONDS:-120}
+case "$UNCONSUMED_LIMIT" in ''|*[!0-9]*|0) UNCONSUMED_LIMIT=120 ;; esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
@@ -308,78 +310,73 @@ publish_ready() {  # <ready_seq> <predecessor_arm_pid>
   rm -f "$tmp" 2>/dev/null || true
 }
 
-# Scoped to this coordinator's own run: absence is only reportable once this
-# coordinator has watched a notifier be alive, so a record left by a notifier that
-# died in an earlier session never marks a fresh healthy home.
-NOTIFIER_SEEN_LIVE=0
+# The ready sequence this coordinator is currently watching go unconsumed, and
+# the moment it was first seen unconsumed. Scoped to this coordinator's own run.
+UNCONSUMED_SEQ=
+UNCONSUMED_SINCE=0
+# Poll counter for the sampled re-check inside the arm-wait loop.
+NOTIFIER_CHECK_TICK=0
 
-# Confirm a notifier lock pid names a process that is genuinely running now.
-# A bare kill -0 is not enough: the notifier's lock records only a pid number, and
-# the OS recycles pid numbers, so an unrelated process that inherited the number
-# would otherwise pass as a parked notifier and silence a real outage. Resolving
-# the pid to its identity token (start time plus command line) is the repo's
-# existing defence against pid reuse, and a pid whose identity cannot be resolved
-# is treated as not present, matching the fail-toward-silence bias.
-notifier_holder_is_live() {  # <pid>
-  local pid=$1
-  fm_pid_alive "$pid" || return 1
-  fm_pid_identity "$pid" >/dev/null 2>&1
+# Read the notifier's delivered high-water mark. A missing or malformed file
+# means nothing has been delivered yet, which reads as 0.
+notifier_surfaced_seq() {
+  local v
+  v=$(cat "$NOTIFIER_SURFACED" 2>/dev/null || echo 0)
+  case "$v" in
+    ''|*[!0-9]*) printf '0' ;;
+    *) printf '%s' "$v" ;;
+  esac
 }
 
-# Record when the notifier has silently died, so a coordinator publishing into
-# the void leaves a durable trace instead of going half-dead in silence. Called
-# after every successful publish_ready. READ ONLY against the notifier lock and
-# the epoch ledger: this never acquires, writes, or releases either.
+# Record when the notifier has stopped delivering, so a coordinator publishing
+# into the void leaves a durable trace instead of going half-dead in silence.
 #
-# The signal is the notifier's own recorded belief plus its liveness, not lock
-# presence. The notifier is a Stop hook: it exits 2 to deliver each wake and its
-# EXIT trap drops the lock, and no replacement parks until the next Stop. So an
-# empty lock during a handling turn is normal and healthy, and treating it as an
-# outage would write the false marker this check exists to avoid.
+# The signal is the symptom itself, not a guess about why the notifier stopped.
+# The notifier consumes a ready record by advancing its surfaced-seq high-water
+# mark to the published sequence as it delivers the wake. So a published sequence
+# that stays ABOVE that mark, while the durable queue still holds an unacked wake
+# at or below it, means wakes are piling up unread. Whether the notifier was
+# killed, wedged, or never parked at all does not change the incident.
 #
-# Two guards keep an outage provable rather than merely plausible. First, only a
-# notifier THIS coordinator watched go live can be reported missing by it: the
-# epoch ledger is never cleared, so a "parked" line left by a notifier that died
-# in an earlier session would otherwise mark a fresh healthy home. A freshness cap
-# cannot serve here, because a notifier that parks and then dies leaves a record
-# as old as the turn it parked in, so an age bound would miss the real outage it
-# exists to catch. Second, a live lock holder must resolve to a running process
-# whose identity still holds, so a recycled pid number cannot pose as a notifier.
+# Inferring liveness from the notifier's lock cannot work here. The notifier is a
+# Stop hook: it exits 2 to hand each wake over and its EXIT trap drops the lock,
+# and no replacement parks until the next Stop. An empty lock during a handling
+# turn is normal, so treating it as an outage would write the false marker this
+# check exists to avoid.
 #
-# Fail-open bias: anything uncertain writes nothing and clears what it found.
+# A momentary lag is not an outage: the notifier polls on its own cadence and can
+# be seconds behind a fresh publish. Only a record that stays unconsumed past
+# UNCONSUMED_LIMIT seconds is reportable, and the clock restarts whenever a newer
+# sequence is published.
+#
+# Fail-open bias: whenever the signal cannot prove wakes are piling up, this
+# writes nothing and clears what it found. READ ONLY on the notifier's own state.
 record_notifier_presence() {  # <ready_seq>
-  local ready_seq=$1 tmp now first_seen holder_pid holder_role epoch_outcome epoch_owner
-  holder_pid=$(cat "$NOTIFIER_LOCK/pid" 2>/dev/null || true)
-  holder_role=$(cat "$NOTIFIER_LOCK/role" 2>/dev/null || true)
-  # A live holder only counts as a parked notifier when the lock says so. The
-  # turn-end guard takes this same lock with role "terminal-check", and that
-  # holder must not be mistaken for a notifier.
-  case "$holder_role" in
-    notifier|autoarm)
-      if notifier_holder_is_live "$holder_pid"; then
-        NOTIFIER_SEEN_LIVE=1
-        rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
-        return
-      fi
-      ;;
-  esac
-  # No parked notifier holds the lock. Ask the epoch ledger what the last
-  # notifier believed it was doing, and whether that process still exists.
-  epoch_outcome=$(sed -n 's/^.*outcome=\([a-z][a-z-]*\).*$/\1/p' "$NOTIFIER_EPOCH" 2>/dev/null | head -1)
-  epoch_owner=$(sed -n 's/^.*owner_pid=\([0-9][0-9]*\).*$/\1/p' "$NOTIFIER_EPOCH" 2>/dev/null | head -1)
-  # Only "parked" plus a dead owner proves a silent death, and only for a notifier
-  # this coordinator already saw alive. A missing or malformed ledger, a
-  # stand-down outcome, a rewake, a failure the turn-end guard already owns, a
-  # parked owner still alive, or a record predating this coordinator's own run are
-  # all left unmarked.
-  if [ "$NOTIFIER_SEEN_LIVE" != 1 ] || [ "$epoch_outcome" != parked ] \
-    || fm_pid_alive "$epoch_owner"; then
+  local ready_seq=$1 tmp now first_seen
+  case "$ready_seq" in ''|*[!0-9]*) return ;; esac
+  now=$(date +%s)
+  # Delivered, or nothing real is pending: the notifier is doing its job, or
+  # there is no wake for it to miss. Either way the clock resets and any marker
+  # from an earlier outage is cleared, because this is recovery.
+  if [ "$ready_seq" -le "$(notifier_surfaced_seq)" ] \
+    || ! fm_wake_has_unacked_at_or_below "$ready_seq"; then
+    UNCONSUMED_SEQ=
+    UNCONSUMED_SINCE=0
     rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
     return
   fi
-  now=$(date +%s)
-  # Preserve first_seen across rewrites so a one-cycle blip is distinguishable from
-  # a real outage. A missing or malformed existing marker starts a fresh outage.
+  # A newly published sequence starts its own clock: the notifier has had no time
+  # to consume this one yet.
+  if [ "$UNCONSUMED_SEQ" != "$ready_seq" ]; then
+    UNCONSUMED_SEQ=$ready_seq
+    UNCONSUMED_SINCE=$now
+    return
+  fi
+  # Still inside the bound. Do not write, and do not clear: clearing here would
+  # erase an ongoing outage's first_seen while the bound is still being served.
+  [ $(( now - UNCONSUMED_SINCE )) -ge "$UNCONSUMED_LIMIT" ] || return
+  # Preserve first_seen across rewrites so a one-cycle blip is distinguishable
+  # from a real outage. A missing or malformed marker starts a fresh outage.
   first_seen=$(sed -n 's/^first_seen=//p' "$NOTIFIER_ABSENT" 2>/dev/null | head -1)
   case "$first_seen" in ''|*[!0-9]*) first_seen=$now ;; esac
   tmp="$NOTIFIER_ABSENT.tmp.$$"
@@ -396,6 +393,8 @@ record_notifier_presence() {  # <ready_seq>
   fi
   rm -f "$tmp" 2>/dev/null || true
 }
+
+
 
 # Stand down when this session no longer owns state/.lock: a new session
 # generation has taken over and owns its own coordinator.
@@ -477,6 +476,16 @@ while :; do
     if [ -e "$STATE/.afk" ]; then cycle_ledger_note afk; handed_off=1; break; fi
     if ! session_still_owns; then cycle_ledger_note session-handover; handed_off=1; break; fi
     if ! need_supervision; then cycle_ledger_note idle; handed_off=1; break; fi
+    # A published record can only be consumed while the arm blocks, so the
+    # unconsumed clock has to be read here too. Checking only at publish time
+    # would see the record exactly once, before the notifier has had any chance
+    # to pick it up, and could never observe it going unread. Sampled every few
+    # gate polls rather than every one: the check takes the wake-queue lock, and
+    # the bound it serves is measured in seconds.
+    NOTIFIER_CHECK_TICK=$(( NOTIFIER_CHECK_TICK + 1 ))
+    if [ $(( NOTIFIER_CHECK_TICK % 4 )) -eq 0 ]; then
+      record_notifier_presence "$READY_SEQ"
+    fi
     sleep 0.5
   done
   if [ "$handed_off" -eq 1 ]; then

@@ -235,18 +235,11 @@ surfaced_seq() {
 
 # True when the durable queue still holds an unacked row whose sequence is at or
 # below <ready_seq>. A leftover .wake-queue.seq high-water mark with no such row
-# is not a supervision event.
+# is not a supervision event. The coordinator asks the same question when it
+# decides whether an unconsumed ready record means wakes are piling up, so the
+# test lives once in bin/fm-wake-lib.sh.
 has_unacked_wake_at_or_below() {  # <ready_seq>
-  local ready_seq=$1 found=1
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
-  if [ -f "$FM_WAKE_QUEUE" ] && awk -F '\t' -v max="$ready_seq" '
-    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 + 0) <= (max + 0) { found = 1; exit }
-    END { exit found ? 0 : 1 }
-  ' "$FM_WAKE_QUEUE"; then
-    found=0
-  fi
-  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
-  return "$found"
+  fm_wake_has_unacked_at_or_below "$1"
 }
 
 advance_surfaced() {  # <seq>

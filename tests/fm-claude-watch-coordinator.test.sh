@@ -182,21 +182,51 @@ absent_field() {  # <dir> <field>
   sed -n "s/^$2=//p" "$1/state/.claude-notifier-absent" 2>/dev/null | head -1
 }
 
-# A pid that is guaranteed dead: spawn a trivial child and reap it, then reuse its
-# number. Standing in for a notifier that was SIGKILLed while parked.
-dead_pid() {
-  local p
-  (exit 0) &
-  p=$!
-  wait "$p" 2>/dev/null || true
-  printf '%s\n' "$p"
+# Stand in for a notifier that delivers: advance the surfaced high-water mark the
+# way bin/fm-claude-watch-notifier.sh does in advance_surfaced.
+surface_seq() {  # <dir> <seq>
+  printf '%s\n' "$2" > "$1/state/.claude-notifier-surfaced-seq"
 }
 
-# Seed the notifier's epoch ledger the way bin/fm-claude-watch-notifier.sh writes
-# it, so the coordinator reads a real record rather than a fabricated shape.
-seed_epoch() {  # <dir> <outcome> <owner-pid>
-  printf 'epoch=1 owner_pid=%s outcome=%s updated_at=%s\n' "$3" "$2" "$(date +%s)" \
-    > "$1/state/.claude-autoarm-epoch"
+# Two in-flight tasks so supervision need persists while the coordinator watches
+# its published record go unconsumed.
+seed_two_tasks() {  # <dir>
+  local dir=$1
+  printf 'window=x\n' > "$dir/state/one.meta"
+  printf 'working: go\n' > "$dir/state/one.status"
+  printf 'window=y\n' > "$dir/state/two.meta"
+  printf 'working: still busy\n' > "$dir/state/two.status"
+  prime_seen "$dir" "$dir/state/one.status"
+  prime_seen "$dir" "$dir/state/two.status"
+}
+
+# Drive one real actionable close and wait for the coordinator to publish a ready
+# record above <prev-seq>. Echoes the newly published ready_seq.
+publish_actionable() {  # <dir> <prev-seq>
+  local dir=$1 prev=$2 seq i
+  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
+  i=0
+  while [ "$i" -lt 600 ]; do
+    seq=$(ready_field "$dir" ready_seq)
+    if [ -n "$seq" ] && [ "$seq" -gt "$prev" ] 2>/dev/null; then
+      printf '%s\n' "$seq"
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# Poll for a path to stay absent for <limit-tenths>. False as soon as it appears.
+stays_absent() {  # <path> <limit-tenths>
+  local path=$1 limit=$2 i=0
+  while [ "$i" -lt "$limit" ]; do
+    [ -e "$path" ] && return 1
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 0
 }
 
 wait_file() {  # <path> <limit-tenths>
@@ -778,72 +808,41 @@ test_coordinator_stands_down_after_successor_timeout_streak() {
   pass "coordinator: stands down after a bounded successor-timeout streak so the guard blocks an idle Stop"
 }
 
-# --- 10. a notifier that died while parked -> the coordinator records it -------
-# The gap this task closes: a live coordinator publishing ready records with no
-# notifier to consume them used to go silently half-dead. The proof of that death
-# is the notifier's own epoch ledger saying "parked" while the process it names is
-# gone. The coordinator must then write the durable .claude-notifier-absent marker
-# and leave a notifier-absent breadcrumb in the cycle-exit ledger, WITHOUT ever
-# touching the notifier lock.
-test_records_notifier_absent_when_notifier_died_parked() {
-  local dir coord holder fs seq gen owner
-  dir=$(make_home notifier-absent)
+
+
+# --- 10. a ready record left unconsumed past the bound -> recorded --------------
+# The gap this task closes: a coordinator that keeps supervision alive while
+# nothing consumes its ready records used to go silently half-dead, and wakes
+# piled up unread in the durable queue (issue #80). The observable symptom is
+# exactly that: the published ready_seq stays above the notifier's surfaced
+# high-water mark while a real unacked wake sits at or below it. Once that has
+# held past the bound the coordinator must write the durable
+# .claude-notifier-absent marker and leave a notifier-absent breadcrumb in the
+# cycle-exit ledger, without ever writing the notifier's own state.
+test_records_notifier_absent_when_ready_record_goes_unconsumed() {
+  local dir coord seq fs gen owner
+  dir=$(make_home notifier-unconsumed)
   start_lock_holder "$dir"
-  # Two tasks so need persists and the coordinator keeps cycling past the first
-  # publish, giving it a second cycle in which to notice the death.
-  printf 'window=x\n' > "$dir/state/one.meta"
-  printf 'working: go\n' > "$dir/state/one.status"
-  printf 'window=y\n' > "$dir/state/two.meta"
-  printf 'working: still busy\n' > "$dir/state/two.status"
-  prime_seen "$dir" "$dir/state/one.status"
-  prime_seen "$dir" "$dir/state/two.status"
+  seed_two_tasks "$dir"
 
-  # Stage a genuinely parked notifier first, because absence is only reportable
-  # for a notifier this coordinator watched go live. A long-lived process stands
-  # in for the parked notifier so the healthy state is stable while the
-  # coordinator confirms it, and its pid is what the epoch ledger records.
-  sleep 300 &
-  holder=$!
-  mkdir -p "$dir/state/.claude-autoarm.lock"
-  printf '%s\n' "$holder" > "$dir/state/.claude-autoarm.lock/pid"
-  printf 'notifier\n' > "$dir/state/.claude-autoarm.lock/role"
-  seed_epoch "$dir" parked "$holder"
-
-  coord=$(start_coordinator "$dir" coord) \
-    || { stop_bg "$holder" "$HOLDER_PID"; fail "session never started the coordinator"; }
+  # A short bound so a real unconsumed episode crosses it quickly.
+  coord=$(start_coordinator "$dir" coord FM_CLAUDE_COORD_UNCONSUMED_SECONDS=2) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+  seq=$(ready_field "$dir" ready_seq)
 
-  # Let the coordinator confirm the live notifier at least once. While a notifier
-  # is parked there must be no marker, so an empty marker across these cycles is
-  # the observable proof it saw a healthy notifier.
-  local k
-  k=0
-  while [ "$k" -lt 30 ]; do
-    [ -e "$dir/state/.claude-notifier-absent" ] \
-      && { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator marked an absence while a notifier was genuinely parked"; }
-    sleep 0.1
-    k=$((k + 1))
-  done
-
-  # Now the parked notifier is killed without releasing anything: the lock goes,
-  # and the epoch ledger keeps saying "parked" naming a pid that is now dead.
-  # That is the silent death this check exists to record.
-  kill -9 "$holder" 2>/dev/null || true
-  wait "$holder" 2>/dev/null || true
-  rm -rf "$dir/state/.claude-autoarm.lock"
-
-  # The coordinator only re-checks the notifier when it publishes a fresh ready
-  # record, so drive a real actionable close to force another cycle.
-  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
+  # A real actionable close queues a durable wake and republishes a higher ready
+  # sequence. Nothing ever advances surfaced-seq, so no notifier is consuming it.
+  seq=$(publish_actionable "$dir" "$seq") \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never republished after a real actionable close"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
 
   wait_file "$dir/state/.claude-notifier-absent" 400 \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator published ready but never recorded the notifier that died while parked"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator left a ready record unconsumed past the bound but never recorded the missing notifier"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
 
   fs=$(absent_field "$dir" first_seen)
   case "$fs" in ''|*[!0-9]*) stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker has no numeric first_seen" ;; esac
-  seq=$(absent_field "$dir" ready_seq)
-  case "$seq" in ''|*[!0-9]*) stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker has no numeric ready_seq" ;; esac
+  case "$(absent_field "$dir" ready_seq)" in ''|*[!0-9]*) stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker has no numeric ready_seq" ;; esac
   gen=$(absent_field "$dir" coordinator_generation)
   case "$gen" in coord-*) : ;; *) stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker has no coordinator_generation token" ;; esac
   owner=$(absent_field "$dir" session_owner)
@@ -853,275 +852,146 @@ test_records_notifier_absent_when_notifier_died_parked() {
   grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator did not leave a notifier-absent breadcrumb in the cycle-exit ledger"; }
 
-  # The coordinator must never re-create the notifier lock: it belongs to the notifier.
+  # The notifier's own state belongs to the notifier: the coordinator must never
+  # write its lock or its surfaced high-water mark.
   [ ! -e "$dir/state/.claude-autoarm.lock" ] \
-    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator acquired or created the notifier's lock"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator created the notifier's lock"; }
+  [ ! -e "$dir/state/.claude-notifier-surfaced-seq" ] \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator wrote the notifier's surfaced-seq high-water mark"; }
 
-  # first_seen must survive a later rewrite while last_seen advances.
+  # first_seen must survive the rewrites the ongoing outage performs, so an
+  # operator can tell a momentary blip from an outage that has been running.
   local fs2 ls1 ls2 j
   ls1=$(absent_field "$dir" last_seen)
   j=0
-  while [ "$j" -lt 120 ]; do
+  while [ "$j" -lt 160 ]; do
     ls2=$(absent_field "$dir" last_seen)
-    [ -n "$ls2" ] && [ "$ls2" -gt "$ls1" ] 2>/dev/null && break
+    [ -n "$ls2" ] && [ -n "$ls1" ] && [ "$ls2" -gt "$ls1" ] 2>/dev/null && break
     sleep 0.25
     j=$((j + 1))
   done
+  [ -n "$ls2" ] && [ "$ls2" -gt "$ls1" ] 2>/dev/null \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "notifier-absent marker was never rewritten while the outage continued"; }
   fs2=$(absent_field "$dir" first_seen)
   [ "$fs2" = "$fs" ] \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "first_seen changed across a rewrite ($fs -> $fs2) instead of surviving"; }
 
   stop_bg "$coord" "$HOLDER_PID"
-  pass "coordinator: records a notifier it watched die while parked, and never touches the notifier lock"
+  pass "coordinator: records the notifier as absent once a ready record sits unconsumed past the bound"
 }
 
-# --- 10a. a parked record from an earlier session must NOT mark a fresh home ---
-# The epoch ledger is never cleared, so a notifier SIGKILLed while parked leaves a
-# "parked" line naming a dead pid behind forever. After a reboot, a brand new
-# session starts and the coordinator hook can reach its first publish before the
-# notifier hook finishes parking. Without a guard the coordinator reads that
-# ancient record, finds the named pid dead, and reports an outage on a home that
-# is perfectly healthy. Absence is only reportable for a notifier THIS coordinator
-# watched go live, so a cold start must stay silent no matter how old the record.
-test_no_marker_for_stale_parked_epoch_before_any_live_notifier() {
-  local dir coord i
-  dir=$(make_home notifier-stale-epoch)
+# --- 10a. a notifier that keeps delivering must NEVER be marked ----------------
+# The false positive to avoid: a healthy home. A delivering notifier advances its
+# surfaced high-water mark to each published ready_seq, so no record is ever left
+# unconsumed and the clock never runs. Marking that home would report a fully
+# working supervision chain as half dead. Cover far longer than the bound.
+test_no_marker_when_notifier_keeps_consuming() {
+  local dir coord seq i
+  dir=$(make_home notifier-consuming)
   start_lock_holder "$dir"
-  printf 'window=x\n' > "$dir/state/task.meta"
-  printf 'working: go\n' > "$dir/state/task.status"
-  prime_seen "$dir" "$dir/state/task.status"
+  seed_two_tasks "$dir"
 
-  # A parked record left by a long-dead notifier from a previous session, with an
-  # updated_at far in the past. Nothing holds the notifier lock.
-  printf 'epoch=42 owner_pid=%s outcome=parked updated_at=1600000000\n' "$(dead_pid)" \
-    > "$dir/state/.claude-autoarm-epoch"
-
-  coord=$(start_coordinator "$dir" coord) \
+  coord=$(start_coordinator "$dir" coord FM_CLAUDE_COORD_UNCONSUMED_SECONDS=2) \
     || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+  seq=$(ready_field "$dir" ready_seq)
+  surface_seq "$dir" "$seq"
 
+  seq=$(publish_actionable "$dir" "$seq") \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never republished after a real actionable close"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+  # A delivering notifier keeps its mark level with each publish.
   i=0
-  while [ "$i" -lt 40 ]; do
+  while [ "$i" -lt 100 ]; do
+    surface_seq "$dir" "$(ready_field "$dir" ready_seq)"
     [ -e "$dir/state/.claude-notifier-absent" ] \
-      && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator reported an outage from a parked record left by an earlier session"; }
+      && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator marked a notifier that was consuming every ready record"; }
     sleep 0.1
     i=$((i + 1))
   done
 
   grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
-    && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator logged a notifier-absent breadcrumb for a stale prior-session record"; }
+    && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator logged a notifier-absent breadcrumb for a delivering notifier"; }
 
   stop_bg "$coord" "$HOLDER_PID"
-  pass "coordinator: a parked record from an earlier session never marks a fresh home"
+  pass "coordinator: a notifier that keeps consuming ready records is never marked absent"
 }
 
-# --- 10b. the healthy gap between Stop hooks must NOT be marked ----------------
-# The false positive this guards: the notifier is a Stop hook. It exits 2 to hand
-# a wake over and its EXIT trap drops .claude-autoarm.lock, and no replacement
-# parks until the next Stop. So for the whole handling turn nothing holds that
-# lock, by design, while the coordinator keeps publishing. Its epoch ledger says
-# "rewake", not "parked". Marking that gap would report a fully working home as
-# half dead, so the coordinator must stay silent across many cycles.
-test_no_marker_during_healthy_rewake_gap() {
+# --- 10b. no real wake pending -> nothing to prove, so nothing is marked -------
+# A lagging surfaced mark on its own is not an incident. A leftover ready
+# high-water mark with every queued wake already acknowledged means no wake is
+# going unread, so there is nothing for a notifier to miss. This is the fail-open
+# bias: an unprovable signal writes no marker and clears whatever it found.
+test_no_marker_when_no_unacked_wake_is_pending() {
   local dir coord i
-  dir=$(make_home notifier-rewake-gap)
+  dir=$(make_home notifier-nothing-pending)
   start_lock_holder "$dir"
   printf 'window=x\n' > "$dir/state/task.meta"
   printf 'working: go\n' > "$dir/state/task.status"
   prime_seen "$dir" "$dir/state/task.status"
 
-  # A notifier that surfaced a wake and exited: no lock holder, rewake outcome,
-  # and the pid that recorded it is gone. This is health, not an outage.
-  seed_epoch "$dir" rewake "$(dead_pid)"
+  # A stale marker from a supposed earlier outage, which recovery must clear.
+  printf 'first_seen=1\nlast_seen=1\nready_seq=0\ncoordinator_generation=coord-old\nsession_owner=0\n' \
+    > "$dir/state/.claude-notifier-absent"
 
-  coord=$(start_coordinator "$dir" coord) \
+  # A ready high-water mark with an empty queue behind it: surfaced-seq lags far
+  # behind, but no unacked row exists at or below any published sequence.
+  printf '99\n' > "$dir/state/.wake-queue.seq"
+  : > "$dir/state/.wake-queue"
+  printf '0\n' > "$dir/state/.claude-notifier-surfaced-seq"
+
+  coord=$(start_coordinator "$dir" coord FM_CLAUDE_COORD_UNCONSUMED_SECONDS=2) \
     || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
   wait_file "$dir/state/.claude-ready-to-notify" 400 \
     || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
 
   i=0
-  while [ "$i" -lt 40 ]; do
-    [ -e "$dir/state/.claude-notifier-absent" ] \
-      && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator marked the normal post-rewake gap as a missing notifier"; }
-    sleep 0.1
-    i=$((i + 1))
-  done
-
-  grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
-    && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator logged a notifier-absent breadcrumb for a healthy rewake gap"; }
-
-  stop_bg "$coord" "$HOLDER_PID"
-  pass "coordinator: the healthy gap between Stop hooks produces no marker"
-}
-
-# --- 11. a live notifier holder -> no marker, and an existing one is cleared ----
-# When a notifier is genuinely parked it holds .claude-autoarm.lock with a live pid
-# tagged role "notifier". The coordinator must then produce no marker, and clear any
-# stale marker left from an earlier outage. The real notifier exits 2 the instant a
-# wake advances the ready record - the exact event that forces the coordinator to
-# re-check - so running it would race its own teardown against the check. Fabricate
-# a live lock holder (a long-lived process whose pid sits in the lock, the
-# coordinator's exact "parked notifier" signal) so the healthy state is stable
-# across the re-check, the same fabrication test 7 uses for a coordinator lock.
-test_no_marker_when_notifier_parked_and_clears_stale() {
-  local dir coord holder first_seq new_seq i
-  dir=$(make_home notifier-present)
-  start_lock_holder "$dir"
-  # Two tasks so need persists and the coordinator keeps cycling.
-  printf 'window=x\n' > "$dir/state/one.meta"
-  printf 'working: go\n' > "$dir/state/one.status"
-  printf 'window=y\n' > "$dir/state/two.meta"
-  printf 'working: still busy\n' > "$dir/state/two.status"
-  prime_seen "$dir" "$dir/state/one.status"
-  prime_seen "$dir" "$dir/state/two.status"
-
-  # Seed a stale marker from a supposed earlier outage. The coordinator must clear
-  # it once it confirms a live notifier.
-  printf 'first_seen=1\nlast_seen=1\nready_seq=0\ncoordinator_generation=coord-old\nsession_owner=0\n' \
-    > "$dir/state/.claude-notifier-absent"
-  # A parked-and-dead epoch alongside the live holder, so clearing the marker can
-  # only come from seeing the live notifier, not from a quiet epoch record.
-  seed_epoch "$dir" parked "$(dead_pid)"
-
-  # A live process standing in for the parked notifier, holding the notifier lock.
-  sleep 120 &
-  holder=$!
-  mkdir -p "$dir/state/.claude-autoarm.lock"
-  printf '%s\n' "$holder" > "$dir/state/.claude-autoarm.lock/pid"
-  printf 'notifier\n' > "$dir/state/.claude-autoarm.lock/role"
-
-  coord=$(start_coordinator "$dir" coord) \
-    || { stop_bg "$holder" "$HOLDER_PID"; fail "session never started the coordinator"; }
-  wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
-  first_seq=$(ready_field "$dir" ready_seq)
-
-  # The coordinator re-checks the notifier only when it publishes a fresh ready
-  # record, so drive a real actionable close to force at least one more cycle. With
-  # a live holder on the lock, that cycle must remove the stale marker.
-  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
-  i=0
-  new_seq=$first_seq
-  while [ "$i" -lt 400 ]; do
-    new_seq=$(ready_field "$dir" ready_seq)
-    [ -n "$new_seq" ] && [ "$new_seq" -gt "$first_seq" ] 2>/dev/null \
-      && [ ! -e "$dir/state/.claude-notifier-absent" ] && break
-    sleep 0.1
-    i=$((i + 1))
-  done
-  [ ! -e "$dir/state/.claude-notifier-absent" ] \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator kept the notifier-absent marker while a live notifier held the lock"; }
-  # The live holder must be untouched: the coordinator is read-only on this lock.
-  kill -0 "$holder" 2>/dev/null \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator killed the notifier lock holder"; }
-  [ "$(cat "$dir/state/.claude-autoarm.lock/pid" 2>/dev/null)" = "$holder" ] \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator rewrote the notifier lock pid"; }
-  [ "$(cat "$dir/state/.claude-autoarm.lock/role" 2>/dev/null)" = notifier ] \
-    || { stop_bg "$holder" "$coord" "$HOLDER_PID"; fail "coordinator rewrote the notifier lock role"; }
-
-  stop_bg "$holder" "$coord" "$HOLDER_PID"
-  pass "coordinator: a live notifier holder leaves no marker, and an existing marker is cleared"
-}
-
-# --- 12. a live holder in another role is not a notifier ------------------------
-# The turn-end guard takes this same lock and tags it role "terminal-check"
-# (bin/fm-turnend-guard.sh). A live holder in that role is not a parked notifier,
-# so it must not silence the check. The coordinator first watches a real parked
-# notifier so absence becomes reportable at all, then the notifier dies and the
-# guard takes the lock in its own role. The marker must still appear, proving the
-# role is what decides and not the bare presence of a live pid.
-test_terminal_check_holder_is_not_a_notifier() {
-  local dir coord notifier guard i
-  dir=$(make_home notifier-role)
-  start_lock_holder "$dir"
-  printf 'window=x\n' > "$dir/state/one.meta"
-  printf 'working: go\n' > "$dir/state/one.status"
-  printf 'window=y\n' > "$dir/state/two.meta"
-  printf 'working: still busy\n' > "$dir/state/two.status"
-  prime_seen "$dir" "$dir/state/one.status"
-  prime_seen "$dir" "$dir/state/two.status"
-
-  # A genuinely parked notifier, so this coordinator sees one alive.
-  sleep 300 &
-  notifier=$!
-  mkdir -p "$dir/state/.claude-autoarm.lock"
-  printf '%s\n' "$notifier" > "$dir/state/.claude-autoarm.lock/pid"
-  printf 'notifier\n' > "$dir/state/.claude-autoarm.lock/role"
-  seed_epoch "$dir" parked "$notifier"
-
-  coord=$(start_coordinator "$dir" coord) \
-    || { stop_bg "$notifier" "$HOLDER_PID"; fail "session never started the coordinator"; }
-  wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$notifier" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
-
-  i=0
-  while [ "$i" -lt 30 ]; do
-    [ -e "$dir/state/.claude-notifier-absent" ] \
-      && { stop_bg "$notifier" "$coord" "$HOLDER_PID"; fail "coordinator marked an absence while a notifier was genuinely parked"; }
-    sleep 0.1
-    i=$((i + 1))
-  done
-
-  # The notifier is killed, and the turn-end guard takes the same lock in its own
-  # role. A live pid now sits in the lock, but it is not a notifier.
-  kill -9 "$notifier" 2>/dev/null || true
-  wait "$notifier" 2>/dev/null || true
-  sleep 300 &
-  guard=$!
-  printf '%s\n' "$guard" > "$dir/state/.claude-autoarm.lock/pid"
-  printf 'terminal-check\n' > "$dir/state/.claude-autoarm.lock/role"
-
-  # Force a fresh publish cycle so the coordinator re-checks the lock's role.
-  printf 'blocked: needs a decision\n' > "$dir/state/one.status"
-
-  wait_file "$dir/state/.claude-notifier-absent" 400 \
-    || { stop_bg "$guard" "$coord" "$HOLDER_PID"; fail "coordinator counted a live terminal-check holder as a parked notifier"; }
-
-  kill -0 "$guard" 2>/dev/null \
-    || { stop_bg "$guard" "$coord" "$HOLDER_PID"; fail "coordinator killed the terminal-check lock holder"; }
-  [ "$(cat "$dir/state/.claude-autoarm.lock/role" 2>/dev/null)" = terminal-check ] \
-    || { stop_bg "$guard" "$coord" "$HOLDER_PID"; fail "coordinator rewrote the terminal-check lock role"; }
-
-  stop_bg "$guard" "$coord" "$HOLDER_PID"
-  pass "coordinator: a live terminal-check holder does not count as a parked notifier"
-}
-
-# --- 13. a parked notifier that is still alive is not an outage ----------------
-# The other side of the epoch signal: the ledger says "parked" and the process it
-# names is still running, it just is not holding the lock at this instant. That is
-# not provable death, so the coordinator must stay silent and clear a stale marker
-# rather than report an outage it cannot prove.
-test_no_marker_when_parked_owner_still_alive() {
-  local dir coord owner i
-  dir=$(make_home notifier-parked-alive)
-  start_lock_holder "$dir"
-  printf 'window=x\n' > "$dir/state/task.meta"
-  printf 'working: go\n' > "$dir/state/task.status"
-  prime_seen "$dir" "$dir/state/task.status"
-
-  sleep 120 &
-  owner=$!
-  seed_epoch "$dir" parked "$owner"
-  printf 'first_seen=1\nlast_seen=1\nready_seq=0\ncoordinator_generation=coord-old\nsession_owner=0\n' \
-    > "$dir/state/.claude-notifier-absent"
-
-  coord=$(start_coordinator "$dir" coord) \
-    || { stop_bg "$owner" "$HOLDER_PID"; fail "session never started the coordinator"; }
-  wait_file "$dir/state/.claude-ready-to-notify" 400 \
-    || { stop_bg "$owner" "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
-
-  i=0
-  while [ "$i" -lt 40 ]; do
+  while [ "$i" -lt 100 ]; do
     [ -e "$dir/state/.claude-notifier-absent" ] || break
     sleep 0.1
     i=$((i + 1))
   done
   [ ! -e "$dir/state/.claude-notifier-absent" ] \
-    || { stop_bg "$owner" "$coord" "$HOLDER_PID"; fail "coordinator reported an outage for a parked notifier whose owner is still alive"; }
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator kept a stale marker with no unacked wake pending"; }
 
-  stop_bg "$owner" "$coord" "$HOLDER_PID"
-  pass "coordinator: a live parked owner is not a provable outage, and clears a stale marker"
+  # Well past the bound, still nothing to report.
+  stays_absent "$dir/state/.claude-notifier-absent" 100 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator marked an absence with no unacked wake to go unread"; }
+
+  stop_bg "$coord" "$HOLDER_PID"
+  pass "coordinator: a lagging surfaced mark with nothing queued writes no marker and clears a stale one"
+}
+
+# --- 10c. the bound itself gates the marker ------------------------------------
+# A momentary lag is not an outage: the notifier polls on its own cadence and can
+# be seconds behind a fresh publish, so marking the first unconsumed observation
+# would report every healthy publish as a failure. The same home, driven the same
+# way but with a long bound, must stay silent for the whole window that a short
+# bound marks inside.
+test_unconsumed_bound_gates_the_marker() {
+  local dir coord seq
+  dir=$(make_home notifier-bound)
+  start_lock_holder "$dir"
+  seed_two_tasks "$dir"
+
+  # A bound far longer than this test's observation window.
+  coord=$(start_coordinator "$dir" coord FM_CLAUDE_COORD_UNCONSUMED_SECONDS=600) \
+    || { stop_bg "$HOLDER_PID"; fail "session never started the coordinator"; }
+  wait_file "$dir/state/.claude-ready-to-notify" 400 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never published a ready record"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+  seq=$(ready_field "$dir" ready_seq)
+
+  # The same unconsumed episode the short-bound test marks on.
+  seq=$(publish_actionable "$dir" "$seq") \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator never republished after a real actionable close"$'\n'"$(cat "$dir/coord.out" 2>/dev/null)"; }
+
+  stays_absent "$dir/state/.claude-notifier-absent" 150 \
+    || { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator marked an absence well inside its unconsumed bound"; }
+  grep -q 'cause=notifier-absent' "$dir/state/.watch-cycle-exits.log" 2>/dev/null \
+    && { stop_bg "$coord" "$HOLDER_PID"; fail "coordinator logged a notifier-absent breadcrumb inside its unconsumed bound"; }
+
+  stop_bg "$coord" "$HOLDER_PID"
+  pass "coordinator: an unconsumed record inside the bound is a lag, not an outage, and is never marked"
 }
 
 test_successor_verified_before_ready_publish
@@ -1134,9 +1004,7 @@ test_single_coordinator_owner
 test_coordinator_lock_does_not_satisfy_guard
 test_coordinator_stands_down_on_session_handover
 test_coordinator_stands_down_after_successor_timeout_streak
-test_records_notifier_absent_when_notifier_died_parked
-test_no_marker_for_stale_parked_epoch_before_any_live_notifier
-test_no_marker_during_healthy_rewake_gap
-test_no_marker_when_notifier_parked_and_clears_stale
-test_terminal_check_holder_is_not_a_notifier
-test_no_marker_when_parked_owner_still_alive
+test_records_notifier_absent_when_ready_record_goes_unconsumed
+test_no_marker_when_notifier_keeps_consuming
+test_no_marker_when_no_unacked_wake_is_pending
+test_unconsumed_bound_gates_the_marker
