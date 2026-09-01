@@ -31,7 +31,7 @@ It lives in the origin metadata beside `decision_keys`, which is state rather th
 This is the route the ordinary flow takes: `complete` transfers a still-open decision to its hold with a `captain-held` line, which closes the live status copy, so a later captain answer is routed to the hold-close path and writes no status line at all.
 
 The status log used to offer a second route, where a resolved line carrying the `answered:` marker that `bin/fm-send.sh` writes on delivery stood in as proof. That route was removed.
-A worker writes its own status lines: `bin/fm-brief.sh` tells a crewmate or scout to append its own `resolved [key=<slug>]: <why it is no longer active>` line whenever a keyed phase fizzles or a blocker clears without a firstmate reply.
+A worker writes its own status lines: `bin/fm-brief.sh` tells a crewmate or scout to append its own `resolved [key=<slug>]: <how it cleared>` line, reusing the key it opened, whenever a blocker or wait clears without a firstmate reply, and tells a secondmate to close a keyed phase that ends without another reportable state the same way.
 Nothing stops that same worker from writing the marker too, so the route was forgeable by the very agent whose source deletion this gate guards, and a check an agent can satisfy by writing a sentence about itself is no check at all.
 The marker still exists as a human-readable annotation on the delivered line; it is simply never read back as evidence.
 
