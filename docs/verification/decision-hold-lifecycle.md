@@ -11,7 +11,8 @@ Plural blocker-readiness and mixed-home projection verification date: 2026-07-22
 Unrouted close-path verification date: 2026-08-13.
 Answer-time closure verification date: 2026-08-16.
 Captain-deferral verification date: 2026-08-30.
-Captain-deferral verification uses tasks-axi 0.2.5.
+Archived-hold verification date: 2026-09-01.
+Captain-deferral and archived-hold verification use tasks-axi 0.2.5.
 
 The focused end-to-end regression uses only synthetic `sample` identities and decision text.
 It begins with a completed investigation and visual review whose genuine unresolved choice exists only in the report.
@@ -37,6 +38,15 @@ Boundary-shaped captain text is stored as a lossless framed payload, and exact `
 An explicit reactivation and second park keep one identity, retain the first cycle, and append the second cycle.
 A persisted pending future cycle finishes after its revisit date and records the resulting inactive future state as complete.
 
+The archived-hold regressions cover `verify`'s tolerance for a hold Done-history retention trimmed out of the backlog.
+They drive the real completion-then-answer ordering end to end, so the answer reaches the hold-close path and its `answered_keys` record, rather than any status line, is what carries the proof past archival.
+Every close path is shown recording that key while a hold left unclosed records none, and a key re-asked after its durable answer is unanswered again.
+The negatives prove an archived hold still fails with no answer evidence, with a mate's own bare self-close, and for a key that was never registered as a hold.
+A missing, empty, or unstructured backlog is refused rather than read as archival, while a real backlog whose Done heading carries trailing text is accepted.
+A home whose `.tasks.toml` configures a non-default `[markdown] path` is judged from that file: real archival out of it still clears the gate, and destroying it is refused even while a decoy `path` under an unrelated table still names a perfectly structured file.
+The status-log answer reader was removed along with its own regressions, because a worker writes its own status lines and could forge the marker it matched on.
+The durable answer record only annotates metadata that already exists: a close performed after teardown deleted the origin's metadata still closes its hold, and leaves the state directory untouched, so a finished origin cannot reappear as a live worker.
+
 The final verification commands and their exact summarized outputs follow.
 
 ```text
@@ -60,7 +70,46 @@ ok - resolve matches first/middle/last in quoted blocked_by and rejects a genuin
 ok - a bound channel's captured answers close their captain holds at answer time
 ok - a channel source with no decision binding closes nothing
 ok - the answer path keeps every guard the unrouted close path already had
-ok - the chat channel feeds the same keyed-answer intake a captured review does
+ok - the chat channel feeds the same keyed-answer intake and clears the gate after archival
+ok - verify tolerates an answered hold archived out of the backlog but still fails one with no answer evidence
+ok - verify treats only a real not-found as archival and refuses when the backlog cannot be read
+ok - verify refuses a mate's own self-close and a forged answered marker with no durable record
+ok - completion refuses a key whose hold was never registered, and accepts it once held
+ok - verify accepts an archived answered hold whose key is named after the answer marker
+ok - verify refuses a deleted, empty, or unstructured backlog instead of reading it as archival
+ok - verify accepts archival in a backlog whose Done heading carries trailing text
+ok - verify tolerates archival of a hold answered on the real completion-then-answer ordering
+ok - every close path records the captain answer durably and an unclosed hold records none
+ok - a re-asked key is unanswered again despite its earlier durable answer record
+ok - verify judges archival from the backlog path tasks-axi resolves, not a decoy
+ok - a post-teardown close closes its hold without resurrecting origin metadata
+
+$ bash tests/fm-classify-decision-key.test.sh
+ok - a stated [key=X] opens X whether it precedes or follows the verb colon
+ok - a keyless needs-decision still opens and closes the default key
+ok - a resolution closes its decision regardless of either line's key position
+ok - blocked [key=X] opens X in both key positions
+ok - two colon-form keyed decisions never collapse into one shared bucket
+ok - punctuation after a complete key preserves multiple-key ambiguity
+ok - note cleanup removes the accepted key occurrence and keeps its lookalike
+ok - a malformed positional key cannot hide the only valid canonical mid-note key
+ok - multiple valid mid-note keys stay ambiguous after a malformed head
+ok - a malformed stated key is rejected in both positions, never folded as default
+ok - status_line_verb strips every bracket tag before the colon, in any order, and recovers the bare verb
+ok - a [corr=...] tag ahead of [key=...] no longer swallows the verb: opens and closes under the stated key
+ok - a [corr=...] tag with no stated key opens under 'default', exactly like a bare needs-decision line
+ok - a [key=x] tag alone (no corr tag) still opens x - no regression from the tag-stripping fix
+ok - blocked/resolved parse their bare verb with any bracket-tag order preceding the colon
+ok - a v5 cursor holding the pto-export-window-ui ghost is rebuilt from its status log
+ok - a v4 cursor holding default for a trailing-key line is discarded after the fold-version bump
+ok - the incremental fold matches the full fold across appends in both key positions
+ok - a [key=X] token as the LAST token of the note states the key, never 'default'
+ok - a bare [slug] token states the key in the documented and closing forms
+ok - the pto-export-window-ui mid-sentence key opens under its stated key
+ok - a blocked line accepts one canonical key inside its note
+ok - an invalid key lookalike cannot hide the only valid canonical key
+ok - a v7 cursor that skipped a valid key after a malformed head is rebuilt
+ok - a v8 cursor that chose one punctuated key is rebuilt
 
 $ bash tests/fm-api-reads.test.sh
 ok - empty home captain queue is an empty list
@@ -106,7 +155,7 @@ $ bin/fm-lint.sh
 fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
 
 $ bin/fm-doc-audience-check.sh
-fm-doc-audience-check: ok surfaces=121 local_links=291
+fm-doc-audience-check: ok surfaces=122 local_links=290
 
 $ git diff --check
 (no output)

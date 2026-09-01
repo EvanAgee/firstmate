@@ -104,10 +104,8 @@ EOF
       and (.reports | any(.id == "sample-route-review"))
   ' >/dev/null || fail "the pre-policy omission shape was not reproduced: $json"
 
-  set +e
   run_teardown "$home" "$id" > "$home/teardown.out" 2> "$home/teardown.err"
   rc=$?
-  set -e
   [ "$rc" -ne 0 ] || fail "completed investigation teardown erased a report-only unresolved decision"
   assert_present "$home/state/$id.meta" "refused completion must preserve investigation metadata"
   assert_grep "REFUSED" "$home/teardown.err" "refusal must be explicit"
@@ -144,6 +142,12 @@ base64_value() {  # <text>
       process.stdout.write(Buffer.concat(chunks).toString("base64"));
     });
   '
+}
+
+# The last recorded value of one origin metadata field, read the way the script
+# itself reads it: the record is append-only, so the final line wins.
+meta_value_in() {  # <home> <id> <field>
+  grep "^$3=" "$1/state/$2.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
 write_origin_meta() {  # <home> <id> [kind]
@@ -1022,7 +1026,7 @@ EOF
   park_rc=$?
   wait "$answer_pid"
   answer_rc=$?
-  set -e
+  set +e
 
   [ "$park_rc" -eq 0 ] || fail "serialized park failed: $(cat "$home/concurrent-park.err")"
   [ "$answer_rc" -ne 0 ] || fail "a concurrent answer replaced the serialized deferral"
@@ -1302,7 +1306,7 @@ SH
   out=$(run_lavish "$home" answers "$result" \
     | run_decisions "$home" answers "$id" --source "the captured result fixture-src sequence 1" 2>&1)
   rc=$?
-  set -e
+  set +e
   [ "$rc" -ne 0 ] || fail "a run that skipped a hold reported success"
   assert_contains "$out" "closed: $id-decision-diversified-membership" \
     "replaying an identical capture was not idempotent: $out"
@@ -1355,7 +1359,7 @@ EOF
   set +e
   out=$(run_decisions "$home" binding "$sid" 2>&1)
   rc=$?
-  set -e
+  set +e
   [ "$rc" -ne 0 ] || fail "an unbound source reported a decision origin"
   [ -z "$out" ] || fail "an unbound source printed an origin: $out"
   show=$(tasks_in "$home" show "$id-decision-only-choice" --full)
@@ -1487,9 +1491,649 @@ SH
   assert_contains "$show" "Resolution mode: answered" "the chat-answered hold did not record its close path"
   assert_contains "$show" "Answer: go with option A" "the chat-answered hold lost the captain answer"
   assert_contains "$show" "answer sent to $id" "the chat-answered hold lost its channel provenance"
+  # The real fm-send flow routed through the hold-close path, so the durable proof
+  # the archival gate reads is the origin's answered_keys, not any status line.
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "chat-choice" \
+    "the real fm-send answer did not durably record answered_keys"
   run_decisions "$home" verify "$id" >/dev/null \
     || fail "a chat-answered decision did not satisfy the completion gate"
-  pass "the chat channel feeds the same keyed-answer intake a captured review does"
+
+  # Retention trims the answered Done hold; the fm-send-answered decision must still
+  # clear the gate end to end, on the durable answered_keys record alone.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+    fail "the archival step did not remove the fm-send-answered hold from the backlog"
+  fi
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/chat-archived.err" \
+    || fail "verify rejected an fm-send-answered hold after archival: $(cat "$home/chat-archived.err")"
+  pass "the chat channel feeds the same keyed-answer intake and clears the gate after archival"
+}
+
+# Done history is trimmed to a bounded recent window, so a captain hold that was
+# answered and marked Done is eventually dropped from the backlog. The answer was
+# durably attested when it was recorded and the status log's resolved line proves
+# it, so verify must treat the archived hold as satisfied. A hold that is absent
+# while its decision is still open (never answered) must still fail.
+test_verify_tolerates_answered_hold_archived_out_of_backlog() {
+  local home id hold
+  home=$(make_home archived-answered)
+  id=sample-archived-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the archived sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-answered origin"
+  write_origin_meta "$home" "$id"
+  cat > "$home/state/$id.status" <<'EOF'
+needs-decision [key=choice]: choose sample option A or option B
+resolved [key=choice]: answered: captain chose option A
+done: report complete
+EOF
+  printf '# Sample archived review\n\nOne choice remained and was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the archived-answered hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed before the hold was answered"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the sample choice"
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "verify failed while the answered hold was still in the backlog"
+
+  # Reproduce retention archival: the answered Done hold is trimmed out of the backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+    fail "the archival step did not remove the answered hold from the backlog"
+  fi
+  run_decisions "$home" verify "$id" > "$home/archived-verify.out" 2> "$home/archived-verify.err" \
+    || fail "verify rejected an answered hold that retention archived: $(cat "$home/archived-verify.err")"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/archived-teardown.err" \
+    || fail "teardown refused after the answered hold was archived: $(cat "$home/archived-teardown.err")"
+
+  # An absent hold whose decision is still open (never answered) must still fail.
+  local open_home open_id
+  open_home=$(make_home archived-open)
+  open_id=sample-open-archived
+  mkdir -p "$open_home/data/$open_id"
+  tasks_in "$open_home" add "$open_id" "Investigate an open sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-open origin"
+  write_origin_meta "$open_home" "$open_id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$open_home/state/$open_id.status"
+  printf '# Sample open review\n\nThe captain has not chosen yet.\n' > "$open_home/data/$open_id/report.md"
+  fm_write_meta "$open_home/state/$open_id.meta" \
+    "window=firstmate:fm-$open_id" "worktree=$open_home/projects/missing-$open_id" \
+    "project=$open_home/projects/sample" "harness=codex" "kind=scout" "mode=scout" \
+    "decisions_reviewed=1" "decision_keys=choice"
+  if run_decisions "$open_home" verify "$open_id" \
+    > "$open_home/open-verify.out" 2> "$open_home/open-verify.err"; then
+    fail "verify accepted an unanswered open decision with no backlog hold"
+  fi
+
+  # No answer line at all: a reviewed key whose status log never records an
+  # explicit resolved or captain-held line, and whose hold is absent, has no
+  # positive evidence it was answered. Absence of the key from the open set is
+  # not proof of an answer, so verify must still fail.
+  local silent_home silent_id
+  silent_home=$(make_home archived-no-evidence)
+  silent_id=sample-silent-archived
+  mkdir -p "$silent_home/data/$silent_id"
+  tasks_in "$silent_home" add "$silent_id" "Investigate a silent sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-no-evidence origin"
+  write_origin_meta "$silent_home" "$silent_id"
+  printf 'done: report complete\n' > "$silent_home/state/$silent_id.status"
+  printf '# Sample silent review\n\nNo answer was ever recorded.\n' > "$silent_home/data/$silent_id/report.md"
+  fm_write_meta "$silent_home/state/$silent_id.meta" \
+    "window=firstmate:fm-$silent_id" "worktree=$silent_home/projects/missing-$silent_id" \
+    "project=$silent_home/projects/sample" "harness=codex" "kind=scout" "mode=scout" \
+    "decisions_reviewed=1" "decision_keys=choice"
+  if run_decisions "$silent_home" verify "$silent_id" \
+    > "$silent_home/silent-verify.out" 2> "$silent_home/silent-verify.err"; then
+    fail "verify accepted an absent hold with no answer line in the status log"
+  fi
+
+  # `complete` appends its own captain-held transfer line for every reviewed key
+  # that is still open, before the captain has answered anything. That line says
+  # where the decision now lives, not that it was answered, so an unanswered hold
+  # that later leaves the backlog must still fail.
+  local held_home held_id held_hold
+  held_home=$(make_home archived-held-only)
+  held_id=sample-held-archived
+  mkdir -p "$held_home/data/$held_id"
+  tasks_in "$held_home" add "$held_id" "Investigate a held sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-held-only origin"
+  write_origin_meta "$held_home" "$held_id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$held_home/state/$held_id.status"
+  printf '# Sample held review\n\nOne choice remained unanswered.\n' > "$held_home/data/$held_id/report.md"
+  held_hold=$(run_decisions "$held_home" hold "$held_id" choice \
+    --title "Choose the held sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the held-only hold"
+  run_decisions "$held_home" complete "$held_id" choice >/dev/null \
+    || fail "completion failed for the held-only origin"
+  grep -q "captain-held \[key=choice\]" "$held_home/state/$held_id.status" \
+    || fail "complete did not append its captain-held transfer line"
+  grep -v "$held_hold" "$held_home/data/backlog.md" > "$held_home/data/backlog.md.trimmed"
+  mv "$held_home/data/backlog.md.trimmed" "$held_home/data/backlog.md"
+  if run_decisions "$held_home" verify "$held_id" \
+    > "$held_home/held-verify.out" 2> "$held_home/held-verify.err"; then
+    fail "verify accepted an unanswered hold whose only status evidence was the captain-held transfer"
+  fi
+
+  # A decision key is stable and reusable, so the same hold id can be answered in
+  # round one and opened again for round two. The stale round-one resolved line is
+  # not evidence for round two. The origin status ends in done, which empties the
+  # open set, so the reviewed-key check is the only gate left and it must fail.
+  local reopen_home reopen_id reopen_hold reopen_open
+  reopen_home=$(make_home archived-reopened)
+  reopen_id=sample-reopened-archived
+  mkdir -p "$reopen_home/data/$reopen_id"
+  tasks_in "$reopen_home" add "$reopen_id" "Investigate a re-opened sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create archived-reopened origin"
+  write_origin_meta "$reopen_home" "$reopen_id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$reopen_home/state/$reopen_id.status"
+  printf '# Sample re-opened review\n\nRound two is still unanswered.\n' > "$reopen_home/data/$reopen_id/report.md"
+  reopen_hold=$(run_decisions "$reopen_home" hold "$reopen_id" choice \
+    --title "Choose the re-opened sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the re-opened hold"
+  run_decisions "$reopen_home" complete "$reopen_id" choice >/dev/null \
+    || fail "completion failed for the re-opened origin"
+  printf 'Captain chose option A.\n' > "$reopen_home/choice-decision.txt"
+  run_decisions "$reopen_home" answer "$reopen_id" choice --decision-file "$reopen_home/choice-decision.txt" >/dev/null \
+    || fail "could not answer round one of the re-opened choice"
+  # bin/fm-send.sh appends this resolved line when the captain's answer is delivered.
+  {
+    printf 'resolved [key=choice]: answered: captain picked A\n'
+    printf 'needs-decision [key=choice]: now choose option C or option D\n'
+    printf 'done: report complete\n'
+  } >> "$reopen_home/state/$reopen_id.status"
+  reopen_open=$(bash -c '. "$1"; status_open_decisions "$2"' _ \
+    "$ROOT/bin/fm-classify-lib.sh" "$reopen_home/state/$reopen_id.status")
+  assert_contains "$reopen_open" "choice" \
+    "the re-opened fixture did not leave the key open in the status fold: $reopen_open"
+  grep -v "$reopen_hold" "$reopen_home/data/backlog.md" > "$reopen_home/data/backlog.md.trimmed"
+  mv "$reopen_home/data/backlog.md.trimmed" "$reopen_home/data/backlog.md"
+  if run_decisions "$reopen_home" verify "$reopen_id" \
+    > "$reopen_home/reopen-verify.out" 2> "$reopen_home/reopen-verify.err"; then
+    fail "verify accepted a re-opened unanswered decision on a stale round-one resolved line"
+  fi
+  assert_contains "$(cat "$reopen_home/reopen-verify.err")" "$reopen_hold" \
+    "the re-open refusal did not name the absent hold, so a different gate refused it"
+  pass "verify tolerates an answered hold archived out of the backlog but still fails one with no answer evidence"
+}
+
+# Absence has to be proven, not inferred from a failed read. Retention trimming a
+# Done hold reports NOT_FOUND; a backlog that cannot be read reports a different
+# error. Only the first is archival. Treating a broken read as archival would let a
+# recorded answer wave through a gate that no longer knows what is in the backlog,
+# right before teardown deletes the source.
+test_verify_refuses_when_the_backlog_cannot_be_read() {
+  local home id hold answered_out unreadable_err
+  home=$(make_home unreadable-backlog)
+  id=sample-unreadable-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the unreadable sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create unreadable-backlog origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample unreadable review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the unreadable sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the unreadable-backlog hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the unreadable-backlog origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the unreadable-backlog choice"
+  # bin/fm-send.sh appends this resolved line when the captain's answer is delivered.
+  printf 'resolved [key=choice]: answered: captain picked A\n' >> "$home/state/$id.status"
+
+  # Real archival: retention trims the answered hold and tasks-axi reports NOT_FOUND.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  cp "$home/data/backlog.md" "$home/backlog.intact.md"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  answered_out=$(tasks_in "$home" show "$hold" --full 2>&1) && \
+    fail "the archival step left the answered hold readable in the backlog"
+  assert_contains "$answered_out" "code: NOT_FOUND" \
+    "archival did not surface as a not-found: $answered_out"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/archived-ok.err" \
+    || fail "verify rejected a genuinely archived answered hold: $(cat "$home/archived-ok.err")"
+
+  # A backlog that cannot be read is a different failure, and it must not pass.
+  cp "$home/backlog.intact.md" "$home/data/backlog.md"
+  chmod 000 "$home/data/backlog.md"
+  unreadable_err=$(tasks_in "$home" show "$hold" --full 2>&1)
+  case "$unreadable_err" in
+    *"code: NOT_FOUND"*)
+      chmod 644 "$home/data/backlog.md"
+      fail "an unreadable backlog reported not-found, so this case cannot tell the two apart"
+      ;;
+  esac
+  if run_decisions "$home" verify "$id" > "$home/unreadable.out" 2> "$home/unreadable.err"; then
+    chmod 644 "$home/data/backlog.md"
+    fail "verify passed while the backlog could not be read at all"
+  fi
+  chmod 644 "$home/data/backlog.md"
+  # The refusal has to name the real cause. Calling an unreadable backlog a deleted
+  # hold sends the operator hunting for a missing item that was never removed.
+  assert_contains "$(cat "$home/unreadable.err")" "could not be read" \
+    "the unreadable-backlog refusal did not say the hold could not be read"
+  case "$(cat "$home/unreadable.err")" in
+    *"is absent from"*)
+      fail "the unreadable-backlog refusal claimed the hold was absent"
+      ;;
+  esac
+  pass "verify treats only a real not-found as archival and refuses when the backlog cannot be read"
+}
+
+# tasks-axi answers "not found in this backlog" for a hold retention trimmed AND for a
+# backlog that is missing, empty, or no longer a backlog. Only the first is archival.
+# A destroyed backlog means the durable record is gone, not retired, so treating it as
+# archival would clear the last gate before teardown erases the source too.
+test_verify_refuses_when_the_backlog_was_destroyed() {
+  local home id hold mode err
+  home=$(make_home wiped-backlog)
+  id=sample-wiped-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the wiped sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create wiped-backlog origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample wiped review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the wiped sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the wiped-backlog hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the wiped-backlog origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the wiped-backlog choice"
+  # bin/fm-send.sh appends this delivered-answer line when the answer reaches the mate.
+  printf 'resolved [key=choice]: answered: captain chose option A\n' >> "$home/state/$id.status"
+  cp "$home/data/backlog.md" "$home/backlog.intact.md"
+
+  # Real archival first: the answered Done hold is trimmed out of an intact backlog.
+  grep -v "$hold" "$home/backlog.intact.md" > "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/trimmed.err" \
+    || fail "verify rejected a genuinely archived answered hold: $(cat "$home/trimmed.err")"
+
+  # Each destroyed backlog still lists the hold, so nothing was retired. tasks-axi
+  # reports the same not-found for all of them, and every one must refuse.
+  for mode in deleted empty junk; do
+    cp "$home/backlog.intact.md" "$home/data/backlog.md"
+    case "$mode" in
+      deleted) rm -f "$home/data/backlog.md" ;;
+      empty) : > "$home/data/backlog.md" ;;
+      junk) printf 'not a backlog at all\n' > "$home/data/backlog.md" ;;
+    esac
+    if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+      fail "the $mode backlog still resolved the hold, so this case proves nothing"
+    fi
+    if run_decisions "$home" verify "$id" > "$home/$mode.out" 2> "$home/$mode.err"; then
+      fail "verify accepted a $mode backlog as proof the hold was archived"
+    fi
+    err=$(cat "$home/$mode.err")
+    case "$err" in
+      *"is absent from"*)
+        fail "the $mode-backlog refusal claimed the hold was absent: $err"
+        ;;
+    esac
+    assert_contains "$err" "$hold" \
+      "the $mode-backlog refusal did not name the hold it could not confirm"
+  done
+  pass "verify refuses a deleted, empty, or unstructured backlog instead of reading it as archival"
+}
+
+# tasks-axi treats any level-2 heading whose text starts with "done" as the Done
+# section, and it writes back whichever heading the file already had. So a real home
+# may spell it "## Done (last 10)". The archival tolerance has to recognise that file
+# as a backlog, or such a home can never finish teardown.
+test_verify_accepts_archival_under_a_custom_done_heading() {
+  local home id hold
+  home=$(make_home custom-done-heading)
+  id=sample-custom-heading-review
+  # Re-spell the Done heading the way tasks-axi allows, before any task exists.
+  printf '## In flight\n\n## Queued\n\n## Done (last 10)\n' > "$home/data/backlog.md"
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the custom-heading sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create custom-heading origin"
+  grep -qx -- '## Done (last 10)' "$home/data/backlog.md" \
+    || fail "tasks-axi did not preserve the custom Done heading, so this case proves nothing"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample custom-heading review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the custom-heading sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the custom-heading hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the custom-heading origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the custom-heading choice"
+  # bin/fm-send.sh appends this delivered-answer line when the answer reaches the mate.
+  printf 'resolved [key=choice]: answered: captain chose option A\n' >> "$home/state/$id.status"
+
+  # Retention trims the answered Done hold out of the otherwise intact backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/custom-heading.err" \
+    || fail "verify rejected an archived answered hold because the Done heading is spelled '## Done (last 10)': $(cat "$home/custom-heading.err")"
+  pass "verify accepts archival in a backlog whose Done heading carries trailing text"
+}
+
+# bin/fm-brief.sh tells a mate to append its own `resolved [key=<slug>]: <why it is no
+# longer active>` line when a keyed phase fizzles or a blocker clears without anyone
+# answering, into the very status file this gate reads. That line closes the key for
+# the fold but proves nothing about a captain answer, so an archived hold backed only
+# by a self-close must still fail before teardown erases the source.
+test_verify_refuses_a_mate_self_close_as_an_answer() {
+  local home id hold
+  home=$(make_home self-close-answer)
+  id=sample-selfclose-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the self-close sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create self-close origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample self-close review\n\nThe phase ended with no captain answer.\n' \
+    > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the self-close sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the self-close hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the self-close origin"
+  # The mate closes its own keyed phase. No captain answer, no answer/resolve/decline.
+  {
+    printf 'resolved [key=choice]: no longer active, that branch was abandoned\n'
+    printf 'done: report complete\n'
+  } >> "$home/state/$id.status"
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if run_decisions "$home" verify "$id" > "$home/selfclose.out" 2> "$home/selfclose.err"; then
+    fail "verify accepted a mate's own self-close as proof the captain answered"
+  fi
+  assert_contains "$(cat "$home/selfclose.err")" "$hold" \
+    "the self-close refusal did not name the absent hold, so a different gate refused it"
+
+  # Even hand-writing the exact delivered-answer marker a mate could forge does not
+  # rescue it: the status-log route was removed as forgeable, so only a real close
+  # path's answered_keys record counts, and this origin never went through one.
+  printf 'resolved [key=choice]: answered: captain chose option A\n' >> "$home/state/$id.status"
+  if run_decisions "$home" verify "$id" > "$home/selfclose-forged.out" 2> "$home/selfclose-forged.err"; then
+    fail "verify accepted a forged answered marker that no close path ever recorded"
+  fi
+  assert_contains "$(cat "$home/selfclose-forged.err")" "$hold" \
+    "the forged-marker refusal did not name the absent hold, so a different gate refused it"
+  pass "verify refuses a mate's own self-close and a forged answered marker with no durable record"
+}
+
+# tasks-axi reports the same not-found for a hold retention trimmed and a hold that
+# was never written at all, and a captain can answer a keyed status decision through
+# fm-send without any hold existing. So an answered status line alone cannot stand in
+# for a durable backlog record. The origin's recorded decision_keys is what tells the
+# two apart: `complete` writes a key there only after finding its hold durable.
+test_completion_refuses_a_key_that_was_never_held() {
+  local home id
+  home=$(make_home never-held)
+  id=sample-never-held-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the never-held sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create never-held origin"
+  write_origin_meta "$home" "$id"
+  printf '# Sample never-held review\n\nA choice was answered but never held.\n' \
+    > "$home/data/$id/report.md"
+  # The captain answered in the status channel. bin/fm-send.sh writes this line
+  # whenever --resolve-key closes a keyed decision, with no hold involved.
+  {
+    printf 'needs-decision [key=choice]: choose sample option A or option B\n'
+    printf 'resolved [key=choice]: answered: captain picked A\n'
+    printf 'done: report complete\n'
+  } > "$home/state/$id.status"
+  if tasks_in "$home" show "$id-decision-choice" --full >/dev/null 2>&1; then
+    fail "the never-held fixture already has a hold, so it proves nothing"
+  fi
+
+  if run_decisions "$home" complete "$id" choice \
+    > "$home/never-held.out" 2> "$home/never-held.err"; then
+    fail "complete accepted a key whose hold was never registered"
+  fi
+  assert_contains "$(cat "$home/never-held.err")" "$id-decision-choice" \
+    "the never-held refusal did not name the missing hold"
+  if grep -q '^decision_keys=' "$home/state/$id.meta"; then
+    fail "a refused completion still recorded the never-held key as inventoried"
+  fi
+
+  # Registering the hold first is what makes the same call succeed, so the refusal
+  # above is about the missing hold and not about the fixture being malformed.
+  run_decisions "$home" hold "$id" choice \
+    --title "Choose the sample option" --reason "captain sample choice pending" --repo sample >/dev/null \
+    || fail "could not register the hold for the never-held origin"
+  run_decisions "$home" complete "$id" choice >/dev/null 2> "$home/held.err" \
+    || fail "complete refused a key whose hold was registered: $(cat "$home/held.err")"
+  pass "completion refuses a key whose hold was never registered, and accepts it once held"
+}
+
+# A decision key is an ordinary slug, so nothing stops one from being named after the
+# answer marker itself. Such a key must clear the archival tolerance like any other, or
+# its origin can never finish teardown.
+# The real captain-answer ordering, end to end through the actual scripts. `complete`
+# transfers the still-open decision to its hold with a captain-held line, which closes
+# the live status copy, so a later captain answer is routed to the hold-close path and
+# writes NO status line at all. The only durable proof left after Done-history
+# retention trims the hold is the origin's answered_keys record, so this is the case
+# that decides whether scout teardown can ever proceed on a genuinely answered
+# decision. Nothing here hand-writes an answer marker or an answered_keys line.
+test_verify_tolerates_archival_on_the_real_answer_ordering() {
+  local home id hold
+  home=$(make_home real-order-archived)
+  id=sample-real-order
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the real-order sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create real-order origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample real-order review\n\nOne choice was answered after completion.\n' \
+    > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the real-order sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the real-order hold"
+
+  # Completion first, exactly as the documented order runs it. Its captain-held
+  # transfer closes the key in the status fold before any answer exists.
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the real-order origin"
+  grep -q "captain-held \[key=choice\]" "$home/state/$id.status" \
+    || fail "precondition: complete did not transfer the decision to its hold"
+  case "$(meta_value_in "$home" "$id" answered_keys)" in
+    *choice*) fail "an unanswered decision was already recorded as answered" ;;
+  esac
+
+  # The captain answers through the real hold-close path, which is where fm-send.sh
+  # routes a key the captain-held transfer already closed.
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the real-order choice through the close path"
+  assert_contains "$(tasks_in "$home" show "$hold" --full)" "state: done" \
+    "the real-order answer left its captain hold open"
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "choice" \
+    "the close path did not durably record the captain answer"
+  # The close path writes no status line at all, so the status log carries no answer
+  # evidence here; the durable answered_keys record above is the only proof there is.
+  if grep -q "answered:" "$home/state/$id.status"; then
+    fail "precondition: the close path wrote a status answer marker, so this is not the real ordering"
+  fi
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "verify failed while the answered hold was still in the backlog"
+
+  # Retention trims the answered Done hold out of the backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+    fail "the archival step did not remove the answered hold from the backlog"
+  fi
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/real-order.err" \
+    || fail "verify rejected a hold answered on the real ordering and then archived: $(cat "$home/real-order.err")"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/real-order-teardown.err" \
+    || fail "teardown refused after the real-order answer was archived: $(cat "$home/real-order-teardown.err")"
+  pass "verify tolerates archival of a hold answered on the real completion-then-answer ordering"
+}
+
+# The durable answered_keys record must come from a real close, never from the mere
+# fact that a hold once existed. `resolve` and `decline` are the other two close
+# paths, so each has to leave the same proof; a hold nobody closed must leave none
+# and must keep failing after archival.
+test_every_close_path_records_the_captain_answer() {
+  local home id hold routed
+  home=$(make_home close-path-records)
+  id=sample-close-paths
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the close-path sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create close-path origin"
+  write_origin_meta "$home" "$id"
+  {
+    printf 'needs-decision [key=routed]: choose the sample route\n'
+    printf 'needs-decision [key=dropped]: choose whether to drop the sample\n'
+    printf 'needs-decision [key=stalled]: choose the stalled sample option\n'
+  } > "$home/state/$id.status"
+  printf '# Sample close-path review\n\nThree choices remained.\n' > "$home/data/$id/report.md"
+
+  routed=sample-followup
+  tasks_in "$home" add "$routed" "Do the routed sample work" --repo sample >/dev/null \
+    || fail "could not create the routed follow-up task"
+  hold=$(run_decisions "$home" hold "$id" routed \
+    --title "Choose the sample route" --reason "captain route choice pending" --repo sample) \
+    || fail "could not register the routed hold"
+  tasks_in "$home" block "$routed" --by "$hold" >/dev/null \
+    || fail "could not block the follow-up on the routed hold"
+  run_decisions "$home" hold "$id" dropped \
+    --title "Choose whether to drop the sample" --reason "captain drop choice pending" --repo sample >/dev/null \
+    || fail "could not register the dropped hold"
+  run_decisions "$home" hold "$id" stalled \
+    --title "Choose the stalled sample option" --reason "captain stalled choice pending" --repo sample >/dev/null \
+    || fail "could not register the stalled hold"
+  run_decisions "$home" complete "$id" routed dropped stalled >/dev/null \
+    || fail "completion failed for the close-path origin"
+
+  printf 'Captain routed the work.\n' > "$home/routed-decision.txt"
+  run_decisions "$home" resolve "$id" routed \
+    --decision-file "$home/routed-decision.txt" --routed-to "$routed" >/dev/null \
+    || fail "could not resolve the routed choice"
+  printf 'Captain dropped the sample.\n' > "$home/dropped-decision.txt"
+  run_decisions "$home" decline "$id" dropped \
+    --decision-file "$home/dropped-decision.txt" >/dev/null \
+    || fail "could not decline the dropped choice"
+
+  local recorded
+  recorded=$(meta_value_in "$home" "$id" answered_keys)
+  assert_contains "$recorded" "routed" "resolve did not durably record the captain answer"
+  assert_contains "$recorded" "dropped" "decline did not durably record the captain answer"
+  case "$recorded" in
+    *stalled*) fail "a hold nobody closed was recorded as answered: $recorded" ;;
+  esac
+
+  # An exact retry of a close is idempotent and must not grow the record.
+  run_decisions "$home" decline "$id" dropped \
+    --decision-file "$home/dropped-decision.txt" >/dev/null \
+    || fail "an exact decline retry was refused"
+  [ "$(meta_value_in "$home" "$id" answered_keys)" = "$recorded" ] \
+    || fail "an exact close retry duplicated the durable answer record"
+
+  # Retention trims the two answered Done holds. The still-open one keeps its hold,
+  # so verify passes on exactly the durable records the close paths wrote.
+  grep -v -e "$id-decision-routed" -e "$id-decision-dropped" "$home/data/backlog.md" \
+    > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/close-path.err" \
+    || fail "verify rejected two holds each closed through a real close path: $(cat "$home/close-path.err")"
+
+  # Take the never-closed hold out of the backlog too. The origin has ended, which
+  # empties the live open set, so its missing durable answer record is the only
+  # thing left to refuse on, and it must.
+  printf 'done: report complete\n' >> "$home/state/$id.status"
+  grep -v "$id-decision-stalled" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed2"
+  mv "$home/data/backlog.md.trimmed2" "$home/data/backlog.md"
+  if run_decisions "$home" verify "$id" > "$home/stalled.out" 2> "$home/stalled.err"; then
+    fail "verify accepted an archived hold that no close path ever answered"
+  fi
+  assert_contains "$(cat "$home/stalled.err")" "$id-decision-stalled" \
+    "the archived never-closed refusal did not name the absent hold: $(cat "$home/stalled.err")"
+  pass "every close path records the captain answer durably and an unclosed hold records none"
+}
+
+# A durable answered_keys record is proof about the round it closed, not a permanent
+# licence. A key is stable and reusable, so a later needs-decision line asks it again,
+# and that new round has no hold and no answer. The record must not outrank the live
+# question.
+test_a_reopened_key_defeats_its_earlier_durable_answer() {
+  local home id hold
+  home=$(make_home reopened-durable)
+  id=sample-reopened-durable
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate a re-asked sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create reopened-durable origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample re-asked review\n\nRound two is still unanswered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the re-asked sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the reopened-durable hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the reopened-durable origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer round one of the re-asked choice"
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "choice" \
+    "precondition: round one did not leave a durable answer record"
+
+  # Round two asks the same key again. No new hold exists for it.
+  printf 'needs-decision [key=choice]: now choose option C or option D\n' \
+    >> "$home/state/$id.status"
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if run_decisions "$home" verify "$id" > "$home/reasked.out" 2> "$home/reasked.err"; then
+    fail "verify accepted a re-asked decision on a stale round-one durable answer"
+  fi
+  pass "a re-asked key is unanswered again despite its earlier durable answer record"
+}
+
+test_verify_accepts_an_archived_hold_whose_key_is_named_answered() {
+  local home id hold
+  home=$(make_home key-named-answered)
+  id=sample-answered-key-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the answered-key sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create answered-key origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=answered]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample answered-key review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" answered \
+    --title "Choose the answered-key sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the answered-key hold"
+  run_decisions "$home" complete "$id" answered >/dev/null \
+    || fail "completion failed for the answered-key origin"
+  printf 'Captain chose option A.\n' > "$home/answered-decision.txt"
+  run_decisions "$home" answer "$id" answered --decision-file "$home/answered-decision.txt" >/dev/null \
+    || fail "could not answer the answered-key choice"
+  # bin/fm-send.sh appends this delivered-answer line when the answer reaches the mate.
+  printf 'resolved [key=answered]: answered: captain chose option A\n' >> "$home/state/$id.status"
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "verify failed while the answered-key hold was still in the backlog"
+
+  # Retention trims the answered Done hold out of the backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/answered-key.err" \
+    || fail "verify rejected an archived answered hold because its key is named 'answered': $(cat "$home/answered-key.err")"
+  pass "verify accepts an archived answered hold whose key is named after the answer marker"
 }
 
 test_uninventoried_report_decision_refuses_completion
@@ -1503,6 +2147,120 @@ test_concurrent_park_and_answer_keep_one_decision
 test_out_of_band_close_is_repairable_before_teardown
 test_unanswered_decision_still_blocks_completion_and_teardown
 test_structured_holds_survive_teardown_and_route_resolution
+# tasks-axi resolves its backlog from the `path` key of the `[markdown]` table in the
+# home's .tasks.toml, so a home that configures a non-default path keeps its whole
+# backlog somewhere else. The intactness check that decides archival has to read THAT
+# file. A check that assumed data/backlog.md would judge a home by a file tasks-axi
+# never touches: it would refuse a real archival because the assumed file is missing,
+# and, worse, a stray `path` under some other table could pass a destroyed backlog off
+# as an intact one. Both directions are proven here against the real script.
+test_verify_reads_the_backlog_path_tasks_axi_resolves() {
+  local home id hold
+  home=$(make_home configured-backlog-path)
+  # The real backlog lives at a configured path, and an unrelated table names a decoy
+  # file that tasks-axi ignores and this gate must ignore too.
+  mkdir -p "$home/custom" "$home/decoy"
+  cat > "$home/.tasks.toml" <<'EOF'
+backend = "markdown"
+
+[sqlite]
+path = "decoy/backlog.md"
+
+[markdown]
+path = "custom/board.md"
+done_keep = 10
+EOF
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/custom/board.md"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/decoy/backlog.md"
+  rm -f "$home/data/backlog.md"
+
+  id=sample-configured-path-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the configured-path sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create configured-path origin"
+  assert_grep "$id" "$home/custom/board.md" "tasks-axi did not use the configured backlog path"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample configured-path review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the configured-path option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the configured-path hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the configured-path origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the configured-path choice"
+  cp "$home/custom/board.md" "$home/board.intact.md"
+
+  # Real archival out of the configured backlog still clears the gate.
+  grep -v "$hold" "$home/board.intact.md" > "$home/custom/board.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/configured.err" \
+    || fail "verify rejected archival out of the configured backlog: $(cat "$home/configured.err")"
+
+  # Destroying the configured backlog must refuse, even though the decoy path named by
+  # the other table is still a perfectly structured file.
+  printf 'not a backlog at all\n' > "$home/custom/board.md"
+  assert_grep "## Done" "$home/decoy/backlog.md" "the decoy file stopped being a structured backlog"
+  if run_decisions "$home" verify "$id" >/dev/null 2> "$home/decoy.err"; then
+    fail "verify read the decoy backlog and accepted a destroyed one as archival"
+  fi
+  assert_contains "$(cat "$home/decoy.err")" "$hold" \
+    "the destroyed configured-backlog refusal did not name the hold"
+  pass "verify judges archival from the backlog path tasks-axi resolves, not a decoy"
+}
+
+# The durable answer record is an annotation on a LIVE origin's metadata, never a
+# reason to bring that metadata back. Teardown deletes state/<origin>.meta on purpose,
+# and the whole fleet reads state/*.meta as its register of live workers, so a close
+# performed after teardown must leave the directory exactly as it found it. The record
+# would be inert anyway: verify reads answered_keys only for a key already in the same
+# file's decision_keys, and only `complete` writes those, only into a file that exists.
+test_a_post_teardown_close_does_not_resurrect_origin_metadata() {
+  local home id hold before after
+  home=$(make_home post-teardown-close)
+  id=sample-torn-origin
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the torn sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the torn-origin sample"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample torn review\n\nOne choice remained.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the torn sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the torn-origin hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the torn-origin sample"
+
+  # A live origin whose metadata exists records the answer, which is the case the
+  # record exists to serve.
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the torn-origin choice while it was live"
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "choice" \
+    "a live origin's close did not record the captain answer"
+
+  # Teardown removes the origin's metadata. Reproduce that end state, then close a
+  # second decision the way a post-teardown visual review does.
+  hold=$(run_decisions "$home" hold "$id" later \
+    --title "Choose the later torn option" --reason "captain later choice pending" --repo sample) \
+    || fail "could not register the second torn-origin hold"
+  rm -f "$home/state/$id.meta"
+  before=$(ls "$home/state" | LC_ALL=C sort)
+  printf 'Captain chose the later option.\n' > "$home/later-decision.txt"
+  run_decisions "$home" answer "$id" later --decision-file "$home/later-decision.txt" >/dev/null \
+    || fail "a post-teardown close should still close its hold"
+  assert_contains "$(tasks_in "$home" show "$hold" --full)" "state: done" \
+    "the post-teardown close did not actually close the hold"
+  assert_absent "$home/state/$id.meta" \
+    "a post-teardown close recreated the origin metadata teardown deleted"
+  after=$(ls "$home/state" | LC_ALL=C sort)
+  [ "$before" = "$after" ] \
+    || fail "a post-teardown close added state files: before [$before] after [$after]"
+  pass "a post-teardown close closes its hold without resurrecting origin metadata"
+}
+
 test_origin_slug_validation_precedes_path_construction
 test_visual_review_uses_shared_completion_owner
 test_none_inventory_and_resolved_prose_do_not_create_holds
@@ -1513,3 +2271,15 @@ test_bound_channel_answers_close_their_holds_at_answer_time
 test_unbound_source_closes_no_hold
 test_answer_preserves_every_unrouted_close_guard
 test_chat_channel_feeds_the_same_keyed_answer_intake
+test_verify_tolerates_answered_hold_archived_out_of_backlog
+test_verify_refuses_when_the_backlog_cannot_be_read
+test_verify_refuses_a_mate_self_close_as_an_answer
+test_completion_refuses_a_key_that_was_never_held
+test_verify_accepts_an_archived_hold_whose_key_is_named_answered
+test_verify_refuses_when_the_backlog_was_destroyed
+test_verify_accepts_archival_under_a_custom_done_heading
+test_verify_tolerates_archival_on_the_real_answer_ordering
+test_every_close_path_records_the_captain_answer
+test_a_reopened_key_defeats_its_earlier_durable_answer
+test_verify_reads_the_backlog_path_tasks_axi_resolves
+test_a_post_teardown_close_does_not_resurrect_origin_metadata

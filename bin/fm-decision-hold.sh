@@ -40,7 +40,26 @@
 # metadata inventory is unioned idempotently. A post-teardown visual review can
 # complete against the surviving report and holds without recreating task state.
 # `verify` is read-only and is called by scout teardown so teardown cannot erase a
-# source before this gate has succeeded.
+# source before this gate has succeeded. A reviewed key whose hold was answered and
+# then trimmed out of the backlog by Done-history retention still passes, but only on
+# positive evidence on two counts. The key must already be recorded in the origin's
+# decision_keys, which only happens after an earlier `complete` found its hold durable,
+# because tasks-axi reports the same not-found for a hold that was trimmed and one that
+# never existed. And the captain must be proven to have answered it. The durable proof
+# is the origin's ONLY recorded answered_keys: `resolve`, `answer`, `decline`, and
+# `repair` each add the key there after tasks-axi confirms the hold kept its resolution
+# record, so the proof lives in state and survives the retention that removes the hold
+# itself. Nothing else counts. The status log was once a second route, and it was
+# removed: fm-brief.sh tells a crewmate or scout to append its own
+# `resolved [key=<slug>]: ...` line whenever a blocker clears without a firstmate reply,
+# so a worker can write any resolved line it likes, marker and all. A check the guarded
+# agent can satisfy by writing a sentence about itself is no check. A key answered in
+# round one and then re-opened by a later needs-decision or blocked line is not answered
+# either: answered_keys is checked against the open-decision fold, so a live question
+# outranks even a standing answered_keys record. A reviewed key with no such record -
+# one still open, one re-opened, one a mate closed itself, or one that never appeared
+# anywhere - must keep a present durable hold, so an absent hold with no answer evidence
+# keeps failing.
 #
 # `resolve`, `answer`, and `decline` close active holds; `repair` attests a hold
 # already closed outside this script. All four paths require a non-empty captain
@@ -260,6 +279,128 @@ task_show() {  # <id>
   tasks_axi show "$1" --full 2>/dev/null
 }
 
+# Read one hold ONCE and say what came back, as "<verdict>\t<payload>":
+#   ok       + the show output           - the hold is present and readable
+#   absent   + a reason clause           - tasks-axi says NOT_FOUND, so it is really gone
+#   unreadable + a reason clause         - any other failure, payload carried through
+# A backlog that cannot be read is NOT a deleted hold. Reporting one as the other
+# would send an operator hunting for a missing item at the exact moment teardown is
+# about to erase a source, so tasks-axi's own NOT_FOUND code tells them apart. Both
+# reason clauses are phrased to finish "captain decision <id> ...".
+# One read serves both the absence probe and the durability check: splitting them
+# into separate reads costs a second subprocess per key and lets the backlog change
+# between the two, which is how a caller ends up with no reason to report at all.
+
+# The backlog file tasks-axi actually reads. tasks_axi runs it with $FM_HOME as its
+# working directory, so this mirrors tasks-axi's own config resolution (its
+# resolveConfig / resolveMarkdownPath) rather than assuming $DATA/backlog.md: an
+# intactness check on a file tasks-axi never consulted would decide archival from the
+# wrong contents. In tasks-axi's precedence order, TASKS_AXI_FILE wins outright, then
+# the `path` key of the `[markdown]` table in $FM_HOME/.tasks.toml, then the same key
+# in the user's ~/.tasks-axi/config.toml. The table matters: tasks-axi ignores keys in
+# any other table, so a `path` under some unrelated `[section]` must not be picked up
+# here either, or a decoy path could stand in for a destroyed backlog. With no path
+# configured anywhere, tasks-axi takes the FIRST of "backlog.md" then "data/backlog.md"
+# that EXISTS relative to $FM_HOME, and falls back to the first candidate when neither
+# does. Relative paths resolve against $FM_HOME, matching tasks-axi's cwd.
+toml_markdown_path() {  # <toml-path>
+  [ -r "$1" ] || return 0
+  awk '
+    { line = $0; sub(/#.*/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line) }
+    line == "" { next }
+    line ~ /^\[[^]]*\]$/ {
+      table = substr(line, 2, length(line) - 2)
+      gsub(/^[ \t]+|[ \t]+$/, "", table)
+      next
+    }
+    table != "markdown" { next }
+    {
+      if (match(line, /^path[ \t]*=[ \t]*/)) {
+        value = substr(line, RLENGTH + 1)
+        gsub(/^[ \t]+|[ \t]+$/, "", value)
+        quote = substr(value, 1, 1)
+        if ((quote == "\"" || quote == "'\''") && length(value) > 1 \
+            && substr(value, length(value), 1) == quote) {
+          print substr(value, 2, length(value) - 2)
+          exit
+        }
+      }
+    }
+  ' "$1"
+}
+
+backlog_file() {
+  local path=''
+  if [ -n "${TASKS_AXI_FILE:-}" ]; then
+    path=$TASKS_AXI_FILE
+  else
+    path=$(toml_markdown_path "$FM_HOME/.tasks.toml")
+    [ -n "$path" ] || path=$(toml_markdown_path "$HOME/.tasks-axi/config.toml")
+  fi
+  if [ -z "$path" ]; then
+    if [ -e "$FM_HOME/backlog.md" ]; then
+      path=backlog.md
+    elif [ -e "$FM_HOME/data/backlog.md" ]; then
+      path=data/backlog.md
+    else
+      path=backlog.md
+    fi
+  fi
+  case "$path" in
+    /*) printf '%s' "$path" ;;
+    *) printf '%s/%s' "$FM_HOME" "$path" ;;
+  esac
+}
+
+# 0 when this home's backlog is a readable file that still has the structure
+# tasks-axi maintains. Retention only removes entries, never the section headings, so
+# a missing, empty, or structurally destroyed file is not a backlog whose contents can
+# be trusted to mean anything. The Done heading is matched the same permissive way
+# tasks-axi's own parser matches it - a level-2 heading whose text begins with "done",
+# case-insensitively - because tasks-axi writes back whatever heading the file already
+# had, so a real home may spell it "## Done (last 10)" or "## done" and still be sound.
+backlog_is_intact() {
+  local f
+  f=$(backlog_file)
+  [ -s "$f" ] && [ -r "$f" ] \
+    && grep -qiE '^##[[:space:]]+done' -- "$f" 2>/dev/null
+}
+
+read_hold() {  # <id>
+  local id=$1 out
+  if out=$(tasks_axi show "$id" --full 2>&1); then
+    printf 'ok\t%s' "$out"
+    return 0
+  fi
+  if printf '%s\n' "$out" | grep -qx 'code: NOT_FOUND'; then
+    # tasks-axi reports the same not-found whether ONE hold was trimmed out of a real
+    # backlog or the backlog itself is gone, empty, or unparseable, so its answer only
+    # means "the hold is not in what I read". Retention trims a Done entry out of an
+    # intact file and leaves its section headings behind, so a readable file still
+    # carrying the Done heading is a real backlog that simply no longer lists this
+    # hold. A file that is missing, empty, or has lost that structure is a destroyed
+    # backlog, and calling that archival would let teardown erase a source whose
+    # durable record was wiped rather than retired.
+    if backlog_is_intact; then
+      printf 'absent\tis absent from %s' "$(backlog_file)"
+    else
+      printf 'unreadable\tcould not be confirmed because %s is missing, empty, or not a backlog' \
+        "$(backlog_file)"
+    fi
+  else
+    printf 'unreadable\tcould not be read from %s: %s' \
+      "$(backlog_file)" "$(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+}
+
+hold_read_verdict() {  # <read_hold-output>
+  printf '%s' "${1%%$'\t'*}"
+}
+
+hold_read_payload() {  # <read_hold-output>
+  printf '%s' "${1#*$'\t'}"
+}
+
 show_field() {  # <show-output> <field>
   local output=$1 field=$2
   printf '%s\n' "$output" | sed -n "s/^  $field: //p" | head -1
@@ -342,6 +483,46 @@ sorted_key_union() {  # <comma-list> <newline-or-space-separated-new-keys>
 
 meta_value() {  # <meta> <key>
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
+# Record durably, in the origin's own metadata, that the captain's answer for ONE key
+# was closed through this script. Only the close paths call it, and they call it only
+# after tasks-axi confirmed the hold retained its resolution record, so the list is a
+# statement about closes this script performed rather than about anything a status log
+# claims. That matters because the hold body carrying the same proof lives in the Done
+# section, which retention eventually trims; this line survives in state and is the
+# only evidence `verify` still has once the hold is gone.
+# The union is idempotent, so an exact retry of a close does not grow the list.
+# The record is written only into a metadata file that already exists, and this
+# function never creates one. `verify` consults answered_keys only for a key already
+# listed in that same metadata's decision_keys, and `command_complete` writes
+# decision_keys only into an existing metadata file too, so a metadata file conjured
+# here could never carry the decision_keys any gate reads and would prove nothing.
+# Creating one would instead do harm: teardown deletes $STATE/<origin>.meta on purpose,
+# and state/*.meta is the fleet's sole register of live workers, so a post-teardown
+# close that recreated the file would resurrect a finished origin as a phantom worker
+# for every consumer that walks that directory.
+record_answered_key() {  # <origin-id> <decision-key>
+  local origin=$1 key=$2 meta="$STATE/$1.meta" lock previous merged
+  [ -f "$meta" ] || return 0
+  lock=$(fm_meta_lock_path "$meta") || fail "could not resolve task metadata lock"
+  fm_lock_acquire_wait "$lock"
+  DECISION_META_LOCK=$lock
+  DECISION_META_LOCK_HELD=1
+  if [ ! -f "$meta" ]; then
+    fm_lock_release "$lock"
+    DECISION_META_LOCK_HELD=0
+    return 0
+  fi
+  previous=$(meta_value "$meta" answered_keys)
+  merged=$(sorted_key_union "$previous" "$key")
+  if [ "$previous" != "$merged" ]; then
+    printf 'answered_keys=%s\n' "$merged" >> "$meta" \
+      || { fm_lock_release "$lock" || true; DECISION_META_LOCK_HELD=0
+           fail "could not record the captain answer for $origin/$key"; }
+  fi
+  fm_lock_release "$lock"
+  DECISION_META_LOCK_HELD=0
 }
 
 origin_open_decisions() {  # <origin-id>
@@ -500,9 +681,11 @@ verify_hold_resolved() {  # <hold-id>
   body_has_resolution_record "$body"
 }
 
-verify_hold_durable() {  # <hold-id>
-  local id=$1 show state held kind hold_kind body
-  show=$(task_show "$id") || fail "captain decision $id is absent from $FM_HOME/data/backlog.md"
+verify_hold_durable() {  # <hold-id> [prior-read_hold-output]
+  local id=$1 read_out=${2:-} show state held kind hold_kind body
+  [ -n "$read_out" ] || read_out=$(read_hold "$id")
+  show=$(hold_read_payload "$read_out")
+  [ "$(hold_read_verdict "$read_out")" = ok ] || fail "captain decision $id $show"
   state=$(show_field "$show" state)
   held=$(show_field "$show" held)
   kind=$(show_field "$show" kind)
@@ -524,6 +707,72 @@ verify_hold_durable() {  # <hold-id>
     return 0
   fi
   fail "captain decision $id is neither active, durably deferred, nor durably resolved"
+}
+
+# The reviewed-inventory check for `complete` and `verify`. It is `verify_hold_durable`
+# with one added tolerance: a hold that is ABSENT from the backlog passes only when
+# three POSITIVE facts all hold. Done-history retention eventually trims an answered,
+# Done hold out of the backlog, so archival must not fail the gate; nothing weaker than
+# real proof may pass, because this is the last thing standing between scout teardown
+# and deleting a source.
+# First, the captain must genuinely have answered the key. The SOLE positive proof is
+# the origin metadata's answered_keys list, which only a close path writes and only
+# after tasks-axi confirmed the hold kept its resolution record. It lives in state, so
+# it outlives the Done entry retention removes. The status log is NOT accepted, and no
+# longer offers a second route: a worker writes its own status lines (fm-brief.sh tells
+# a crewmate or scout to append its own resolved line when a blocker clears without a
+# firstmate reply), so any answered marker there is forgeable by the very agent whose
+# source deletion this gate guards.
+# Second, the hold must have EXISTED before, or a hold that never existed would be
+# indistinguishable from one retention trimmed - tasks-axi reports NOT_FOUND for both.
+# The caller passes held_before=1 only for a key already in the origin's decision_keys,
+# which `complete` writes only after finding that key's hold durable, so a key being
+# inventoried for the first time can never use the tolerance.
+# Third, absence must be proven: a tasks-axi NOT_FOUND read out of a backlog that is
+# still intact (read_hold's absent verdict). tasks-axi answers NOT_FOUND for a wiped
+# backlog exactly as it does for a trimmed hold, so a backlog that is missing, empty,
+# or no longer structured is not an archived hold, and neither is one that cannot be
+# read at all. Every failing case falls through to verify_hold_durable and fails
+# loudly, the way it did before this tolerance existed.
+verify_reviewed_hold() {  # <origin-id> <hold-id> <status-file> <key> <held-before>
+  local origin=$1 id=$2 status_file=$3 key=$4 held_before=$5 read_out
+  read_out=$(read_hold "$id")
+  if [ "$held_before" = 1 ] \
+    && [ "$(hold_read_verdict "$read_out")" = absent ] \
+    && key_was_answered "$origin" "$status_file" "$key"; then
+    return 0
+  fi
+  verify_hold_durable "$id" "$read_out"
+}
+
+# 0 when the captain's answer for one key is proven durably AND nothing has re-opened
+# that key since. The ONLY positive proof is the origin metadata's answered_keys list,
+# which only a close path (resolve, answer, decline, repair) writes and only after the
+# captain's answer closed a real hold. The status-log route was removed: a worker
+# writes its own status lines (fm-brief.sh instructs a crewmate or scout to append its
+# own `resolved [key=<slug>]: ...` line when a blocker clears without a firstmate
+# reply), so a `resolved [key=X]: answered: ...` line is forgeable by the very agent
+# whose source deletion this gate guards. A check an agent can satisfy by writing a
+# sentence about itself is no check, so it cannot stand as answer proof.
+# A key is stable and reusable, so a decision answered in round one can be asked again
+# with a later needs-decision or blocked line; an earlier answer says nothing about the
+# new round, and the hold that would carry it is gone. The re-open guard here reads the
+# RAW status_open_decisions fold, deliberately NOT origin_open_decisions. The two differ
+# in one way that matters exactly here: origin_open_decisions additionally suppresses the
+# whole open set once the origin's last status line is `done` or `failed`, which is the
+# normal state at teardown. If this guard used that suppressed set, a key re-opened in a
+# later round and then followed by a routine `done:` line would read as not-open, and a
+# stale round-one answered_keys entry would wave the unanswered new round through right
+# before teardown deletes the source. Reading the raw fold keeps a re-opened key visible
+# regardless of a trailing done line, so a live question always outranks an old answer.
+key_was_answered() {  # <origin-id> <status-file> <key>
+  local origin=$1 status_file=$2 key=$3 open
+  while IFS=$'\t' read -r open _verb _summary; do
+    [ "$open" != "$key" ] || return 1
+  done <<EOF
+$(status_open_decisions "$status_file")
+EOF
+  list_has_key "$(meta_value "$STATE/$origin.meta" answered_keys)" "$key"
 }
 
 verify_parked_hold() {  # <hold-id> <mode> <until-or-empty> <reason> [allow-expired]
@@ -779,16 +1028,18 @@ command_complete() {
     previous=$(meta_value "$meta" decision_keys)
   fi
   keys=$(sorted_key_union "$previous" "$supplied")
+
+  status_file="$STATE/$origin.status"
   if [ -n "$keys" ]; then
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      verify_hold_durable "$(hold_id "$origin" "$key")"
+      verify_reviewed_hold "$origin" "$(hold_id "$origin" "$key")" "$status_file" "$key" \
+        "$(list_has_key "$previous" "$key" && echo 1 || echo 0)"
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
   fi
 
-  status_file="$STATE/$origin.status"
   raw_open=$(status_open_decisions "$status_file")
   open=$(origin_open_decisions "$origin")
   while IFS=$'\t' read -r key _verb _summary; do
@@ -829,7 +1080,7 @@ EOF
 }
 
 command_verify() {
-  local origin=${1:-} meta reviewed keys key open
+  local origin=${1:-} meta reviewed keys key open status_file
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   meta="$STATE/$origin.meta"
@@ -838,10 +1089,13 @@ command_verify() {
   reviewed=$(meta_value "$meta" decisions_reviewed)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed unresolved-decision inventory"
   keys=$(meta_value "$meta" decision_keys)
+  status_file="$STATE/$origin.status"
   if [ -n "$keys" ]; then
+    # Every key here was read back out of decision_keys, which `complete` writes only
+    # after verifying that key's hold was durable, so all of them were held before.
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      verify_hold_durable "$(hold_id "$origin" "$key")"
+      verify_reviewed_hold "$origin" "$(hold_id "$origin" "$key")" "$status_file" "$key" 1
     done <<EOF
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
@@ -883,6 +1137,7 @@ command_resolve() {
     hold_show=$(task_show "$id")
     hold_body=$(show_field "$hold_show" body)
     verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$routed_csv"
+    record_answered_key "$origin" "$key"
     printf 'resolved: %s\n' "$id"
     return 0
   fi
@@ -921,6 +1176,8 @@ command_resolve() {
         || fail "could not route the recorded decision to $dep"
     fi
   done
+  # Record the durable answer proof before the irreversible done (see close_unrouted_hold).
+  record_answered_key "$origin" "$key"
   tasks_axi "done" "$id" >/dev/null || fail "could not close resolved captain hold $id"
   verify_hold_resolved "$id" || fail "captain hold $id did not retain its durable resolution record"
   printf 'resolved: %s -> %s\n' "$id" "$routed"
@@ -957,6 +1214,7 @@ close_unrouted_hold() {  # <mode> <outcome-word> <origin-id> <decision-key> <fla
     hold_show=$(task_show "$id")
     hold_body=$(show_field "$hold_show" body)
     verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$ROUTED_NONE"
+    record_answered_key "$origin" "$key"
     printf '%s: %s\n' "$outcome" "$id"
     return 0
   fi
@@ -977,6 +1235,13 @@ close_unrouted_hold() {  # <mode> <outcome-word> <origin-id> <decision-key> <fla
   body=$(resolution_body "$mode" "$ROUTED_NONE")
   tasks_axi update "$id" --body "$body" >/dev/null \
     || fail "could not record the captain decision on $id"
+  # Record the durable answer proof BEFORE the irreversible tasks-axi done, so a
+  # metadata-write failure aborts here (the hold stays active and the close can be
+  # retried idempotently) rather than after a successful close - which would report an
+  # already-closed hold as not closed and send the operator down a re-answer path. An
+  # answered_keys entry for a hold that is still present is harmless: verify only reads
+  # answered_keys when the hold is absent.
+  record_answered_key "$origin" "$key"
   tasks_axi "done" "$id" >/dev/null || fail "could not close $mode captain hold $id"
   verify_hold_resolved "$id" || fail "captain hold $id did not retain its durable resolution record"
   printf '%s: %s\n' "$outcome" "$id"
@@ -1258,6 +1523,7 @@ command_repair() {
   hold_body=$(show_field "$show" body)
   if [ "$state" = "done" ] && body_has_resolution_record "$hold_body"; then
     verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$ROUTED_NONE"
+    record_answered_key "$origin" "$key"
     printf 'repaired: %s\n' "$id"
     return 0
   fi
@@ -1269,6 +1535,7 @@ command_repair() {
   show=$(task_show "$id") || fail "captain decision $id disappeared while recording the repair"
   [ "$(show_field "$show" state)" = "done" ] || fail "repairing $id reopened a closed captain decision"
   verify_hold_resolved "$id" || fail "captain hold $id did not retain its durable resolution record"
+  record_answered_key "$origin" "$key"
   printf 'repaired: %s\n' "$id"
 }
 

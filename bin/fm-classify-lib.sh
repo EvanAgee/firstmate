@@ -77,6 +77,17 @@ FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 FM_CLASSIFY_RESOLVE_VERB_DEFAULT='resolved'
 FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT='captain-held'
 
+# The note prefix bin/fm-send.sh writes on the resolved line it appends when a
+# captain's answer is DELIVERED, so a reader can tell that close apart from the
+# `resolved [key=<slug>]: <why it is no longer active>` line bin/fm-brief.sh tells a
+# mate to append when a keyed phase fizzles or a blocker clears on its own. It is a
+# human-readable annotation ONLY. It is deliberately not read back as proof anyone
+# answered: a mate writes its own status lines, so it can forge this marker as easily
+# as any other text. The one durable answer proof is the origin metadata's
+# answered_keys list, which only bin/fm-decision-hold.sh's close paths write.
+# shellcheck disable=SC2034 # Read by bin/fm-send.sh, not by this lib's own fold.
+FM_CLASSIFY_ANSWER_NOTE_MARKER='answered:'
+
 # Return the last non-blank line of a status file (empty if missing/blank).
 last_status_line() {
   local f=$1
