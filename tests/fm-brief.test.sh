@@ -913,10 +913,11 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 
 # Four worker-silence gaps closed on 2026-09-01 after five of fifteen workers
-# stalled without firstmate ever seeing an open decision. Each stall traced to
+# stalled without firstmate ever acting on what they needed. Each stall traced to
 # something the scaffold never said, so each fact is pinned here against the
 # generated brief TEXT rather than the script source.
-#   1. An unkeyed needs-decision/blocked line never reaches OPEN DECISIONS.
+#   1. An unkeyed needs-decision/blocked line lands under the shared key
+#      `default`, so a second unkeyed one silently overwrites the first.
 #   2. Ending a turn with a validation gate open makes no progress.
 #   3. Appending `resolved` records an answer; it does not do the work.
 #   4. A local dependency or environment failure is the worker's own to fix.
