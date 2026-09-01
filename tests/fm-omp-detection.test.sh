@@ -33,8 +33,10 @@ HARNESS="$ROOT/bin/fm-harness.sh"
 # carries a config/crew-harness; CI's does not). FM_CONFIG_OVERRIDE points
 # fm-harness.sh's config lookup here, making "no crew config" a fact of the test
 # rather than a fact of the machine.
-EMPTY_CONFIG=$(fm_test_tmproot fm-omp-detection)/config
-mkdir -p "$EMPTY_CONFIG"
+EMPTY_CONFIG_ROOT=$(fm_test_tmproot fm-omp-detection) ||
+  fail "could not create a temp root for the empty config dir"
+EMPTY_CONFIG="$EMPTY_CONFIG_ROOT/config"
+mkdir -p "$EMPTY_CONFIG" || fail "could not create the empty config dir at $EMPTY_CONFIG"
 
 # Run fm-harness.sh with a clean slate plus the given env markers.
 detect_with() {
@@ -44,20 +46,42 @@ detect_with() {
 }
 
 # Independent evidence for the no-marker skip below: walk THIS test's own parent
-# process chain and report the first harness command name found, or nothing. This
-# reads the live ancestry directly (ps + ppid) rather than asking the detector
-# under test, so it is not fooled by a detector regression: it is a separate
-# witness that a real harness process launched the run. The command-name set
-# mirrors bin/fm-harness.sh's layer-2 walk.
+# process chain and report the first harness found, or nothing. This reads the
+# live ancestry directly (ps + ppid) rather than asking the detector under test,
+# so it is not fooled by a detector regression: it is a separate witness that a
+# real harness process launched the run.
+#
+# It recognizes every harness bin/fm-harness.sh's layer-2 walk can identify, not
+# only the ones whose command NAME is a harness. That means cursor, which runs as
+# a bundled node/agent process identified by its structured argv[0], and any
+# harness installed as a node or python SCRIPT rather than a native binary. If
+# this witness saw fewer harnesses than the detector, a developer inside one of
+# the missed harnesses would get a hard failure instead of the loud skip.
+# shellcheck source=bin/fm-cursor-lib.sh
+. "$ROOT/bin/fm-cursor-lib.sh"
+
 ambient_harness_in_ancestry() {
-  local pid=$$ comm bc
+  local pid=$$ comm bc args argv0
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+    argv0=$(fm_cursor_argv0_for_pid "$pid" "$comm" 2>/dev/null || true)
+    if fm_cursor_process_matches "$comm" '' "$argv0"; then
+      printf '%s\n' cursor
+      return 0
+    fi
     bc=$(basename -- "$comm")
     case "$bc" in
       *claude*|*codex*|*opencode*|*grok*|kimi|muse|muse-bin-*|pi|pi-signed|omp)
         printf '%s\n' "$bc"
         return 0 ;;
+      node*|python*)
+        # Bare interpreter: the harness name lives in the script path instead.
+        args=$(ps -o args= -p "$pid" 2>/dev/null)
+        case "$args" in
+          *claude*|*codex*|*opencode*|*grok*|*" pi "*|*/pi|*" omp "*|*/omp)
+            printf '%s\n' "$bc"
+            return 0 ;;
+        esac ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
