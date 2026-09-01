@@ -741,7 +741,14 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
   FM_COMPOSER_SCAN_PI_OPEN=-1
   FM_COMPOSER_SCAN_PI_CLOSE=-1
   FM_COMPOSER_SCAN_PI_LAST_SEPARATOR=-1
-  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max
+  # OMP shape: a titled top border immediately above a bottom border of the same
+  # family and indent, with NO side-bordered content rows between them, where the
+  # typed input lives inside the bottom rule row (see _fm_composer_omp_verdict).
+  # The bottom-most such pair wins; an earlier one (a stale transcript box) is
+  # overwritten by a later one.
+  FM_COMPOSER_SCAN_OMP_TOP=-1
+  FM_COMPOSER_SCAN_OMP_BOTTOM=-1
+  local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max omp_top_titled=0
   pi_max=$FM_COMPOSER_PI_MAX_LINES
   case "$pi_max" in ''|*[!0-9]*|0) pi_max=8 ;; esac
   while IFS= read -r line; do
@@ -827,10 +834,49 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
         heavy) top_inner=${top_inner#┏}; top_inner=${top_inner%┓}; top_spaces=${top_inner//━/ } ;;
         ascii) top_inner=${top_inner#+}; top_inner=${top_inner%+}; top_spaces=${top_inner//-/ } ;;
       esac
+      # OMP proof: its top border is a TITLED status bar, never a bare box top.
+      # Record whether this top carries a title (non-rule interior content), so
+      # the OMP pair check can require a titled top. A bare `╭────╮` has an
+      # all-space interior and is not an OMP top.
+      case "$top_spaces" in
+        *[![:space:]]*) omp_top_titled=1 ;;
+        *) omp_top_titled=0 ;;
+      esac
       case "$top_spaces" in
         *[![:space:]]*) geometry_check=0; geometry_ambiguous=1 ;;
       esac
     elif [ "$kind" = bottom ] || { [ "$kind" = ascii ] && [ "$top" -ge 0 ]; }; then
+      # OMP shape: a bottom rule directly under a TITLED top border. OMP draws
+      # its status bar in the top rule and its input inside the bottom rule, so
+      # a normal box's "needs a content row" test rejects it - this is the one
+      # shape whose content is IN the bottom border. The bottom-most such pair
+      # wins.
+      #
+      # The complete proof is: a titled top border (a bare `╭╮`/`╰╯` pair is
+      # refused), the same border family, the same indent, adjacency (the bottom
+      # sits directly under the top with no content rows between), a
+      # bottom-anchored pair (only blank rows below the close, proven in
+      # _fm_composer_omp_bottom_anchored), and a live OMP identity.
+      #
+      # Width is deliberately NOT compared. OMP's title replaces rule dashes
+      # with text of a different length, so an equal-visual-width top and bottom
+      # hold different character counts and a count-based test would reject real
+      # panes. A real OMP pane always draws its top and bottom the same visual
+      # width, and the identity gate keeps non-OMP panes out, so a
+      # width-mismatched pair is not a realistic false-empty.
+      #
+      # Box-drawing families only. OMP renders its composer with box-drawing
+      # glyphs (18.0.7 draws the rounded family live), never the ascii `+--+`
+      # family, and `+`-delimited rows are ordinary ASCII table output that
+      # would otherwise read `empty` under a live OMP identity.
+      if [ "$top" -ge 0 ] && [ "$family" != ascii ] \
+         && [ "$family" = "$current_family" ] \
+         && [ "$valid" = 1 ] && [ "$content_rows" -eq 0 ] \
+         && [ "$row" -eq "$((top + 1))" ] && [ "$indent" = "$current_indent" ] \
+         && [ "$omp_top_titled" = 1 ]; then
+        FM_COMPOSER_SCAN_OMP_TOP=$top
+        FM_COMPOSER_SCAN_OMP_BOTTOM=$row
+      fi
       if [ "$top" -ge 0 ] && [ "$family" = "$current_family" ] \
          && [ "$valid" = 1 ] && [ "$content_rows" -gt 0 ]; then
         [ "$indent" = "$current_indent" ] || geometry_ambiguous=1
@@ -864,6 +910,13 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
           FM_COMPOSER_SCAN_BOX_BOTTOM=$row
           FM_COMPOSER_SCAN_BOX_AMBIG=$geometry_ambiguous
         fi
+        FM_COMPOSER_SCAN_INCOMPLETE_BOX_FROM=-1
+      elif [ "$FM_COMPOSER_SCAN_OMP_TOP" = "$top" ] && [ "$FM_COMPOSER_SCAN_OMP_BOTTOM" = "$row" ]; then
+        # The OMP pair recorded just above is a complete identified shape, not
+        # an incomplete box or an unsafe cursor straddle: leave both markers
+        # alone so cursorless selection and cursor-mode both reach the OMP
+        # verdict. The cursor legitimately sits on the OMP input (its bottom
+        # rule row), so a cursor on top or bottom of this pair is safe.
         FM_COMPOSER_SCAN_INCOMPLETE_BOX_FROM=-1
       else
         if [ "$FM_COMPOSER_SCAN_INCOMPLETE_BOX_FROM" -lt 0 ]; then
@@ -1180,6 +1233,12 @@ _fm_composer_select_cursorless() {
     FM_COMPOSER_SELECTED_FIRST=$FM_COMPOSER_SCAN_LEFTBAR_START
     FM_COMPOSER_SELECTED_LAST=$FM_COMPOSER_SCAN_LEFTBAR_END
   fi
+  if [ "$FM_COMPOSER_SCAN_OMP_BOTTOM" -gt "$generic" ]; then
+    generic=$FM_COMPOSER_SCAN_OMP_BOTTOM
+    FM_COMPOSER_SELECTED_KIND=omp
+    FM_COMPOSER_SELECTED_FIRST=$FM_COMPOSER_SCAN_OMP_TOP
+    FM_COMPOSER_SELECTED_LAST=$FM_COMPOSER_SCAN_OMP_BOTTOM
+  fi
   if [ "$FM_COMPOSER_SCAN_INCOMPLETE_BOX_FROM" -gt "$generic" ]; then
     FM_COMPOSER_SELECTED_KIND=
     return 1
@@ -1214,10 +1273,13 @@ _fm_composer_select_cursorless() {
     done
   fi
   if [ "$FM_COMPOSER_SELECTED_KIND" = box ] \
-     || [ "$FM_COMPOSER_SELECTED_KIND" = leftbar ]; then
+     || [ "$FM_COMPOSER_SELECTED_KIND" = leftbar ] \
+     || [ "$FM_COMPOSER_SELECTED_KIND" = omp ]; then
     boundary=$FM_COMPOSER_SELECTED_LAST
     if [ "$FM_COMPOSER_SELECTED_KIND" = box ]; then
       boundary=$FM_COMPOSER_SCAN_BOX_BOTTOM
+    elif [ "$FM_COMPOSER_SELECTED_KIND" = omp ]; then
+      boundary=$FM_COMPOSER_SCAN_OMP_BOTTOM
     else
       next=$((boundary + 1))
       raw=$(_fm_composer_screen_row "$next" "$plain")
@@ -1227,16 +1289,59 @@ _fm_composer_select_cursorless() {
         boundary=$next
       fi
     fi
-    next=$((boundary + 1))
-    raw=$(_fm_composer_screen_row "$next" "$plain")
-    trimmed=$raw
-    fm_composer_normalize_trim_var trimmed
-    if [ -n "$trimmed" ] && ! fm_composer_row_has_edge "$trimmed"; then
-      FM_COMPOSER_SELECTED_KIND=
-      return 1
+    # A non-blank, non-structural row below the closing border means the
+    # selected container is stale scrollback with live content beneath it, never
+    # the bottom-anchored live composer. OMP must be proven anchored against
+    # EVERY row below its close, not just the next one, and those rows must be
+    # BLANK: a finished-turn `╰─...─╯` box can be followed by a blank line and
+    # then transcript, which a single-row check would wave through. box and
+    # leftbar keep the cheaper next-row edge check their existing shapes already
+    # rely on, where that next row really is the container's own furniture.
+    if [ "$FM_COMPOSER_SELECTED_KIND" = omp ]; then
+      if ! _fm_composer_omp_bottom_anchored "$plain" "$boundary"; then
+        FM_COMPOSER_SELECTED_KIND=
+        return 1
+      fi
+    else
+      next=$((boundary + 1))
+      raw=$(_fm_composer_screen_row "$next" "$plain")
+      trimmed=$raw
+      fm_composer_normalize_trim_var trimmed
+      if [ -n "$trimmed" ] && ! fm_composer_row_has_edge "$trimmed"; then
+        FM_COMPOSER_SELECTED_KIND=
+        return 1
+      fi
     fi
   fi
   [ -n "$FM_COMPOSER_SELECTED_KIND" ]
+}
+
+# _fm_composer_omp_bottom_anchored: 0 when EVERY row below <bottom-row> is
+# BLANK, proving the OMP pair is the live bottom-anchored composer rather than a
+# finished-turn box with transcript beneath it. A single blank spacer line
+# followed by real transcript is exactly the case a next-row check misses, so
+# this scans to the end of the captured screen. Blankness is the whole test:
+# fm_composer_row_has_edge answers "is this the container's own furniture" for
+# the ONE row directly under a box or left bar, and below OMP's close there is
+# no such furniture, so any row it accepted here would be transcript that starts
+# or ends with a border, rule, pipe, or plus glyph - `| file | status |`,
+# `─ ran the tests`, `+ added a line` - waved through as an injection green
+# light. A live OMP composer sits at the bottom of the pane with nothing but
+# blank rows under it.
+_fm_composer_omp_bottom_anchored() {  # <plain-screen> <bottom-row>
+  local plain=$1 bottom=$2 total row line trimmed
+  total=$(printf '%s\n' "$plain" | wc -l)
+  row=$((bottom + 1))
+  while [ "$row" -lt "$total" ]; do
+    line=$(_fm_composer_screen_row "$row" "$plain")
+    trimmed=$line
+    fm_composer_normalize_trim_var trimmed
+    if [ -n "$trimmed" ]; then
+      return 1
+    fi
+    row=$((row + 1))
+  done
+  return 0
 }
 
 fm_composer_extract_selected_content() {  # <caps> <screen>
@@ -1378,6 +1483,22 @@ EOF
       _fm_composer_pi_verdict "$screen" "$styled" "$has_identity" "$identity"
       return 0
     fi
+    # OMP shape: the cursor must sit on the pair's BOTTOM rule row, its input.
+    # The top row is the status bar, not an input row, so a cursor parked there
+    # is not editing and must not read as the live composer (a finished-turn box
+    # can leave the cursor on its top row). OMP is identity-provable exactly like
+    # pi, so the verdict resolves through _fm_composer_omp_verdict. This runs
+    # BEFORE the strict cursor-edge refusal because the OMP input row IS a bottom
+    # border row - an identified input, not the unidentifiable blank edge the
+    # strict rule guards against. The pair must also be bottom-anchored: nothing
+    # non-blank and non-structural below its closing border, or it is stale
+    # scrollback with live content beneath it.
+    if [ "$FM_COMPOSER_SCAN_OMP_BOTTOM" -ge 0 ] \
+       && [ "$cy" -eq "$FM_COMPOSER_SCAN_OMP_BOTTOM" ] \
+       && _fm_composer_omp_bottom_anchored "$plain" "$FM_COMPOSER_SCAN_OMP_BOTTOM"; then
+      _fm_composer_omp_verdict "$screen" "$styled" "$has_identity" "$identity"
+      return 0
+    fi
     if [ "$FM_COMPOSER_SCAN_CURSOR_EDGE" = 1 ]; then
       printf 'unknown'; return 0
     fi
@@ -1418,6 +1539,9 @@ EOF
     leftbar)
       _fm_composer_classify_leftbar "$screen" "$styled" \
         "$FM_COMPOSER_SELECTED_FIRST" "$FM_COMPOSER_SELECTED_LAST"
+      ;;
+    omp)
+      _fm_composer_omp_verdict "$screen" "$styled" "$has_identity" "$identity"
       ;;
   esac
 }
@@ -1526,4 +1650,141 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
     idle|done|blocked) printf 'empty' ;;
     *) printf 'unknown' ;;
   esac
+}
+
+# _fm_composer_omp_bottom_content: extract the input content from an OMP bottom
+# rule row `╰─<content>─╯` (or its light/double/heavy/ascii family). OMP draws
+# the typed input INSIDE the bottom border rather than in a separate content
+# row, so the corner glyphs and the flanking rule glyphs are furniture.
+#
+# The rule family is read from the ANSI-STRIPPED row (structure never ghosts),
+# because OMP renders the CLOSING ` ─╯` in the same dim color as its autocomplete
+# suggestion (verified live, omp 18.0.7): ghost-stripping a styled row would drop
+# that closing corner, leaving `╰─` residue that reads as typed input. So border
+# furniture is stripped structurally, then - for a styled read - the interior is
+# re-extracted from the ghost-stripped row so OMP's dim autocomplete suggestion
+# is dropped exactly like every other harness's placeholder, while a plain read
+# keeps every visible character.
+_fm_composer_omp_bottom_content() {  # <raw-bottom-row> <styled> -> content on stdout
+  local raw=$1 styled=$2 plain ghost open close dash content
+  plain=$(printf '%s\n' "$raw" | fm_composer_strip_ansi)
+  fm_composer_normalize_trim_var plain
+  case "$plain" in
+    '╰'*'╯') open='╰'; close='╯'; dash='─' ;;
+    '└'*'┘') open='└'; close='┘'; dash='─' ;;
+    '╚'*'╝') open='╚'; close='╝'; dash='═' ;;
+    '┗'*'┛') open='┗'; close='┛'; dash='━' ;;
+    '+'*'+') open='+'; close='+'; dash='-' ;;
+    *) content=$plain; open=''; close=''; dash='' ;;
+  esac
+  if [ -n "$open" ]; then
+    if [ "$styled" = 1 ]; then
+      # Re-extract the interior from the ghost-stripped row: OMP's autocomplete
+      # ghost (and its ghosted closing corner) drop out, leaving only real
+      # typed text between the structurally-proven furniture.
+      ghost=$(printf '%s\n' "$raw" | fm_composer_strip_ghost)
+      fm_composer_normalize_trim_var ghost
+      content=$ghost
+    else
+      content=$plain
+    fi
+    # Strip only the structural furniture, and preserve rule glyphs the user
+    # typed. OMP's furniture is a corner, the rule run touching it, then the
+    # space it pads the interior with; the interior is whatever follows that
+    # boundary. Removing every trailing/leading rule glyph instead would eat a
+    # draft made of dashes ("───" would collapse to empty, so an injection could
+    # append over it or a swallowed Enter read as delivered).
+    #
+    # Strip an edge's furniture ONLY when that edge's corner is present on the
+    # row being read. OMP ghost-colors its closing ` ─╯`, so a styled read whose
+    # interior is real typed text loses the closing corner to the ghost strip;
+    # its trailing dashes are then typed input, not furniture, and must survive.
+    # The leading `╰─ ` stays bright, so its furniture is always strippable.
+    local had_open=0 had_close=0
+    case "$content" in "$open"*) had_open=1 ;; esac
+    case "$content" in *"$close") had_close=1 ;; esac
+    content=${content#"$open"}
+    content=${content%"$close"}
+    [ "$had_open" = 1 ] && content=$(_fm_composer_omp_strip_edge_rule "$content" "$dash" leading)
+    [ "$had_close" = 1 ] && content=$(_fm_composer_omp_strip_edge_rule "$content" "$dash" trailing)
+  fi
+  fm_composer_normalize_trim_var content
+  printf '%s' "$content"
+}
+
+# _fm_composer_omp_strip_edge_rule: remove one structural rule-glyph run from the
+# named edge of an OMP interior, but only the furniture run - the dashes that sit
+# between a corner and the space OMP pads the interior with. Leading whitespace
+# is skipped first, then a dash run is removed only when it is followed by
+# whitespace (or consumes the whole string, an all-furniture blank interior).
+# A dash run that butts straight into non-space content is typed input, left
+# intact.
+_fm_composer_omp_strip_edge_rule() {  # <content> <dash> <leading|trailing> -> content
+  local content=$1 dash=$2 edge=$3 rest
+  [ -n "$dash" ] || { printf '%s' "$content"; return 0; }
+  if [ "$edge" = leading ]; then
+    rest=${content#"${content%%[![:space:]]*}"}   # drop leading whitespace
+    case "$rest" in
+      "$dash"*)
+        while [ "${rest#"$dash"}" != "$rest" ]; do rest=${rest#"$dash"}; done
+        # Only accept the strip when the run ended at whitespace or end of
+        # string; otherwise the dashes were typed input, so keep the original.
+        case "$rest" in ''|[[:space:]]*) printf '%s' "$rest"; return 0 ;; esac
+        ;;
+    esac
+    printf '%s' "$content"
+  else
+    rest=${content%"${content##*[![:space:]]}"}   # drop trailing whitespace
+    case "$rest" in
+      *"$dash")
+        while [ "${rest%"$dash"}" != "$rest" ]; do rest=${rest%"$dash"}; done
+        case "$rest" in ''|*[[:space:]]) printf '%s' "$rest"; return 0 ;; esac
+        ;;
+    esac
+    printf '%s' "$content"
+  fi
+}
+
+# The OMP composer verdict: an identity + structure conjunction, the same rule
+# as pi's separated shape. OMP is identity-provable through the same pi-family
+# probe (the tmux foreground process reads `omp`, herdr `agent get` reports its
+# agent). A missing identity capability keeps the shape unknown; an unfetched
+# identity asks the adapter to probe and re-call. Unlike pi, OMP's input lives
+# in the bottom rule row and is authoritative on its own: typed text is pending
+# and a blank interior is empty, independent of the agent's turn state, because
+# the composer is always the live bottom rule whether the agent is idle or
+# working.
+#
+# The agent must be exactly `omp`, not the wider pi family the pi separated
+# shape accepts. Only OMP draws the titled-top-over-bottom-rule composer, and
+# both identity sources report `omp` for a real OMP worker, so this costs no
+# real detection. A pi transcript, by contrast, renders collapsed titled boxes -
+# a tool-call header row directly above an all-rule closing row with no body -
+# and this shape's turn-state independence would read one as `empty` mid-turn.
+# A pi identity therefore keeps resolving through _fm_composer_pi_verdict and
+# its idle|done|blocked gate.
+_fm_composer_omp_verdict() {  # <screen> <styled> <has_identity> <identity>
+  local screen=$1 styled=$2 has_identity=$3 identity=$4 agent raw content state
+  if [ "$has_identity" != 1 ]; then
+    printf 'unknown'
+    return 0
+  fi
+  if [ -z "$identity" ]; then
+    printf 'need-identity'
+    return 0
+  fi
+  if [ "$identity" = probe-absent ]; then
+    printf 'unknown'
+    return 0
+  fi
+  agent=${identity%%$'\t'*}
+  case "$agent" in
+    omp) ;;
+    *) printf 'unknown'; return 0 ;;
+  esac
+  raw=$(_fm_composer_screen_row "$FM_COMPOSER_SCAN_OMP_BOTTOM" "$screen")
+  content=$(_fm_composer_omp_bottom_content "$raw" "$styled")
+  state=$(fm_composer_classify_content 1 "$content" \
+    "${FM_COMPOSER_IDLE_RE:-$FM_COMPOSER_IDLE_RE_DEFAULT}" insensitive "$content" 1 "$styled")
+  printf '%s' "$state"
 }

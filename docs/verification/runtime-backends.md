@@ -290,11 +290,46 @@ Kimi was not installed on the verification machine; its bordered shape is pinned
 This guard is the refresh command after an upgrade to any matrix-covered harness; rerun it and update the versions above rather than trusting this table across releases.
 Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
 
-OMP is also outside this matrix.
-The fork classifies an OMP worker's busy and idle state from the omp-ext extension marker (agent_start/agent_end), not by reading the OMP composer, so the shared classifier was never taught OMP's status-row-plus-input-row shape.
-When the shared classifier meets an OMP composer it returns `unknown`, and every steer or injection guard defers safely rather than typing.
-Screen-based and session-file OMP steer detection from upstream (the `fm_composer_terminal_width` two-row measurement and the `fm_backend_herdr_omp_session_*` readers) is deferred to a follow-up; its portable regressions in `tests/fm-backend-herdr.test.sh` and `tests/fm-tmux-submit-busy.test.sh` self-skip behind `FM_OMP_SCREEN_DETECTION=1`, which the follow-up sets once it teaches the shared classifier OMP's shape.
-Until then, OMP worker lifecycle stays covered by the opt-in real-omp live E2E suite (`tests/fm-omp-worker-tmux-live-e2e.test.sh`).
+OMP is outside the cursor-anchored empty-composer matrix above because its foreground process is a bun-hosted `<bun> <cli.js>` invocation, not a self-named harness binary, so the generic harness loop cannot launch and attribute it.
+The shared classifier now knows OMP's shape: a titled top border `╭──<status bar>──╮` directly above a bottom rule row `╰─<input>─╯` whose interior carries the typed input (unlike every other bordered harness, the input lives in the bottom border, not a separate content row).
+OMP renders its closing ` ─╯` in the same dim color as its autocomplete suggestion, so the extractor reads the rule family from the ANSI-stripped row and ghost-strips only the interior.
+The verdict is an identity plus structure conjunction like pi's separated shape.
+On tmux the task's canonical Bun and OMP entry paths, threaded from the task meta through `fm-send` into the composer read, attribute the pane's bun-hosted process to a provable OMP identity.
+On herdr the native `agent get` reports it.
+Without that identity the shape stays `unknown` and every steer or injection guard defers safely.
+
+The shape is pinned two ways.
+The portable regression `test_matrix_omp_two_row_input_border` in `tests/fm-composer-lib.test.sh` classifies real byte captures (omp 18.0.7, Bun 1.3.14) across the tmux (cursor), herdr (styled cursorless), zellij, and plain capability profiles under both a UTF-8 locale and `LC_ALL=C`, proving empty, typed-pending, ghost-only-empty, the identity gate, and the ghost-stripped closing corner.
+The live guard is the opt-in real-omp E2E suite (`tests/fm-omp-worker-tmux-live-e2e.test.sh`, `FM_OMP_TMUX_LIVE_E2E=1`), whose `wait_idle` requires the real `fm_backend_composer_state` to reach `empty`; refresh it after an OMP upgrade (it needs valid OMP provider credentials to complete an agent turn).
+
+On 2026-09-01, against a live OMP 18.0.7 / Bun 1.3.14 worker in an isolated tmux server, the real send path was exercised directly.
+A task meta bound the endpoint (`window=fm:fm-omp-live`, `harness=omp`, and the canonical `omp_bun`/`omp_bin` paths), then:
+
+```sh
+# probe: identity, agent state, and composer verdict on an idle OMP worker
+. bin/fm-backend.sh
+fm_backend_agent_record_identity tmux fm:fm-omp-live "$STATE/omp-live.meta"
+printf 'agent_state=%s\n' "$(fm_backend_agent_state tmux fm:fm-omp-live "$STATE/omp-live.meta")"
+printf 'composer_state=%s\n' "$(fm_backend_composer_state tmux fm:fm-omp-live omp \
+  "$FM_BACKEND_AGENT_OMP_BUN" "$FM_BACKEND_AGENT_OMP_BIN")"
+
+# delivery through the real send entrypoint
+bin/fm-send.sh omp-live "verify OMP composer delivery"; echo "fm-send exit=$?"
+```
+
+Observed output:
+
+```text
+agent_state=alive
+composer_state=empty
+fm-send exit=0
+```
+
+`fm-send` prints nothing on success, and the composer read `empty` again immediately after the send, confirming the message was delivered and the input box cleared.
+This proves the tmux OMP identity threading and the composer read end to end.
+Without the bound `omp_bin` the identity probe returns `probe-absent` and the composer stays `unknown`.
+
+An earlier upstream design for the same feature (the `fm_composer_terminal_width` two-row measurement and the `fm_backend_herdr_omp_session_*` session-file readers) is not the approach taken here; its portable subtests in `tests/fm-backend-herdr.test.sh` and `tests/fm-tmux-submit-busy.test.sh` self-skip behind `FM_OMP_SCREEN_DETECTION=1` and stay skipped, and the session-file readers remain a separate deferred item.
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
 

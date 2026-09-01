@@ -237,6 +237,9 @@ The adapter is a thin capture: it hands a bounded ANSI tail plus Herdr's capabil
 A working Pi, pending middle row, missing identity, incomplete separator pair, or over-tall candidate remains unknown or pending.
 Identity stays a lazy second read, consulted only when a separator pair could change the verdict.
 
+The same classifier also owns OMP's two-row input border, whose geometry and proof rules are documented in [the tmux backend guide](tmux-backend.md#composer-busy-state-and-delivery).
+Herdr needs no extra plumbing for it: native `agent get` already reports the agent, so an exact `omp` identity plus that structure is the whole conjunction, and a non-OMP identity or an unproven shape stays unknown.
+
 ANSI capture preserves de-emphasized placeholder style.
 `bin/fm-composer-lib.sh` is the fleet-wide owner that strips dim or faint runs and dark truecolor placeholders while retaining bright typed input.
 If the ANSI capture ever fails, the plain fallback declares itself unstyled and the classifier degrades a glyph row carrying trailing text to `unknown` instead of misreading ghost suggestions as typed input, which safely defers injection and eventually raises the wedge alarm.

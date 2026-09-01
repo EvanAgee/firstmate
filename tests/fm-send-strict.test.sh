@@ -193,7 +193,7 @@ test_unmatched_single_colon_target_must_exist() {
 test_omp_send_uses_metadata_bound_bun_and_rejects_process_mismatch() {
   local dir fb home err log rc got actual_bun omp project worktree capture top width before
   if [ "${FM_OMP_SCREEN_DETECTION:-0}" != 1 ]; then
-    pass "fm-send strict: OMP composer-submit subtest skipped: the success half confirms delivery by reading the OMP composer, which is deferred (the fork reads OMP state from the omp-ext marker); the metadata-bound Bun identity gate this exercises is covered always-on by tests/fm-secondmate-liveness.test.sh (set FM_OMP_SCREEN_DETECTION=1 once the consolidated classifier learns OMP's shape)"
+    pass "fm-send strict: OMP composer-submit subtest skipped: it pins the upstream two-row MEASUREMENT design, which the fork did not take. The shared classifier now knows OMP's shape (live coverage: test_matrix_omp_two_row_input_border in tests/fm-composer-lib.test.sh), and the metadata-bound Bun identity gate this exercises is covered always-on by tests/fm-secondmate-liveness.test.sh"
     return
   fi
   if ! command -v bun >/dev/null 2>&1; then

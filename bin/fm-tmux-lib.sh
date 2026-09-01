@@ -45,6 +45,8 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
+# shellcheck source=bin/fm-omp-process-lib.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/fm-omp-process-lib.sh"
 
 
 # fm_tmux_strip_ghost: thin adapter over the shared, fleet-wide ghost extractor
@@ -85,8 +87,9 @@ fm_tmux_composer_caps() {
 }
 
 # fm_tmux_composer_identity: the tmux agent-identity probe backing the
-# separated Pi-family composer shape, tmux's analogue of herdr's native
-# `agent get`. It answers for pi, pi-signed, and omp from two live signals:
+# separated Pi-family composer shape and OMP's two-row input border, tmux's
+# analogue of herdr's native `agent get`. It answers for pi, pi-signed, and
+# omp from two live signals:
 #   - identity: the pane tty's FOREGROUND process group (pgid = tpgid, the
 #     same scoping as fm_backend_tmux_foreground_comms) contains a pi-family
 #     process (omp, pi, pi-signed, pi-launcher - docs/verification/
@@ -97,10 +100,17 @@ fm_tmux_composer_caps() {
 #     row between two stale rules stays unknown.
 #   - status: pi's verified busy footer via fm_pane_is_busy, mapped onto the
 #     idle/working vocabulary herdr's probe reports natively.
-# Prints "pi<TAB>idle" or "pi<TAB>working"; exits 1 when the pane is not a
-# live pi.
-fm_tmux_composer_identity() {  # <target>
-  local target=$1 tty pgid tpgid comm found=0 status
+# OMP is launched as `<bun> <cli.js>`, so its foreground process reports
+# comm=bun, which the name-only pi-family match above cannot attribute (a bare
+# `bun` could be anything). When the caller supplies the task's exact Bun and
+# OMP entry paths (from the task meta), the OMP branch confirms the pane's
+# foreground IS this task's OMP through the shared process-identity probe
+# (bin/fm-omp-process-lib.sh) and reports `omp<TAB><status>`. Without those
+# paths a bun-comm pane stays unattributed, exactly the strict posture.
+# Prints "pi<TAB>idle"/"pi<TAB>working" (or "omp<TAB>..."); exits 1 when the
+# pane is not a live pi-family agent.
+fm_tmux_composer_identity() {  # <target> [omp-bun] [omp-bin]
+  local target=$1 omp_bun=${2:-} omp_bin=${3:-} tty pgid tpgid comm found=0 status agent=pi
   tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || tty=
   case "$tty" in
     /dev/*)
@@ -121,13 +131,38 @@ EOF
       omp|pi|pi-signed|pi-launcher) found=1 ;;
     esac
   fi
+  # OMP's bun-hosted process is only identifiable through the task's bound
+  # Bun/OMP entry paths, matched against the pane's actual foreground process.
+  if [ "$found" -ne 1 ] && [ -n "$omp_bun" ] && [ -n "$omp_bin" ] \
+     && fm_tmux_pane_is_bound_omp "$target" "$omp_bun" "$omp_bin"; then
+    found=1
+    agent=omp
+  fi
   [ "$found" -eq 1 ] || return 1
   status=$(fm_pane_busy_state "$target" pi)
   case "$status" in
-    busy) printf 'pi\tworking' ;;
-    idle) printf 'pi\tidle' ;;
+    busy) printf '%s\tworking' "$agent" ;;
+    idle) printf '%s\tidle' "$agent" ;;
     *) return 1 ;;
   esac
+}
+
+# fm_tmux_pane_is_bound_omp: 0 when the pane's FOREGROUND process (pgid=tpgid)
+# is the exact task-bound OMP process - the shared identity probe matching the
+# pane's foreground comm/args against the task's canonical Bun and OMP entry
+# paths (bin/fm-omp-process-lib.sh, the same match fm_backend_tmux_bun_agent_state
+# uses). A bare `bun` running anything else, or a pane whose OMP exited to a
+# shell, does not match and gets no OMP identity.
+fm_tmux_pane_is_bound_omp() {  # <target> <omp-bun> <omp-bin>
+  local target=$1 omp_bun=$2 omp_bin=$3 pane_pid fg_pid comm args
+  pane_pid=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null) || return 1
+  case "$pane_pid" in ''|*[!0-9]*) return 1 ;; esac
+  fg_pid=$(ps -o tpgid= -p "$pane_pid" 2>/dev/null | tr -d '[:space:]') || return 1
+  case "$fg_pid" in ''|*[!0-9]*|0|1) return 1 ;; esac
+  comm=$(ps -o comm= -p "$fg_pid" 2>/dev/null | tr -d '[:space:]') || return 1
+  args=$(ps -o args= -p "$fg_pid" 2>/dev/null) || return 1
+  FM_OMP_PROCESS_EXPECTED_BUN="$omp_bun" FM_OMP_PROCESS_EXPECTED_BIN="$omp_bin" \
+    fm_omp_process_matches "$comm" "$args" "$fg_pid"
 }
 
 # fm_tmux_composer_state: the tmux composer verdict - a thin adapter over the
@@ -135,16 +170,24 @@ EOF
 # pending-unproven | unknown, positive proof required for empty, unrecognized
 # future verdicts failing safe) is owned by bin/fm-composer-lib.sh. Identity
 # is fetched lazily, only when the classifier reports the verdict depends on
-# it (a pi separator pair under the cursor), so the common read never pays
-# for the process probe.
-fm_tmux_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
-  local target=$1 cy pane verdict identity
+# it (a pi separator pair or an OMP two-row border under the cursor), so the
+# common read never pays for the process probe.
+# For OMP, the task's canonical Bun and OMP entry paths bind the pane's
+# bun-hosted foreground process to a provable OMP identity; the send path
+# supplies them from the task meta. They are optional: a non-OMP read ignores
+# them, and an OMP read without them stays unknown (the strict posture).
+fm_tmux_composer_state() {  # <target> [harness] [omp-bun] [omp-bin] -> empty|pending|pending-unproven|unknown
+  # _unused_harness only holds the shared backend signature's slot so omp_bun and
+  # omp_bin land at 3 and 4. Nothing reads it, and callers do not reliably supply
+  # a harness there (bin/fm-spawn.sh passes a window), so do not wire behavior
+  # onto it without first fixing every caller.
+  local target=$1 _unused_harness=${2:-} omp_bun=${3:-} omp_bin=${4:-} cy pane verdict identity
   cy=$(fm_tmux_composer_cursor_row "$target") || { printf 'unknown'; return 0; }
   case "$cy" in ''|*[!0-9]*) printf 'unknown'; return 0 ;; esac
   pane=$(fm_tmux_composer_capture "$target") || { printf 'unknown'; return 0; }
   verdict=$(fm_composer_classify_screen "$(fm_tmux_composer_caps)" "$pane" "$cy")
   if [ "$verdict" = need-identity ]; then
-    if ! identity=$(fm_tmux_composer_identity "$target") || [ -z "$identity" ]; then
+    if ! identity=$(fm_tmux_composer_identity "$target" "$omp_bun" "$omp_bin") || [ -z "$identity" ]; then
       identity=probe-absent
     fi
     verdict=$(fm_composer_classify_screen "$(fm_tmux_composer_caps)" "$pane" "$cy" "$identity")
@@ -239,12 +282,12 @@ fm_pane_is_busy() {  # <target> [harness]
 # fm_tmux_submit_enter_core caller, or a pane already busy before typing) an
 # `unknown` verdict is preserved untouched: busy conversion without the
 # transition evidence could mark an undelivered message delivered.
-fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle]
-  local target=$1 retries=$2 sleep_s=$3 baseline_idle=${4:-} i=0 j state
+fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle] [harness] [omp-bun] [omp-bin]
+  local target=$1 retries=$2 sleep_s=$3 baseline_idle=${4:-} harness=${5:-} omp_bun=${6:-} omp_bin=${7:-} i=0 j state
   while :; do
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
-    state=$(fm_tmux_composer_state "$target")
+    state=$(fm_tmux_composer_state "$target" "$harness" "$omp_bun" "$omp_bin")
     case "$state" in
       pending|pending-unproven) ;;
       unknown)
@@ -283,8 +326,8 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
   fi
 }
 
-fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
-  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 baseline_idle='' baseline_state
+fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [harness] [omp-bun] [omp-bin]
+  local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${6:-} omp_bun=${7:-} omp_bin=${8:-} baseline_idle='' baseline_state
   # The turn-started baseline must predate our own typing: a pane already
   # busy before the text lands can turn "busy" for reasons unrelated to our
   # Enter, so only a clean idle-to-busy transition may confirm a submit.
@@ -292,5 +335,5 @@ fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle>
   [ "$baseline_state" = idle ] && baseline_idle=1
   tmux send-keys -t "$target" -l "$text" 2>/dev/null || { printf 'send-failed'; return 0; }
   sleep "$settle"
-  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle"
+  fm_tmux_submit_enter_core "$target" "$retries" "$sleep_s" "$baseline_idle" "$harness" "$omp_bun" "$omp_bin"
 }

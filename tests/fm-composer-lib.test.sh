@@ -323,6 +323,145 @@ test_matrix_pi_separated_needs_identity() {
   pass "matrix: pi's separated composer needs identity + structure; the blank row alone never proves it"
 }
 
+test_matrix_omp_two_row_input_border() {
+  # Real idle/typed OMP (omp 18.0.7, Bun 1.3.14), captured byte-for-byte from a
+  # live tmux pane. OMP draws its composer as two adjacent rows: a TITLED top
+  # border `╭──<status bar>──╮` above a bottom rule row `╰─<input>─╯` whose
+  # interior IS the input area - unlike every other bordered harness, the typed
+  # text lives in the bottom border, not a separate content row. The cursor
+  # sits on that bottom row. OMP is identity-provable through the same pi-family
+  # probe (tmux foreground process reads omp; herdr `agent get` reports it), so
+  # the verdict is an identity + structure conjunction exactly like pi's
+  # separated shape: structure alone never proves it. The agent must be exactly
+  # `omp` here, unlike pi's own shape, which accepts the wider family.
+  #
+  # The top row here is a faithful reduction of the real capture's status bar
+  # (model, thinking level, project, branch markers) to prove the titled top
+  # border is tolerated; the bottom row's ANSI runs are the real capture's:
+  # bright default-fg typed text, then OMP's dim-gray (38;2;107;114;128,
+  # luminance 113.5 < 128) autocomplete ghost, which the shared ghost strip
+  # drops exactly like every other harness's placeholder.
+  local top empty pending ghost_only omp_idle omp_working none stale
+  top='╭── π > GLM 5.3 Flash > project > ⑂ main ▶─3%─────────┃──1M──╮'
+  omp_idle=$(printf 'omp\tidle')
+  omp_working=$(printf 'omp\tworking')
+  none=$(printf 'zsh\t')
+
+  # Empty composer: `╰─ <spaces> ─╯`. OMP renders the CLOSING ` ─╯` in the same
+  # dim gray (38;2;106;112;120, luminance ~107 < 128) it uses for its
+  # autocomplete ghost, so ghost-stripping removes that corner; the empty
+  # verdict must survive losing it (a naive extractor left `╰─` residue and read
+  # pending - the live-capture bug this pins). The opening `╰─ ` is bright.
+  local dimclose=$'\033[38;2;106;112;120m ─╯'
+  empty="$top"$'\n''╰─ '"${ESC}[39m                    ${dimclose}"
+  assert_screen "omp empty on tmux with identity" empty "$CAPS_TMUX" "$empty" 1 "$omp_idle"
+  assert_screen "omp empty on tmux while working" empty "$CAPS_TMUX" "$empty" 1 "$omp_working"
+  assert_screen "omp empty on herdr with identity" empty "$CAPS_STYLED" "$empty" '' "$omp_idle"
+  # Identity-capable but unfetched: the adapter is asked to probe lazily.
+  [ "$(fm_composer_classify_screen "$CAPS_TMUX" "$empty" 1)" = need-identity ] \
+    || fail "an identity-capable OMP profile should request the lazy identity probe"
+  [ "$(fm_composer_classify_screen "$CAPS_STYLED" "$empty")" = need-identity ] \
+    || fail "an identity-capable OMP herdr profile should request the lazy identity probe"
+  # No identity capability (cmux/orca/zellij): the shape is unprovable.
+  assert_screen "omp pair without identity capability" unknown "$CAPS_PLAIN" "$empty"
+  assert_screen "omp pair on zellij" unknown "$CAPS_STYLED_NOID" "$empty"
+  # A probe that found no live pi-family agent, or a non-omp identity, refuses.
+  assert_screen "omp absent identity cannot prove the pair" unknown "$CAPS_TMUX" "$empty" 1 probe-absent
+  assert_screen "omp pair with non-omp identity" unknown "$CAPS_TMUX" "$empty" 1 "$none"
+
+  # Typed input: bright text then a dim-gray autocomplete ghost. The ghost is
+  # stripped; the real typed text survives and reads pending.
+  pending="$top"$'\n''╰─ '"${ESC}[39msteer after current turn${ESC}[38;2;107;114;128maround${dimclose}"
+  assert_screen "omp typed on tmux" pending "$CAPS_TMUX" "$pending" 1 "$omp_idle"
+  assert_screen "omp typed on herdr" pending "$CAPS_STYLED" "$pending" '' "$omp_idle"
+  # A plain (styling-lost) capture cannot tell the autocomplete ghost from typed
+  # text, so its non-blank interior defers to unknown rather than a false empty.
+  assert_screen "omp typed on plain capture defers" unknown "$CAPS_PLAIN" "$pending"
+
+  # Ghost-ONLY interior (an autocomplete suggestion over an otherwise empty
+  # composer) is furniture, not typed input, so it reads empty once stripped.
+  ghost_only="$top"$'\n''╰─ '"${ESC}[38;2;107;114;128mrun the tests${dimclose}"
+  assert_screen "omp ghost-only interior is empty" empty "$CAPS_TMUX" "$ghost_only" 1 "$omp_idle"
+
+  # A stale transcript OMP box higher in the pane, with the live empty composer
+  # at the bottom: cursorless selection takes the bottom-most pair, never the
+  # stale one, so a finished-turn box above cannot fabricate pending.
+  stale='╭── π > older turn ──╮'$'\n''╰─ stale echoed text ─╯'$'\n''transcript'$'\n'"$empty"
+  assert_screen "omp bottom-most pair wins on herdr" empty "$CAPS_STYLED" "$stale" '' "$omp_idle"
+
+  # A bare (untitled) `╭╮`/`╰╯` pair is not an OMP composer: OMP's top border
+  # always carries its status bar, so an all-rule top with no title stays
+  # unknown even with a live OMP identity. Without this a plain empty box could
+  # be injected into.
+  local bare_pair
+  bare_pair='╭────────────────────────╮'$'\n''╰─                     ─╯'
+  assert_screen "omp bare untitled pair is unknown" unknown "$CAPS_STYLED" "$bare_pair" '' "$omp_idle"
+  assert_screen "omp bare untitled pair is unknown on tmux" unknown "$CAPS_TMUX" "$bare_pair" 1 "$omp_idle"
+
+  # A finished-turn OMP box followed by a BLANK spacer line and then transcript
+  # must stay unknown: the pair is not bottom-anchored. A next-row-only check
+  # would wave the blank line through, so EVERY row below the close must be
+  # blank.
+  local stale_spaced
+  stale_spaced="$top"$'\n''╰─                       ─╯'$'\n'$'\n''earlier transcript output'
+  assert_screen "omp stale pair with blank+transcript below is unknown" unknown "$CAPS_STYLED" "$stale_spaced" '' "$omp_idle"
+
+  # The cursor parked on the STATUS (top) row of a finished box is not editing;
+  # only the cursor on the bottom input row reads as the live composer.
+  assert_screen "omp cursor on the status row is not input" unknown "$CAPS_TMUX" "$stale_spaced" 0 "$omp_idle"
+
+  # Transcript rows that merely BEGIN or END with a border, rule, pipe, or plus
+  # glyph are still transcript, not the composer's own furniture: a markdown
+  # table row, a rule-prefixed status line, a diff line, and a half-drawn box row
+  # each leave the stale pair un-anchored. Anything but a blank row below the
+  # close must stay unknown in BOTH cursorless and cursor mode; the edge-glyph
+  # predicate used for the row directly under a box does not discriminate here.
+  local edgey stale_edge
+  for edgey in '| file | status |' '─ ran the tests' 'elapsed 3.2s ─' \
+               '+ added a line' '│ partial box row'; do
+    stale_edge="$top"$'\n''╰─                       ─╯'$'\n'$'\n'"$edgey"
+    assert_screen "omp stale pair above '$edgey' is unknown" \
+      unknown "$CAPS_STYLED" "$stale_edge" '' "$omp_idle"
+    assert_screen "omp stale pair above '$edgey' is unknown on tmux" \
+      unknown "$CAPS_TMUX" "$stale_edge" 1 "$omp_idle"
+  done
+
+  # OMP draws box-drawing glyphs, never the ascii `+--+` family. A titled
+  # `+-- … --+` row above `+-  -+` is ordinary ASCII table output, so it stays
+  # unknown even with a live OMP identity.
+  local ascii_pair
+  ascii_pair='+-- π > GLM 5.3 Flash > project --+'$'\n''+-                              -+'
+  assert_screen "omp ascii pair is not an OMP composer" unknown "$CAPS_STYLED" "$ascii_pair" '' "$omp_idle"
+  assert_screen "omp ascii pair is not an OMP composer on tmux" unknown "$CAPS_TMUX" "$ascii_pair" 1 "$omp_idle"
+
+  # Only an `omp` identity may resolve this shape. A pi transcript renders
+  # COLLAPSED titled boxes - a tool-call header row directly above an all-rule
+  # closing row with no body - which is structurally the same two rows OMP draws.
+  # This shape's verdict ignores turn state (OMP's composer is always the live
+  # bottom rule), so accepting the wider pi family would read a mid-turn pi
+  # tool box as `empty`, the verdict that authorizes typing. A pi identity must
+  # keep resolving through the pi separated shape and its idle|done|blocked gate.
+  local collapsed pi_working pi_idle
+  pi_working=$(printf 'pi\tworking')
+  pi_idle=$(printf 'pi\tidle')
+  collapsed=$'Running tool\n╭─ Read(src/app.ts) ─────────────╮\n╰────────────────────────────────╯'
+  assert_screen "a pi tool box is not an OMP composer" unknown "$CAPS_STYLED" "$collapsed" '' "$pi_working"
+  assert_screen "a pi tool box is not an OMP composer on tmux" unknown "$CAPS_TMUX" "$collapsed" 2 "$pi_working"
+  assert_screen "an idle pi tool box is not an OMP composer" unknown "$CAPS_STYLED" "$collapsed" '' "$pi_idle"
+  # The same structure under a live OMP identity still resolves, so restricting
+  # the gate costs no real OMP detection.
+  assert_screen "the same shape with an omp identity still resolves" empty "$CAPS_STYLED" "$collapsed" '' "$omp_idle"
+  assert_screen "the same shape with an omp identity still resolves on tmux" empty "$CAPS_TMUX" "$collapsed" 2 "$omp_idle"
+
+  # A draft made only of rule glyphs is real typed input, not furniture: the
+  # extractor strips only the structural flanking rule run, so `───` reads
+  # pending rather than collapsing to a false empty.
+  local dash_draft
+  dash_draft="$top"$'\n''╰─ '"${ESC}[39m─── ${dimclose}"
+  assert_screen "omp dash-only draft is pending" pending "$CAPS_TMUX" "$dash_draft" 1 "$omp_idle"
+  pass "matrix: OMP's two-row input border needs a titled top, a bottom-anchored pair, cursor on the input row, and preserves rule-glyph input"
+}
+
 test_matrix_opencode_leftbar_signals() {
   # Real idle opencode: `┃`-prefixed rows holding the "Ask anything..." hint,
   # blanks, and a Build-mode footer. Two independent idle signals: the shared
@@ -614,6 +753,7 @@ test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_pi_separated_needs_identity
+test_matrix_omp_two_row_input_border
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
 test_matrix_kimi_bordered_shell_glyph_box

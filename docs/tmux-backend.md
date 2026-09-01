@@ -68,12 +68,23 @@ Run the real-harness guard after any harness upgrade and before trusting refresh
 ### Composer, busy state, and delivery
 
 Agent liveness and composer safety are separate checks.
-The tmux reader is a thin adapter over the fleet-wide classifier in `bin/fm-composer-lib.sh`: it contributes one styled full-pane capture, the `#{cursor_y}` cursor row, and foreground-process identity probes, and the shape containing the cursor - a complete bordered box (titled bottom borders tolerated), a bare agent-glyph row with its wrapped input, opencode's left bar, or Pi's identity-corroborated separator pair - normally decides the verdict.
+The tmux reader is a thin adapter over the fleet-wide classifier in `bin/fm-composer-lib.sh`: it contributes one styled full-pane capture, the `#{cursor_y}` cursor row, and foreground-process identity probes, and the shape containing the cursor - a complete bordered box (titled bottom borders tolerated), a bare agent-glyph row with its wrapped input, opencode's left bar, Pi's identity-corroborated separator pair, or OMP's identity-corroborated two-row input border - normally decides the verdict.
 Real text in an identified shape is pending, while only positively proven emptiness reads empty.
 A blank or otherwise unidentified cursor row is `unknown` and every consumer defers, except that a foreground process proven to be Cursor is re-read cursorlessly because Cursor parks its terminal cursor below its footer.
 That identity-gated exception preserves the strict container-proof rule for every other pane, so a modal dialog, a dead shell between stale rules, or a mid-redraw pane is never an injection target.
 The shared classifier accepts a shell glyph as an empty agent composer only inside a bordered container.
 A bare shell prompt is `unknown`, so away-mode escalation is never injected into a dead shell.
+
+OMP's composer is the one shape whose typed input lives inside a border rather than in a content row: a titled top border carrying its status bar sits directly above a bottom rule row whose interior holds the input.
+The shared classifier accepts that pair only when the top is titled (a bare box top is refused), the two rows share a box-drawing family and indent, they are adjacent with no content row between them, and only blank rows follow the closing border, so a finished-turn box with transcript beneath it stays `unknown`.
+Width is deliberately not compared, because OMP's title replaces rule glyphs with text and an equal-width top and bottom therefore hold different character counts.
+In cursor mode the cursor must sit on the bottom input row, not on the status row.
+OMP renders its closing corner in the same dim color as its autocomplete suggestion, so the extractor reads the border family from the ANSI-stripped row and ghost-strips only the interior, and it removes only the structural flanking rule run so a dash-only draft is preserved instead of read as empty.
+
+That structure is only half the proof; a live OMP identity is the other half.
+On tmux an OMP worker runs as a bun-hosted process rather than a self-named binary, so the pane is attributed through the task's canonical `omp_bun` and `omp_bin` entry paths recorded in its metadata.
+`fm-send.sh` resolves both from the task meta and threads them through the submit core into the composer read; the away-mode supervisor daemon resolves the same pair from the primary's OMP marker, proven against the running process before either value is used.
+Without that identity the shape stays `unknown` and every steer or injection guard defers, and `fm-send.sh` refuses inspection and delivery outright rather than typing blind.
 
 Busy state is not read from rendered text on this backend.
 A task's busy, idle, unknown, or dead verdict comes from the semantic busy-state contract owned by `bin/fm-busy-lib.sh`; [architecture](architecture.md#busy-state-is-semantic-per-adapter) owns its boundaries.

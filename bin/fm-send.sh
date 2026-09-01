@@ -342,6 +342,7 @@ if [ "$TARGET_BACKEND" != remote ]; then
 fi
 
 TARGET_OMP_BUN=
+TARGET_OMP_BIN=
 if [ "$TARGET_HARNESS" = omp ]; then
   if [ -z "$TARGET_META" ] \
      || ! fm_backend_agent_record_identity "$TARGET_BACKEND" "$T" "$TARGET_META"; then
@@ -354,6 +355,7 @@ if [ "$TARGET_HARNESS" = omp ]; then
     exit 1
   fi
   TARGET_OMP_BUN=$FM_BACKEND_AGENT_OMP_BUN
+  TARGET_OMP_BIN=$FM_BACKEND_AGENT_OMP_BIN
 fi
 
 # Classify a from-firstmate -> secondmate request. Only a task selector resolved
@@ -559,7 +561,7 @@ else
       send_rc=$?
       verdict=send-failed
     fi
-  elif verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL" "$TARGET_HARNESS" "$TARGET_OMP_BUN"); then
+  elif verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL" "$TARGET_HARNESS" "$TARGET_OMP_BUN" "$TARGET_OMP_BIN"); then
     :
   else
     send_rc=$?
