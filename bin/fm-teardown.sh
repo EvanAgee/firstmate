@@ -2281,15 +2281,16 @@ remove_secondmate_registry_entry() {
   return "$rc"
 }
 
-# Clear a retirement receipt before the cleanup preflight validates it. A
+# Clear a legacy retirement receipt before the cleanup preflight validates it. A
 # receipt written before the inode-only fix (fm-pr-poll-retirement-v1) no longer
 # parses, so validate_pr_poll_cleanup would refuse teardown on a merged task
-# whose receipt outlived a reboot. fm_pr_poll_retirement_recover_one discards
-# that legacy receipt (and finishes any valid pending retirement), the same
-# recovery the arm path runs, so a stale receipt clears rather than blocking
-# teardown. A failure here is not fatal on its own: the preflight below still
-# refuses a genuinely invalid poll state, so the real safety check is unchanged.
-fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || true
+# whose receipt outlived a reboot. fm_pr_poll_retirement_discard_legacy removes
+# only that stale legacy receipt and nothing else; a valid current receipt is
+# left alone here and finished later by remove_pr_poll_artifacts, after every
+# refusal gate has passed. A failure here is not fatal on its own: the preflight
+# below still refuses a genuinely invalid poll state, so the real safety check
+# is unchanged.
+fm_pr_poll_retirement_discard_legacy "$STATE" "$ID" || true
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
 if [ "$KIND" = secondmate ]; then

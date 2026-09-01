@@ -2745,7 +2745,7 @@ SH
 }
 
 test_teardown_removes_poll_artifacts() {
-  local dir fakebin kind artifact counterpart rc
+  local dir fakebin kind artifact counterpart rc before
   dir=$(make_case teardown-cleanup)
   fakebin="$dir/fakebin"
   fm_write_meta "$dir/home/state/task-a.meta" \
@@ -2850,6 +2850,44 @@ SH
   assert_poll_absent "$dir/home/state" task-a
   [ ! -e "$dir/home/state/task-a.meta" ] \
     || fail "teardown left task metadata after clearing a legacy receipt"
+
+  # A VALID current retirement receipt must not be cashed in before the teardown
+  # refusal gates. A task with an unsafe PR-check artifact makes teardown refuse,
+  # and on that refusal the poll files and the receipt must all still be on disk
+  # for a plain rerun. This fails when the pre-gate step is the full
+  # fm_pr_poll_retirement_recover_one, which deletes them before the refusal.
+  dir=$(make_case teardown-valid-receipt-survives-refusal)
+  fakebin="$dir/fakebin"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'pr=https://github.com/o/r/pull/20'
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/20
+  fm_pr_poll_snapshot_capture "$dir/home/state" task-a "$POLL" \
+    || fail "could not snapshot refusal-survival receipt fixture"
+  fm_pr_poll_retirement_publish "$dir/home/state" task-a "$POLL" merged \
+    || fail "could not publish refusal-survival receipt fixture"
+  mkdir "$dir/home/state/task-a.pr-review-chase"
+  printf 'directory sentinel\n' > "$dir/home/state/task-a.pr-review-chase/sentinel"
+  before=$(poll_artifact_snapshot "$dir/home/state" task-a)
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown accepted a directory-shaped PR review chase"
+  [ "$(poll_artifact_snapshot "$dir/home/state" task-a)" = "$before" ] \
+    || fail "teardown consumed a valid retirement receipt before its refusal gate"
 
   dir=$(make_case teardown-reserved-quarantine)
   fakebin="$dir/fakebin"
