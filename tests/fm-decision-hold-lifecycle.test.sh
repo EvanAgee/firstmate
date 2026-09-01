@@ -2210,6 +2210,57 @@ EOF
   pass "verify judges archival from the backlog path tasks-axi resolves, not a decoy"
 }
 
+# The durable answer record is an annotation on a LIVE origin's metadata, never a
+# reason to bring that metadata back. Teardown deletes state/<origin>.meta on purpose,
+# and the whole fleet reads state/*.meta as its register of live workers, so a close
+# performed after teardown must leave the directory exactly as it found it. The record
+# would be inert anyway: verify reads answered_keys only for a key already in the same
+# file's decision_keys, and only `complete` writes those, only into a file that exists.
+test_a_post_teardown_close_does_not_resurrect_origin_metadata() {
+  local home id hold before after
+  home=$(make_home post-teardown-close)
+  id=sample-torn-origin
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the torn sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the torn-origin sample"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample torn review\n\nOne choice remained.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the torn sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the torn-origin hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the torn-origin sample"
+
+  # A live origin whose metadata exists records the answer, which is the case the
+  # record exists to serve.
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the torn-origin choice while it was live"
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "choice" \
+    "a live origin's close did not record the captain answer"
+
+  # Teardown removes the origin's metadata. Reproduce that end state, then close a
+  # second decision the way a post-teardown visual review does.
+  hold=$(run_decisions "$home" hold "$id" later \
+    --title "Choose the later torn option" --reason "captain later choice pending" --repo sample) \
+    || fail "could not register the second torn-origin hold"
+  rm -f "$home/state/$id.meta"
+  before=$(ls "$home/state" | LC_ALL=C sort)
+  printf 'Captain chose the later option.\n' > "$home/later-decision.txt"
+  run_decisions "$home" answer "$id" later --decision-file "$home/later-decision.txt" >/dev/null \
+    || fail "a post-teardown close should still close its hold"
+  assert_contains "$(tasks_in "$home" show "$hold" --full)" "state: done" \
+    "the post-teardown close did not actually close the hold"
+  assert_absent "$home/state/$id.meta" \
+    "a post-teardown close recreated the origin metadata teardown deleted"
+  after=$(ls "$home/state" | LC_ALL=C sort)
+  [ "$before" = "$after" ] \
+    || fail "a post-teardown close added state files: before [$before] after [$after]"
+  pass "a post-teardown close closes its hold without resurrecting origin metadata"
+}
+
 test_origin_slug_validation_precedes_path_construction
 test_visual_review_uses_shared_completion_owner
 test_none_inventory_and_resolved_prose_do_not_create_holds
@@ -2231,3 +2282,4 @@ test_verify_tolerates_archival_on_the_real_answer_ordering
 test_every_close_path_records_the_captain_answer
 test_a_reopened_key_defeats_its_earlier_durable_answer
 test_verify_reads_the_backlog_path_tasks_axi_resolves
+test_a_post_teardown_close_does_not_resurrect_origin_metadata

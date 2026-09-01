@@ -388,8 +388,8 @@ read_hold() {  # <id>
         "$(backlog_file)"
     fi
   else
-    printf 'unreadable\tcould not be read from %s/backlog.md: %s' \
-      "$DATA" "$(printf '%s' "$out" | tr '\n' ' ')"
+    printf 'unreadable\tcould not be read from %s: %s' \
+      "$(backlog_file)" "$(printf '%s' "$out" | tr '\n' ' ')"
   fi
 }
 
@@ -492,19 +492,28 @@ meta_value() {  # <meta> <key>
 # claims. That matters because the hold body carrying the same proof lives in the Done
 # section, which retention eventually trims; this line survives in state and is the
 # only evidence `verify` still has once the hold is gone.
-# The union is idempotent, so an exact retry of a close does not grow the list. A
-# missing metadata file is NOT skipped: this record is the only durable proof `verify`
-# has once retention trims the hold, and the status-log route that used to back it up
-# was removed as forgeable, so silently dropping it would let a genuinely answered hold
-# fail the gate. When the origin meta does not exist yet, create it (the directory
-# already holds the origin's state), so a close performed before the meta is written
-# still leaves answered_keys behind.
+# The union is idempotent, so an exact retry of a close does not grow the list.
+# The record is written only into a metadata file that already exists, and this
+# function never creates one. `verify` consults answered_keys only for a key already
+# listed in that same metadata's decision_keys, and `command_complete` writes
+# decision_keys only into an existing metadata file too, so a metadata file conjured
+# here could never carry the decision_keys any gate reads and would prove nothing.
+# Creating one would instead do harm: teardown deletes $STATE/<origin>.meta on purpose,
+# and state/*.meta is the fleet's sole register of live workers, so a post-teardown
+# close that recreated the file would resurrect a finished origin as a phantom worker
+# for every consumer that walks that directory.
 record_answered_key() {  # <origin-id> <decision-key>
   local origin=$1 key=$2 meta="$STATE/$1.meta" lock previous merged
+  [ -f "$meta" ] || return 0
   lock=$(fm_meta_lock_path "$meta") || fail "could not resolve task metadata lock"
   fm_lock_acquire_wait "$lock"
   DECISION_META_LOCK=$lock
   DECISION_META_LOCK_HELD=1
+  if [ ! -f "$meta" ]; then
+    fm_lock_release "$lock"
+    DECISION_META_LOCK_HELD=0
+    return 0
+  fi
   previous=$(meta_value "$meta" answered_keys)
   merged=$(sorted_key_union "$previous" "$key")
   if [ "$previous" != "$merged" ]; then

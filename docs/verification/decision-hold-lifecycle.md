@@ -45,6 +45,7 @@ The negatives prove an archived hold still fails with no answer evidence, with a
 A missing, empty, or unstructured backlog is refused rather than read as archival, while a real backlog whose Done heading carries trailing text is accepted.
 A home whose `.tasks.toml` configures a non-default `[markdown] path` is judged from that file: real archival out of it still clears the gate, and destroying it is refused even while a decoy `path` under an unrelated table still names a perfectly structured file.
 The status-log answer reader was removed along with its own regressions, because a worker writes its own status lines and could forge the marker it matched on.
+The durable answer record only annotates metadata that already exists: a close performed after teardown deleted the origin's metadata still closes its hold, and leaves the state directory untouched, so a finished origin cannot reappear as a live worker.
 
 The final verification commands and their exact summarized outputs follow.
 
@@ -81,6 +82,7 @@ ok - verify tolerates archival of a hold answered on the real completion-then-an
 ok - every close path records the captain answer durably and an unclosed hold records none
 ok - a re-asked key is unanswered again despite its earlier durable answer record
 ok - verify judges archival from the backlog path tasks-axi resolves, not a decoy
+ok - a post-teardown close closes its hold without resurrecting origin metadata
 
 $ bash tests/fm-classify-decision-key.test.sh
 ok - a stated [key=X] opens X whether it precedes or follows the verb colon
