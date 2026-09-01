@@ -8,17 +8,30 @@
 # Usage:
 #   fm-review-loop-stop.sh record <task-id> --run <run-id> --head <reviewed-head> \
 #     --changed <summary> --cluster <cluster> [--cluster <cluster>...] \
-#     [--threshold <rounds>]
+#     [--targeted <cluster>...] [--threshold <rounds>]
 #   fm-review-loop-stop.sh resolve <task-id> --run <run-id> \
 #     --decision <root|bank>
 #
 # record represents one completed Review gate that returned findings.
-# --head makes an exact retry idempotent. --changed says what the reviewed code
-# changed in this round. Each --cluster is a stable semantic key assigned by the
-# invoking agent under the skill's definition.
+# --changed says what the reviewed code changed in this round. Each --cluster is
+# a stable defect-identity key assigned by the invoking agent under the skill's
+# definition; pass one per returned finding cluster at any severity.
 #
-# A cluster trips after it appears in the configured number of consecutive
-# recorded rounds. --threshold sets that number for a new run. Otherwise
+# --targeted names each cluster this round's change tried to close. A cluster's
+# loop count advances only across a trailing run of rounds where that cluster was
+# both returned and targeted, so a defect that merely reappears without a fix
+# aimed at it is recorded but does not advance toward a stop. Every --targeted
+# value must also be a --cluster of the same record. Omitting --targeted entirely
+# treats every returned cluster as targeted.
+#
+# --head makes a retry against an already recorded head idempotent, but only for
+# an identical cluster set. A same-head retry that adds a cluster is reconciled
+# into that round (its clusters and targeted sets are unioned and the trip is
+# re-evaluated) so a new cluster is never silently lost; a retry that only
+# repeats the recorded clusters is a no-op.
+#
+# A cluster trips after the configured number of consecutive targeted-and-
+# returned rounds. --threshold sets that number for a new run. Otherwise
 # FM_REVIEW_LOOP_THRESHOLD sets it, with 3 as the default. The first record pins
 # the threshold for that run and later records refuse a conflicting override.
 #
@@ -137,9 +150,9 @@ write_report() { # <path> <state-json> <clusters-json>
 }
 
 record_round() { # <task-id> <args...>
-  local task=$1 run='' head='' changed='' requested_threshold=''
-  local clusters='[]' state_file state_json threshold existing_run existing_threshold
-  local new_state triggers generation key report round_count
+  local task=$1 run='' head='' changed='' requested_threshold='' targeted_given=0
+  local clusters='[]' targeted='[]' state_file state_json threshold existing_run existing_threshold
+  local new_state triggers generation key report round_count missing_target
   shift
   command -v jq >/dev/null 2>&1 || die "jq is required"
   while [ "$#" -gt 0 ]; do
@@ -166,6 +179,14 @@ record_round() { # <task-id> <args...>
           '$current + [$cluster] | unique')
         shift 2
         ;;
+      --targeted)
+        [ "$#" -ge 2 ] || die "--targeted requires a value"
+        valid_text "$2" 240 || die "--targeted must be 1-240 printable characters"
+        targeted_given=1
+        targeted=$(jq -cn --argjson current "$targeted" --arg cluster "$2" \
+          '$current + [$cluster] | unique')
+        shift 2
+        ;;
       --threshold)
         [ "$#" -ge 2 ] || die "--threshold requires a value"
         requested_threshold=$2
@@ -182,6 +203,16 @@ record_round() { # <task-id> <args...>
   [ "$(printf '%s' "$clusters" | jq 'length')" -gt 0 ] || die "record requires at least one --cluster"
   [ -z "$requested_threshold" ] || valid_threshold "$requested_threshold" ||
     die "threshold must be a positive integer"
+
+  # No --targeted means the whole round was a fix attempt aimed at every cluster
+  # it returned. An explicit --targeted set must name only returned clusters.
+  if [ "$targeted_given" -eq 0 ]; then
+    targeted=$clusters
+  else
+    missing_target=$(jq -rn --argjson clusters "$clusters" --argjson targeted "$targeted" \
+      '($targeted - $clusters) | join(", ")')
+    [ -z "$missing_target" ] || die "--targeted names clusters that are not --cluster values: $missing_target"
+  fi
 
   lock_task "$task"
   state_file="$LOOP_DIR/$task.json"
@@ -223,26 +254,46 @@ record_round() { # <task-id> <args...>
 
   if printf '%s' "$state_json" | jq -e --arg head "$head" \
     '.rounds[]? | select(.head == $head)' >/dev/null; then
-    printf 'continue: reviewed head %s was already recorded\n' "$head"
-    return 0
+    # A retry against a head we already recorded is idempotent only when it
+    # repeats that round's clusters. A retry that adds a cluster is reconciled
+    # into the round so the new information is never silently dropped.
+    if printf '%s' "$state_json" | jq -e --arg head "$head" --argjson clusters "$clusters" '
+      [.rounds[] | select(.head == $head)][-1] as $round
+      | ($clusters - $round.clusters) | length == 0
+    ' >/dev/null; then
+      printf 'continue: reviewed head %s was already recorded\n' "$head"
+      return 0
+    fi
+    new_state=$(printf '%s' "$state_json" | jq -c \
+      --arg head "$head" --argjson clusters "$clusters" --argjson targeted "$targeted" '
+        .rounds |= map(
+          if .head == $head then
+            .clusters = (.clusters + $clusters | unique)
+            | .targeted = ((.targeted // []) + $targeted | unique)
+          else . end)
+      ')
+  else
+    new_state=$(printf '%s' "$state_json" | jq -c \
+      --arg head "$head" --arg changed "$changed" \
+      --argjson clusters "$clusters" --argjson targeted "$targeted" '
+        .rounds += [{round: ((.rounds | length) + 1), head: $head,
+                     changed: $changed, clusters: $clusters, targeted: $targeted}]
+      ')
   fi
-
-  new_state=$(printf '%s' "$state_json" | jq -c \
-    --arg head "$head" --arg changed "$changed" --argjson clusters "$clusters" '
-      .rounds += [{round: ((.rounds | length) + 1), head: $head,
-                   changed: $changed, clusters: $clusters}]
-    ')
-  triggers=$(printf '%s' "$new_state" | jq -c --argjson threshold "$threshold" '
+  triggers=$(printf '%s' "$new_state" | jq -c \
+    --argjson threshold "$threshold" --argjson recorded "$clusters" '
     def trailing_count($rounds; $cluster):
       reduce ($rounds | reverse[]) as $round
         ({count: 0, open: true};
-         if .open and ($round.clusters | index($cluster) != null)
+         if .open
+            and ($round.clusters | index($cluster) != null)
+            and ((($round.targeted // $round.clusters)) | index($cluster) != null)
          then .count += 1
          elif .open then .open = false
          else .
          end) | .count;
     .rounds as $rounds
-    | [ .rounds[-1].clusters[] as $cluster
+    | [ $recorded[] as $cluster
         | select(trailing_count($rounds; $cluster) >= $threshold)
         | $cluster ]
   ')

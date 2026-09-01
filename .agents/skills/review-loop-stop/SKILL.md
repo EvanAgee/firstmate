@@ -16,55 +16,42 @@ Use that root for every helper call below, never the current project worktree.
 
 ## Define the clusters
 
-A cluster is the smallest stable owner of the repeated problem.
-Use the exact file as the default key, such as `file:src/lib/serve/exec-bridge.ts`.
-Use `module:<directory>:<invariant>` when findings cross files but describe one broken invariant owned by that module.
+A cluster is a stable identity for what the defect is, not the file it happens to live in.
+Two different defects in one file are two clusters.
+The same defect is one cluster even when its symptom moves to another file.
+Derive the key from the finding's content, the broken behavior or invariant the review keeps flagging.
+A file or module path may qualify the key but must never be the whole key.
 
-Keep the key unchanged while later rounds patch another edge of the same owner or invariant.
-A different exact file, module owner, or invariant is a new cluster and starts its own count.
-Record every blocking cluster in the returned gate, not only the first finding.
+- `defect:<short-stable-slug>` names the broken behavior, such as `defect:replay-identity-not-preserved`.
+- `module:<directory>:<invariant>` names one broken invariant an owning module keeps violating across files.
+
+Keep the key unchanged while later rounds patch another edge of the same defect or invariant.
+A genuinely different defect is a new cluster and starts its own count, even in a file you have already touched.
+Record every finding cluster the gate returned, at any severity and regardless of the action taken, so a recurring nonblocking defect is surfaced rather than silently dropped.
 
 ## Record the round
 
-For each Review gate with findings:
+Run `"<firstmate-code-root>/bin/fm-review-loop-stop.sh" --help` for the exact commands, flags, exit codes, threshold, and state effects.
+This skill owns only the judgment those flags need.
 
-1. Get the no-mistakes run ID from the gate output or `no-mistakes axi status`.
-2. Use the reviewed commit from the gate, or the current `git rev-parse HEAD`, as `--head`.
-3. Write one sentence for `--changed` that says what the code reviewed in this round changed.
-   For the first review, summarize the implementation commit.
-   For later reviews, summarize the preceding no-mistakes review-fix commit.
-4. Run the Firstmate code root's helper once with every cluster:
+For each Review gate with findings, run the helper's `record` command once with:
 
-```sh
-"<firstmate-code-root>/bin/fm-review-loop-stop.sh" record <task-id> \
-  --run <run-id> \
-  --head <reviewed-head> \
-  --changed '<what this round changed>' \
-  --cluster '<stable-cluster-key>'
-```
+- Every cluster the gate returned, one `--cluster` per cluster, keyed as above.
+- The clusters this round's change tried to close, one `--targeted` per cluster.
+  A cluster advances toward a stop only across rounds that both returned it and were aimed at it, so a defect that reappears while you were fixing a different one does not count against you.
+  Name a cluster as targeted only when the reviewed change tried to close that defect.
+- One `--changed` sentence saying what the reviewed code changed this round.
+  Use the implementation commit for the first review and the preceding review-fix commit for later ones.
+- The run ID from the gate output or `no-mistakes axi status`, and the reviewed commit (or `git rev-parse HEAD`) as `--head`.
 
-Repeat `--cluster` when the gate has more than one cluster.
-Pass `--threshold <rounds>` on the first record when this task needs a value other than three.
-`FM_REVIEW_LOOP_THRESHOLD` provides the same per-run override.
-
-Exit 0 means no cluster has reached the threshold.
-Continue through the existing authority and gate-response rules.
-
-Exit 20 means stop.
-The helper has written a report and appended one keyed `needs-decision` event for firstmate.
-Do not send another no-mistakes response and do not append a second status event.
+When the helper stops the run, it has already written the report and surfaced the decision for firstmate.
+Do not send another no-mistakes response and do not append a status event yourself.
 End the turn so firstmate can choose one of the report's two paths.
 
 ## Resume only from firstmate's choice
 
-When firstmate sends an exact decision, record it before following the supplied no-mistakes response command:
-
-```sh
-"<firstmate-code-root>/bin/fm-review-loop-stop.sh" resolve <task-id> --run <run-id> --decision root
-```
-
-Use `--decision bank` for an explicit bank-the-remainder choice.
-The helper records the choice but never chooses the gate action.
-For a root fix, it starts fresh counts for the report's clusters while keeping every other cluster's active streak.
-For a bank choice, it archives the surfaced stop under the same rule so later Review gates can record new or still-open clusters.
+When firstmate sends an exact decision, run the helper's `resolve` command with that decision before following the supplied no-mistakes response command.
+The helper records the choice; it never chooses the gate action.
+A root fix starts a fresh count for the surfaced clusters while keeping every other cluster's active streak.
+A bank choice archives the stop so later gates can record new or still-open clusters.
 Follow only the exact gate action firstmate authorized.

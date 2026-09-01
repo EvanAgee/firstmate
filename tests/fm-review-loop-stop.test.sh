@@ -23,6 +23,13 @@ record() { # <home> <task-id> <run-id> <head> <changed> <cluster> [extra args...
     --changed "$changed" --cluster "$cluster" "$@"
 }
 
+record_raw() { # <home> <task-id> <run-id> <head> <changed> [args...]
+  local home=$1 task=$2 run=$3 head=$4 changed=$5
+  shift 5
+  FM_HOME="$home" "$STOP" record "$task" --run "$run" --head "$head" \
+    --changed "$changed" "$@"
+}
+
 hold_lock() { # <home> <lock> <ready>
   local home=$1 lock=$2 ready=$3
   local FM_HOME=$home STATE="$home/state"
@@ -262,8 +269,141 @@ test_dead_lock_owner_is_recovered() {
   pass "review-loop stop: dead lock owners are recovered"
 }
 
+test_distinct_defects_in_one_file_do_not_trip() {
+  local task=onefile-loop run=run-onefile home
+  home=$(make_home distinct-defects "$task")
+  # Three different defects, each fixed once, all living in the same file. The
+  # file is constant; only the defect identity should decide the count.
+  record "$home" "$task" "$run" head-a "Fixed root resolution." \
+    "defect:root-resolution" >/dev/null \
+    || fail "first distinct defect should continue"
+  record "$home" "$task" "$run" head-b "Fixed cluster grouping." \
+    "defect:cluster-grouping" >/dev/null \
+    || fail "second distinct defect should continue"
+  record "$home" "$task" "$run" head-c "Fixed lock recovery." \
+    "defect:lock-recovery" >/dev/null \
+    || fail "third distinct defect should continue"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "three different defects in one file tripped the rule"
+  pass "review-loop stop: different defects in one file do not trip"
+}
+
+test_same_defect_across_files_trips() {
+  local task=moving-loop run=run-moving home rc out report
+  home=$(make_home moving-symptom "$task")
+  # One defect whose symptom moves to a different file each round, each round
+  # aimed at closing that same defect.
+  record "$home" "$task" "$run" head-a "Fixed the model-memory leak in loader.ts." \
+    "defect:model-memory-leak" --targeted "defect:model-memory-leak" >/dev/null \
+    || fail "first targeted round should continue"
+  record "$home" "$task" "$run" head-b "Fixed the same leak surfacing in cache.ts." \
+    "defect:model-memory-leak" --targeted "defect:model-memory-leak" >/dev/null \
+    || fail "second targeted round should continue"
+
+  set +e
+  out=$(record "$home" "$task" "$run" head-c "Fixed the same leak surfacing in serve.ts." \
+    "defect:model-memory-leak" --targeted "defect:model-memory-leak" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the same defect surviving three targeted fixes must stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the moving-symptom defect did not write its report"
+  assert_grep "defect:model-memory-leak" "$report" \
+    "report omitted the moving-symptom defect"
+  pass "review-loop stop: same defect trips even as symptoms move across files"
+}
+
+test_untargeted_recurrence_does_not_advance_count() {
+  local task=untargeted-loop run=run-untargeted home rc
+  home=$(make_home untargeted-recurrence "$task")
+  # The defect keeps reappearing, but each round is aimed at a different one.
+  # An unfixed defect that merely reappears must not advance toward a stop.
+  record_raw "$home" "$task" "$run" head-a "Fixed defect alpha." \
+    --cluster "defect:alpha" --cluster "defect:beta" \
+    --targeted "defect:alpha" --threshold 2 >/dev/null \
+    || fail "first mixed round should continue"
+  record_raw "$home" "$task" "$run" head-b "Fixed defect gamma; beta still reported." \
+    --cluster "defect:beta" --cluster "defect:gamma" \
+    --targeted "defect:gamma" >/dev/null \
+    || fail "an untargeted recurrence must not trip at threshold two"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "an untargeted recurring defect tripped the rule"
+
+  # Now aim two consecutive rounds at beta: it must trip at threshold two.
+  set +e
+  record_raw "$home" "$task" "$run" head-c "Aimed at beta." \
+    --cluster "defect:beta" --targeted "defect:beta" >/dev/null 2>&1
+  record_raw "$home" "$task" "$run" head-d "Aimed at beta again." \
+    --cluster "defect:beta" --targeted "defect:beta" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "two consecutive targeted beta rounds must stop"
+  pass "review-loop stop: untargeted recurrence does not advance the count"
+}
+
+test_multiple_severities_all_recorded() {
+  local task=severity-loop run=run-severity home rc out report
+  home=$(make_home multi-severity "$task")
+  # A gate returning findings at different severities must record every cluster,
+  # not only the blocking one. Both survive two targeted rounds and both surface.
+  record_raw "$home" "$task" "$run" head-a "Round one touched both defects." \
+    --cluster "defect:blocking-null-deref" --cluster "defect:advisory-naming" \
+    --targeted "defect:blocking-null-deref" --targeted "defect:advisory-naming" \
+    --threshold 2 >/dev/null || fail "first severity round should continue"
+
+  set +e
+  out=$(record_raw "$home" "$task" "$run" head-b "Round two touched both defects." \
+    --cluster "defect:blocking-null-deref" --cluster "defect:advisory-naming" \
+    --targeted "defect:blocking-null-deref" --targeted "defect:advisory-naming" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "both severities repeated twice must stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "multi-severity round did not write its report"
+  assert_grep "defect:blocking-null-deref" "$report" \
+    "report omitted the blocking-severity cluster"
+  assert_grep "defect:advisory-naming" "$report" \
+    "report omitted the advisory-severity cluster"
+  pass "review-loop stop: every returned severity is recorded"
+}
+
+test_expanded_same_head_retry_keeps_new_cluster() {
+  local task=reconcile-loop run=run-reconcile home rc out report
+  home=$(make_home reconcile-head "$task")
+  # First record head-a with one cluster.
+  record "$home" "$task" "$run" head-a "Recorded alpha only." \
+    "defect:alpha" --threshold 2 >/dev/null \
+    || fail "first record should continue"
+  # A same-head retry that adds a cluster must not silently drop it. An
+  # identical retry stays idempotent.
+  record "$home" "$task" "$run" head-a "Same head, alpha again." \
+    "defect:alpha" >/dev/null \
+    || fail "identical same-head retry should be idempotent"
+  record "$home" "$task" "$run" head-a "Same head now also carries beta." \
+    "defect:alpha" --cluster "defect:beta" --targeted "defect:beta" >/dev/null \
+    || fail "expanded same-head retry should be accepted"
+
+  # beta now has one targeted round on head-a; a second targeted beta round trips.
+  set +e
+  out=$(record "$home" "$task" "$run" head-b "Aimed at beta again." \
+    "defect:beta" --targeted "defect:beta" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the reconciled beta cluster must survive and trip"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "reconciled retry did not surface beta"
+  assert_grep "defect:beta" "$report" \
+    "expanded same-head retry lost the added cluster"
+  pass "review-loop stop: expanded same-head retry keeps the new cluster"
+}
+
 test_third_round_surfaces_once
 test_distinct_areas_do_not_trip
+test_distinct_defects_in_one_file_do_not_trip
+test_same_defect_across_files_trips
+test_untargeted_recurrence_does_not_advance_count
+test_multiple_severities_all_recorded
+test_expanded_same_head_retry_keeps_new_cluster
 test_threshold_is_configurable
 test_ambient_threshold_does_not_override_a_pinned_run
 test_root_decision_starts_a_fresh_count
