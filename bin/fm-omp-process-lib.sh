@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Usage: source bin/fm-omp-process-lib.sh; fm_omp_process_matches <comm-or-path> <args> [pid]
-# Exact OMP process identity shared by primary ancestry and backend liveness probes.
-# Bun may publish comm=omp as its process title, but argv must still begin with the
-# launch-bound Bun executable and OMP entrypoint after canonical resolution.
+#        source bin/fm-omp-process-lib.sh; fm_omp_launch_argv_shape <args>
+# OMP process evidence shared by primary ancestry and backend liveness probes:
+# `fm_omp_process_matches` proves exact launch-bound identity, and the weaker
+# `fm_omp_launch_argv_shape` proves only firstmate's OMP launch argv shape.
+# For the exact probe: Bun may publish comm=omp as its process title, but argv must
+# still begin with the launch-bound Bun executable and OMP entrypoint after canonical
+# resolution.
 # Callers supply those paths from task metadata; primary probes may use the loaded
 # marker written by the running OMP extension and bound to the exact PID. A fresh
 # PATH lookup is never identity evidence. When Linux exposes /proc/<pid>/exe, that
@@ -95,6 +99,28 @@ fm_omp_process_executable() {  # <pid>
   path=$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
   [ -n "$path" ] || return 1
   fm_omp_process_resolve_path "$path"
+}
+
+# Launch-shape OMP evidence: the argv begins with an absolute Bun executable
+# followed by an absolute `omp` entrypoint, the way firstmate launches an OMP
+# worker. This is weaker than fm_omp_process_matches: it proves the launch shape
+# rather than the exact launch-bound identity, so callers only use it to qualify
+# an already-present FM_OMP_HARNESS launch-boundary marker.
+# It lives here, beside fm_omp_process_matches, so every OMP ancestry probe
+# reads the same primitive instead of re-deriving the argv shape.
+fm_omp_launch_argv_shape() {  # <args>
+  local first second rest bun_path omp_path
+  read -r first second rest <<EOF
+$1
+EOF
+  [ -n "${first:-}" ] && [ -n "${second:-}" ] || return 1
+  case "$first" in /*) ;; *) return 1 ;; esac
+  case "$second" in */omp) ;; *) return 1 ;; esac
+  [ "$(basename -- "$first")" = bun ] || return 1
+  bun_path=$(fm_omp_process_resolve_path "$first") || return 1
+  omp_path=$(fm_omp_process_resolve_path "$second") || return 1
+  fm_omp_process_identity_path_valid "$bun_path" \
+    && fm_omp_process_identity_path_valid "$omp_path"
 }
 
 fm_omp_process_matches() {  # <comm-or-path> <args> [pid]
