@@ -26,13 +26,15 @@
 #
 # --head makes a retry against an already recorded head idempotent, but only when
 # it adds nothing: its clusters are already in that round and its targeting is
-# already recorded there. A same-head retry that adds a cluster or adds targeting
-# is reconciled into that round (this call's clusters and targeting are unioned
-# in and the trip is re-evaluated) so new information is never silently lost. A
-# retry only ever targets the clusters it names, so it never marks a stored
-# cluster the recorded round deliberately left untargeted. An untargeted caller
-# therefore reaches the same count whether clusters arrive in one call or across
-# same-head retries.
+# already recorded there. Any other same-head retry is reconciled into that
+# round and the trip is re-evaluated, so new information is never silently lost.
+# A reconcile splits this call's clusters into the ones it newly adds and the
+# ones the round already stored. It decides targeting only for the newly added
+# clusters, under the same rule a fresh round uses. Targeting already stored for
+# a cluster stands untouched, so a retry never marks a cluster the recorded round
+# deliberately left untargeted. A reconcile also replaces the round's --changed
+# summary with this call's. An untargeted caller therefore reaches the same count
+# whether clusters arrive in one call or across same-head retries.
 #
 # A cluster trips after the configured number of consecutive targeted-and-
 # returned rounds. --threshold sets that number for a new run. Otherwise
@@ -261,26 +263,37 @@ record_round() { # <task-id> <args...>
 
   if printf '%s' "$state_json" | jq -e --arg head "$head" \
     '.rounds[]? | select(.head == $head)' >/dev/null; then
-    # A retry against a head we already recorded is idempotent only when it adds
-    # nothing: no new cluster and no targeting the round is missing. Anything
-    # else is reconciled into the round so new information is never silently
-    # dropped. Only this call's own targeting is unioned in, so a retry never
-    # targets a stored cluster it does not name.
+    # A reconcile decides targeting only for the clusters this call newly adds
+    # to the round. Targeting already stored for a cluster from an earlier call
+    # stands untouched, so a retry never marks a cluster the recorded round
+    # deliberately left untargeted. A retry that adds no cluster and no missing
+    # targeting is a no-op.
     if printf '%s' "$state_json" | jq -e --arg head "$head" \
-      --argjson clusters "$clusters" --argjson targeted "$targeted" '
+      --argjson clusters "$clusters" --argjson targeted "$targeted" \
+      --argjson given "$targeted_given" '
       [.rounds[] | select(.head == $head)][-1] as $round
-      | (($clusters - $round.clusters) | length == 0)
+      | ($clusters - $round.clusters) as $new_clusters
+      | (if $given == 1 then ($targeted - ($targeted - $new_clusters))
+         else $new_clusters end) as $new_targeted
+      | (($new_clusters | length) == 0)
+        and (($new_targeted | length) == 0)
         and ((($targeted - ($round.targeted // [])) | length) == 0)
     ' >/dev/null; then
       printf 'continue: reviewed head %s was already recorded\n' "$head"
       return 0
     fi
     new_state=$(printf '%s' "$state_json" | jq -c \
-      --arg head "$head" --argjson clusters "$clusters" --argjson targeted "$targeted" '
+      --arg head "$head" --arg changed "$changed" \
+      --argjson clusters "$clusters" --argjson targeted "$targeted" \
+      --argjson given "$targeted_given" '
         .rounds |= map(
           if .head == $head then
-            .clusters = (.clusters + $clusters | unique)
-            | .targeted = ((.targeted // []) + $targeted | unique)
+            ($clusters - .clusters) as $new_clusters
+            | (if $given == 1 then ($targeted - ($targeted - $new_clusters))
+               else $new_clusters end) as $new_targeted
+            | .changed = $changed
+            | .clusters = (.clusters + $new_clusters | unique)
+            | .targeted = ((.targeted // []) + $new_targeted | unique)
           else . end)
       ')
   else

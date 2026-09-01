@@ -426,6 +426,55 @@ test_expanded_same_head_retry_keeps_new_cluster() {
   pass "review-loop stop: expanded same-head retry keeps the new cluster"
 }
 
+test_untargeted_retry_keeps_stored_untargeted_cluster() {
+  local task=stored-untargeted run=run-stored-untargeted home rc
+  home=$(make_home stored-untargeted "$task")
+  # head-a returned X and Y but only aimed at Y, so X has no targeted round yet.
+  record_raw "$home" "$task" "$run" head-a "Aimed at Y." \
+    --cluster "defect:X" --cluster "defect:Y" \
+    --targeted "defect:Y" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  record_raw "$home" "$task" "$run" head-b "Aimed at X." \
+    --cluster "defect:X" --targeted "defect:X" >/dev/null \
+    || fail "one targeted X round must not trip at threshold two"
+
+  # An untargeted retry of head-a re-names X. head-a's stored decision that X was
+  # untargeted must stand, so X still has one targeted round and cannot stop.
+  set +e
+  record_raw "$home" "$task" "$run" head-a "Retry: the gate also returned Z." \
+    --cluster "defect:X" --cluster "defect:Y" --cluster "defect:Z" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "a retry must not retroactively target a stored cluster"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "an untargeted retry retroactively targeted a stored cluster"
+  pass "review-loop stop: a retry keeps a stored cluster untargeted"
+}
+
+test_same_head_retry_updates_the_changed_summary() {
+  local task=changed-retry run=run-changed-retry home rc out report
+  home=$(make_home changed-retry "$task")
+  record "$home" "$task" "$run" head-a "Stale summary." "defect:q" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  record "$home" "$task" "$run" head-a "Corrected summary: rewrote the parser." \
+    "defect:q" --cluster "defect:r" >/dev/null \
+    || fail "expanded same-head retry should be accepted"
+
+  # The report prints each round's summary, so the corrected one must win.
+  set +e
+  out=$(record "$home" "$task" "$run" head-b "Round two." "defect:q" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "two targeted rounds must stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the tripping round did not write a report"
+  assert_grep "Corrected summary" "$report" \
+    "a same-head retry dropped its corrected --changed summary"
+  grep -Fq "Stale summary." "$report" \
+    && fail "the report still prints the superseded summary"
+  pass "review-loop stop: a same-head retry updates the changed summary"
+}
+
 test_untargeted_reconcile_does_not_retroactively_target() {
   local task=untargeted-reconcile run=run-untargeted-reconcile home rc
   home=$(make_home untargeted-reconcile "$task")
@@ -487,16 +536,14 @@ test_untargeted_retry_counts_like_one_combined_call() {
 test_same_head_retry_keeps_added_targeting() {
   local task=targeting-reconcile run=run-targeting-reconcile home rc out report
   home=$(make_home targeting-reconcile "$task")
-  # head-a returned both defects but was recorded as aimed at alpha only.
+  # head-a returned alpha and aimed at it. A retry adds beta and aims at beta.
   record_raw "$home" "$task" "$run" head-a "Aimed at alpha." \
-    --cluster "defect:alpha" --cluster "defect:beta" \
-    --targeted "defect:alpha" --threshold 2 >/dev/null \
+    --cluster "defect:alpha" --targeted "defect:alpha" --threshold 2 >/dev/null \
     || fail "first round should continue"
-  # A retry repeating the same clusters but adding targeting must keep it.
   record_raw "$home" "$task" "$run" head-a "Same head also aimed at beta." \
     --cluster "defect:alpha" --cluster "defect:beta" \
     --targeted "defect:alpha" --targeted "defect:beta" >/dev/null \
-    || fail "a retry that adds targeting should be accepted"
+    || fail "a retry that adds a targeted cluster should be accepted"
 
   set +e
   out=$(record_raw "$home" "$task" "$run" head-b "Aimed at beta again." \
@@ -518,6 +565,8 @@ test_untargeted_recurrence_does_not_advance_count
 test_multiple_severities_all_recorded
 test_expanded_same_head_retry_keeps_new_cluster
 test_untargeted_reconcile_does_not_retroactively_target
+test_untargeted_retry_keeps_stored_untargeted_cluster
+test_same_head_retry_updates_the_changed_summary
 test_untargeted_retry_counts_like_one_combined_call
 test_same_head_retry_keeps_added_targeting
 test_resolved_round_carries_no_stale_targeting
