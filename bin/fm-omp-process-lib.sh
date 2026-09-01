@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Usage: source bin/fm-omp-process-lib.sh; fm_omp_process_matches <comm-or-path> <args> [pid]
 #        source bin/fm-omp-process-lib.sh; fm_omp_launch_argv_shape <args>
-# Exact OMP process identity shared by primary ancestry and backend liveness probes.
-# Bun may publish comm=omp as its process title, but argv must still begin with the
-# launch-bound Bun executable and OMP entrypoint after canonical resolution.
+# OMP process evidence shared by primary ancestry and backend liveness probes:
+# `fm_omp_process_matches` proves exact launch-bound identity, and the weaker
+# `fm_omp_launch_argv_shape` proves only firstmate's OMP launch argv shape.
+# For the exact probe: Bun may publish comm=omp as its process title, but argv must
+# still begin with the launch-bound Bun executable and OMP entrypoint after canonical
+# resolution.
 # Callers supply those paths from task metadata; primary probes may use the loaded
 # marker written by the running OMP extension and bound to the exact PID. A fresh
 # PATH lookup is never identity evidence. When Linux exposes /proc/<pid>/exe, that

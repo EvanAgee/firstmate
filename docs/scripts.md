@@ -134,7 +134,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
 | `fm-pi-compatible-lib.sh` | Shared membership predicate for the verified Pi-compatible harness family            |
 | `fm-pi-compatible-runtimes` | The tracked single owner of that closed family allowlist                          |
-| `fm-omp-process-lib.sh`  | Exact OMP process identity shared by primary ancestry and backend liveness probes    |
+| `fm-omp-process-lib.sh`  | Exact OMP process identity plus the weaker OMP launch-argv shape, shared by primary ancestry and backend liveness probes |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared Relay config, relay, and reply-threading helpers                              |
 | `fm-x-poll.sh`           | One bounded Relay poll: stash newly offered mentions and emit their once-only wake   |
