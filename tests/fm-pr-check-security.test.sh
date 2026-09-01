@@ -2745,7 +2745,7 @@ SH
 }
 
 test_teardown_removes_poll_artifacts() {
-  local dir fakebin kind artifact counterpart rc before
+  local dir fakebin kind artifact counterpart rc before child_home child_state
   dir=$(make_case teardown-cleanup)
   fakebin="$dir/fakebin"
   fm_write_meta "$dir/home/state/task-a.meta" \
@@ -2888,6 +2888,101 @@ SH
   [ "$rc" -ne 0 ] || fail "teardown accepted a directory-shaped PR review chase"
   [ "$(poll_artifact_snapshot "$dir/home/state" task-a)" = "$before" ] \
     || fail "teardown consumed a valid retirement receipt before its refusal gate"
+
+  # The same two guarantees must hold for a secondmate CHILD task, whose poll
+  # lives in the secondmate home's own state directory and is inspected by the
+  # child preflight rather than the top-level one. First: a pre-fix v1 receipt
+  # on a child must not block the parent's teardown.
+  dir=$(make_case teardown-child-legacy-receipt)
+  fakebin="$dir/fakebin"
+  child_home="$dir/secondmate-home"
+  child_state="$child_home/state"
+  mkdir -p "$child_state" "$child_home/data" "$child_home/config" "$child_home/projects"
+  printf '%s\n' task-a > "$child_home/.fm-secondmate-home"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$child_home" \
+    "project=$dir/project" \
+    'kind=secondmate' \
+    'mode=secondmate' \
+    'backend=tmux' \
+    "home=$child_home"
+  fm_write_meta "$child_state/child-a.meta" \
+    'window=firstmate:fm-child-a' \
+    'endpoint_task_id=child-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'backend=tmux' \
+    'pr=https://github.com/o/r/pull/21'
+  seed_canonical_poll_in "$child_state" child-a https://github.com/o/r/pull/21
+  fm_pr_poll_snapshot_capture "$child_state" child-a "$POLL" \
+    || fail "could not snapshot child legacy receipt fixture"
+  fm_pr_poll_retirement_publish "$child_state" child-a "$POLL" merged \
+    || fail "could not publish child legacy receipt fixture"
+  downgrade_receipt_to_v1_device_inode "$child_state" child-a
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err" \
+    || fail "a child's stale pre-fix retirement receipt blocked teardown: $(cat "$dir/teardown.err")"
+  [ ! -e "$dir/home/state/task-a.meta" ] \
+    || fail "teardown left the parent task after clearing a child's legacy receipt"
+
+  # Second: a VALID current receipt on a child must survive a teardown refusal,
+  # so the child's poll files are still there for a plain rerun.
+  dir=$(make_case teardown-child-valid-receipt-survives-refusal)
+  fakebin="$dir/fakebin"
+  child_home="$dir/secondmate-home"
+  child_state="$child_home/state"
+  mkdir -p "$child_state" "$child_home/data" "$child_home/config" "$child_home/projects"
+  printf '%s\n' task-a > "$child_home/.fm-secondmate-home"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$child_home" \
+    "project=$dir/project" \
+    'kind=secondmate' \
+    'mode=secondmate' \
+    'backend=tmux' \
+    "home=$child_home"
+  fm_write_meta "$child_state/child-a.meta" \
+    'window=firstmate:fm-child-a' \
+    'endpoint_task_id=child-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'backend=tmux' \
+    'pr=https://github.com/o/r/pull/22'
+  seed_canonical_poll_in "$child_state" child-a https://github.com/o/r/pull/22
+  fm_pr_poll_snapshot_capture "$child_state" child-a "$POLL" \
+    || fail "could not snapshot child refusal-survival fixture"
+  fm_pr_poll_retirement_publish "$child_state" child-a "$POLL" merged \
+    || fail "could not publish child refusal-survival fixture"
+  mkdir "$child_state/child-a.pr-review-chase"
+  printf 'directory sentinel\n' > "$child_state/child-a.pr-review-chase/sentinel"
+  before=$(poll_artifact_snapshot "$child_state" child-a)
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown accepted a directory-shaped child PR review chase"
+  [ "$(poll_artifact_snapshot "$child_state" child-a)" = "$before" ] \
+    || fail "teardown consumed a valid child retirement receipt before its refusal gate"
 
   dir=$(make_case teardown-reserved-quarantine)
   fakebin="$dir/fakebin"
@@ -3109,8 +3204,12 @@ EOF
 }
 
 seed_canonical_poll() {
-  local dir=$1 id=$2 url=$3 template=${4:-$POLL} state provider host path number
-  state="$dir/home/state"
+  local dir=$1 id=$2 url=$3 template=${4:-$POLL}
+  seed_canonical_poll_in "$dir/home/state" "$id" "$url" "$template"
+}
+
+seed_canonical_poll_in() {
+  local state=$1 id=$2 url=$3 template=${4:-$POLL} provider host path number
   fm_pr_url_parse "$url" || fail "retirement fixture URL was invalid"
   provider=$FM_PR_PROVIDER
   host=$FM_PR_HOST
