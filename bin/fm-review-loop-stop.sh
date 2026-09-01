@@ -24,11 +24,14 @@
 # value must also be a --cluster of the same record. Omitting --targeted entirely
 # treats every returned cluster as targeted.
 #
-# --head makes a retry against an already recorded head idempotent, but only for
-# an identical cluster set. A same-head retry that adds a cluster is reconciled
-# into that round (its clusters and targeted sets are unioned and the trip is
-# re-evaluated) so a new cluster is never silently lost; a retry that only
-# repeats the recorded clusters is a no-op.
+# --head makes a retry against an already recorded head idempotent, but only when
+# it adds nothing: its clusters are already in that round and its explicit
+# --targeted values, if any, are already targeted there. A same-head retry that
+# adds a cluster or adds explicit targeting is reconciled into that round (the
+# added clusters and the explicitly named targeted clusters are unioned in and
+# the trip is re-evaluated) so new information is never silently lost. A retry
+# that omits --targeted adds no targeting, so it never marks a cluster the
+# recorded round deliberately left untargeted.
 #
 # A cluster trips after the configured number of consecutive targeted-and-
 # returned rounds. --threshold sets that number for a new run. Otherwise
@@ -151,7 +154,8 @@ write_report() { # <path> <state-json> <clusters-json>
 
 record_round() { # <task-id> <args...>
   local task=$1 run='' head='' changed='' requested_threshold='' targeted_given=0
-  local clusters='[]' targeted='[]' state_file state_json threshold existing_run existing_threshold
+  local clusters='[]' targeted='[]' explicit_targeted='[]'
+  local state_file state_json threshold existing_run existing_threshold
   local new_state triggers generation key report round_count missing_target
   shift
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -208,7 +212,9 @@ record_round() { # <task-id> <args...>
   # it returned. An explicit --targeted set must name only returned clusters.
   if [ "$targeted_given" -eq 0 ]; then
     targeted=$clusters
+    explicit_targeted='[]'
   else
+    explicit_targeted=$targeted
     missing_target=$(jq -rn --argjson clusters "$clusters" --argjson targeted "$targeted" \
       '($targeted - $clusters) | join(", ")')
     [ -z "$missing_target" ] || die "--targeted names clusters that are not --cluster values: $missing_target"
@@ -254,18 +260,22 @@ record_round() { # <task-id> <args...>
 
   if printf '%s' "$state_json" | jq -e --arg head "$head" \
     '.rounds[]? | select(.head == $head)' >/dev/null; then
-    # A retry against a head we already recorded is idempotent only when it
-    # repeats that round's clusters. A retry that adds a cluster is reconciled
-    # into the round so the new information is never silently dropped.
-    if printf '%s' "$state_json" | jq -e --arg head "$head" --argjson clusters "$clusters" '
+    # A retry against a head we already recorded is idempotent only when it adds
+    # nothing: no new cluster and no explicit targeting the round is missing.
+    # Anything else is reconciled into the round so new information is never
+    # silently dropped. Only explicitly named targeting is unioned in, so a retry
+    # that omits --targeted never retroactively targets a recorded cluster.
+    if printf '%s' "$state_json" | jq -e --arg head "$head" \
+      --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
       [.rounds[] | select(.head == $head)][-1] as $round
-      | ($clusters - $round.clusters) | length == 0
+      | (($clusters - $round.clusters) | length == 0)
+        and ((($targeted - ($round.targeted // [])) | length) == 0)
     ' >/dev/null; then
       printf 'continue: reviewed head %s was already recorded\n' "$head"
       return 0
     fi
     new_state=$(printf '%s' "$state_json" | jq -c \
-      --arg head "$head" --argjson clusters "$clusters" --argjson targeted "$targeted" '
+      --arg head "$head" --argjson clusters "$clusters" --argjson targeted "$explicit_targeted" '
         .rounds |= map(
           if .head == $head then
             .clusters = (.clusters + $clusters | unique)

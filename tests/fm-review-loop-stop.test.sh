@@ -397,6 +397,57 @@ test_expanded_same_head_retry_keeps_new_cluster() {
   pass "review-loop stop: expanded same-head retry keeps the new cluster"
 }
 
+test_untargeted_reconcile_does_not_retroactively_target() {
+  local task=untargeted-reconcile run=run-untargeted-reconcile home rc
+  home=$(make_home untargeted-reconcile "$task")
+  # head-a returned epsilon and zeta but only aimed at zeta.
+  record_raw "$home" "$task" "$run" head-a "Aimed at zeta only." \
+    --cluster "defect:epsilon" --cluster "defect:zeta" \
+    --targeted "defect:zeta" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  record_raw "$home" "$task" "$run" head-b "Aimed at epsilon." \
+    --cluster "defect:epsilon" --targeted "defect:epsilon" >/dev/null \
+    || fail "one targeted epsilon round must not trip at threshold two"
+
+  # A same-head retry that adds a cluster but names no --targeted must add no
+  # targeting, so epsilon keeps its single targeted round and does not stop.
+  set +e
+  record_raw "$home" "$task" "$run" head-a "Same head now also carries eta." \
+    --cluster "defect:epsilon" --cluster "defect:zeta" --cluster "defect:eta" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "an untargeted reconcile must not fabricate a stop"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "an untargeted reconcile retroactively targeted a recorded cluster"
+  pass "review-loop stop: an untargeted reconcile adds no targeting"
+}
+
+test_same_head_retry_keeps_added_targeting() {
+  local task=targeting-reconcile run=run-targeting-reconcile home rc out report
+  home=$(make_home targeting-reconcile "$task")
+  # head-a returned both defects but was recorded as aimed at alpha only.
+  record_raw "$home" "$task" "$run" head-a "Aimed at alpha." \
+    --cluster "defect:alpha" --cluster "defect:beta" \
+    --targeted "defect:alpha" --threshold 2 >/dev/null \
+    || fail "first round should continue"
+  # A retry repeating the same clusters but adding targeting must keep it.
+  record_raw "$home" "$task" "$run" head-a "Same head also aimed at beta." \
+    --cluster "defect:alpha" --cluster "defect:beta" \
+    --targeted "defect:alpha" --targeted "defect:beta" >/dev/null \
+    || fail "a retry that adds targeting should be accepted"
+
+  set +e
+  out=$(record_raw "$home" "$task" "$run" head-b "Aimed at beta again." \
+    --cluster "defect:beta" --targeted "defect:beta" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the added beta targeting must survive and trip"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the reconciled targeting did not surface beta"
+  assert_grep "defect:beta" "$report" "same-head retry lost the added targeting"
+  pass "review-loop stop: a same-head retry keeps added targeting"
+}
+
 test_third_round_surfaces_once
 test_distinct_areas_do_not_trip
 test_distinct_defects_in_one_file_do_not_trip
@@ -404,6 +455,8 @@ test_same_defect_across_files_trips
 test_untargeted_recurrence_does_not_advance_count
 test_multiple_severities_all_recorded
 test_expanded_same_head_retry_keeps_new_cluster
+test_untargeted_reconcile_does_not_retroactively_target
+test_same_head_retry_keeps_added_targeting
 test_threshold_is_configurable
 test_ambient_threshold_does_not_override_a_pinned_run
 test_root_decision_starts_a_fresh_count
