@@ -399,8 +399,8 @@ test_matrix_omp_two_row_input_border() {
 
   # A finished-turn OMP box followed by a BLANK spacer line and then transcript
   # must stay unknown: the pair is not bottom-anchored. A next-row-only check
-  # would wave the blank line through, so the whole region below the close must
-  # be blank or structural.
+  # would wave the blank line through, so EVERY row below the close must be
+  # blank.
   local stale_spaced
   stale_spaced="$top"$'\n''╰─                       ─╯'$'\n'$'\n''earlier transcript output'
   assert_screen "omp stale pair with blank+transcript below is unknown" unknown "$CAPS_STYLED" "$stale_spaced" '' "$omp_idle"
@@ -408,6 +408,30 @@ test_matrix_omp_two_row_input_border() {
   # The cursor parked on the STATUS (top) row of a finished box is not editing;
   # only the cursor on the bottom input row reads as the live composer.
   assert_screen "omp cursor on the status row is not input" unknown "$CAPS_TMUX" "$stale_spaced" 0 "$omp_idle"
+
+  # Transcript rows that merely BEGIN or END with a border, rule, pipe, or plus
+  # glyph are still transcript, not the composer's own furniture: a markdown
+  # table row, a rule-prefixed status line, a diff line, and a half-drawn box row
+  # each leave the stale pair un-anchored. Anything but a blank row below the
+  # close must stay unknown in BOTH cursorless and cursor mode; the edge-glyph
+  # predicate used for the row directly under a box does not discriminate here.
+  local edgey stale_edge
+  for edgey in '| file | status |' '─ ran the tests' 'elapsed 3.2s ─' \
+               '+ added a line' '│ partial box row'; do
+    stale_edge="$top"$'\n''╰─                       ─╯'$'\n'$'\n'"$edgey"
+    assert_screen "omp stale pair above '$edgey' is unknown" \
+      unknown "$CAPS_STYLED" "$stale_edge" '' "$omp_idle"
+    assert_screen "omp stale pair above '$edgey' is unknown on tmux" \
+      unknown "$CAPS_TMUX" "$stale_edge" 1 "$omp_idle"
+  done
+
+  # OMP draws box-drawing glyphs, never the ascii `+--+` family. A titled
+  # `+-- … --+` row above `+-  -+` is ordinary ASCII table output, so it stays
+  # unknown even with a live OMP identity.
+  local ascii_pair
+  ascii_pair='+-- π > GLM 5.3 Flash > project --+'$'\n''+-                              -+'
+  assert_screen "omp ascii pair is not an OMP composer" unknown "$CAPS_STYLED" "$ascii_pair" '' "$omp_idle"
+  assert_screen "omp ascii pair is not an OMP composer on tmux" unknown "$CAPS_TMUX" "$ascii_pair" 1 "$omp_idle"
 
   # A draft made only of rule glyphs is real typed input, not furniture: the
   # extractor strips only the structural flanking rule run, so `───` reads

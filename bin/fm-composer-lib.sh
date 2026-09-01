@@ -858,7 +858,13 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
       # bottom border. The title and equal width are what keep a bare `╭╮`/`╰╯`
       # pair or a width-mismatched pair from being read as an OMP composer. The
       # bottom-most such pair wins.
-      if [ "$top" -ge 0 ] && [ "$family" = "$current_family" ] \
+      #
+      # Box-drawing families only. OMP renders its composer with box-drawing
+      # glyphs (18.0.7 draws the rounded family live), never the ascii `+--+`
+      # family, and `+`-delimited rows are ordinary ASCII table output that
+      # would otherwise read `empty` under a live OMP identity.
+      if [ "$top" -ge 0 ] && [ "$family" != ascii ] \
+         && [ "$family" = "$current_family" ] \
          && [ "$valid" = 1 ] && [ "$content_rows" -eq 0 ] \
          && [ "$row" -eq "$((top + 1))" ] && [ "$indent" = "$current_indent" ] \
          && [ "$omp_top_titled" = 1 ]; then
@@ -1280,10 +1286,11 @@ _fm_composer_select_cursorless() {
     # A non-blank, non-structural row below the closing border means the
     # selected container is stale scrollback with live content beneath it, never
     # the bottom-anchored live composer. OMP must be proven anchored against
-    # EVERY row below its close, not just the next one: a finished-turn
-    # `╰─...─╯` box can be followed by a blank line and then transcript, which a
-    # single-row check would wave through. box and leftbar keep the cheaper
-    # next-row check their existing shapes already rely on.
+    # EVERY row below its close, not just the next one, and those rows must be
+    # BLANK: a finished-turn `╰─...─╯` box can be followed by a blank line and
+    # then transcript, which a single-row check would wave through. box and
+    # leftbar keep the cheaper next-row edge check their existing shapes already
+    # rely on, where that next row really is the container's own furniture.
     if [ "$FM_COMPOSER_SELECTED_KIND" = omp ]; then
       if ! _fm_composer_omp_bottom_anchored "$plain" "$boundary"; then
         FM_COMPOSER_SELECTED_KIND=
@@ -1303,11 +1310,18 @@ _fm_composer_select_cursorless() {
   [ -n "$FM_COMPOSER_SELECTED_KIND" ]
 }
 
-# _fm_composer_omp_bottom_anchored: 0 when EVERY row below <bottom-row> is blank
-# or a structural edge row, proving the OMP pair is the live bottom-anchored
-# composer rather than a finished-turn box with transcript beneath it. A single
-# blank spacer line followed by real transcript is exactly the case a next-row
-# check misses, so this scans to the end of the captured screen.
+# _fm_composer_omp_bottom_anchored: 0 when EVERY row below <bottom-row> is
+# BLANK, proving the OMP pair is the live bottom-anchored composer rather than a
+# finished-turn box with transcript beneath it. A single blank spacer line
+# followed by real transcript is exactly the case a next-row check misses, so
+# this scans to the end of the captured screen. Blankness is the whole test:
+# fm_composer_row_has_edge answers "is this the container's own furniture" for
+# the ONE row directly under a box or left bar, and below OMP's close there is
+# no such furniture, so any row it accepted here would be transcript that starts
+# or ends with a border, rule, pipe, or plus glyph - `| file | status |`,
+# `─ ran the tests`, `+ added a line` - waved through as an injection green
+# light. A live OMP composer sits at the bottom of the pane with nothing but
+# blank rows under it.
 _fm_composer_omp_bottom_anchored() {  # <plain-screen> <bottom-row>
   local plain=$1 bottom=$2 total row line trimmed
   total=$(printf '%s\n' "$plain" | wc -l)
@@ -1316,7 +1330,7 @@ _fm_composer_omp_bottom_anchored() {  # <plain-screen> <bottom-row>
     line=$(_fm_composer_screen_row "$row" "$plain")
     trimmed=$line
     fm_composer_normalize_trim_var trimmed
-    if [ -n "$trimmed" ] && ! fm_composer_row_has_edge "$trimmed"; then
+    if [ -n "$trimmed" ]; then
       return 1
     fi
     row=$((row + 1))

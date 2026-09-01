@@ -3261,7 +3261,7 @@ test_composer_state_omp_structure_classifies_empty_pending_and_multiline() {
 # read. Herdr supplies identity natively, so the trailing `omp <bun>` args are
 # ignored here.
 test_composer_state_omp_shape_verdicts_are_safe() {
-  local dir log resp fb out top case_id bottom agent status want
+  local top ascii_top
   top='╭── ⬢ GPT-5.6-Sol++ · ◔ low ▶ 🌳 project ▶ ⑂ branch ▶──╮'
 
   # one_case <case-id> <bottom-rows-printf-fmt> <agent-or-UNREADABLE> <status> <want>
@@ -3297,7 +3297,19 @@ test_composer_state_omp_shape_verdicts_are_safe() {
   one_case stale         '╰─ stale input ─╯\ntranscript continued after stale composer' omp    idle    unknown
   one_case unreadable    '╰─          ─╯'                                            UNREADABLE idle    unknown
   one_case non-pi-family '╰─          ─╯'                                            claude     idle    unknown
-  pass "fm_backend_herdr_composer_state: OMP reads empty/typed through native identity, and malformed, stale, unreadable, and non-pi-family shapes stay unknown"
+  # Transcript below the pair keeps it unknown even when that transcript row
+  # happens to start or end with a border, rule, pipe, or plus glyph: those are
+  # ordinary agent output, not the composer's own furniture.
+  one_case stale-table   '╰─          ─╯\n\n| file | status |'                      omp        idle    unknown
+  one_case stale-rule    '╰─          ─╯\n\n─ ran the tests'                        omp        idle    unknown
+  one_case stale-diff    '╰─          ─╯\n\n+ added a line'                         omp        idle    unknown
+  # OMP renders box-drawing glyphs, never the ascii `+--+` family, so an ASCII
+  # table that happens to sit in a titled pair is not an OMP composer.
+  ascii_top=$top
+  top='+-- GPT-5.6-Sol++ · low · project --+'
+  one_case ascii-pair    '+-                                -+'                     omp        idle    unknown
+  top=$ascii_top
+  pass "fm_backend_herdr_composer_state: OMP reads empty/typed through native identity, and malformed, stale (including edge-glyph transcript), ascii-family, unreadable, and non-pi-family shapes stay unknown"
 }
 
 # Real Pi 0.80.7 on Herdr 0.7.3 renders no prompt glyph and no side border.
