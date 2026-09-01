@@ -1,0 +1,22 @@
+Launcher routing decision per chrome-devtools-axi version.
+
+Captured by running bin/fm-chrome-devtools-mcp.js with a fake
+chrome-devtools-axi reporting each version, and recording the argv the
+launcher forwarded to npx.
+
+axi ver    | argv forwarded to npx
+-----------+----------------------------------
+0.1.29     | -y chrome-devtools-mcp@1.8.0 --isolated --no-page-id-routing
+0.1.30     | -y chrome-devtools-mcp@1.8.0 --isolated --no-page-id-routing
+0.1.31     | -y chrome-devtools-mcp@1.8.0 --isolated
+0.1.33     | -y chrome-devtools-mcp@1.8.0 --isolated
+
+Reading of this table against the intent:
+  - chrome-devtools-mcp stays pinned at 1.8.0 for every supported version,
+    so the launcher is still exported for all of them and never returns to
+    an unpinned @latest spawn.
+  - --no-page-id-routing is added only for 0.1.29 and 0.1.30, the versions
+    that omit pageId.
+  - 0.1.31 and newer keep MCP's default page routing enabled, because axi
+    sends the selected pageId itself from 0.1.31 on.
+  - The boundary sits exactly at 0.1.31, matching the upstream changelog.

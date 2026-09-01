@@ -1,0 +1,44 @@
+Proof that the new 0.1.33 behavior fails against the OLD launcher.
+
+The old launcher is bin/fm-chrome-devtools-mcp.js at base commit e40b3ce,
+extracted with `git show e40b3ce:bin/fm-chrome-devtools-mcp.js`.
+
+1) Launcher argv for axi 0.1.33
+-------------------------------
+OLD launcher (base commit e40b3ce):
+
+  --- npx argv forwarded for axi 0.1.33 ---
+  -y
+  chrome-devtools-mcp@1.8.0
+  --isolated
+  --no-page-id-routing
+  --- assertion ---
+  not ok - launcher disabled pageId routing for axi 0.1.33
+  EXIT=1
+
+NEW launcher (target commit 0a9dd85):
+
+  --- npx argv forwarded for axi 0.1.33 ---
+  -y
+  chrome-devtools-mcp@1.8.0
+  --isolated
+  --- assertion ---
+  ok - launcher kept MCP default pageId routing for axi 0.1.33
+  EXIT=0
+
+The old launcher unconditionally adds --no-page-id-routing, which is wrong
+for 0.1.33 because that axi generation does send pageId.
+
+2) Bootstrap on this real 0.1.33 machine
+----------------------------------------
+Ran `bash bin/fm-bootstrap.sh` with CHROME_DEVTOOLS_AXI_MCP_PATH pointed at
+each launcher.
+
+OLD launcher:
+  MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)
+
+NEW launcher:
+  (no MISSING lines at all)
+
+This reproduces the exact user-reported symptom on the old code and shows it
+gone on the new code.

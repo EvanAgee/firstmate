@@ -1,0 +1,28 @@
+Worker-environment proof required by the user intent.
+Machine has chrome-devtools-axi 0.1.33 installed
+(/Users/evanagee/.nvm/versions/node/v22.22.0/bin/chrome-devtools-axi).
+
+Command run:
+
+  export CHROME_DEVTOOLS_AXI_MCP_PATH="$PWD/bin/fm-chrome-devtools-mcp.js"
+  export CHROME_DEVTOOLS_AXI_SESSION=fm-chrome-axi-0133-launcher
+  chrome-devtools-axi open https://example.com
+
+Actual output:
+
+exit=0
+page:
+  title: Example Domain
+  url: "https://example.com"
+  refs: 5
+snapshot:
+uid=g2:1_0 RootWebArea "Example Domain" url="https://example.com/"
+  uid=g2:1_1 heading "Example Domain" level="1"
+  uid=g2:1_2 StaticText "This domain is for use in documentation examples without needing permission. Avoid use in operations."
+  uid=g2:1_3 link "Learn more" url="https://iana.org/domains/example"
+    uid=g2:1_4 StaticText "Learn more"
+
+This matches the intent's expected transcript: exit 0, the Example Domain
+title, 5 refs, and the same 5-node snapshot tree. The uid generation prefix
+is g2 rather than g1 only because this was the second browser generation in
+the run; node ids and structure are identical.
