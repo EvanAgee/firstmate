@@ -155,8 +155,9 @@ NOTIFIER_SURFACED="$STATE/.claude-notifier-surfaced-seq"
 NOTIFIER_ABSENT="$STATE/.claude-notifier-absent"
 SESSION_ID=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // "unknown"' 2>/dev/null || printf 'unknown')
 
-# Record wakes piling up unread, so a home whose notifier stopped delivering
-# leaves a durable trace instead of going half dead in silence (issue #80).
+# Record wakes the notifier never handed over, so a home whose notifier stopped
+# delivering leaves a durable trace instead of going half dead in silence
+# (issue #80).
 #
 # This runs at a TURN BOUNDARY, which is the whole reason it lives here and not
 # in the coordinator. From the coordinator a healthy long turn and a real outage
@@ -164,25 +165,36 @@ SESSION_ID=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // "unknown"' 2>/dev/nu
 # Stop hook that exits after it delivers. The difference only shows up at the
 # next boundary, and only the guard sits on one.
 #
-# The signal is a DELIVERED wake that is still UNACKNOWLEDGED here. The notifier
-# advances state/.claude-notifier-surfaced-seq to a wake's sequence exactly when
-# it delivers that wake, and bin/fm-wake-drain.sh --ack-through removes a row
-# once the session has handled it. So a queued row at or below the surfaced mark
-# is a wake that was handed to the session and never acknowledged. A healthy turn
-# drains what it received before it ends, so at this boundary no such row
-# survives. One that outlives the boundary means nobody read it.
+# The signal is a NEVER-DELIVERED wake. The notifier advances
+# state/.claude-notifier-surfaced-seq only up to a wake it has delivered, so a
+# queued row STRICTLY ABOVE that mark is one it never handed over.
+#
+# A delivered wake that is merely unacknowledged is deliberately NOT the signal.
+# Interrupted handling is a supported healthy state: the notifier's own banner
+# tells the session that until the post-handling acknowledgement, interruption
+# leaves the wake durable for idempotent re-handling. Reading that as an outage
+# would cry wolf during ordinary work.
+#
+# The check only runs while the watcher is otherwise HEALTHY. When supervision
+# itself is down the guard's own block path owns that state, and an undelivered
+# wake then is expected rather than notifier-specific. That keeps this narrow:
+# the notifier failed to deliver while everything else was up.
+#
+# Accepted blind spot: a notifier killed between delivering one wake and the next
+# wake arriving, on a home with nothing else queued, is not detected. A narrow
+# detector that never false-fires is worth more than a broad one that does.
 #
 # Diagnostic only. This never changes the guard's allow/block decision or its
 # exit status, never touches the notifier lock or epoch, and fails open: any
 # unreadable input writes nothing and disturbs nothing.
-record_notifier_delivery_gap() {
-  local surfaced tmp now first_seen
+record_undelivered_wake_gap() {
+  local surfaced undelivered tmp now first_seen
+  fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME" || return 0
   surfaced=$(cat "$NOTIFIER_SURFACED" 2>/dev/null || echo 0)
   case "$surfaced" in ''|*[!0-9]*) surfaced=0 ;; esac
-  if [ "$surfaced" -le 0 ] || ! fm_wake_has_unacked_at_or_below "$surfaced"; then
-    # Nothing was delivered yet, or everything delivered has been acknowledged.
-    # Either way this boundary shows delivery is being read, so clear any marker
-    # a previous outage left.
+  if ! undelivered=$(fm_wake_lowest_unacked_above "$surfaced"); then
+    # Every queued wake was delivered, or nothing is queued at all. Delivery is
+    # keeping up, so clear any marker a previous outage left.
     rm -f "$NOTIFIER_ABSENT" 2>/dev/null || true
     return 0
   fi
@@ -192,17 +204,23 @@ record_notifier_delivery_gap() {
   first_seen=$(sed -n 's/^first_seen=//p' "$NOTIFIER_ABSENT" 2>/dev/null | head -1)
   case "$first_seen" in ''|*[!0-9]*) first_seen=$now ;; esac
   tmp="$NOTIFIER_ABSENT.tmp.$$"
-  {
+  if {
     printf 'first_seen=%s\n' "$first_seen"
     printf 'last_seen=%s\n' "$now"
+    printf 'undelivered_seq=%s\n' "$undelivered"
     printf 'surfaced_seq=%s\n' "$surfaced"
     printf 'session_id=%s\n' "$SESSION_ID"
     printf 'source=turnend-guard\n'
-  } > "$tmp" 2>/dev/null && mv -f "$tmp" "$NOTIFIER_ABSENT" 2>/dev/null
-  rm -f "$tmp" 2>/dev/null || true
+  } > "$tmp" 2>/dev/null && mv -f "$tmp" "$NOTIFIER_ABSENT" 2>/dev/null; then
+    return 0
+  fi
+  # The write failed, so this boundary produced no reading. Leaving the previous
+  # marker would freeze its last_seen and read as an outage that ended, which is
+  # worse than no marker at all.
+  rm -f "$tmp" "$NOTIFIER_ABSENT" 2>/dev/null || true
   return 0
 }
-record_notifier_delivery_gap || true
+record_undelivered_wake_gap || true
 budget_reset() {
   [ "$CLAUDE_MODE" -eq 1 ] || return 0
   fm_lock_try_acquire "$BUDGET_LOCK" || return 0

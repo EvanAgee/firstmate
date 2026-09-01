@@ -54,10 +54,14 @@ The once-per-episode dedup is keyed on that condition rather than the beacon mti
 If `jq` is missing or hook stdin is empty, the guard exits 0 because it cannot safely read loop-guard fields.
 
 On every in-scope primary boundary the guard also records one diagnostic that never affects its allow/block decision or exit status.
-A wake row still queued at or below `state/.claude-notifier-surfaced-seq` is a wake the notifier delivered that the session never acknowledged.
-A healthy turn drains what it received before it ends, so such a row surviving a turn boundary means nobody read it (issue #80).
-The guard writes `state/.claude-notifier-absent` with `first_seen` preserved across rewrites, a current `last_seen`, the surfaced sequence, the session id, and `source=turnend-guard`.
-It clears that marker once the delivered wakes are acknowledged, and writes nothing when it cannot read the inputs.
+The notifier advances `state/.claude-notifier-surfaced-seq` only up to a wake it has delivered, so a queued wake strictly above that mark is one it never handed over.
+While the watcher is otherwise healthy there is no innocent reading of that state, so the guard records it (issue #80).
+When the watcher is not healthy the check does nothing, because the guard's own blind-turn path already owns that state.
+A delivered wake that is merely unacknowledged is deliberately not the signal: interrupted handling leaves the wake durable for idempotent re-handling, which is supported and normal.
+The guard writes `state/.claude-notifier-absent` with `first_seen` preserved across rewrites, a current `last_seen`, the lowest undelivered sequence, the surfaced sequence, the session id, and `source=turnend-guard`.
+It clears that marker once delivery catches up, and writes nothing when it cannot read the inputs.
+Accepted blind spot: a notifier killed between delivering one wake and the next wake arriving, on a home with nothing else queued, is not detected.
+That miss is accepted because a narrow detector that never false-fires is worth more than a broad one that cries wolf during normal work.
 The turn boundary is the only vantage point where this is unambiguous: the notifier is a Stop hook, so from the coordinator a healthy long turn and a real outage look identical.
 
 ## Harness integrations

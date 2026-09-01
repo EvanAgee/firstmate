@@ -1021,16 +1021,33 @@ fm_wake_queued_keys_locked() {
     "$FM_WAKE_QUEUE" 2>/dev/null || true
 }
 
+# fm_wake_lowest_unacked_above <seq>
+# Echo the lowest queued sequence strictly greater than <seq>, or nothing when
+# the queue holds no such row.
+# The notifier advances state/.claude-notifier-surfaced-seq only up to a wake it
+# has DELIVERED, so a queued row above that mark was never delivered.
+# The turn-end guard asks this to spot a wake the notifier failed to hand over
+# while supervision is otherwise up (issue #80).
+fm_wake_lowest_unacked_above() {  # <seq>
+  local seq=$1 lowest
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  lowest=$(awk -F '\t' -v low="$seq" '
+    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 + 0) > (low + 0) {
+      if (best == "" || ($2 + 0) < best) best = $2 + 0
+    }
+    END { if (best != "") print best }
+  ' "$FM_WAKE_QUEUE" 2>/dev/null || true)
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  [ -n "$lowest" ] || return 1
+  printf '%s' "$lowest"
+}
+
 # fm_wake_has_unacked_at_or_below <ready_seq>
 # True when the durable queue still holds an unacked row whose sequence is at or
 # below <ready_seq>. A leftover .wake-queue.seq high-water mark with no such row
 # is not a supervision event.
-# Two callers ask this same question, so it has one owner.
-# The notifier asks it of a ready record's sequence, to decide whether that
+# The notifier asks this of a ready record's sequence, to decide whether that
 # record covers a real wake before it delivers.
-# The turn-end guard asks it of the notifier's surfaced high-water mark, where a
-# hit means a wake that was DELIVERED to the session is still unacknowledged at a
-# turn boundary: nobody handled it (issue #80).
 fm_wake_has_unacked_at_or_below() {  # <ready_seq>
   local ready_seq=$1 found=1
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
