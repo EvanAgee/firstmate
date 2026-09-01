@@ -144,6 +144,12 @@ base64_value() {  # <text>
   '
 }
 
+# The last recorded value of one origin metadata field, read the way the script
+# itself reads it: the record is append-only, so the final line wins.
+meta_value_in() {  # <home> <id> <field>
+  grep "^$3=" "$1/state/$2.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
 write_origin_meta() {  # <home> <id> [kind]
   local home=$1 id=$2 kind=${3:-scout}
   fm_write_meta "$home/state/$id.meta" \
@@ -1898,6 +1904,188 @@ test_completion_refuses_a_key_that_was_never_held() {
 # A decision key is an ordinary slug, so nothing stops one from being named after the
 # answer marker itself. Such a key must clear the archival tolerance like any other, or
 # its origin can never finish teardown.
+# The real captain-answer ordering, end to end through the actual scripts. `complete`
+# transfers the still-open decision to its hold with a captain-held line, which closes
+# the live status copy, so a later captain answer is routed to the hold-close path and
+# writes NO status line at all. The only durable proof left after Done-history
+# retention trims the hold is the origin's answered_keys record, so this is the case
+# that decides whether scout teardown can ever proceed on a genuinely answered
+# decision. Nothing here hand-writes an answer marker or an answered_keys line.
+test_verify_tolerates_archival_on_the_real_answer_ordering() {
+  local home id hold
+  home=$(make_home real-order-archived)
+  id=sample-real-order
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the real-order sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create real-order origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample real-order review\n\nOne choice was answered after completion.\n' \
+    > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the real-order sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the real-order hold"
+
+  # Completion first, exactly as the documented order runs it. Its captain-held
+  # transfer closes the key in the status fold before any answer exists.
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the real-order origin"
+  grep -q "captain-held \[key=choice\]" "$home/state/$id.status" \
+    || fail "precondition: complete did not transfer the decision to its hold"
+  case "$(meta_value_in "$home" "$id" answered_keys)" in
+    *choice*) fail "an unanswered decision was already recorded as answered" ;;
+  esac
+
+  # The captain answers through the real hold-close path, which is where fm-send.sh
+  # routes a key the captain-held transfer already closed.
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the real-order choice through the close path"
+  assert_contains "$(tasks_in "$home" show "$hold" --full)" "state: done" \
+    "the real-order answer left its captain hold open"
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "choice" \
+    "the close path did not durably record the captain answer"
+  # The close path writes no status line, so the status log alone still proves nothing.
+  if bash -c '. "$1"; status_key_answered "$2" choice' _ \
+    "$ROOT/bin/fm-classify-lib.sh" "$home/state/$id.status"; then
+    fail "precondition: the close path wrote a status answer marker, so this is not the real ordering"
+  fi
+  run_decisions "$home" verify "$id" >/dev/null \
+    || fail "verify failed while the answered hold was still in the backlog"
+
+  # Retention trims the answered Done hold out of the backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if tasks_in "$home" show "$hold" --full >/dev/null 2>&1; then
+    fail "the archival step did not remove the answered hold from the backlog"
+  fi
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/real-order.err" \
+    || fail "verify rejected a hold answered on the real ordering and then archived: $(cat "$home/real-order.err")"
+  run_teardown "$home" "$id" >/dev/null 2> "$home/real-order-teardown.err" \
+    || fail "teardown refused after the real-order answer was archived: $(cat "$home/real-order-teardown.err")"
+  pass "verify tolerates archival of a hold answered on the real completion-then-answer ordering"
+}
+
+# The durable answered_keys record must come from a real close, never from the mere
+# fact that a hold once existed. `resolve` and `decline` are the other two close
+# paths, so each has to leave the same proof; a hold nobody closed must leave none
+# and must keep failing after archival.
+test_every_close_path_records_the_captain_answer() {
+  local home id hold routed
+  home=$(make_home close-path-records)
+  id=sample-close-paths
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the close-path sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create close-path origin"
+  write_origin_meta "$home" "$id"
+  {
+    printf 'needs-decision [key=routed]: choose the sample route\n'
+    printf 'needs-decision [key=dropped]: choose whether to drop the sample\n'
+    printf 'needs-decision [key=stalled]: choose the stalled sample option\n'
+  } > "$home/state/$id.status"
+  printf '# Sample close-path review\n\nThree choices remained.\n' > "$home/data/$id/report.md"
+
+  routed=sample-followup
+  tasks_in "$home" add "$routed" "Do the routed sample work" --repo sample >/dev/null \
+    || fail "could not create the routed follow-up task"
+  hold=$(run_decisions "$home" hold "$id" routed \
+    --title "Choose the sample route" --reason "captain route choice pending" --repo sample) \
+    || fail "could not register the routed hold"
+  tasks_in "$home" block "$routed" --by "$hold" >/dev/null \
+    || fail "could not block the follow-up on the routed hold"
+  run_decisions "$home" hold "$id" dropped \
+    --title "Choose whether to drop the sample" --reason "captain drop choice pending" --repo sample >/dev/null \
+    || fail "could not register the dropped hold"
+  run_decisions "$home" hold "$id" stalled \
+    --title "Choose the stalled sample option" --reason "captain stalled choice pending" --repo sample >/dev/null \
+    || fail "could not register the stalled hold"
+  run_decisions "$home" complete "$id" routed dropped stalled >/dev/null \
+    || fail "completion failed for the close-path origin"
+
+  printf 'Captain routed the work.\n' > "$home/routed-decision.txt"
+  run_decisions "$home" resolve "$id" routed \
+    --decision-file "$home/routed-decision.txt" --routed-to "$routed" >/dev/null \
+    || fail "could not resolve the routed choice"
+  printf 'Captain dropped the sample.\n' > "$home/dropped-decision.txt"
+  run_decisions "$home" decline "$id" dropped \
+    --decision-file "$home/dropped-decision.txt" >/dev/null \
+    || fail "could not decline the dropped choice"
+
+  local recorded
+  recorded=$(meta_value_in "$home" "$id" answered_keys)
+  assert_contains "$recorded" "routed" "resolve did not durably record the captain answer"
+  assert_contains "$recorded" "dropped" "decline did not durably record the captain answer"
+  case "$recorded" in
+    *stalled*) fail "a hold nobody closed was recorded as answered: $recorded" ;;
+  esac
+
+  # An exact retry of a close is idempotent and must not grow the record.
+  run_decisions "$home" decline "$id" dropped \
+    --decision-file "$home/dropped-decision.txt" >/dev/null \
+    || fail "an exact decline retry was refused"
+  [ "$(meta_value_in "$home" "$id" answered_keys)" = "$recorded" ] \
+    || fail "an exact close retry duplicated the durable answer record"
+
+  # Retention trims the two answered Done holds. The still-open one keeps its hold,
+  # so verify passes on exactly the durable records the close paths wrote.
+  grep -v -e "$id-decision-routed" -e "$id-decision-dropped" "$home/data/backlog.md" \
+    > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/close-path.err" \
+    || fail "verify rejected two holds each closed through a real close path: $(cat "$home/close-path.err")"
+
+  # Take the never-closed hold out of the backlog too. The origin has ended, which
+  # empties the live open set, so its missing durable answer record is the only
+  # thing left to refuse on, and it must.
+  printf 'done: report complete\n' >> "$home/state/$id.status"
+  grep -v "$id-decision-stalled" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed2"
+  mv "$home/data/backlog.md.trimmed2" "$home/data/backlog.md"
+  if run_decisions "$home" verify "$id" > "$home/stalled.out" 2> "$home/stalled.err"; then
+    fail "verify accepted an archived hold that no close path ever answered"
+  fi
+  assert_contains "$(cat "$home/stalled.err")" "$id-decision-stalled" \
+    "the archived never-closed refusal did not name the absent hold: $(cat "$home/stalled.err")"
+  pass "every close path records the captain answer durably and an unclosed hold records none"
+}
+
+# A durable answered_keys record is proof about the round it closed, not a permanent
+# licence. A key is stable and reusable, so a later needs-decision line asks it again,
+# and that new round has no hold and no answer. The record must not outrank the live
+# question.
+test_a_reopened_key_defeats_its_earlier_durable_answer() {
+  local home id hold
+  home=$(make_home reopened-durable)
+  id=sample-reopened-durable
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate a re-asked sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create reopened-durable origin"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample re-asked review\n\nRound two is still unanswered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the re-asked sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the reopened-durable hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the reopened-durable origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer round one of the re-asked choice"
+  assert_contains "$(meta_value_in "$home" "$id" answered_keys)" "choice" \
+    "precondition: round one did not leave a durable answer record"
+
+  # Round two asks the same key again. No new hold exists for it.
+  printf 'needs-decision [key=choice]: now choose option C or option D\n' \
+    >> "$home/state/$id.status"
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  if run_decisions "$home" verify "$id" > "$home/reasked.out" 2> "$home/reasked.err"; then
+    fail "verify accepted a re-asked decision on a stale round-one durable answer"
+  fi
+  pass "a re-asked key is unanswered again despite its earlier durable answer record"
+}
+
 test_verify_accepts_an_archived_hold_whose_key_is_named_answered() {
   local home id hold
   home=$(make_home key-named-answered)
@@ -1958,3 +2146,6 @@ test_completion_refuses_a_key_that_was_never_held
 test_verify_accepts_an_archived_hold_whose_key_is_named_answered
 test_verify_refuses_when_the_backlog_was_destroyed
 test_verify_accepts_archival_under_a_custom_done_heading
+test_verify_tolerates_archival_on_the_real_answer_ordering
+test_every_close_path_records_the_captain_answer
+test_a_reopened_key_defeats_its_earlier_durable_answer

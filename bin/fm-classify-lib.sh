@@ -560,7 +560,8 @@ status_open_decisions() {  # <status-file>
 # status_open_decisions. A consumer that must prove a decision was answered - not
 # just that it is no longer open - uses this. fm-decision-hold.sh's own
 # answer/resolve/decline paths write no status line at all, so a hold closed purely
-# through them carries no evidence here and is attested through `repair` instead.
+# through them carries no evidence here; that script records its own closes in the
+# origin's answered_keys and consults this only for the chat-answered case.
 # The part of <note> that a delivered-answer marker would lead, for <key>.
 # A reserved-namespace key must open its note with that namespace's own vocabulary
 # (see _fm_decision_key_transition_allowed), so the marker can only appear after it
