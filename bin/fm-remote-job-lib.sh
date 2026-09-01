@@ -939,7 +939,7 @@ fm_remote_job_reload_launchagent() { # <account-home> <uid>
 }
 
 fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
-  local root=$1 account_home=$2 worker pid setsid_bin monitor_mode=0
+  local root=$1 account_home=$2 worker pid
   worker="$root/bin/fm-remote-job-worker.sh"
   [ -f "$worker" ] && [ ! -L "$worker" ] && [ -x "$worker" ] || {
     FM_REMOTE_JOB_ERROR="remote job worker is not a genuine executable in the configured code root"
@@ -959,34 +959,18 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
     wait "$pid" 2>/dev/null || true
     FM_REMOTE_JOB_REPAIRED=1
   fi
-  fm_remote_job_compose_operator_path "$account_home" >/dev/null
-  setsid_bin=$(fm_remote_job_operator_tool setsid 2>/dev/null || true)
-  if [ -n "$setsid_bin" ]; then
-    # setsid makes process-group ownership independent of Bash job-control
-    # timing. A missed setpgid race leaves the restart supervisor outside the
-    # group and lets it respawn stale code after replacement kills the child.
-    case $- in *m*) monitor_mode=1; set +m ;; esac
-    nohup env \
-      HOME="$account_home" \
-      FM_ROOT_OVERRIDE="$root" \
-      FM_REMOTE_JOB_STATE_ROOT="$FM_REMOTE_JOB_STATE" \
-      FM_REMOTE_JOB_PLATFORM_OVERRIDE="${FM_REMOTE_JOB_PLATFORM_OVERRIDE:-}" \
-      "$setsid_bin" "$worker" >> "$FM_REMOTE_JOB_STATE/logs/$FM_REMOTE_JOB_LABEL.log" 2>&1 < /dev/null &
-    pid=$!
-    [ "$monitor_mode" -eq 0 ] || set -m
-  else
-    # Minimal systems without setsid still use Bash job control to isolate the
-    # worker tree from its caller.
-    set -m
-    nohup env \
-      HOME="$account_home" \
-      FM_ROOT_OVERRIDE="$root" \
-      FM_REMOTE_JOB_STATE_ROOT="$FM_REMOTE_JOB_STATE" \
-      FM_REMOTE_JOB_PLATFORM_OVERRIDE="${FM_REMOTE_JOB_PLATFORM_OVERRIDE:-}" \
-      "$worker" >> "$FM_REMOTE_JOB_STATE/logs/$FM_REMOTE_JOB_LABEL.log" 2>&1 < /dev/null &
-    pid=$!
-    set +m
-  fi
+  # Job control puts the worker tree in its own process group, so a later stop
+  # can signal every descendant at once without ever reaching the caller's own
+  # group. Without this the group of a leaked worker is the launching command's.
+  set -m
+  nohup env \
+    HOME="$account_home" \
+    FM_ROOT_OVERRIDE="$root" \
+    FM_REMOTE_JOB_STATE_ROOT="$FM_REMOTE_JOB_STATE" \
+    FM_REMOTE_JOB_PLATFORM_OVERRIDE="${FM_REMOTE_JOB_PLATFORM_OVERRIDE:-}" \
+    "$worker" >> "$FM_REMOTE_JOB_STATE/logs/$FM_REMOTE_JOB_LABEL.log" 2>&1 < /dev/null &
+  pid=$!
+  set +m
   case "$pid" in ''|*[!0-9]*) FM_REMOTE_JOB_ERROR="could not start the remote job worker"; return 1 ;; esac
   FM_REMOTE_JOB_REPAIRED=1
 }

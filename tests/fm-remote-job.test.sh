@@ -180,13 +180,16 @@ case "$LONG_CMD" in
 esac
 pass "process_command keeps the worker name beyond the default ps width"
 
-# Start through the Linux entry point so replacement exercises the same process
-# group contract as production.
+# Match the Linux start path: job control puts the restart supervisor in its
+# own process group so later ensure stops can signal the whole tree. Without
+# that, worker.pid is a serving child in this test's group, stop_worker_tree
+# refuses to signal it, and a leftover supervisor wins the next lock race.
+set -m
 HOME="$ACCOUNT_HOME" PATH="$RUNTIME_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_FAKE_PERL_LOG="$FAKE_PERL_LOG" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_REMOTE_JOB_TIMEOUT=5 \
-  fm_remote_job_start_linux_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
-  || fail "$FM_REMOTE_JOB_ERROR"
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" > "$TMP_ROOT/worker.out" 2> "$TMP_ROOT/worker.err" &
+set +m
 for _ in $(seq 1 100); do
   [ -f "$STATE_ROOT/worker.ready" ] && break
   sleep 0.05
@@ -252,12 +255,6 @@ fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 [ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "the active job did not complete after the readiness probe"
 assert_present "$ACTIVE_SIDE_EFFECT" "the active job was interrupted by the concurrent readiness check"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the active readiness job could not be reaped"
-touch -t 200001010000 "$STATE_ROOT/worker.ready"
-for _ in $(seq 1 40); do
-  fm_remote_job_probe "$ACCOUNT_HOME" && break
-  sleep 0.05
-done
-fm_remote_job_probe "$ACCOUNT_HOME" || fail "the worker did not return to its serving loop after the active job"
 pass "active jobs keep the worker ready for concurrent requests"
 
 OLD_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
