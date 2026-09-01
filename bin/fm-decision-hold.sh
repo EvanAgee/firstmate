@@ -291,10 +291,13 @@ task_show() {  # <id>
 # 0 when this home's backlog is a readable file that still has the structure
 # tasks-axi maintains. Retention only removes entries, never the section headings, so
 # a missing, empty, or structurally destroyed file is not a backlog whose contents can
-# be trusted to mean anything.
+# be trusted to mean anything. The Done heading is matched the same permissive way
+# tasks-axi's own parser matches it - a level-2 heading whose text begins with "done",
+# case-insensitively - because tasks-axi writes back whatever heading the file already
+# had, so a real home may spell it "## Done (last 10)" or "## done" and still be sound.
 backlog_is_intact() {
   [ -s "$DATA/backlog.md" ] && [ -r "$DATA/backlog.md" ] \
-    && grep -qx -- '## Done' "$DATA/backlog.md" 2>/dev/null
+    && grep -qiE '^##[[:space:]]+done' -- "$DATA/backlog.md" 2>/dev/null
 }
 
 read_hold() {  # <id>

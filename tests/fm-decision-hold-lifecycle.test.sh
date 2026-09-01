@@ -1768,6 +1768,44 @@ test_verify_refuses_when_the_backlog_was_destroyed() {
   pass "verify refuses a deleted, empty, or unstructured backlog instead of reading it as archival"
 }
 
+# tasks-axi treats any level-2 heading whose text starts with "done" as the Done
+# section, and it writes back whichever heading the file already had. So a real home
+# may spell it "## Done (last 10)". The archival tolerance has to recognise that file
+# as a backlog, or such a home can never finish teardown.
+test_verify_accepts_archival_under_a_custom_done_heading() {
+  local home id hold
+  home=$(make_home custom-done-heading)
+  id=sample-custom-heading-review
+  # Re-spell the Done heading the way tasks-axi allows, before any task exists.
+  printf '## In flight\n\n## Queued\n\n## Done (last 10)\n' > "$home/data/backlog.md"
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the custom-heading sample" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create custom-heading origin"
+  grep -qx -- '## Done (last 10)' "$home/data/backlog.md" \
+    || fail "tasks-axi did not preserve the custom Done heading, so this case proves nothing"
+  write_origin_meta "$home" "$id"
+  printf 'needs-decision [key=choice]: choose sample option A or option B\n' \
+    > "$home/state/$id.status"
+  printf '# Sample custom-heading review\n\nOne choice was answered.\n' > "$home/data/$id/report.md"
+  hold=$(run_decisions "$home" hold "$id" choice \
+    --title "Choose the custom-heading sample option" --reason "captain sample choice pending" --repo sample) \
+    || fail "could not register the custom-heading hold"
+  run_decisions "$home" complete "$id" choice >/dev/null \
+    || fail "completion failed for the custom-heading origin"
+  printf 'Captain chose option A.\n' > "$home/choice-decision.txt"
+  run_decisions "$home" answer "$id" choice --decision-file "$home/choice-decision.txt" >/dev/null \
+    || fail "could not answer the custom-heading choice"
+  # bin/fm-send.sh appends this delivered-answer line when the answer reaches the mate.
+  printf 'resolved [key=choice]: answered: captain chose option A\n' >> "$home/state/$id.status"
+
+  # Retention trims the answered Done hold out of the otherwise intact backlog.
+  grep -v "$hold" "$home/data/backlog.md" > "$home/data/backlog.md.trimmed"
+  mv "$home/data/backlog.md.trimmed" "$home/data/backlog.md"
+  run_decisions "$home" verify "$id" >/dev/null 2> "$home/custom-heading.err" \
+    || fail "verify rejected an archived answered hold because the Done heading is spelled '## Done (last 10)': $(cat "$home/custom-heading.err")"
+  pass "verify accepts archival in a backlog whose Done heading carries trailing text"
+}
+
 # bin/fm-brief.sh tells a mate to append its own `resolved [key=<slug>]: <why it is no
 # longer active>` line when a keyed phase fizzles or a blocker clears without anyone
 # answering, into the very status file this gate reads. That line closes the key for
@@ -1919,3 +1957,4 @@ test_verify_refuses_a_mate_self_close_as_an_answer
 test_completion_refuses_a_key_that_was_never_held
 test_verify_accepts_an_archived_hold_whose_key_is_named_answered
 test_verify_refuses_when_the_backlog_was_destroyed
+test_verify_accepts_archival_under_a_custom_done_heading
