@@ -21,6 +21,8 @@ const PINNED_PACKAGE = "chrome-devtools-mcp";
 const PINNED_VERSION = "1.8.0";
 const ROUTING_FLAG = "--no-page-id-routing";
 const AXI_PAGE_ID_MIN_VERSION = [0, 1, 31];
+const AXI_VERSION_TIMEOUT_MS = 5000;
+const AXI_VERSION_MAX_BUFFER = 64 * 1024;
 
 function printSpec() {
   process.stdout.write(`package=${PINNED_PACKAGE}@${PINNED_VERSION}\n`);
@@ -33,6 +35,9 @@ function installedAxiVersion() {
     const output = execFileSync("chrome-devtools-axi", ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: AXI_VERSION_TIMEOUT_MS,
+      maxBuffer: AXI_VERSION_MAX_BUFFER,
+      killSignal: "SIGKILL",
     });
     const match = output.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/);
     return match ? match.slice(1).map(Number) : null;

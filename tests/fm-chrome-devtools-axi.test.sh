@@ -189,6 +189,33 @@ test_launcher_matches_axi_page_id_generation() {
   pass "launcher disables pageId routing only for axi versions that omit pageId"
 }
 
+test_launcher_gives_up_on_a_hanging_axi_version_read() {
+  local case_dir fakebin started elapsed status
+  case_dir="$TMP_ROOT/launcher-hanging-axi"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  cat > "$fakebin/chrome-devtools-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  sleep 120
+  exit 0
+fi
+exit 1
+SH
+  chmod +x "$fakebin/chrome-devtools-axi"
+
+  started=$SECONDS
+  status=0
+  PATH="$fakebin:$PATH" node "$ROOT/bin/fm-chrome-devtools-mcp.js" --isolated \
+    >/dev/null 2>&1 || status=$?
+  elapsed=$((SECONDS - started))
+  [ "$status" -eq 1 ] \
+    || fail "launcher did not exit 1 when the axi version read hung: $status"
+  [ "$elapsed" -lt 30 ] \
+    || fail "launcher waited ${elapsed}s on a hanging axi version read"
+  pass "launcher gives up on a hanging chrome-devtools-axi version read"
+}
+
 test_compatibility_probe_accepts_both_axi_generations() {
   local version case_dir fakebin
   for version in 0.1.30 0.1.33; do
@@ -457,6 +484,7 @@ test_session_start_prints_mcp_path_export() {
 test_launcher_prints_pin_and_routing_flag
 test_launcher_ok_accepts_the_shipped_script
 test_launcher_matches_axi_page_id_generation
+test_launcher_gives_up_on_a_hanging_axi_version_read
 test_compatibility_probe_accepts_both_axi_generations
 test_snapshot_classifier_accepts_a_named_session_page
 test_snapshot_classifier_rejects_pageid_schema_error

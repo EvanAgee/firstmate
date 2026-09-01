@@ -10,6 +10,9 @@
 #   - bin/fm-chrome-devtools-mcp.js is the CHROME_DEVTOOLS_AXI_MCP_PATH
 #     launcher. It pins chrome-devtools-mcp. It adds --no-page-id-routing
 #     through axi 0.1.30, then keeps MCP's default routing for axi 0.1.31+.
+#     It reads that generation by running chrome-devtools-axi --version, so
+#     chrome-devtools-axi must be resolvable on the launcher's PATH or the
+#     launcher exits 1 without starting MCP.
 #   - Compatible means the installed chrome-devtools-axi meets that floor,
 #     the launcher prints the expected pin, flag, and version boundary, and
 #     (unless the live probe is skipped) `chrome-devtools-axi open` against a
