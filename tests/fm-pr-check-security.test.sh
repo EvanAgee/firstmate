@@ -3592,7 +3592,84 @@ test_pr_watch_survives_device_reassignment() {
   pass "an unrebuildable stale record is quarantined unarmed with a visible signal"
 }
 
+
+# Rewrite a current (v2, inode-only) retirement receipt into the pre-fix v1
+# format, whose stored file identities were "<device>:<inode>". This is the
+# receipt an armed home on the previous release carries on disk. The device is
+# one the live state directory does not have, which is what a macOS reboot
+# produces on APFS, so the receipt no longer parses under the current version.
+downgrade_receipt_to_v1_device_inode() {
+  local state=$1 id=$2 receipt line n=0 data_inode check_inode reg_inode
+  receipt="$state/$id.pr-poll-retirement"
+  [ -f "$receipt" ] || fail "no v2 receipt to downgrade"
+  data_inode=$(fm_pr_file_inode "$state/$id.pr-poll") || fail "could not read sidecar inode"
+  check_inode=$(fm_pr_file_inode "$state/$id.check.sh") || fail "could not read check inode"
+  reg_inode=$(fm_pr_file_inode "$state/$id.pr-poll-registration") \
+    || fail "could not read registration inode"
+  : > "$receipt.v1"
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$n" in
+      1) printf 'fm-pr-poll-retirement-v1\n' >> "$receipt.v1" ;;
+      10) printf '4242424242:%s\n' "$data_inode" >> "$receipt.v1" ;;
+      11) printf '4242424242:%s\n' "$check_inode" >> "$receipt.v1" ;;
+      13) printf '4242424242:%s\n' "$reg_inode" >> "$receipt.v1" ;;
+      *) printf '%s\n' "$line" >> "$receipt.v1" ;;
+    esac
+  done < "$receipt"
+  mv "$receipt.v1" "$receipt"
+  chmod 0600 "$receipt"
+}
+
+# fm_pr_poll_retirement_discard_legacy deletes a file, so both of its outcomes
+# need an executable assertion: a genuine pre-fix receipt must be discarded so a
+# rebooted home can re-arm, and a tampered current-version receipt must keep the
+# existing loud refusal rather than being mistaken for a legacy one.
+test_legacy_retirement_receipt_is_discarded_but_tampering_is_refused() {
+  local dir state before rc
+
+  dir=$(make_case retirement-legacy-receipt)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/30
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/30
+  fm_pr_poll_snapshot_capture "$state" task-a "$POLL" \
+    || fail "could not snapshot legacy receipt fixture"
+  fm_pr_poll_retirement_publish "$state" task-a "$POLL" merged \
+    || fail "could not publish legacy receipt fixture"
+  downgrade_receipt_to_v1_device_inode "$state" task-a
+  fm_pr_poll_retirement_recover_one "$state" task-a "$POLL" \
+    || fail "a genuine legacy retirement receipt was not discarded"
+  [ ! -e "$state/task-a.pr-poll-retirement" ] && [ ! -L "$state/task-a.pr-poll-retirement" ] \
+    || fail "a genuine legacy retirement receipt survived recovery"
+  run_check_entry "$dir" task-a https://github.com/o/r/pull/31 > "$dir/rearm.out" 2> "$dir/rearm.err" \
+    || fail "a discarded legacy receipt still blocked rearming: $(cat "$dir/rearm.err")"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "rearm after a discarded legacy receipt did not produce a valid poll"
+
+  dir=$(make_case retirement-tampered-current-receipt)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/32
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/32
+  fm_pr_poll_snapshot_capture "$state" task-a "$POLL" \
+    || fail "could not snapshot tampered receipt fixture"
+  fm_pr_poll_retirement_publish "$state" task-a "$POLL" merged \
+    || fail "could not publish tampered receipt fixture"
+  printf 'extra\n' >> "$state/task-a.pr-poll-retirement"
+  before=$(state_snapshot "$state")
+  set +e
+  fm_pr_poll_retirement_recover_one "$state" task-a "$POLL"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a tampered current-version receipt was discarded as legacy"
+  [ -f "$state/task-a.pr-poll-retirement" ] \
+    || fail "a tampered current-version receipt was removed"
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "a refused tampered receipt changed poll state"
+  pass "a legacy retirement receipt is discarded while a tampered current one is refused"
+}
+
 test_pr_watch_survives_device_reassignment
+test_legacy_retirement_receipt_is_discarded_but_tampering_is_refused
 test_parser_matrix
 test_gitlab_merge_watch
 test_merged_poll_retires_once
