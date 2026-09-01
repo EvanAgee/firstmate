@@ -421,12 +421,12 @@ migrate_reply_delivery_tracking() {  # <queue-json> <cursor>
     return 0
   fi
   [ -f "$replies_file" ] || replies_file=/dev/null
-  jq -nc \
+  printf '%s\n' "$queue" | jq -c \
     --rawfile raw "$replies_file" \
-    --argjson queue "$queue" \
     --argjson cursor "$cursor" \
     "$ISO_EPOCH_JQ$REPLY_LOG_JQ"'
-      (fm_classified_replies($raw)
+      . as $queue
+      | (fm_classified_replies($raw)
         | map(select(.valid and .line <= $cursor))) as $consumed
       | ([$queue.records[] as $record
           | $consumed[]
@@ -437,7 +437,8 @@ migrate_reply_delivery_tracking() {  # <queue-json> <cursor>
                 .generation == $record.generation
               elif .generation < $record.generation then
                 any($record.__fm_legacy_resolved_answers[]?;
-                  .generation == $entry.generation and .answer == $entry.answer)
+                  .generation == $entry.generation
+                  and (.answer == $entry.answer or .answer == "backlog-done"))
                 or (
                   ([$record.asked_at | fm_iso_epoch][0] // null) as $asked_epoch
                   |
@@ -983,12 +984,12 @@ EOF
 
 build_reply_plan() {  # <queue-json> <cursor> -> plan JSON on stdout
   local queue=$1 cursor=$2
-  jq -nc \
+  printf '%s\n' "$queue" | jq -c \
     --rawfile raw "$REPLIES" \
-    --argjson queue "$queue" \
     --argjson cursor "$cursor" \
     "$ISO_EPOCH_JQ$REPLY_LOG_JQ"'
-      (fm_classified_replies($raw)) as $classified
+      . as $queue
+      | (fm_classified_replies($raw)) as $classified
       | ($classified | map(
           select(.line > $cursor)
           | if (.valid | not) then . + {kind: "malformed"}
@@ -1024,7 +1025,7 @@ build_reply_plan() {  # <queue-json> <cursor> -> plan JSON on stdout
 
 cmd_reconcile() {
   local cursor queue pruned plan blocker_line line entry n id generation answer stamp winner_line
-  local delivery_kind delivered_kind prior_delivered_line prior_delivered_answer replacement_kind
+  local reply_kind delivery_kind delivered_kind prior_delivered_line prior_delivered_answer replacement_kind
   local needs_migration
   local orphan=0 orphan_id="" orphan_answer=""
   acquire_queue_lock
@@ -1069,6 +1070,7 @@ cmd_reconcile() {
       generation=$(printf '%s\n' "$entry" | jq -r '.generation')
       answer=$(printf '%s\n' "$entry" | jq -r '.answer')
       winner_line=$(printf '%s\n' "$entry" | jq -r '.winner_line')
+      reply_kind=$(printf '%s\n' "$entry" | jq -r '.kind')
       prior_delivered_line=$(printf '%s\n' "$queue" | jq -r \
         --arg id "$id" --argjson generation "$generation" '
           [.delivered_reply_winners[]?
@@ -1128,9 +1130,8 @@ cmd_reconcile() {
         queue=$(drop_delivered_replies "$queue" "$cursor") \
           || die 1 "failed to clear duplicate delivered reply"
         printf '%s\n' "$queue" | write_queue || die 1 "failed to clear duplicate delivered reply"
-      elif [ -n "$delivery_kind" ] && { [ "$n" -eq "$winner_line" ] || printf '%s\n' "$queue" | jq -e \
-          --arg id "$id" --argjson generation "$generation" \
-          'any(.records[]; .id == $id and .generation > $generation)' >/dev/null; }; then
+      elif [ -n "$delivery_kind" ] \
+          && { [ "$n" -eq "$winner_line" ] || [ "$reply_kind" = stale ]; }; then
         finish_reply_delivery "$id" "$generation" "$answer" "$n" "$delivery_kind"
       elif [ "$n" -ne "$winner_line" ]; then
         printf 'superseded: [id=%s] [generation=%s] [winner-line=%s] %s\n' \

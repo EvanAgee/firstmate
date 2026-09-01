@@ -661,6 +661,71 @@ test_park_reconstructs_consumed_reply_history() {
   pass "park reconstructs consumed reply history before canonical write"
 }
 
+test_legacy_backlog_done_history_reconstructs_dashboard_delivery() {
+  local home out
+  home=$(make_home legacy-backlog-done-history)
+  jq -n '{
+    updated_at: "2026-08-27T18:00:00Z",
+    items: [{
+      id: "legacy-backlog-done-card",
+      num: 1,
+      question: "New question?",
+      asked_at: "2026-08-27T18:00:00Z",
+      status: "open"
+    }],
+    resolved: [{
+      id: "legacy-backlog-done-card",
+      num: 1,
+      question: "Old question?",
+      asked_at: "2026-08-20T18:00:00Z",
+      answer: "backlog-done",
+      resolved_at: "2026-08-21T18:00:00Z",
+      status: "resolved"
+    }]
+  }' > "$home/data/captain-queue.json"
+  jq -nc \
+    --arg id legacy-backlog-done-card \
+    --arg answer "first dashboard answer" \
+    '{id: $id, answer: $answer}' \
+    >> "$home/state/captain-replies.jsonl"
+  printf '1\n' > "$home/state/captain-replies.cursor"
+
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "legacy backlog-done migration should be quiet: $out"
+  jq -e '
+    .records[0].state == "open"
+    and .records[0].generation == 2
+    and .delivered_reply_winners == [{
+      line: 1,
+      id: "legacy-backlog-done-card",
+      generation: 1,
+      answer: "first dashboard answer",
+      kind: "handled"
+    }]
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "legacy backlog-done history omitted the consumed dashboard answer"
+  jq -nc \
+    --arg id legacy-backlog-done-card \
+    --arg answer "replacement dashboard answer" \
+    --arg at "$NOW" \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" \
+    "superseding: [id=legacy-backlog-done-card] [generation=1] replacement dashboard answer" \
+    "the later historical answer should supersede reconstructed backlog-done delivery"
+  assert_contains "$out" \
+    "handled: [id=legacy-backlog-done-card] replacement dashboard answer" \
+    "the later historical answer should be delivered"
+  jq -e '
+    .records[0].state == "open"
+    and .records[0].generation == 2
+    and .records[0].question == "New question?"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "historical backlog-done supersession changed the reopened card"
+  pass "legacy backlog-done migration reconstructs dashboard delivery"
+}
+
 test_manual_park_rejects_backed_and_unknown_cards() {
   local home id out rc
   home=$(make_home manual-park-guards)
@@ -853,6 +918,49 @@ test_matched_reply_removes_the_card_and_keeps_the_answer() {
   [ -z "$out" ] || fail "caught-up reconcile should be silent, got: $out"
   [ "$(cursor_value "$home")" = 1 ] || fail "caught-up reconcile moved the cursor"
   pass "a matched reply removes the card, keeps the answer, and advances the cursor one line"
+}
+
+test_reconcile_handles_a_queue_larger_than_one_process_argument() {
+  local home out payload_file
+  home=$(make_home large-queue-reconcile)
+  payload_file="$home/data/large-card-body"
+  head -c 2097152 /dev/zero | tr '\0' x > "$payload_file"
+  jq -n --rawfile context "$payload_file" '{
+    updated_at: "2026-08-27T18:00:00Z",
+    records: [
+      {
+        id: "large-history",
+        num: 1,
+        generation: 1,
+        question: "Historical question?",
+        context: $context,
+        asked_at: "2026-08-20T18:00:00Z",
+        state: "resolved",
+        answer: "Historical answer",
+        resolved_at: "2026-08-21T18:00:00Z"
+      },
+      {
+        id: "large-queue-live-card",
+        num: 2,
+        generation: 1,
+        question: "Handle this answer?",
+        asked_at: "2026-08-27T18:00:00Z",
+        backlog_backed: false,
+        state: "open"
+      }
+    ],
+    pending_reply_deliveries: [],
+    delivered_reply_winners: [],
+    reply_delivery_tracking: false
+  }' > "$home/data/captain-queue.json"
+  append_reply "$home" large-queue-live-card "large queue answer"
+
+  out=$(run_q "$home" reconcile)
+  assert_contains "$out" "handled: [id=large-queue-live-card] large queue answer" \
+    "a large retained queue should not block a matching answer"
+  [ "$(resolved_answer "$home" large-queue-live-card)" = "large queue answer" ] \
+    || fail "large queue reconcile lost the matching answer"
+  pass "reconcile handles a queue larger than one process argument"
 }
 
 test_resolved_card_id_reopens_without_parked_history() {
@@ -1150,12 +1258,6 @@ test_pending_group_winner_is_not_superseding() {
     --arg at 2026-08-27T17:59:59Z \
     '{id: $id, generation: 1, answer: $answer, at: $at}' \
     >> "$home/state/captain-replies.jsonl"
-  jq -nc \
-    --arg id card-a \
-    --arg answer "newer pending winner" \
-    --arg at 2026-08-27T18:00:00Z \
-    '{id: $id, generation: 1, answer: $answer, at: $at}' \
-    >> "$home/state/captain-replies.jsonl"
   queue_file="$home/data/captain-queue.json"
   next_file="$home/data/captain-queue.next"
   jq --arg stamp "$NOW" '
@@ -1173,6 +1275,12 @@ test_pending_group_winner_is_not_superseding() {
       }]
   ' "$queue_file" > "$next_file"
   mv "$next_file" "$queue_file"
+  jq -nc \
+    --arg id card-a \
+    --arg answer "newer pending winner" \
+    --arg at 2026-08-27T18:00:00Z \
+    '{id: $id, generation: 1, answer: $answer, at: $at}' \
+    >> "$home/state/captain-replies.jsonl"
 
   out=$(run_q "$home" reconcile)
   assert_contains "$out" \
@@ -1180,6 +1288,8 @@ test_pending_group_winner_is_not_superseding() {
     "the persisted loser should remain superseded evidence"
   assert_contains "$out" "handled: [id=card-a] newer pending winner" \
     "the pending group winner should be delivered"
+  assert_not_contains "$out" "handled: [id=card-a] persisted before delivery" \
+    "the pending loser must not be delivered"
   assert_not_contains "$out" "superseding: [id=card-a]" \
     "an answer that was only persisted must not count as previously delivered"
   [ "$(resolved_answer "$home" card-a)" = "newer pending winner" ] \
@@ -1759,8 +1869,10 @@ test_legacy_reopen_uses_successor_generation
 test_future_legacy_anchor_gets_one_fresh_window
 test_add_reconstructs_consumed_reply_history
 test_park_reconstructs_consumed_reply_history
+test_legacy_backlog_done_history_reconstructs_dashboard_delivery
 test_manual_park_rejects_backed_and_unknown_cards
 test_matched_reply_removes_the_card_and_keeps_the_answer
+test_reconcile_handles_a_queue_larger_than_one_process_argument
 test_orphan_reply_does_not_advance_or_drop
 test_orphan_stops_before_a_later_match
 test_conflict_ranking_sees_winner_after_orphan
