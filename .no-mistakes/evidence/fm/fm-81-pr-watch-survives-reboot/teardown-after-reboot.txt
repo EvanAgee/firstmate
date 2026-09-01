@@ -1,0 +1,33 @@
+
+=== A merged task whose retirement receipt was written BEFORE the fix ===
+  receipt on disk: fm-pr-poll-retirement-v1  (pre-fix format)
+  the reboot happened before the poll files were cleaned up:
+    present: task-a.check.sh
+    present: task-a.pr-poll
+    present: task-a.pr-poll-registration
+    present: task-a.pr-poll-retirement
+    present: task-a.meta
+  
+  user types: fm-teardown.sh task-a --force
+  exit code: 0
+  state after:
+    (all task-a files gone - clean teardown)
+  RESULT: teardown SUCCEEDED. The stale receipt no longer wedges the task.
+
+=== A VALID receipt must survive when teardown refuses for another reason ===
+  receipt on disk: fm-pr-poll-retirement-v2  (current format)
+  something else is wrong: a world-readable quarantine file exists
+  
+  user types: fm-teardown.sh task-a --force
+  exit code: 1
+  stderr:
+    | REFUSED: unsafe task quarantine entry; preserving task state.
+  state after:
+    present: task-a.check.sh
+    present: task-a.pr-poll
+    present: task-a.pr-poll-registration
+    present: task-a.pr-poll-retirement
+    present: task-a.meta
+  RESULT: teardown refused AND left every file intact for a plain rerun.
+
+=== done ===

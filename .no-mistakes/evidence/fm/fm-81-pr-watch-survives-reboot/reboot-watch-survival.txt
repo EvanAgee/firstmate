@@ -1,0 +1,37 @@
+
+=== 1. A ship task arms a PR merge watch ===
+  state dir:            /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-reboot-demo.vVfogO/live.BPdrHc/home/state
+  armed files:          task-a.check.sh task-a.pr-poll task-a.pr-poll-registration 
+  trust record format:  fm-pr-poll-registration-v3
+  stored file identity: 591436687 591436688 
+  live device number:   16777232
+  WATCH STATUS:         ARMED and trusted
+
+=== 2. The Mac reboots. APFS hands the volume a new device number. ===
+  (simulated: every live device read now returns 9999999999)
+  live device number:   9999999999  (was different before the reboot)
+  WATCH STATUS:         ARMED and still trusted  <-- FIXED
+
+=== 3. The old (pre-fix) trust record, the one issue #81 reported ===
+  trust record format:  fm-pr-poll-registration-v2
+  stored file identity: 4242424242:591436882 4242424242:591436883   <-- device baked in
+  live device number:   16777232
+  on disk it still looks armed: task-a.check.sh
+  WATCH STATUS:         SILENTLY UNTRUSTED - the watch never fires again
+
+=== 4. Recovery: firstmate rebuilds the watch and says so out loud ===
+  what the user sees on stdout:
+    | PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home
+  log line:
+    | task task-a: migration outcome tracking started before legacy poll handling
+    | task task-a: canonical legacy poll rebuilt and armed
+  trust record format now: fm-pr-poll-registration-v3
+  stored file identity:    591437921 591437924   <-- inode only
+  WATCH STATUS:            RE-ARMED and trusted
+
+=== 5. A stale record with no PR URL to rebuild from is parked loudly, not dropped ===
+  what the user sees on stdout:
+    | PR_CHECK_MIGRATION: quarantined polls remain unarmed; review state/.pr-check-migration.log before rearming
+  RESULT: poll disarmed and quarantined, with the line above telling the user
+
+=== done ===
