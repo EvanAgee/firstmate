@@ -837,11 +837,7 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
       # OMP proof: its top border is a TITLED status bar, never a bare box top.
       # Record whether this top carries a title (non-rule interior content), so
       # the OMP pair check can require a titled top. A bare `╭────╮` has an
-      # all-space interior and is not an OMP top. Width is NOT compared by
-      # character count: OMP's title replaces rule dashes with text of a
-      # different length, so an equal-visual-width top and bottom hold different
-      # character counts; the title, shared indent, shared family, adjacency,
-      # and OMP identity are the proof instead.
+      # all-space interior and is not an OMP top.
       case "$top_spaces" in
         *[![:space:]]*) omp_top_titled=1 ;;
         *) omp_top_titled=0 ;;
@@ -850,14 +846,24 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
         *[![:space:]]*) geometry_check=0; geometry_ambiguous=1 ;;
       esac
     elif [ "$kind" = bottom ] || { [ "$kind" = ascii ] && [ "$top" -ge 0 ]; }; then
-      # OMP shape: a bottom rule directly under a TITLED top border of the same
-      # family, indent, and width, with no content rows between (content_rows ==
-      # 0) and the two rows adjacent. OMP draws its status bar in the top rule
-      # and its input inside the bottom rule, so a normal box's "needs a content
-      # row" test rejects it - this is the one shape whose content is IN the
-      # bottom border. The title and equal width are what keep a bare `╭╮`/`╰╯`
-      # pair or a width-mismatched pair from being read as an OMP composer. The
-      # bottom-most such pair wins.
+      # OMP shape: a bottom rule directly under a TITLED top border. OMP draws
+      # its status bar in the top rule and its input inside the bottom rule, so
+      # a normal box's "needs a content row" test rejects it - this is the one
+      # shape whose content is IN the bottom border. The bottom-most such pair
+      # wins.
+      #
+      # The complete proof is: a titled top border (a bare `╭╮`/`╰╯` pair is
+      # refused), the same border family, the same indent, adjacency (the bottom
+      # sits directly under the top with no content rows between), a
+      # bottom-anchored pair (only blank rows below the close, proven in
+      # _fm_composer_omp_bottom_anchored), and a live OMP identity.
+      #
+      # Width is deliberately NOT compared. OMP's title replaces rule dashes
+      # with text of a different length, so an equal-visual-width top and bottom
+      # hold different character counts and a count-based test would reject real
+      # panes. A real OMP pane always draws its top and bottom the same visual
+      # width, and the identity gate keeps non-OMP panes out, so a
+      # width-mismatched pair is not a realistic false-empty.
       #
       # Box-drawing families only. OMP renders its composer with box-drawing
       # glyphs (18.0.7 draws the rounded family live), never the ascii `+--+`
