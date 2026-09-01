@@ -271,15 +271,33 @@ task_show() {  # <id>
   tasks_axi show "$1" --full 2>/dev/null
 }
 
+# Why one hold read failed, phrased to finish "captain decision <id> ...". A backlog
+# that cannot be read is NOT a deleted hold: reporting one as the other would send an
+# operator hunting for a missing item at the exact moment teardown is about to erase a
+# source, so the two are told apart by tasks-axi's own NOT_FOUND code and any other
+# failure carries its payload through. Returns 1 when the read actually succeeded.
+hold_read_failure_reason() {  # <id>
+  local id=$1 out
+  out=$(tasks_axi show "$id" --full 2>&1) && return 1
+  if printf '%s\n' "$out" | grep -qx 'code: NOT_FOUND'; then
+    printf 'is absent from %s/data/backlog.md' "$FM_HOME"
+  else
+    printf 'could not be read from %s/data/backlog.md: %s' \
+      "$FM_HOME" "$(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+}
+
 # 0 only when tasks-axi says the hold is genuinely NOT in the backlog. Every other
 # failure - an unreadable or corrupt backlog, a transient error - returns nonzero, so
 # a caller that tolerates absence cannot mistake a broken read for a missing item and
 # must fall through to the loud verify_hold_durable failure instead.
 hold_is_absent() {  # <id>
-  local out rc=0
-  out=$(tasks_axi show "$1" --full 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || return 1
-  printf '%s\n' "$out" | grep -qx 'code: NOT_FOUND'
+  local reason
+  reason=$(hold_read_failure_reason "$1") || return 1
+  case "$reason" in
+    'is absent from '*) return 0 ;;
+  esac
+  return 1
 }
 
 show_field() {  # <show-output> <field>
@@ -524,7 +542,7 @@ verify_hold_resolved() {  # <hold-id>
 
 verify_hold_durable() {  # <hold-id>
   local id=$1 show state held kind hold_kind body
-  show=$(task_show "$id") || fail "captain decision $id is absent from $FM_HOME/data/backlog.md"
+  show=$(task_show "$id") || fail "captain decision $id $(hold_read_failure_reason "$id")"
   state=$(show_field "$show" state)
   held=$(show_field "$show" held)
   kind=$(show_field "$show" kind)
@@ -826,8 +844,6 @@ command_complete() {
   keys=$(sorted_key_union "$previous" "$supplied")
 
   status_file="$STATE/$origin.status"
-  raw_open=$(status_open_decisions "$status_file")
-  open=$(origin_open_decisions "$origin")
   if [ -n "$keys" ]; then
     while IFS= read -r key; do
       [ -n "$key" ] || continue
@@ -837,6 +853,8 @@ $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
   fi
 
+  raw_open=$(status_open_decisions "$status_file")
+  open=$(origin_open_decisions "$origin")
   while IFS=$'\t' read -r key _verb _summary; do
     [ -n "$key" ] || continue
     list_has_key "$keys" "$key" \
@@ -885,7 +903,6 @@ command_verify() {
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed unresolved-decision inventory"
   keys=$(meta_value "$meta" decision_keys)
   status_file="$STATE/$origin.status"
-  open=$(origin_open_decisions "$origin")
   if [ -n "$keys" ]; then
     while IFS= read -r key; do
       [ -n "$key" ] || continue
@@ -894,6 +911,7 @@ command_verify() {
 $(printf '%s\n' "$keys" | tr ',' '\n')
 EOF
   fi
+  open=$(origin_open_decisions "$origin")
   while IFS=$'\t' read -r key _verb _summary; do
     [ -n "$key" ] || continue
     list_has_key "$keys" "$key" \

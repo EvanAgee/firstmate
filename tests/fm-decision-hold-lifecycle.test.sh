@@ -1697,6 +1697,15 @@ test_verify_refuses_when_the_backlog_cannot_be_read() {
     fail "verify passed while the backlog could not be read at all"
   fi
   chmod 644 "$home/data/backlog.md"
+  # The refusal has to name the real cause. Calling an unreadable backlog a deleted
+  # hold sends the operator hunting for a missing item that was never removed.
+  assert_contains "$(cat "$home/unreadable.err")" "could not be read" \
+    "the unreadable-backlog refusal did not say the hold could not be read"
+  case "$(cat "$home/unreadable.err")" in
+    *"is absent from"*)
+      fail "the unreadable-backlog refusal claimed the hold was absent"
+      ;;
+  esac
   pass "verify treats only a real not-found as archival and refuses when the backlog cannot be read"
 }
 
