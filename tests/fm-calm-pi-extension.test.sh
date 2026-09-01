@@ -3650,7 +3650,10 @@ JS
     CURRENT_FROM_FIRSTMATE_E2E \
     CURRENT_LAUNCH_BRIEF_E2E
   do
-    assert_contains "$(cat "$restored_snapshot")" "$restored" "second /calm did not restore current operational kind $restored"
+    # Each operational row lands in the pane on its own schedule, so wait for this
+    # one rather than reading a snapshot captured while waiting for another string.
+    wait_for_text "$restored_snapshot" "$restored" \
+      || fail "second /calm did not restore current operational kind $restored"
   done
   assert_contains "$(cat "$restored_snapshot")" "Warning: CALM_TRANSIENT_DIAGNOSTIC" "second /calm dropped a transient diagnostic"
   assert_contains "$(cat "$restored_snapshot")" " Error:" "second /calm dropped the synthetic delivery diagnostic"
