@@ -53,6 +53,13 @@ The once-per-episode dedup is keyed on that condition rather than the beacon mti
 `FM_GUARD_GRACE` controls beacon freshness and defaults to 300 seconds.
 If `jq` is missing or hook stdin is empty, the guard exits 0 because it cannot safely read loop-guard fields.
 
+On every in-scope primary boundary the guard also records one diagnostic that never affects its allow/block decision or exit status.
+A wake row still queued at or below `state/.claude-notifier-surfaced-seq` is a wake the notifier delivered that the session never acknowledged.
+A healthy turn drains what it received before it ends, so such a row surviving a turn boundary means nobody read it (issue #80).
+The guard writes `state/.claude-notifier-absent` with `first_seen` preserved across rewrites, a current `last_seen`, the surfaced sequence, the session id, and `source=turnend-guard`.
+It clears that marker once the delivered wakes are acknowledged, and writes nothing when it cannot read the inputs.
+The turn boundary is the only vantage point where this is unambiguous: the notifier is a Stop hook, so from the coordinator a healthy long turn and a real outage look identical.
+
 ## Harness integrations
 
 - Claude registers three `Stop` hooks in `.claude/settings.json`, all anchored through `CLAUDE_PROJECT_DIR`: `bin/fm-turnend-guard.sh --claude`; `bin/fm-claude-watch-coordinator.sh` with `async: true` and `timeout: 28800`, which keeps the watcher cycle alive; and `bin/fm-claude-watch-notifier.sh` with `asyncRewake: true` and `timeout: 28800`, which parks until it can exit 2 to wake the idle session (docs/watcher-continuity.md).

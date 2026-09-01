@@ -1666,6 +1666,157 @@ test_hook_claude_mode_secondmate_reblocks_like_primary() {
   pass "fm-turnend-guard --claude: secondmate home re-blocks unclaimed and allows auto-arm-claimed stops"
 }
 
+# --- notifier delivery gap (issue #80) ---------------------------------------
+# A wake the notifier DELIVERED that is still UNACKNOWLEDGED at a turn boundary
+# means nobody read it: firstmate went silent while supervision looked alive.
+# The guard records that as a diagnostic marker and must never let the recording
+# change its own allow/block decision.
+
+# Queue one real durable wake row through the production wake library, then move
+# the notifier's surfaced high-water mark to that row's sequence, exactly as
+# bin/fm-claude-watch-notifier.sh advance_surfaced does when it delivers a wake.
+# Echoes the delivered sequence.
+deliver_wake() {  # <dir>
+  local dir=$1 seq
+  FM_STATE_OVERRIDE="$dir/state" bash -c '
+    . "$1"
+    fm_wake_append signal delivered-key "blocked: needs a decision"
+  ' _ "$dir/bin/fm-wake-lib.sh" >/dev/null 2>&1 || return 1
+  seq=$(cat "$dir/state/.wake-queue.seq" 2>/dev/null) || return 1
+  printf '%s\n' "$seq" > "$dir/state/.claude-notifier-surfaced-seq"
+  printf '%s\n' "$seq"
+}
+
+# Acknowledge every delivered row the way the post-handling drain does: drop
+# queue rows at or below the acknowledged sequence.
+ack_through() {  # <dir> <seq>
+  local dir=$1 seq=$2 tmp
+  tmp="$dir/state/.wake-queue.acked"
+  awk -F '\t' -v cutoff="$seq" 'NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff { print }' \
+    "$dir/state/.wake-queue" > "$tmp" && mv -f "$tmp" "$dir/state/.wake-queue"
+}
+
+absent_marker_field() {  # <dir> <field>
+  sed -n "s/^$2=//p" "$1/state/.claude-notifier-absent" 2>/dev/null | head -1
+}
+
+test_hook_records_delivered_wake_left_unacknowledged() {
+  local dir seq out status fs ls1 ls2
+  dir=$(make_primary_dir "$TMP_ROOT/hook-notifier-gap")
+  : > "$dir/state/task1.meta"
+  seq=$(deliver_wake "$dir") || fail "could not queue and deliver a wake"
+
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 2 "$status" "the delivery-gap recording must not change the guard's block decision"
+  assert_contains "$out" "TURN WOULD END BLIND" "the guard must still carry its own blind-turn banner"
+
+  [ -f "$dir/state/.claude-notifier-absent" ] \
+    || fail "a delivered wake still unacknowledged at the turn boundary left no marker"
+  [ "$(absent_marker_field "$dir" surfaced_seq)" = "$seq" ] \
+    || fail "marker surfaced_seq does not name the delivered sequence $seq"
+  [ "$(absent_marker_field "$dir" session_id)" = unknown ] \
+    || fail "marker session_id does not carry the payload's session"
+  [ "$(absent_marker_field "$dir" source)" = turnend-guard ] \
+    || fail "marker does not name the turn-end guard as its source"
+  fs=$(absent_marker_field "$dir" first_seen)
+  case "$fs" in ''|*[!0-9]*) fail "marker has no numeric first_seen" ;; esac
+  ls1=$(absent_marker_field "$dir" last_seen)
+
+  # The outage persists across boundaries: last_seen advances, first_seen holds,
+  # so an operator can tell a one-boundary blip from a long silence.
+  sleep 1
+  run_hook "$dir" false >/dev/null 2>&1
+  ls2=$(absent_marker_field "$dir" last_seen)
+  [ -n "$ls2" ] && [ "$ls2" -gt "$ls1" ] 2>/dev/null \
+    || fail "marker last_seen did not advance on the next boundary ($ls1 -> $ls2)"
+  [ "$(absent_marker_field "$dir" first_seen)" = "$fs" ] \
+    || fail "first_seen changed across a rewrite instead of surviving the outage"
+
+  # The guard is read-only on the notifier's own state.
+  [ ! -e "$dir/state/.claude-autoarm.lock" ] \
+    || fail "the guard created the notifier's lock"
+  [ "$(cat "$dir/state/.claude-notifier-surfaced-seq")" = "$seq" ] \
+    || fail "the guard wrote the notifier's surfaced high-water mark"
+
+  pass "fm-turnend-guard: records a delivered wake left unacknowledged at the turn boundary"
+}
+
+test_hook_clears_marker_once_delivery_is_acknowledged() {
+  local dir seq status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-notifier-recovered")
+  : > "$dir/state/task1.meta"
+  seq=$(deliver_wake "$dir") || fail "could not queue and deliver a wake"
+  run_hook "$dir" false >/dev/null 2>&1
+  [ -f "$dir/state/.claude-notifier-absent" ] \
+    || fail "the outage boundary wrote no marker, so recovery cannot be observed"
+
+  # The session handled the wake and drained it, which is the healthy shape.
+  ack_through "$dir" "$seq"
+  run_hook "$dir" false >/dev/null 2>&1; status=$?
+  expect_code 2 "$status" "clearing the marker must not change the guard's block decision"
+  [ ! -e "$dir/state/.claude-notifier-absent" ] \
+    || fail "an acknowledged delivery left the stale outage marker in place"
+  pass "fm-turnend-guard: an acknowledged delivery clears the outage marker"
+}
+
+test_hook_delivery_gap_fails_open_without_a_delivered_wake() {
+  local dir status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-notifier-failopen")
+  : > "$dir/state/task1.meta"
+  printf 'first_seen=1\nlast_seen=1\nsurfaced_seq=9\nsession_id=old\nsource=turnend-guard\n' \
+    > "$dir/state/.claude-notifier-absent"
+
+  # No surfaced-seq at all: the notifier has never delivered anything here, so
+  # there is no delivery to have gone unread.
+  run_hook "$dir" false >/dev/null 2>&1; status=$?
+  expect_code 2 "$status" "a missing surfaced-seq must not change the guard's block decision"
+  [ ! -e "$dir/state/.claude-notifier-absent" ] \
+    || fail "a home with nothing ever delivered kept an outage marker"
+
+  # A surfaced mark with an empty queue: everything delivered was acknowledged.
+  printf '7\n' > "$dir/state/.claude-notifier-surfaced-seq"
+  : > "$dir/state/.wake-queue"
+  run_hook "$dir" false >/dev/null 2>&1
+  [ ! -e "$dir/state/.claude-notifier-absent" ] \
+    || fail "an empty queue behind a surfaced mark wrote an outage marker"
+  pass "fm-turnend-guard: writes no marker when no delivered wake is outstanding"
+}
+
+test_hook_delivery_gap_stays_out_of_child_worktrees() {
+  local base dir out status
+  base="$TMP_ROOT/hook-notifier-crew-base"
+  dir="$TMP_ROOT/hook-notifier-crew-wt"
+  make_crewmate_worktree_dir "$base" "$dir" >/dev/null
+  : > "$dir/state/task1.meta"
+  deliver_wake "$dir" >/dev/null || fail "could not queue and deliver a wake"
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 0 "$status" "a child worktree must stay an inert no-op"
+  [ -z "$out" ] || fail "the guard produced output inside a child worktree: $out"
+  [ ! -e "$dir/state/.claude-notifier-absent" ] \
+    || fail "the guard wrote an outage marker inside an out-of-scope child worktree"
+  pass "fm-turnend-guard: the delivery-gap check stays inert in a child worktree"
+}
+
+test_hook_delivery_gap_leaves_healthy_allow_untouched() {
+  local dir pid identity out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-notifier-healthy-allow")
+  : > "$dir/state/task1.meta"
+  touch "$dir/state/.last-watcher-beat"
+  deliver_wake "$dir" >/dev/null || fail "could not queue and deliver a wake"
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid")
+  record_watcher_lock "$dir" "$pid" "$identity"
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "a live identity-matched watcher must still allow the stop"
+  [ -z "$out" ] || fail "the healthy allow path produced output: $out"
+  [ -f "$dir/state/.claude-notifier-absent" ] \
+    || fail "the delivery gap went unrecorded on an otherwise healthy allow"
+  pass "fm-turnend-guard: records the delivery gap without disturbing a healthy allow"
+}
+
 test_predicate_healthy_no_inflight
 test_predicate_unhealthy_no_beacon
 test_predicate_unhealthy_stale_beacon
@@ -1733,3 +1884,8 @@ test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open
 test_hook_claude_mode_allow_resets_budget
 test_hook_claude_mode_waits_for_late_claim
 test_hook_claude_mode_secondmate_reblocks_like_primary
+test_hook_records_delivered_wake_left_unacknowledged
+test_hook_clears_marker_once_delivery_is_acknowledged
+test_hook_delivery_gap_fails_open_without_a_delivered_wake
+test_hook_delivery_gap_stays_out_of_child_worktrees
+test_hook_delivery_gap_leaves_healthy_allow_untouched

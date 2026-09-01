@@ -1021,31 +1021,16 @@ fm_wake_queued_keys_locked() {
     "$FM_WAKE_QUEUE" 2>/dev/null || true
 }
 
-# fm_wake_has_unacked_in_range <low_exclusive> <high_inclusive>
-# True when the durable queue still holds an unacked row whose sequence sits
-# above <low_exclusive> and at or below <high_inclusive>.
-# The coordinator asks this with the notifier's surfaced high-water mark as the
-# low bound, so a row the notifier already delivered never counts: a delivered
-# row stays unacked for the whole handling turn, which is healthy, while an
-# UNDELIVERED row that persists is the wakes-piling-up symptom of issue #80.
-fm_wake_has_unacked_in_range() {  # <low_exclusive> <high_inclusive>
-  local low=$1 high=$2 found=1
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
-  if [ -f "$FM_WAKE_QUEUE" ] && awk -F '\t' -v low="$low" -v high="$high" '
-    NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 + 0) > (low + 0) && ($2 + 0) <= (high + 0) { found = 1; exit }
-    END { exit found ? 0 : 1 }
-  ' "$FM_WAKE_QUEUE"; then
-    found=0
-  fi
-  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
-  return "$found"
-}
-
 # fm_wake_has_unacked_at_or_below <ready_seq>
 # True when the durable queue still holds an unacked row whose sequence is at or
 # below <ready_seq>. A leftover .wake-queue.seq high-water mark with no such row
-# is not a supervision event. The notifier asks this when deciding whether a
-# ready record covers a real wake.
+# is not a supervision event.
+# Two callers ask this same question, so it has one owner.
+# The notifier asks it of a ready record's sequence, to decide whether that
+# record covers a real wake before it delivers.
+# The turn-end guard asks it of the notifier's surfaced high-water mark, where a
+# hit means a wake that was DELIVERED to the session is still unacknowledged at a
+# turn boundary: nobody handled it (issue #80).
 fm_wake_has_unacked_at_or_below() {  # <ready_seq>
   local ready_seq=$1 found=1
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"

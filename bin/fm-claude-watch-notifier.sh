@@ -233,14 +233,6 @@ surfaced_seq() {
   esac
 }
 
-# True when the durable queue still holds an unacked row whose sequence is at or
-# below <ready_seq>. A leftover .wake-queue.seq high-water mark with no such row
-# is not a supervision event. The test itself lives in bin/fm-wake-lib.sh
-# alongside the range variant the coordinator uses.
-has_unacked_wake_at_or_below() {  # <ready_seq>
-  fm_wake_has_unacked_at_or_below "$1"
-}
-
 advance_surfaced() {  # <seq>
   local seq=$1 tmp
   tmp="$SURFACED.tmp.$$"
@@ -285,12 +277,12 @@ ready_pending() {
   esac
   if [ ! -f "$SURFACED" ]; then
     hw=$(queue_highwater)
-    if ! has_unacked_wake_at_or_below "$hw"; then
+    if ! fm_wake_has_unacked_at_or_below "$hw"; then
       advance_surfaced "$hw"
     fi
   fi
   [ "$rs" -gt "$(surfaced_seq)" ] || return 1
-  has_unacked_wake_at_or_below "$rs" || return 1
+  fm_wake_has_unacked_at_or_below "$rs" || return 1
   READY_SEQ=$rs
   return 0
 }
