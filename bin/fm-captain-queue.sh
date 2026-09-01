@@ -91,6 +91,7 @@ QUEUE_LOCK_HELD=0
 LOCK_LIB_LOADED=0
 UNBACKED_CARD_EXPIRY_DAYS=7
 UNBACKED_CARD_EXPIRY_SECONDS=$((UNBACKED_CARD_EXPIRY_DAYS * 24 * 60 * 60))
+# shellcheck disable=SC2016 # jq program text: $stamp and $parts are jq variables, not shell ones.
 ISO_EPOCH_JQ='
 def fm_iso_epoch:
   . as $stamp
@@ -119,6 +120,7 @@ def fm_iso_epoch:
       | ($local + $fraction + (if $parts.sign == "+" then -$offset else $offset end)))
     // empty;
 '
+# shellcheck disable=SC2016 # jq program text: $parts and $epoch are jq variables, not shell ones.
 REPLY_LOG_JQ='
 def fm_reply_receipt_ms:
   if has("at") | not then -1

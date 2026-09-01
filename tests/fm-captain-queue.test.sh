@@ -1265,36 +1265,33 @@ test_conflicting_replies_rank_timestamp_then_log_order() {
   run_q "$home" add --id conflict-card --question "Choose one answer?" >/dev/null
   run_q "$home" add --id interleaved-card --question "Unrelated answer?" >/dev/null
   run_q "$home" add --id tied-card --question "Break the tie?" >/dev/null
-  jq -nc \
-    --arg id conflict-card \
-    --arg answer "older answer" \
-    --arg at 2026-08-27T17:59:58Z \
-    '{id: $id, generation: 1, answer: $answer, at: $at}' \
-    >> "$home/state/captain-replies.jsonl"
-  jq -nc \
-    --arg id interleaved-card \
-    --arg answer "unrelated answer" \
-    --arg at 2026-08-27T17:59:59Z \
-    '{id: $id, generation: 1, answer: $answer, at: $at}' \
-    >> "$home/state/captain-replies.jsonl"
-  jq -nc \
-    --arg id conflict-card \
-    --arg answer "newer answer" \
-    --arg at 2026-08-27T18:00:00Z \
-    '{id: $id, generation: 1, answer: $answer, at: $at}' \
-    >> "$home/state/captain-replies.jsonl"
-  jq -nc \
-    --arg id tied-card \
-    --arg answer "first tied answer" \
-    --arg at 2026-08-27T18:00:00Z \
-    '{id: $id, generation: 1, answer: $answer, at: $at}' \
-    >> "$home/state/captain-replies.jsonl"
-  jq -nc \
-    --arg id tied-card \
-    --arg answer "later tied answer" \
-    --arg at 2026-08-27T18:00:00Z \
-    '{id: $id, generation: 1, answer: $answer, at: $at}' \
-    >> "$home/state/captain-replies.jsonl"
+  {
+    jq -nc \
+      --arg id conflict-card \
+      --arg answer "older answer" \
+      --arg at 2026-08-27T17:59:58Z \
+      '{id: $id, generation: 1, answer: $answer, at: $at}'
+    jq -nc \
+      --arg id interleaved-card \
+      --arg answer "unrelated answer" \
+      --arg at 2026-08-27T17:59:59Z \
+      '{id: $id, generation: 1, answer: $answer, at: $at}'
+    jq -nc \
+      --arg id conflict-card \
+      --arg answer "newer answer" \
+      --arg at 2026-08-27T18:00:00Z \
+      '{id: $id, generation: 1, answer: $answer, at: $at}'
+    jq -nc \
+      --arg id tied-card \
+      --arg answer "first tied answer" \
+      --arg at 2026-08-27T18:00:00Z \
+      '{id: $id, generation: 1, answer: $answer, at: $at}'
+    jq -nc \
+      --arg id tied-card \
+      --arg answer "later tied answer" \
+      --arg at 2026-08-27T18:00:00Z \
+      '{id: $id, generation: 1, answer: $answer, at: $at}'
+  } >> "$home/state/captain-replies.jsonl"
 
   out=$(run_q "$home" reconcile) || fail "conflicting reply group failed: $out"
   assert_contains "$out" \
