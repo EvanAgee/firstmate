@@ -92,6 +92,69 @@ function textField(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+const CARD_STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
+
+function cardStampEpoch(value) {
+  if (typeof value !== "string") return -1;
+  const parts = CARD_STAMP.exec(value);
+  if (!parts) return -1;
+  const [, base, fraction, zone] = parts;
+  const whole = Date.parse(`${base}Z`);
+  if (!Number.isFinite(whole)) return -1;
+  if (new Date(whole).toISOString().replace(/\.\d{3}Z$/, "Z") !== `${base}Z`) return -1;
+  let offset = 0;
+  if (zone !== "Z") {
+    const hours = Number(zone.slice(1, 3));
+    const minutes = Number(zone.slice(4, 6));
+    if (hours > 23 || minutes > 59) return -1;
+    offset = (hours * 60 + minutes) * 60 * (zone[0] === "+" ? -1 : 1);
+  }
+  return whole / 1000 + (fraction ? Number(`0.${fraction}`) : 0) + offset;
+}
+
+function legacyStateRank(state) {
+  if (state === "parked") return 2;
+  if (state === "open") return 1;
+  return 0;
+}
+
+function legacyStateTouchEpoch(record) {
+  if (record.state === "resolved") {
+    return cardStampEpoch(record.resolved_at ?? record.parked_at ?? record.asked_at);
+  }
+  if (record.state === "parked") {
+    return cardStampEpoch(record.parked_at ?? record.asked_at);
+  }
+  return cardStampEpoch(record.asked_at);
+}
+
+function collapseLegacyRecordsById(records) {
+  const bestByBucket = new Map();
+  const order = [];
+  records.forEach((record, index) => {
+    const id = textField(record.id);
+    const bucket = id || ` unkeyed:${index}`;
+    const rank = [
+      legacyStateRank(record.state),
+      legacyStateTouchEpoch(record),
+      typeof record.num === "number" && Number.isFinite(record.num) ? record.num : 0,
+      index,
+    ];
+    const current = bestByBucket.get(bucket);
+    if (!current) {
+      bestByBucket.set(bucket, { record, rank });
+      order.push(bucket);
+      return;
+    }
+    for (let level = 0; level < rank.length; level += 1) {
+      if (rank[level] === current.rank[level]) continue;
+      if (rank[level] > current.rank[level]) bestByBucket.set(bucket, { record, rank });
+      return;
+    }
+  });
+  return order.map((bucket) => bestByBucket.get(bucket).record);
+}
+
 function normalizedCaptainCardOptionLabels(options) {
   return (Array.isArray(options) ? options : [])
     .filter((raw) => typeof raw === "string")
@@ -174,7 +237,7 @@ function captainQueueRecords(data) {
         : 1;
     resolvedGenerationById.set(id, Math.max(resolvedGenerationById.get(id) || 0, generation));
   }
-  return records.map((record) => {
+  return collapseLegacyRecordsById(records).map((record) => {
     if (record.state === "resolved") return record;
     const resolvedGeneration = resolvedGenerationById.get(textField(record.id)) || 0;
     if (resolvedGeneration === 0) return record;

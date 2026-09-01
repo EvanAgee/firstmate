@@ -1172,7 +1172,6 @@ test_reply_behind_orphan_delivers_after_orphan_clears() {
   [ "$(cursor_value "$home")" = 0 ] \
     || fail "cursor should stay before the orphan, got $(cursor_value "$home")"
 
-  run_q "$home" resolve --id missing-card >/dev/null 2>&1 || true
   jq -c 'select(.id != "missing-card")' \
     "$home/state/captain-replies.jsonl" > "$home/state/replies.tmp"
   mv "$home/state/replies.tmp" "$home/state/captain-replies.jsonl"

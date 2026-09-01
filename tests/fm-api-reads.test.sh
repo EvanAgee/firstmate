@@ -154,6 +154,44 @@ EOF
   pass "captain queue serves legacy reopens with successor generations"
 }
 
+test_captain_queue_collapses_legacy_duplicate_id() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-legacy-duplicate)
+  write_queue "$home" <<'EOF'
+{
+  "updated_at": "2026-08-27T18:00:00Z",
+  "items": [{
+    "id": "legacy-duplicate-card",
+    "question": "Still asking?",
+    "options": ["Approve (recommended)", "Decline"],
+    "asked_at": "2026-08-20T10:00:00Z",
+    "status": "open"
+  }],
+  "parked": [{
+    "id": "legacy-duplicate-card",
+    "question": "Still asking?",
+    "options": ["Approve (recommended)", "Decline"],
+    "asked_at": "2026-08-20T10:00:00Z",
+    "status": "parked",
+    "parked_at": "2026-08-27T10:00:00Z",
+    "parked_reason": "expired-unbacked"
+  }]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "legacy duplicate queue status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 0 ] \
+    || fail "a parked legacy card must not also be served as an active ask: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked.length')" = 1 ] \
+    || fail "the parked legacy card should be served once: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.parked[0].parkedReason')" = expired-unbacked ] \
+    || fail "the surviving legacy row should be the parked one: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "captain queue collapses a legacy id listed as both open and parked"
+}
+
 test_captain_queue_serves_parked_cards_separately() {
   local home port resp
   home=$(fm_test_api_home api-queue-parked)
@@ -773,6 +811,7 @@ test_empty_home_queue_is_empty
 test_captain_queue_ignores_worker_needs_decision
 test_captain_queue_serves_open_named_cards
 test_captain_queue_serves_legacy_reopen_generation
+test_captain_queue_collapses_legacy_duplicate_id
 test_captain_queue_serves_parked_cards_separately
 test_captain_queue_keeps_parked_cards_without_active_options
 test_captain_queue_rejects_bad_options
