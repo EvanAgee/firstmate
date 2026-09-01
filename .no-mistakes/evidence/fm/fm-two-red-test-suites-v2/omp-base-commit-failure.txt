@@ -1,0 +1,3 @@
+not ok - no markers should detect unknown, got: claude (missing: 'unknown')
+--- output ---
+claude
