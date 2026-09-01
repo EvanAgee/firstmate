@@ -2813,6 +2813,44 @@ SH
   assert_poll_absent "$dir/home/state" task-a
   [ ! -e "$dir/home/state/task-a.meta" ] || fail "receipt-aware teardown left task metadata"
 
+  # A retirement receipt written before the inode-only fix
+  # (fm-pr-poll-retirement-v1) that outlives a reboot must not block teardown.
+  # Sequence: the PR merged and a v1 receipt was written, the Mac rebooted before
+  # the poll files were removed, and the user runs teardown directly on the task.
+  # Teardown must clear the legacy receipt and succeed. This fails against the
+  # pre-reorder teardown, where the cleanup preflight refuses the v1 receipt.
+  dir=$(make_case teardown-legacy-retirement-receipt)
+  fakebin="$dir/fakebin"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'pr=https://github.com/o/r/pull/19'
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/19
+  fm_pr_poll_snapshot_capture "$dir/home/state" task-a "$POLL" \
+    || fail "could not snapshot legacy teardown receipt fixture"
+  fm_pr_poll_retirement_publish "$dir/home/state" task-a "$POLL" merged \
+    || fail "could not publish legacy teardown receipt fixture"
+  downgrade_receipt_to_v1_device_inode "$dir/home/state" task-a
+  # The poll files still exist because the reboot happened before their removal.
+  [ -f "$dir/home/state/task-a.pr-poll" ] \
+    || fail "legacy teardown fixture lost its sidecar before the test"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err" \
+    || fail "a stale pre-fix retirement receipt blocked teardown: $(cat "$dir/teardown.err")"
+  assert_poll_absent "$dir/home/state" task-a
+  [ ! -e "$dir/home/state/task-a.meta" ] \
+    || fail "teardown left task metadata after clearing a legacy receipt"
+
   dir=$(make_case teardown-reserved-quarantine)
   fakebin="$dir/fakebin"
   fm_write_meta "$dir/home/state/invalid.meta" \
