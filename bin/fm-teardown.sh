@@ -714,6 +714,16 @@ validate_pr_poll_cleanup() {
   done
   if [ -e "$state_dir/$id.pr-poll-retirement" ] \
     || [ -L "$state_dir/$id.pr-poll-retirement" ]; then
+    # A receipt written before the inode-only fix (fm-pr-poll-retirement-v1) no
+    # longer parses, so it would refuse teardown on a merged task whose receipt
+    # outlived a reboot. Clear only that stale legacy receipt here, for every
+    # task this preflight inspects including a secondmate child. A valid current
+    # receipt is left alone and finished later by remove_pr_poll_artifacts,
+    # after every refusal gate has passed.
+    fm_pr_poll_retirement_discard_legacy "$state_dir" "$id" || true
+  fi
+  if [ -e "$state_dir/$id.pr-poll-retirement" ] \
+    || [ -L "$state_dir/$id.pr-poll-retirement" ]; then
     fm_pr_poll_retirement_state_valid "$state_dir" "$id" || {
       echo "REFUSED: invalid PR-poll retirement receipt; preserving task state." >&2
       return 1

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Non-executing migration for watcher PR checks created by older Firstmate
-# versions. Legacy check files are never run, sourced, or parsed by Bash.
+# versions, and for polls whose stored file identity carried a device number
+# that a macOS reboot reassigned (the pre-v3 registration format). Both classes
+# now fail the current registration parse and are rebuilt here from validated
+# metadata rather than left on disk looking armed but silently untrusted.
+# Legacy check files are never run, sourced, or parsed by Bash.
 # Pending validated merged-poll retirements finish first. Canonical polls are
 # then rebuilt from validated metadata, remaining provenance-bound polls and
 # registered custom checks remain armed, and every other task poll is
@@ -1144,7 +1148,7 @@ if [ "$migration_failed" -ne 0 ]; then
 fi
 
 if [ "$canonical_rebuilt" -eq 1 ]; then
-  echo "PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home"
+  echo "PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home"
 fi
 if [ "$validated_rearmed" -eq 1 ]; then
   echo "PR_CHECK_MIGRATION: validated replacement polls armed; resume supervision for this home"

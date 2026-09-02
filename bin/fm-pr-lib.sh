@@ -245,12 +245,32 @@ fm_pr_file_inode() {
   fi
 }
 
+# The within-session identity of a private artifact is its device and inode.
+# Callers that compare this value inside one boot (the procevent source claim)
+# have no separate same-device guard, so the device number stays part of the
+# identity for them.
 fm_pr_file_identity() {
   local device inode
   device=$(fm_pr_file_device "$1") || return 1
   inode=$(fm_pr_file_inode "$1") || return 1
   [ -n "$device" ] && [ -n "$inode" ] || return 1
   printf '%s:%s\n' "$device" "$inode"
+}
+
+# The durable identity used by the PR poll trust record is the inode alone. The
+# device number is deliberately excluded: APFS reassigns st_dev across a macOS
+# reboot, so a stored device would stop matching the live one after a restart
+# and every trusted-file check would silently fail. The inode is stable across a
+# reboot, and every PR poll caller that reads a stored identity also runs the
+# live same-device guard (fm_pr_private_file_valid's third argument), so the
+# file is still proven to sit on the state directory's own device at check time
+# without binding that reassigned number into a record meant to outlive a
+# reboot.
+fm_pr_file_inode_identity() {
+  local inode
+  inode=$(fm_pr_file_inode "$1") || return 1
+  [ -n "$inode" ] || return 1
+  printf '%s\n' "$inode"
 }
 
 fm_pr_sha256() {
@@ -364,10 +384,13 @@ fm_pr_poll_data_parse() {
 
 # Registration layout: version tag, task id, then the same provider-tagged
 # identity as the sidecar, then the two hashes and the two file identities.
-# The version tag moved to v2 with the provider tag, so a registration written
-# by the previous release is recognised as old and refused. The non-executing
-# migration in bin/fm-pr-check-migrate.sh then rebuilds that poll from the
-# task's recorded pull request URL.
+# The version tag moved to v3 when the stored file identities dropped their
+# reboot-unstable device number and became inode-only (see fm_pr_file_inode_identity),
+# so a v2 registration written by the previous release, whose identities still
+# carry a device that a macOS reboot may have reassigned, no longer parses and
+# is refused. The non-executing migration in bin/fm-pr-check-migrate.sh then
+# rebuilds that poll from the task's recorded pull request URL, which re-arms a
+# watch that would otherwise have gone silently dormant after a restart.
 fm_pr_poll_registration_parse() {
   local file=$1 version id provider url host path number data_hash template_hash data_identity check_identity
   FM_PR_REG_ID=
@@ -398,7 +421,7 @@ fm_pr_poll_registration_parse() {
     return 1
   fi
   exec 7<&-
-  [ "$version" = fm-pr-poll-registration-v2 ] || return 1
+  [ "$version" = fm-pr-poll-registration-v3 ] || return 1
   fm_pr_task_id_valid "$id" || return 1
   fm_pr_url_parse "$url" || return 1
   [ "$provider" = "$FM_PR_PROVIDER" ] || return 1
@@ -407,8 +430,8 @@ fm_pr_poll_registration_parse() {
   [ "$number" = "$FM_PR_NUMBER" ] || return 1
   [[ "$data_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ "$template_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
-  [[ "$data_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
-  [[ "$check_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  [[ "$data_identity" =~ ^[0-9]+$ ]] || return 1
+  [[ "$check_identity" =~ ^[0-9]+$ ]] || return 1
   FM_PR_REG_ID=$id
   FM_PR_REG_PROVIDER=$FM_PR_PROVIDER
   FM_PR_REG_URL=$FM_PR_URL
@@ -503,10 +526,10 @@ fm_pr_poll_prepare() {
   fi
   FM_PR_POLL_EXPECT_DATA_HASH=$(fm_pr_sha256 "$FM_PR_POLL_DATA_TMP") || { fm_pr_poll_cleanup; return 1; }
   FM_PR_POLL_EXPECT_TEMPLATE_HASH=$(fm_pr_sha256 "$FM_PR_POLL_CHECK_TMP") || { fm_pr_poll_cleanup; return 1; }
-  FM_PR_POLL_EXPECT_DATA_IDENTITY=$(fm_pr_file_identity "$FM_PR_POLL_DATA_TMP") || { fm_pr_poll_cleanup; return 1; }
-  FM_PR_POLL_EXPECT_CHECK_IDENTITY=$(fm_pr_file_identity "$FM_PR_POLL_CHECK_TMP") || { fm_pr_poll_cleanup; return 1; }
+  FM_PR_POLL_EXPECT_DATA_IDENTITY=$(fm_pr_file_inode_identity "$FM_PR_POLL_DATA_TMP") || { fm_pr_poll_cleanup; return 1; }
+  FM_PR_POLL_EXPECT_CHECK_IDENTITY=$(fm_pr_file_inode_identity "$FM_PR_POLL_CHECK_TMP") || { fm_pr_poll_cleanup; return 1; }
   if ! printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
-      fm-pr-poll-registration-v2 "$id" "$provider" "$url" "$host" "$path" "$number" \
+      fm-pr-poll-registration-v3 "$id" "$provider" "$url" "$host" "$path" "$number" \
       "$FM_PR_POLL_EXPECT_DATA_HASH" "$FM_PR_POLL_EXPECT_TEMPLATE_HASH" \
       "$FM_PR_POLL_EXPECT_DATA_IDENTITY" "$FM_PR_POLL_EXPECT_CHECK_IDENTITY" \
       > "$FM_PR_POLL_REG_TMP" \
@@ -539,7 +562,7 @@ fm_pr_poll_publish_prepared() {
   fi
   FM_PR_POLL_DATA_TMP=
   if ! fm_pr_private_file_valid "$FM_PR_POLL_DATA_DEST" 600 "$FM_PR_POLL_STATE_DEVICE" \
-    || [ "$(fm_pr_file_identity "$FM_PR_POLL_DATA_DEST")" != "$FM_PR_POLL_EXPECT_DATA_IDENTITY" ] \
+    || [ "$(fm_pr_file_inode_identity "$FM_PR_POLL_DATA_DEST")" != "$FM_PR_POLL_EXPECT_DATA_IDENTITY" ] \
     || [ "$(fm_pr_sha256 "$FM_PR_POLL_DATA_DEST")" != "$FM_PR_POLL_EXPECT_DATA_HASH" ] \
     || ! fm_pr_poll_data_parse "$FM_PR_POLL_DATA_DEST" \
     || [ "$FM_PR_DATA_PROVIDER" != "$FM_PR_POLL_EXPECT_PROVIDER" ] \
@@ -602,8 +625,8 @@ fm_pr_poll_files_valid() {
   fm_pr_poll_data_parse "$data" || return 1
   data_hash=$(fm_pr_sha256 "$data") || return 1
   template_hash=$(fm_pr_sha256 "$check") || return 1
-  data_identity=$(fm_pr_file_identity "$data") || return 1
-  check_identity=$(fm_pr_file_identity "$check") || return 1
+  data_identity=$(fm_pr_file_inode_identity "$data") || return 1
+  check_identity=$(fm_pr_file_inode_identity "$check") || return 1
   fm_pr_poll_registration_parse "$registration" || return 1
   [ "$FM_PR_REG_ID" = "$id" ] || return 1
   [ "$FM_PR_REG_PROVIDER" = "$FM_PR_DATA_PROVIDER" ] || return 1
@@ -636,7 +659,7 @@ fm_pr_poll_snapshot_capture() {
   fm_pr_poll_artifacts_valid "$state" "$id" "$template" || return 1
   registration="$state/$id.pr-poll-registration"
   FM_PR_POLL_SNAPSHOT_REG_HASH=$(fm_pr_sha256 "$registration") || return 1
-  FM_PR_POLL_SNAPSHOT_REG_IDENTITY=$(fm_pr_file_identity "$registration") || return 1
+  FM_PR_POLL_SNAPSHOT_REG_IDENTITY=$(fm_pr_file_inode_identity "$registration") || return 1
   FM_PR_POLL_SNAPSHOT_ID=$id
   FM_PR_POLL_SNAPSHOT_PROVIDER=$FM_PR_DATA_PROVIDER
   FM_PR_POLL_SNAPSHOT_URL=$FM_PR_DATA_URL
@@ -655,7 +678,7 @@ fm_pr_poll_snapshot_matches() {
   fm_pr_poll_artifacts_valid "$state" "$id" "$template" || return 1
   registration="$state/$id.pr-poll-registration"
   reg_hash=$(fm_pr_sha256 "$registration") || return 1
-  reg_identity=$(fm_pr_file_identity "$registration") || return 1
+  reg_identity=$(fm_pr_file_inode_identity "$registration") || return 1
   [ "$FM_PR_DATA_PROVIDER" = "$FM_PR_POLL_SNAPSHOT_PROVIDER" ] || return 1
   [ "$FM_PR_DATA_URL" = "$FM_PR_POLL_SNAPSHOT_URL" ] || return 1
   [ "$FM_PR_DATA_HOST" = "$FM_PR_POLL_SNAPSHOT_HOST" ] || return 1
@@ -705,7 +728,7 @@ fm_pr_poll_retirement_parse() {
     return 1
   fi
   exec 9<&-
-  [ "$version" = fm-pr-poll-retirement-v1 ] || return 1
+  [ "$version" = fm-pr-poll-retirement-v2 ] || return 1
   fm_pr_task_id_valid "$id" || return 1
   fm_pr_url_parse "$url" || return 1
   [ "$provider" = "$FM_PR_PROVIDER" ] || return 1
@@ -714,10 +737,10 @@ fm_pr_poll_retirement_parse() {
   [ "$number" = "$FM_PR_NUMBER" ] || return 1
   [[ "$data_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ "$template_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
-  [[ "$data_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
-  [[ "$check_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  [[ "$data_identity" =~ ^[0-9]+$ ]] || return 1
+  [[ "$check_identity" =~ ^[0-9]+$ ]] || return 1
   [[ "$reg_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
-  [[ "$reg_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  [[ "$reg_identity" =~ ^[0-9]+$ ]] || return 1
   [ "$result" = merged ] || return 1
   FM_PR_RETIRE_ID=$id
   FM_PR_RETIRE_PROVIDER=$provider
@@ -750,7 +773,7 @@ fm_pr_poll_retirement_receipt_valid() {
   [ "$FM_PR_META_PATH" = "$FM_PR_RETIRE_PATH" ] || return 1
   [ "$FM_PR_META_NUMBER" = "$FM_PR_RETIRE_NUMBER" ] || return 1
   FM_PR_RETIRE_RECEIPT_HASH=$(fm_pr_sha256 "$receipt") || return 1
-  FM_PR_RETIRE_RECEIPT_IDENTITY=$(fm_pr_file_identity "$receipt") || return 1
+  FM_PR_RETIRE_RECEIPT_IDENTITY=$(fm_pr_file_inode_identity "$receipt") || return 1
 }
 
 fm_pr_poll_retirement_data_valid() {
@@ -760,7 +783,7 @@ fm_pr_poll_retirement_data_valid() {
   fm_pr_private_file_valid "$data" 600 "$state_device" || return 1
   fm_pr_poll_data_parse "$data" || return 1
   data_hash=$(fm_pr_sha256 "$data") || return 1
-  data_identity=$(fm_pr_file_identity "$data") || return 1
+  data_identity=$(fm_pr_file_inode_identity "$data") || return 1
   [ "$FM_PR_DATA_PROVIDER" = "$FM_PR_RETIRE_PROVIDER" ] || return 1
   [ "$FM_PR_DATA_URL" = "$FM_PR_RETIRE_URL" ] || return 1
   [ "$FM_PR_DATA_HOST" = "$FM_PR_RETIRE_HOST" ] || return 1
@@ -777,7 +800,7 @@ fm_pr_poll_retirement_registration_valid() {
   fm_pr_private_file_valid "$registration" 600 "$state_device" || return 1
   fm_pr_poll_registration_parse "$registration" || return 1
   reg_hash=$(fm_pr_sha256 "$registration") || return 1
-  reg_identity=$(fm_pr_file_identity "$registration") || return 1
+  reg_identity=$(fm_pr_file_inode_identity "$registration") || return 1
   [ "$FM_PR_REG_ID" = "$id" ] || return 1
   [ "$FM_PR_REG_PROVIDER" = "$FM_PR_RETIRE_PROVIDER" ] || return 1
   [ "$FM_PR_REG_URL" = "$FM_PR_RETIRE_URL" ] || return 1
@@ -798,7 +821,7 @@ fm_pr_poll_retirement_check_valid() {
   check="$state/$id.check.sh"
   fm_pr_private_file_valid "$check" 600 "$state_device" || return 1
   check_hash=$(fm_pr_sha256 "$check") || return 1
-  check_identity=$(fm_pr_file_identity "$check") || return 1
+  check_identity=$(fm_pr_file_inode_identity "$check") || return 1
   [ "$check_hash" = "$FM_PR_RETIRE_TEMPLATE_HASH" ] || return 1
   [ "$check_identity" = "$FM_PR_RETIRE_CHECK_IDENTITY" ]
 }
@@ -831,7 +854,7 @@ fm_pr_poll_retirement_state_valid() {
 fm_pr_poll_retirement_remove_exact() {
   local path=$1 state_device=$2 expected_identity=$3 expected_hash=$4
   fm_pr_private_file_valid "$path" 600 "$state_device" || return 1
-  [ "$(fm_pr_file_identity "$path")" = "$expected_identity" ] || return 1
+  [ "$(fm_pr_file_inode_identity "$path")" = "$expected_identity" ] || return 1
   [ "$(fm_pr_sha256 "$path")" = "$expected_hash" ] || return 1
   rm -f -- "$path" || return 1
   [ ! -e "$path" ] && [ ! -L "$path" ]
@@ -848,17 +871,57 @@ fm_pr_poll_retirement_discard_obsolete() {
   fm_pr_poll_retirement_parse "$receipt" || return 1
   [ "$FM_PR_RETIRE_ID" = "$id" ] || return 1
   receipt_hash=$(fm_pr_sha256 "$receipt") || return 1
-  receipt_identity=$(fm_pr_file_identity "$receipt") || return 1
+  receipt_identity=$(fm_pr_file_inode_identity "$receipt") || return 1
   fm_pr_poll_artifacts_valid "$state" "$id" "$template" || return 1
   registration="$state/$id.pr-poll-registration"
   current_reg_hash=$(fm_pr_sha256 "$registration") || return 1
-  current_reg_identity=$(fm_pr_file_identity "$registration") || return 1
+  current_reg_identity=$(fm_pr_file_inode_identity "$registration") || return 1
   if [ "$current_reg_hash" = "$FM_PR_RETIRE_REG_HASH" ] \
     && [ "$current_reg_identity" = "$FM_PR_RETIRE_REG_IDENTITY" ] \
     && [ "$FM_PR_REG_DATA_IDENTITY" = "$FM_PR_RETIRE_DATA_IDENTITY" ] \
     && [ "$FM_PR_REG_CHECK_IDENTITY" = "$FM_PR_RETIRE_CHECK_IDENTITY" ]; then
     return 1
   fi
+  fm_pr_poll_retirement_remove_exact "$receipt" "$state_device" \
+    "$receipt_identity" "$receipt_hash"
+}
+
+# A retirement receipt written by a previous release stores its identities as
+# device:inode and no longer parses under the current inode-only version, so a
+# receipt that survives a reboot would otherwise block re-arming. The receipt
+# only ever records that an already-merged PR's poll files should be cleaned up,
+# so discarding a genuinely legacy one is safe: if any poll files still exist,
+# the next poll re-observes the merge and republishes a current receipt.
+#
+# The legacy test is deliberately narrow. Discard fires only when the receipt's
+# first line is exactly a recognized older version tag, so a tampered current
+# receipt - which still begins with the current tag and fails to parse only
+# because of the tampering - is NOT treated as legacy and keeps the existing
+# loud refusal. The removal stays tightly scoped to a private, single-link,
+# 0600 file on the state device whose identity and bytes are captured
+# immediately before removal, exactly as fm_pr_poll_retirement_remove_exact
+# demands, so nothing outside the private state namespace is ever touched.
+FM_PR_RETIREMENT_LEGACY_VERSIONS="fm-pr-poll-retirement-v1"
+fm_pr_poll_retirement_discard_legacy() {
+  local state=$1 id=$2 receipt state_device version known legacy receipt_hash receipt_identity
+  fm_pr_task_id_valid "$id" || return 1
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  state_device=$(fm_pr_file_device "$state") || return 1
+  receipt="$state/$id.pr-poll-retirement"
+  fm_pr_private_file_valid "$receipt" 600 "$state_device" || return 1
+  if fm_pr_poll_retirement_parse "$receipt"; then
+    return 1
+  fi
+  exec 9< "$receipt" || return 1
+  IFS= read -r version <&9 || { exec 9<&-; return 1; }
+  exec 9<&-
+  known=0
+  for legacy in $FM_PR_RETIREMENT_LEGACY_VERSIONS; do
+    [ "$version" = "$legacy" ] && known=1 && break
+  done
+  [ "$known" -eq 1 ] || return 1
+  receipt_hash=$(fm_pr_sha256 "$receipt") || return 1
+  receipt_identity=$(fm_pr_file_inode_identity "$receipt") || return 1
   fm_pr_poll_retirement_remove_exact "$receipt" "$state_device" \
     "$receipt_identity" "$receipt_hash"
 }
@@ -874,7 +937,7 @@ fm_pr_poll_retirement_publish() {
   umask 077
   tmp=$(mktemp "$state/.fm-pr-poll-retirement.XXXXXX") || return 1
   if ! printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
-      fm-pr-poll-retirement-v1 \
+      fm-pr-poll-retirement-v2 \
       "$FM_PR_POLL_SNAPSHOT_ID" \
       "$FM_PR_POLL_SNAPSHOT_PROVIDER" \
       "$FM_PR_POLL_SNAPSHOT_URL" \
@@ -912,6 +975,7 @@ fm_pr_poll_retirement_recover_one() {
   fi
   if ! fm_pr_poll_retirement_state_valid "$state" "$id"; then
     fm_pr_poll_retirement_discard_obsolete "$state" "$id" "$template" && return 0
+    fm_pr_poll_retirement_discard_legacy "$state" "$id" && return 0
     return 1
   fi
   state_device=$(fm_pr_file_device "$state") || return 1

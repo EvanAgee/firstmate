@@ -1652,8 +1652,8 @@ test_replacement_provenance_negative_matrix() {
       forged-registration)
         write_manual_poll_pair "$state"
         printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
-          fm-pr-poll-registration-v2 task-a github https://github.com/o/r/pull/10 github.com o/r 10 \
-          "$zeros" "$zeros" 1:1 1:2 > "$state/task-a.pr-poll-registration"
+          fm-pr-poll-registration-v3 task-a github https://github.com/o/r/pull/10 github.com o/r 10 \
+          "$zeros" "$zeros" 1 2 > "$state/task-a.pr-poll-registration"
         chmod 0600 "$state/task-a.pr-poll-registration"
         ;;
       partial-publication)
@@ -1907,7 +1907,7 @@ test_failed_outcomes_block_every_retry_until_repaired() {
       || fail "$classification repaired migration retained a contradictory failure obligation"
     [ -f "$success" ] || fail "$classification repaired migration did not persist its success obligation"
     if [ "$classification" = canonical ]; then
-      [ "$(cat "$dir/migrate-3.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+      [ "$(cat "$dir/migrate-3.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
         || fail "canonical repaired retry did not report the armed outcome"
       fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "canonical repaired retry did not arm a valid poll pair"
     else
@@ -1955,7 +1955,7 @@ test_canonical_publication_failure_recovers_only_on_retry() {
 
   FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err" \
     || fail "canonical publication failure did not recover on a clean retry"
-  [ "$(cat "$dir/migrate-2.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+  [ "$(cat "$dir/migrate-2.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
     || fail "canonical publication retry did not report the armed outcome"
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "canonical publication retry did not arm a valid pair"
   assert_valid_migration_marker "$state/.pr-check-migration-v1"
@@ -2149,7 +2149,7 @@ test_nonexecuting_migration() {
 
   FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "canonical legacy migration failed"
-  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
     || fail "canonical migration stdout did not state that the rebuilt poll is armed"
   assert_grep 'task task-a: canonical legacy poll rebuilt and armed' "$state/.pr-check-migration.log" \
     "canonical migration log did not record the armed outcome"
@@ -2195,7 +2195,7 @@ test_nonexecuting_migration() {
   snap_before=$(cat "$state/task-x.meta")
   FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "X-linked migration failed"
-  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
+  [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' ] \
     || fail "X-linked migration did not report an armed canonical poll"
   fm_pr_poll_artifacts_valid "$state" task-x "$POLL" || fail "X-linked migration did not arm a valid pair"
   snap_after=$(cat "$state/task-x.meta")
@@ -2745,7 +2745,7 @@ SH
 }
 
 test_teardown_removes_poll_artifacts() {
-  local dir fakebin kind artifact counterpart rc
+  local dir fakebin kind artifact counterpart rc before child_home child_state
   dir=$(make_case teardown-cleanup)
   fakebin="$dir/fakebin"
   fm_write_meta "$dir/home/state/task-a.meta" \
@@ -2812,6 +2812,185 @@ SH
     || fail "teardown could not finish a valid crash-left retirement receipt"
   assert_poll_absent "$dir/home/state" task-a
   [ ! -e "$dir/home/state/task-a.meta" ] || fail "receipt-aware teardown left task metadata"
+
+  # A retirement receipt written before the inode-only fix
+  # (fm-pr-poll-retirement-v1) that outlives a reboot must not block teardown.
+  # Sequence: the PR merged and a v1 receipt was written, the Mac rebooted before
+  # the poll files were removed, and the user runs teardown directly on the task.
+  # Teardown must clear the legacy receipt and succeed. This fails against the
+  # pre-reorder teardown, where the cleanup preflight refuses the v1 receipt.
+  dir=$(make_case teardown-legacy-retirement-receipt)
+  fakebin="$dir/fakebin"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'pr=https://github.com/o/r/pull/19'
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/19
+  fm_pr_poll_snapshot_capture "$dir/home/state" task-a "$POLL" \
+    || fail "could not snapshot legacy teardown receipt fixture"
+  fm_pr_poll_retirement_publish "$dir/home/state" task-a "$POLL" merged \
+    || fail "could not publish legacy teardown receipt fixture"
+  downgrade_receipt_to_v1_device_inode "$dir/home/state" task-a
+  # The poll files still exist because the reboot happened before their removal.
+  [ -f "$dir/home/state/task-a.pr-poll" ] \
+    || fail "legacy teardown fixture lost its sidecar before the test"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err" \
+    || fail "a stale pre-fix retirement receipt blocked teardown: $(cat "$dir/teardown.err")"
+  assert_poll_absent "$dir/home/state" task-a
+  [ ! -e "$dir/home/state/task-a.meta" ] \
+    || fail "teardown left task metadata after clearing a legacy receipt"
+
+  # A VALID current retirement receipt must not be cashed in before the teardown
+  # refusal gates. The refusal here is a world-readable quarantine entry, whose
+  # gate runs AFTER the legacy-receipt discard inside validate_pr_poll_cleanup,
+  # so the discard is genuinely executed before teardown gives up. On that
+  # refusal the poll files and the receipt must all still be on disk for a plain
+  # rerun. This goes red if the discard is widened to the full
+  # fm_pr_poll_retirement_recover_one, which deletes them before the refusal.
+  dir=$(make_case teardown-valid-receipt-survives-refusal)
+  fakebin="$dir/fakebin"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'pr=https://github.com/o/r/pull/20'
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/20
+  fm_pr_poll_snapshot_capture "$dir/home/state" task-a "$POLL" \
+    || fail "could not snapshot refusal-survival receipt fixture"
+  fm_pr_poll_retirement_publish "$dir/home/state" task-a "$POLL" merged \
+    || fail "could not publish refusal-survival receipt fixture"
+  mkdir -p "$dir/home/state/.pr-check-quarantine"
+  chmod 0700 "$dir/home/state/.pr-check-quarantine"
+  printf 'unsafe entry\n' > "$dir/home/state/.pr-check-quarantine/task-a.check.abc123"
+  chmod 0644 "$dir/home/state/.pr-check-quarantine/task-a.check.abc123"
+  before=$(poll_artifact_snapshot "$dir/home/state" task-a)
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown accepted a world-readable quarantine entry"
+  [ "$(poll_artifact_snapshot "$dir/home/state" task-a)" = "$before" ] \
+    || fail "teardown consumed a valid retirement receipt before its refusal gate"
+
+  # The same two guarantees must hold for a secondmate CHILD task, whose poll
+  # lives in the secondmate home's own state directory and is inspected by the
+  # child preflight rather than the top-level one. First: a pre-fix v1 receipt
+  # on a child must not block the parent's teardown.
+  dir=$(make_case teardown-child-legacy-receipt)
+  fakebin="$dir/fakebin"
+  child_home="$dir/secondmate-home"
+  child_state="$child_home/state"
+  mkdir -p "$child_state" "$child_home/data" "$child_home/config" "$child_home/projects"
+  printf '%s\n' task-a > "$child_home/.fm-secondmate-home"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$child_home" \
+    "project=$dir/project" \
+    'kind=secondmate' \
+    'mode=secondmate' \
+    'backend=tmux' \
+    "home=$child_home"
+  fm_write_meta "$child_state/child-a.meta" \
+    'window=firstmate:fm-child-a' \
+    'endpoint_task_id=child-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'backend=tmux' \
+    'pr=https://github.com/o/r/pull/21'
+  seed_canonical_poll_in "$child_state" child-a https://github.com/o/r/pull/21
+  fm_pr_poll_snapshot_capture "$child_state" child-a "$POLL" \
+    || fail "could not snapshot child legacy receipt fixture"
+  fm_pr_poll_retirement_publish "$child_state" child-a "$POLL" merged \
+    || fail "could not publish child legacy receipt fixture"
+  downgrade_receipt_to_v1_device_inode "$child_state" child-a
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err" \
+    || fail "a child's stale pre-fix retirement receipt blocked teardown: $(cat "$dir/teardown.err")"
+  [ ! -e "$dir/home/state/task-a.meta" ] \
+    || fail "teardown left the parent task after clearing a child's legacy receipt"
+
+  # Second: a VALID current receipt on a child must survive a teardown refusal,
+  # so the child's poll files are still there for a plain rerun. As above the
+  # refusal is a world-readable quarantine entry, whose gate runs after the
+  # legacy-receipt discard, so the discard really runs before teardown refuses.
+  dir=$(make_case teardown-child-valid-receipt-survives-refusal)
+  fakebin="$dir/fakebin"
+  child_home="$dir/secondmate-home"
+  child_state="$child_home/state"
+  mkdir -p "$child_state" "$child_home/data" "$child_home/config" "$child_home/projects"
+  printf '%s\n' task-a > "$child_home/.fm-secondmate-home"
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$child_home" \
+    "project=$dir/project" \
+    'kind=secondmate' \
+    'mode=secondmate' \
+    'backend=tmux' \
+    "home=$child_home"
+  fm_write_meta "$child_state/child-a.meta" \
+    'window=firstmate:fm-child-a' \
+    'endpoint_task_id=child-a' \
+    "worktree=$dir/missing-worktree" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=local-only' \
+    'backend=tmux' \
+    'pr=https://github.com/o/r/pull/22'
+  seed_canonical_poll_in "$child_state" child-a https://github.com/o/r/pull/22
+  fm_pr_poll_snapshot_capture "$child_state" child-a "$POLL" \
+    || fail "could not snapshot child refusal-survival fixture"
+  fm_pr_poll_retirement_publish "$child_state" child-a "$POLL" merged \
+    || fail "could not publish child refusal-survival fixture"
+  mkdir -p "$child_state/.pr-check-quarantine"
+  chmod 0700 "$child_state/.pr-check-quarantine"
+  printf 'unsafe entry\n' > "$child_state/.pr-check-quarantine/child-a.check.abc123"
+  chmod 0644 "$child_state/.pr-check-quarantine/child-a.check.abc123"
+  before=$(poll_artifact_snapshot "$child_state" child-a)
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  touch "$dir/home/state/.last-watcher-beat"
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$BASE_PATH" \
+    "$TEARDOWN" task-a --force > "$dir/teardown.out" 2> "$dir/teardown.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown accepted a world-readable child quarantine entry"
+  [ "$(poll_artifact_snapshot "$child_state" child-a)" = "$before" ] \
+    || fail "teardown consumed a valid child retirement receipt before its refusal gate"
 
   dir=$(make_case teardown-reserved-quarantine)
   fakebin="$dir/fakebin"
@@ -3033,8 +3212,12 @@ EOF
 }
 
 seed_canonical_poll() {
-  local dir=$1 id=$2 url=$3 template=${4:-$POLL} state provider host path number
-  state="$dir/home/state"
+  local dir=$1 id=$2 url=$3 template=${4:-$POLL}
+  seed_canonical_poll_in "$dir/home/state" "$id" "$url" "$template"
+}
+
+seed_canonical_poll_in() {
+  local state=$1 id=$2 url=$3 template=${4:-$POLL} provider host path number
   fm_pr_url_parse "$url" || fail "retirement fixture URL was invalid"
   provider=$FM_PR_PROVIDER
   host=$FM_PR_HOST
@@ -3489,6 +3672,187 @@ test_gitlab_merged_poll_retires() {
   pass "GitHub and GitLab exact merged results share one retirement path"
 }
 
+# Rewrite a current (v3, inode-only) registration into the pre-fix v2 format,
+# whose stored file identities were "<device>:<inode>". This is byte-faithful to
+# what an armed home on the previous release carries on disk. On APFS the device
+# reassigns across a macOS reboot, so the stored device would then stop matching
+# the live one; recording it here reproduces exactly that broken record without
+# needing an actual restart.
+downgrade_registration_to_v2_device_inode() {
+  local state=$1 id=$2 registration line n=0 data_inode check_inode
+  registration="$state/$id.pr-poll-registration"
+  [ -f "$registration" ] || fail "no v3 registration to downgrade"
+  data_inode=$(fm_pr_file_inode "$state/$id.pr-poll") || fail "could not read sidecar inode"
+  check_inode=$(fm_pr_file_inode "$state/$id.check.sh") || fail "could not read check inode"
+  : > "$registration.v2"
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$n" in
+      1) printf 'fm-pr-poll-registration-v2\n' >> "$registration.v2" ;;
+      # The pre-fix format stored data_identity and check_identity as
+      # device:inode. Use a device the live state directory will not have.
+      10) printf '4242424242:%s\n' "$data_inode" >> "$registration.v2" ;;
+      11) printf '4242424242:%s\n' "$check_inode" >> "$registration.v2" ;;
+      *) printf '%s\n' "$line" >> "$registration.v2" ;;
+    esac
+  done < "$registration"
+  mv "$registration.v2" "$registration"
+  chmod 0600 "$registration"
+}
+
+# The core regression: an armed watch must survive a device-number change (an
+# APFS reboot) without an actual restart, and a poll that genuinely cannot be
+# rebuilt must leave a visible signal rather than dying quietly.
+test_pr_watch_survives_device_reassignment() {
+  local dir state saved_dev out rc
+
+  # Post-fix immunity: with the current inode-only record, a different live
+  # device number must not make an armed poll read as untrusted. This is the
+  # assertion that goes red against the old device:inode record, where the
+  # durable comparison embedded a device that a reboot would change.
+  dir=$(make_case reboot-immune-current-record)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/10
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/10
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "freshly armed poll did not validate"
+  # Simulate the reboot: every live device read now returns a different number,
+  # exactly as APFS would after a restart. The same-device guard still sees a
+  # consistent value because both the state dir and its private files report the
+  # same (new) device, so only a record that durably bound the OLD device could
+  # break here.
+  saved_dev=$(declare -f fm_pr_file_device)
+  fm_pr_file_device() { printf '9999999999\n'; }
+  if ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL"; then
+    eval "$saved_dev"
+    fail "armed poll went dormant after a simulated device reassignment"
+  fi
+  eval "$saved_dev"
+  pass "an armed poll survives a device-number change without an actual reboot"
+
+  # Recovery path: a pre-fix v2 record carrying a now-stale device is detected
+  # and rebuilt from canonical metadata, and the rebuild is announced.
+  dir=$(make_case reboot-recovers-legacy-record)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/10
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/10
+  downgrade_registration_to_v2_device_inode "$state" task-a
+  # The stale record must first read as untrusted, proving the watch would have
+  # gone dormant on the unfixed code path.
+  ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "a stale device:inode record was silently trusted"
+  # Clear the completion markers so the migration re-scans this home.
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/recover.out" 2> "$dir/recover.err" \
+    || fail "migration did not recover a rebooted armed watch: $(cat "$dir/recover.err")"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "rebooted watch was not re-armed as a valid v3 poll"
+  grep -qxF 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed (recovers watches left dormant by a prior release or a macOS reboot); resume supervision for this home' \
+    "$dir/recover.out" || fail "recovery did not announce the rebuilt watch"
+  grep -qxF 'fm-pr-poll-registration-v3' "$state/task-a.pr-poll-registration" \
+    || fail "rebuilt registration was not written in the inode-only format"
+  pass "a rebooted armed watch is detected and re-armed with a visible signal"
+
+  # Refusal-with-signal path: a stale record whose task no longer carries
+  # canonical PR metadata cannot be rebuilt, so it must be quarantined unarmed
+  # with a visible line rather than left looking healthy or silently dropped.
+  dir=$(make_case reboot-refuses-unrebuildable-record)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/10
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/10
+  downgrade_registration_to_v2_device_inode "$state" task-a
+  # Remove the canonical pr= line so no rebuild source remains.
+  grep -v '^pr=' "$state/task-a.meta" > "$state/task-a.meta.tmp"
+  mv "$state/task-a.meta.tmp" "$state/task-a.meta"
+  chmod 0600 "$state/task-a.meta"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/refuse.out" 2> "$dir/refuse.err" \
+    || fail "migration did not complete over an unrebuildable record: $(cat "$dir/refuse.err")"
+  [ ! -e "$state/task-a.check.sh" ] && [ ! -L "$state/task-a.check.sh" ] \
+    || fail "an unrebuildable stale record was left armed"
+  grep -qxF 'PR_CHECK_MIGRATION: quarantined polls remain unarmed; review state/.pr-check-migration.log before rearming' \
+    "$dir/refuse.out" || fail "an unrebuildable record was dropped without a visible signal"
+  pass "an unrebuildable stale record is quarantined unarmed with a visible signal"
+}
+
+
+# Rewrite a current (v2, inode-only) retirement receipt into the pre-fix v1
+# format, whose stored file identities were "<device>:<inode>". This is the
+# receipt an armed home on the previous release carries on disk. The device is
+# one the live state directory does not have, which is what a macOS reboot
+# produces on APFS, so the receipt no longer parses under the current version.
+downgrade_receipt_to_v1_device_inode() {
+  local state=$1 id=$2 receipt line n=0 data_inode check_inode reg_inode
+  receipt="$state/$id.pr-poll-retirement"
+  [ -f "$receipt" ] || fail "no v2 receipt to downgrade"
+  data_inode=$(fm_pr_file_inode "$state/$id.pr-poll") || fail "could not read sidecar inode"
+  check_inode=$(fm_pr_file_inode "$state/$id.check.sh") || fail "could not read check inode"
+  reg_inode=$(fm_pr_file_inode "$state/$id.pr-poll-registration") \
+    || fail "could not read registration inode"
+  : > "$receipt.v1"
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$n" in
+      1) printf 'fm-pr-poll-retirement-v1\n' >> "$receipt.v1" ;;
+      10) printf '4242424242:%s\n' "$data_inode" >> "$receipt.v1" ;;
+      11) printf '4242424242:%s\n' "$check_inode" >> "$receipt.v1" ;;
+      13) printf '4242424242:%s\n' "$reg_inode" >> "$receipt.v1" ;;
+      *) printf '%s\n' "$line" >> "$receipt.v1" ;;
+    esac
+  done < "$receipt"
+  mv "$receipt.v1" "$receipt"
+  chmod 0600 "$receipt"
+}
+
+# fm_pr_poll_retirement_discard_legacy deletes a file, so both of its outcomes
+# need an executable assertion: a genuine pre-fix receipt must be discarded so a
+# rebooted home can re-arm, and a tampered current-version receipt must keep the
+# existing loud refusal rather than being mistaken for a legacy one.
+test_legacy_retirement_receipt_is_discarded_but_tampering_is_refused() {
+  local dir state before rc
+
+  dir=$(make_case retirement-legacy-receipt)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/30
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/30
+  fm_pr_poll_snapshot_capture "$state" task-a "$POLL" \
+    || fail "could not snapshot legacy receipt fixture"
+  fm_pr_poll_retirement_publish "$state" task-a "$POLL" merged \
+    || fail "could not publish legacy receipt fixture"
+  downgrade_receipt_to_v1_device_inode "$state" task-a
+  fm_pr_poll_retirement_recover_one "$state" task-a "$POLL" \
+    || fail "a genuine legacy retirement receipt was not discarded"
+  [ ! -e "$state/task-a.pr-poll-retirement" ] && [ ! -L "$state/task-a.pr-poll-retirement" ] \
+    || fail "a genuine legacy retirement receipt survived recovery"
+  run_check_entry "$dir" task-a https://github.com/o/r/pull/31 > "$dir/rearm.out" 2> "$dir/rearm.err" \
+    || fail "a discarded legacy receipt still blocked rearming: $(cat "$dir/rearm.err")"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "rearm after a discarded legacy receipt did not produce a valid poll"
+
+  dir=$(make_case retirement-tampered-current-receipt)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/32
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/32
+  fm_pr_poll_snapshot_capture "$state" task-a "$POLL" \
+    || fail "could not snapshot tampered receipt fixture"
+  fm_pr_poll_retirement_publish "$state" task-a "$POLL" merged \
+    || fail "could not publish tampered receipt fixture"
+  printf 'extra\n' >> "$state/task-a.pr-poll-retirement"
+  before=$(state_snapshot "$state")
+  set +e
+  fm_pr_poll_retirement_recover_one "$state" task-a "$POLL"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a tampered current-version receipt was discarded as legacy"
+  [ -f "$state/task-a.pr-poll-retirement" ] \
+    || fail "a tampered current-version receipt was removed"
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "a refused tampered receipt changed poll state"
+  pass "a legacy retirement receipt is discarded while a tampered current one is refused"
+}
+
+test_pr_watch_survives_device_reassignment
+test_legacy_retirement_receipt_is_discarded_but_tampering_is_refused
 test_parser_matrix
 test_gitlab_merge_watch
 test_merged_poll_retires_once
