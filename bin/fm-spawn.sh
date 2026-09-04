@@ -225,8 +225,9 @@
 # Claude Code 2.1.260 advertises --append-system-prompt[-file], Pi 0.84.3
 # advertises repeatable --skill <path>, and OMP 18.1.6 says
 # --append-system-prompt reads file contents. Claude and capability-matched OMP
-# receive one task-temp concatenation whose first line records caveman: full and
-# ponytail: full; Pi and pi-signed receive each available skill directory
+# receive one task-temp concatenation whose first line records every available
+# skill at full; with both files available it records caveman: full and
+# ponytail: full. Pi and pi-signed receive each available skill directory
 # separately. OMP falls back to the harness-neutral brief line when that option
 # is absent.
 # Codex 0.152.1 and OpenCode 1.18.4 expose no launch-time skill-file option;
