@@ -309,12 +309,12 @@ fi
 
 IFS= read -r -d '' WORKER_SKILLS_SECTION <<'EOF' || true
 # Session skills
-Caveman (`full`) and ponytail (`full`) are active for this session.
+Firstmate delivers caveman (`full`) and ponytail (`full`) for this session when their installed skill files are available.
 Caveman keeps chat terse; commits, PRs, issues, and docs stay normal prose.
-Ponytail means building the simplest thing that works without dropping required validation, error handling, security, accessibility, or tests.
+Ponytail means building the simplest thing that works without dropping required validation, error handling, security, accessibility, or brief-required tests.
 This brief's test requirements win over ponytail's test rule.
 The skill files own the details: `~/.agents/skills/caveman/SKILL.md` and `~/.agents/skills/ponytail/SKILL.md`.
-Use `stop caveman` or `stop ponytail` to turn each skill off.
+For delivered skills, the skill-defined off phrases `stop caveman` and `stop ponytail` are available.
 EOF
 WORKER_SKILLS_SECTION=${WORKER_SKILLS_SECTION%$'\n'}
 

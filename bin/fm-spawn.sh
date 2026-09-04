@@ -122,7 +122,10 @@
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|omp|pi|pi-signed|grok|kimi|cursor|muse)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
+#   new adapters. Raw crewmate and scout launches are excluded from worker-skill
+#   injection because they have no delivery contract; they print exactly one
+#   SKILLS diagnostic and otherwise keep the raw command unchanged. For pi and
+#   pi-signed, fm-spawn resolves the selected executable
 #   name from PATH once, probes that concrete path with --help, and launches the
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
@@ -218,18 +221,22 @@
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __WORKTREE__  absolute path to the task worktree
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
-# Worker skill launch paths were checked against real local help on 2026-09-04.
+# Worker skill launch flags were checked against real local help on 2026-09-04.
 # Claude Code 2.1.260 advertises --append-system-prompt[-file], Pi 0.84.3
 # advertises repeatable --skill <path>, and OMP 18.1.6 says
-# --append-system-prompt reads file contents. Claude and OMP receive one
-# task-temp concatenation whose first line records caveman: full and ponytail:
-# full; Pi and pi-signed receive each available skill directory separately.
+# --append-system-prompt reads file contents. Claude and capability-matched OMP
+# receive one task-temp concatenation whose first line records caveman: full and
+# ponytail: full; Pi and pi-signed receive each available skill directory
+# separately. OMP falls back to the harness-neutral brief line when that option
+# is absent.
 # Codex 0.152.1 and OpenCode 1.18.4 expose no launch-time skill-file option;
 # Grok 1.0.5 exposes inline --rules but no rules-file option; Kimi 1.5 exposes
 # --skills-dir for discovery rather than activation. They receive the generic
-# one-line brief prefix, as do Cursor and Muse, whose executables were absent
-# from this machine. pi-signed was also absent; its existing verified adapter
-# contract shares Pi's CLI. Secondmate launches receive none of these additions.
+# one-line brief prefix. Cursor and Muse are not installed on this machine.
+# Both use the harness-neutral brief-line fallback, which adds no harness flag
+# and therefore needs no live help verification.
+# pi-signed was also absent; its existing verified adapter contract shares Pi's
+# CLI. Secondmate launches receive none of these additions.
 # Skill bodies always come from resolved ~/.agents/skills paths at spawn time.
 # If either file is unavailable, one SKILLS diagnostic names it and the launch
 # continues with every skill that remains available.
@@ -798,6 +805,7 @@ ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
 OMP_ABORT_CLEANUP=0
 OMP_ABORT_INITIAL_HEAD=
+OMP_WORKER_SKILL_MODE=brief
 HERDR_PROJECTION_ABORT_CLEANUP=0
 HERDR_PROJECTION_ABORT_SESSION=
 HERDR_PROJECTION_ABORT_TASK_PANE=
@@ -1430,6 +1438,55 @@ resolve_worker_skill_file() {  # <skill-file>
   printf '%s/%s\n' "$dir" "$(basename "$file")"
 }
 
+task_tmp_directory_prepare() {  # <directory>
+  local path=$1 old_umask status owner mode current_uid platform
+  if [ -L "$path" ]; then
+    echo "error: task temp directory must not be a symlink: $path" >&2
+    return 1
+  fi
+  if [ ! -e "$path" ]; then
+    old_umask=$(umask)
+    umask 077
+    if mkdir "$path"; then status=0; else status=$?; fi
+    umask "$old_umask"
+    [ "$status" -eq 0 ] || {
+      echo "error: could not create task temp directory: $path" >&2
+      return 1
+    }
+  fi
+  [ -d "$path" ] && [ ! -L "$path" ] || {
+    echo "error: task temp path is not a regular directory: $path" >&2
+    return 1
+  }
+  current_uid=$(id -u 2>/dev/null) || {
+    echo "error: could not resolve the current user for task temp validation" >&2
+    return 1
+  }
+  platform=$(uname -s 2>/dev/null || true)
+  if [ "$platform" = Darwin ]; then
+    owner=$(stat -f %u "$path" 2>/dev/null) || return 1
+  else
+    owner=$(stat -c %u "$path" 2>/dev/null) || return 1
+  fi
+  [ "$owner" = "$current_uid" ] || {
+    echo "error: task temp directory is not owned by the current user: $path" >&2
+    return 1
+  }
+  chmod 0700 "$path" || {
+    echo "error: could not secure task temp directory: $path" >&2
+    return 1
+  }
+  if [ "$platform" = Darwin ]; then
+    mode=$(stat -f %Lp "$path" 2>/dev/null) || return 1
+  else
+    mode=$(stat -c %a "$path" 2>/dev/null) || return 1
+  fi
+  [ "$mode" = 700 ] || {
+    echo "error: task temp directory mode is $mode, expected 700: $path" >&2
+    return 1
+  }
+}
+
 # The verified launch command per adapter. The knowledge half of each adapter
 # (busy-state source, exit command, dialogs, quirks) lives in the harness-adapters skill.
 launch_template() {
@@ -1537,8 +1594,10 @@ launch_template() {
   esac
 }
 
+RAW_LAUNCH=0
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
+    RAW_LAUNCH=1
     LAUNCH=$ARG3
     HARNESS=$(raw_launch_harness "$LAUNCH") || {
       echo "error: raw launch command has no executable" >&2
@@ -1610,6 +1669,9 @@ if [ "$BACKEND" = orca ]; then
 fi
 if [ "$HARNESS" = omp ]; then
   OMP_BIN=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-binary) || exit 1
+  if [ "$KIND" != secondmate ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+    OMP_WORKER_SKILL_MODE=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-worker-skill-mode) || exit 1
+  fi
   OMP_BIN_CANON=$(fm_omp_process_resolve_path "$OMP_BIN") || {
     echo "error: selected OMP executable cannot be canonicalized: $OMP_BIN" >&2
     exit 1
@@ -2957,14 +3019,11 @@ fi
 # later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
 # targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
 TASK_TMP="/tmp/fm-$ID"
-if [ -L "$TASK_TMP" ]; then
-  echo "error: task temp root must not be a symlink: $TASK_TMP" >&2
-  exit 1
-fi
-mkdir -p "$TASK_TMP/gotmp"
+task_tmp_directory_prepare "$TASK_TMP" || exit 1
+task_tmp_directory_prepare "$TASK_TMP/gotmp" || exit 1
 if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
   OMP_SESSION_DIR="$TASK_TMP/omp-sessions"
-  mkdir -p "$OMP_SESSION_DIR"
+  task_tmp_directory_prepare "$OMP_SESSION_DIR" || exit 1
 fi
 
 WORKER_SKILL_CLAUDE=
@@ -2973,70 +3032,85 @@ WORKER_SKILL_OMP=
 BRIEF_DELIVERY=$BRIEF
 KIMI_BRIEF_DELIVERY=$BRIEF_REAL
 if [ "$KIND" != secondmate ]; then
-  WORKER_SKILLS_ROOT="${HOME:-}/.agents/skills"
-  WORKER_CAVEMAN_SOURCE="$WORKER_SKILLS_ROOT/caveman/SKILL.md"
-  WORKER_PONYTAIL_SOURCE="$WORKER_SKILLS_ROOT/ponytail/SKILL.md"
-  WORKER_CAVEMAN=
-  WORKER_PONYTAIL=
-  WORKER_SKILLS_MISSING=
-  if ! WORKER_CAVEMAN=$(resolve_worker_skill_file "$WORKER_CAVEMAN_SOURCE"); then
-    WORKER_SKILLS_MISSING=$WORKER_CAVEMAN_SOURCE
-  fi
-  if ! WORKER_PONYTAIL=$(resolve_worker_skill_file "$WORKER_PONYTAIL_SOURCE"); then
-    WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
-  fi
-  if [ -n "$WORKER_SKILLS_MISSING" ]; then
-    echo "SKILLS: missing worker skill file(s): $WORKER_SKILLS_MISSING; continuing without the missing skill(s)" >&2
-  fi
+  if [ "$RAW_LAUNCH" -eq 1 ]; then
+    echo "SKILLS: raw launches get no skill injection" >&2
+  else
+    WORKER_SKILLS_ROOT="${HOME:-}/.agents/skills"
+    WORKER_CAVEMAN_SOURCE="$WORKER_SKILLS_ROOT/caveman/SKILL.md"
+    WORKER_PONYTAIL_SOURCE="$WORKER_SKILLS_ROOT/ponytail/SKILL.md"
+    WORKER_CAVEMAN=
+    WORKER_PONYTAIL=
+    WORKER_SKILLS_MISSING=
+    if ! WORKER_CAVEMAN=$(resolve_worker_skill_file "$WORKER_CAVEMAN_SOURCE"); then
+      WORKER_SKILLS_MISSING=$WORKER_CAVEMAN_SOURCE
+    fi
+    if ! WORKER_PONYTAIL=$(resolve_worker_skill_file "$WORKER_PONYTAIL_SOURCE"); then
+      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
+    fi
+    if [ -n "$WORKER_SKILLS_MISSING" ]; then
+      echo "SKILLS: missing worker skill file(s): $WORKER_SKILLS_MISSING; continuing without the missing skill(s)" >&2
+    fi
 
-  WORKER_SKILL_LEVELS=
-  WORKER_SKILL_PATHS=
-  if [ -n "$WORKER_CAVEMAN" ]; then
-    WORKER_SKILL_LEVELS='caveman: full'
-    WORKER_SKILL_PATHS=$WORKER_CAVEMAN
-  fi
-  if [ -n "$WORKER_PONYTAIL" ]; then
-    WORKER_SKILL_LEVELS="${WORKER_SKILL_LEVELS}${WORKER_SKILL_LEVELS:+, }ponytail: full"
-    WORKER_SKILL_PATHS="${WORKER_SKILL_PATHS}${WORKER_SKILL_PATHS:+ and }$WORKER_PONYTAIL"
-  fi
+    WORKER_SKILL_LEVELS=
+    WORKER_SKILL_PATHS=
+    if [ -n "$WORKER_CAVEMAN" ]; then
+      WORKER_SKILL_LEVELS='caveman: full'
+      WORKER_SKILL_PATHS=$WORKER_CAVEMAN
+    fi
+    if [ -n "$WORKER_PONYTAIL" ]; then
+      WORKER_SKILL_LEVELS="${WORKER_SKILL_LEVELS}${WORKER_SKILL_LEVELS:+, }ponytail: full"
+      WORKER_SKILL_PATHS="${WORKER_SKILL_PATHS}${WORKER_SKILL_PATHS:+ and }$WORKER_PONYTAIL"
+    fi
 
-  if [ -n "$WORKER_SKILL_LEVELS" ]; then
-    case "$HARNESS" in
-      claude|omp)
-        WORKER_SKILL_PROMPT="$TASK_TMP/worker-skills.md"
-        {
-          printf 'Active skill levels: %s\n\n' "$WORKER_SKILL_LEVELS"
-          [ -z "$WORKER_CAVEMAN" ] || cat "$WORKER_CAVEMAN"
-          if [ -n "$WORKER_PONYTAIL" ]; then
-            [ -z "$WORKER_CAVEMAN" ] || printf '\n'
-            cat "$WORKER_PONYTAIL"
-          fi
-        } > "$WORKER_SKILL_PROMPT"
-        if [ "$HARNESS" = claude ]; then
+    write_worker_skill_prompt() {
+      WORKER_SKILL_PROMPT=$(mktemp "$TASK_TMP/worker-skills.XXXXXXXX") || return 1
+      {
+        printf 'Active skill levels: %s\n\n' "$WORKER_SKILL_LEVELS"
+        [ -z "$WORKER_CAVEMAN" ] || cat "$WORKER_CAVEMAN"
+        if [ -n "$WORKER_PONYTAIL" ]; then
+          [ -z "$WORKER_CAVEMAN" ] || printf '\n'
+          cat "$WORKER_PONYTAIL"
+        fi
+      } > "$WORKER_SKILL_PROMPT"
+    }
+    write_worker_skill_brief() {
+      BRIEF_DELIVERY=$(mktemp "$TASK_TMP/brief.XXXXXXXX") || return 1
+      KIMI_BRIEF_DELIVERY=$BRIEF_DELIVERY
+      if [ -n "$WORKER_CAVEMAN" ] && [ -n "$WORKER_PONYTAIL" ]; then
+        printf 'Caveman and ponytail are active for this session. Load their rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
+      elif [ -n "$WORKER_CAVEMAN" ]; then
+        printf 'Caveman is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
+      else
+        printf 'Ponytail is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
+      fi
+      cat "$BRIEF_REAL" >> "$BRIEF_DELIVERY"
+    }
+
+    if [ -n "$WORKER_SKILL_LEVELS" ]; then
+      case "$HARNESS" in
+        claude)
+          write_worker_skill_prompt || exit 1
           WORKER_SKILL_CLAUDE="--append-system-prompt-file $(shell_quote "$WORKER_SKILL_PROMPT") "
-        else
-          WORKER_SKILL_OMP="--append-system-prompt=$(shell_quote "$WORKER_SKILL_PROMPT") "
-        fi
-        ;;
-      pi|pi-signed)
-        [ -z "$WORKER_CAVEMAN" ] \
-          || WORKER_SKILL_PI="--skill $(shell_quote "$(dirname "$WORKER_CAVEMAN")") "
-        [ -z "$WORKER_PONYTAIL" ] \
-          || WORKER_SKILL_PI="${WORKER_SKILL_PI}--skill $(shell_quote "$(dirname "$WORKER_PONYTAIL")") "
-        ;;
-      codex|grok|kimi|cursor|muse|opencode)
-        BRIEF_DELIVERY="$TASK_TMP/brief.md"
-        KIMI_BRIEF_DELIVERY=$BRIEF_DELIVERY
-        if [ -n "$WORKER_CAVEMAN" ] && [ -n "$WORKER_PONYTAIL" ]; then
-          printf 'Caveman and ponytail are active for this session. Load their rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
-        elif [ -n "$WORKER_CAVEMAN" ]; then
-          printf 'Caveman is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
-        else
-          printf 'Ponytail is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
-        fi
-        cat "$BRIEF_REAL" >> "$BRIEF_DELIVERY"
-        ;;
-    esac
+          ;;
+        omp)
+          if [ "$OMP_WORKER_SKILL_MODE" = append-system-prompt ]; then
+            write_worker_skill_prompt || exit 1
+            WORKER_SKILL_OMP="--append-system-prompt=$(shell_quote "$WORKER_SKILL_PROMPT") "
+          else
+            write_worker_skill_brief || exit 1
+          fi
+          ;;
+        pi|pi-signed)
+          [ -z "$WORKER_CAVEMAN" ] \
+            || WORKER_SKILL_PI="--skill $(shell_quote "$(dirname "$WORKER_CAVEMAN")") "
+          [ -z "$WORKER_PONYTAIL" ] \
+            || WORKER_SKILL_PI="${WORKER_SKILL_PI}--skill $(shell_quote "$(dirname "$WORKER_PONYTAIL")") "
+          ;;
+        codex|grok|kimi|cursor|muse|opencode)
+          write_worker_skill_brief || exit 1
+          ;;
+      esac
+    fi
   fi
 fi
 

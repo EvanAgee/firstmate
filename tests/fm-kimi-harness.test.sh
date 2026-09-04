@@ -38,7 +38,7 @@ fake_screen() {
       printf 'context: 0%% (0/256k)\n╭────────────────────────────────╮\n│ > Read the brief and follow it │\n│                                │\n╰────────────────────────────────╯\n'
       ;;
     delivered)
-      printf '✨ Read the brief at %s and follow it exactly.\ncontext: 1%% (2k/256k)\n╭────────────────────────────────╮\n│ >                              │\n╰────────────────────────────────╯\n' "$FM_FAKE_BRIEF_REAL"
+      printf '✨ %s\ncontext: 1%% (2k/256k)\n╭────────────────────────────────╮\n│ >                              │\n╰────────────────────────────────╯\n' "$(tail -n 1 "$FM_FAKE_POINTER_LOG")"
       ;;
     *)
       printf 'shell starting\n$ \n'
@@ -138,8 +138,11 @@ make_spawn_case() {
   proj="$case_dir/project"
   wt="$case_dir/wt"
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
-  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config" "$home/.kimi-code"
+  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config" "$home/.kimi-code" \
+    "$home/.agents/skills/caveman" "$home/.agents/skills/ponytail"
   printf '# Kimi test config\ndefault_model = "test"\n' > "$home/.kimi-code/config.toml"
+  printf '%s\n' CAVEMAN_KIMI_FIXTURE > "$home/.agents/skills/caveman/SKILL.md"
+  printf '%s\n' PONYTAIL_KIMI_FIXTURE > "$home/.agents/skills/ponytail/SKILL.md"
   printf 'brief for kimi\n' > "$home/data/$id/brief.md"
   printf 'kimi\n' > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
@@ -164,7 +167,6 @@ run_spawn() {
     FM_FAKE_KIMI_SWALLOWED="$case_dir/kimi.swallowed" \
     FM_FAKE_KIMI_SWALLOW_FIRST="${FM_FAKE_KIMI_SWALLOW_FIRST:-no}" \
     FM_FAKE_TMUX_CALL_LOG="$case_dir/tmux-calls.log" \
-    FM_FAKE_BRIEF_REAL="$(cd "$home/data/$id" && pwd -P)/brief.md" \
     FM_KIMI_READY_POLLS=2 FM_KIMI_DELIVERY_POLLS=2 FM_KIMI_POLL_INTERVAL=0 \
     PATH="$fakebin:$BASE_PATH" \
     "$SPAWN" "$id" "$proj" --harness kimi --mode no-mistakes --yolo off "$@" 2>&1
@@ -177,7 +179,7 @@ EOF
 }
 
 test_kimi_launch_then_send_is_verified() {
-  local id rec out rc launch pointer brief_real meta task_tmp
+  local id rec out rc launch pointer brief_delivery meta task_tmp expected
   id="kimi-success-z1-$$"
   task_tmp="/tmp/fm-$id"
   KIMI_RUNTIME_TASK_TMP=$task_tmp
@@ -198,10 +200,19 @@ test_kimi_launch_then_send_is_verified() {
   assert_not_contains "$launch" "turn-ended" "kimi launch embedded a turn-end path"
   assert_not_contains "$launch" "__TURNEND__" "kimi launch retained a turn-end placeholder"
 
-  brief_real="$(cd "$HOME_DIR/data/$id" && pwd -P)/brief.md"
+  set -- "$task_tmp"/brief.????????
+  [ "$#" -eq 1 ] && [ -f "$1" ] && [ ! -L "$1" ] \
+    || fail "kimi spawn did not create one regular prefixed task-temp brief"
+  brief_delivery=$1
   pointer=$(cat "$CASE_DIR/pointer.log")
-  [ "$pointer" = "Read the brief at $brief_real and follow it exactly." ] \
+  [ "$pointer" = "Read the brief at $brief_delivery and follow it exactly." ] \
     || fail "kimi pointer was not the exact absolute-path-only instruction: $pointer"
+  worker_home=$(cd "$HOME_DIR" && pwd -P)
+  expected="Caveman and ponytail are active for this session. Load their rules from $worker_home/.agents/skills/caveman/SKILL.md and $worker_home/.agents/skills/ponytail/SKILL.md."
+  [ "$(sed -n '1p' "$brief_delivery")" = "$expected" ] \
+    || fail "kimi task-temp brief did not name both resolved worker skill paths"
+  [ "$(sed -n '2p' "$brief_delivery")" = 'brief for kimi' ] \
+    || fail "kimi task-temp brief replaced the generated task brief"
   meta="$HOME_DIR/state/$id.meta"
   assert_grep 'model=kimi-code/k3' "$meta" "kimi meta lost the requested model"
   assert_grep 'effort=high' "$meta" "kimi meta did not retain the unsupported effort axis"

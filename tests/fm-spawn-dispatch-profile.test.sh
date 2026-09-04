@@ -182,6 +182,7 @@ SH
 case "${1:-}" in
   --help)
     printf '%s\n' '--model=<value>' '--thinking=<value>' '--auto-approve' '--session-dir=<value>' '-e, --extension=<value>' '-r, --resume=<value>'
+    [ "${FM_FAKE_OMP_APPEND:-yes}" != yes ] || printf '%s\n' '--append-system-prompt=<path>'
     ;;
   --version) printf 'omp/17.1.8\n' ;;
   *) exit 0 ;;
@@ -288,6 +289,7 @@ run_spawn() {
     FM_FAKE_CURSOR_LIST_STATUS="${FM_TEST_CURSOR_LIST_STATUS:-0}" \
     FM_FAKE_ENDPOINT_LOG="$endpointlog" \
     FM_FAKE_TREEHOUSE_LOG="$treehouselog" FM_FAKE_OMP_ACK="${FM_TEST_OMP_ACK:-}" \
+    FM_FAKE_OMP_APPEND="${FM_TEST_OMP_APPEND:-yes}" \
     FM_FAKE_HERDR_PANE_FLAG="$herdrpaneflag" \
     FM_FAKE_HERDR_REFUSE_CLOSE="${FM_TEST_HERDR_REFUSE_CLOSE:-0}" \
     FM_FAKE_OMP_META_TAMPER="${FM_TEST_OMP_META_TAMPER:-}" \
@@ -329,21 +331,41 @@ assert_meta_dispatch() {
   assert_grep "dispatch_reason=$dispatch_reason" "$meta" "meta missing dispatch_reason=$dispatch_reason"
 }
 
+find_single_task_tmp_file() {  # <task-tmp> <prefix>
+  local tasktmp=$1 prefix=$2
+  set -- "$tasktmp/$prefix".????????
+  [ "$#" -eq 1 ] && [ -f "$1" ] && [ ! -L "$1" ] \
+    || fail "expected one regular $prefix task-temp file under $tasktmp"
+  printf '%s\n' "$1"
+}
+
+task_tmp_mode() {  # <directory>
+  if [ "$(uname -s)" = Darwin ]; then
+    stat -f %Lp "$1"
+  else
+    stat -c %a "$1"
+  fi
+}
+
 test_no_profile_keeps_claude_profile_defaults() {
-  local rec id out status expected launch
+  local rec id out status expected launch tasktmp prompt
   id=$(profile_id profile-off-z1)
   rec=$(make_spawn_case profile-off claude "$id")
   read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  out=$(FM_TEST_KEEP_TASK_TMP=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 0 "$status" "claude spawn without profile flags should succeed"
   assert_contains "$out" "spawned $id harness=claude" "spawn did not report claude"
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude default default
 
   launch=$(cat "$LAUNCH_LOG")
-  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-system-prompt-file '/tmp/fm-$id/worker-skills.md' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-system-prompt-file '$prompt' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
   [ "$launch" = "$expected" ] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  rm -rf "$tasktmp"
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
 
@@ -383,7 +405,7 @@ test_claude_loads_concatenated_worker_skill_prompt() {
   status=$?
   expect_code 0 "$status" "Claude worker-skill spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  prompt="$tasktmp/worker-skills.md"
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
   assert_contains "$launch" "--append-system-prompt-file '$prompt'" \
     "Claude launch omitted its worker skill prompt file"
   assert_worker_skill_prompt "$prompt"
@@ -428,12 +450,38 @@ test_omp_loads_concatenated_worker_skill_prompt() {
   status=$?
   expect_code 0 "$status" "OMP worker-skill spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  prompt="$tasktmp/worker-skills.md"
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
   assert_contains "$launch" "--append-system-prompt='$prompt'" \
     "OMP launch omitted its worker skill prompt file"
   assert_worker_skill_prompt "$prompt"
   rm -rf "$tasktmp"
   pass "OMP launch appends one prompt containing both worker skills"
+}
+
+test_omp_without_append_support_uses_worker_skill_brief() {
+  local rec id out status launch delivered worker_home tasktmp expected
+  id=$(profile_id profile-worker-skills-omp-fallback)
+  rec=$(make_spawn_case profile-worker-skills-omp-fallback omp "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+  worker_home=$(cd "$CASE_DIR/worker-home" && pwd -P)
+  expected="Caveman and ponytail are active for this session. Load their rules from $worker_home/.agents/skills/caveman/SKILL.md and $worker_home/.agents/skills/ponytail/SKILL.md."
+
+  out=$(FM_TEST_KEEP_TASK_TMP=1 FM_TEST_OMP_APPEND=no \
+    FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "OMP without append-system-prompt should use brief delivery"
+  launch=$(cat "$LAUNCH_LOG")
+  delivered=$(find_single_task_tmp_file "$tasktmp" brief)
+  assert_not_contains "$launch" "--append-system-prompt" \
+    "OMP fallback launch used an unsupported append-system-prompt flag"
+  assert_contains "$launch" "encode launch-brief < '$delivered'" \
+    "OMP fallback launch did not deliver the prefixed brief"
+  [ "$(sed -n '1p' "$delivered")" = "$expected" ] \
+    || fail "OMP fallback brief did not name both active skill paths"
+  rm -rf "$tasktmp"
+  pass "OMP uses brief delivery when append-system-prompt is unavailable"
 }
 
 test_fallback_harness_gets_worker_skill_brief_prefix() {
@@ -442,7 +490,6 @@ test_fallback_harness_gets_worker_skill_brief_prefix() {
   rec=$(make_spawn_case profile-worker-skills-fallback codex "$id")
   read_case_record "$rec"
   tasktmp="/tmp/fm-$id"
-  delivered="$tasktmp/brief.md"
   worker_home=$(cd "$CASE_DIR/worker-home" && pwd -P)
   expected="Caveman and ponytail are active for this session. Load their rules from $worker_home/.agents/skills/caveman/SKILL.md and $worker_home/.agents/skills/ponytail/SKILL.md."
 
@@ -451,6 +498,7 @@ test_fallback_harness_gets_worker_skill_brief_prefix() {
   status=$?
   expect_code 0 "$status" "fallback worker-skill spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
+  delivered=$(find_single_task_tmp_file "$tasktmp" brief)
   assert_contains "$launch" "encode launch-brief < '$delivered'" \
     "fallback launch did not deliver the prefixed brief"
   [ "$(sed -n '1p' "$delivered")" = "$expected" ] \
@@ -459,6 +507,39 @@ test_fallback_harness_gets_worker_skill_brief_prefix() {
     || fail "fallback brief prefix replaced the original brief"
   rm -rf "$tasktmp"
   pass "fallback launch prepends both worker skill paths to the delivered brief"
+}
+
+test_task_tmp_uses_private_directories_and_exclusive_files() {
+  local harness_leaf harness leaf rec id out status tasktmp victim generated
+  for harness_leaf in claude:worker-skills.md codex:brief.md; do
+    harness=${harness_leaf%%:*}
+    leaf=${harness_leaf#*:}
+    id=$(profile_id "profile-worker-skills-private-$harness")
+    rec=$(make_spawn_case "profile-worker-skills-private-$harness" "$harness" "$id")
+    read_case_record "$rec"
+    tasktmp="/tmp/fm-$id"
+    victim="$CASE_DIR/victim"
+    printf '%s\n' untouched > "$victim"
+    mkdir "$tasktmp"
+    chmod 0777 "$tasktmp"
+    ln -s "$victim" "$tasktmp/$leaf"
+
+    out=$(FM_TEST_KEEP_TASK_TMP=1 \
+      run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 0 "$status" "$harness spawn should ignore a symlink at the old predictable leaf"
+    [ "$(cat "$victim")" = untouched ] || fail "$harness spawn followed $leaf symlink"
+    [ "$(task_tmp_mode "$tasktmp")" = 700 ] || fail "$harness task temp root was not mode 0700"
+    [ "$(task_tmp_mode "$tasktmp/gotmp")" = 700 ] || fail "$harness Go temp directory was not mode 0700"
+    if [ "$harness" = claude ]; then
+      generated=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+    else
+      generated=$(find_single_task_tmp_file "$tasktmp" brief)
+    fi
+    [ ! -L "$generated" ] || fail "$harness generated a symlinked worker-skill file"
+    rm -rf "$tasktmp"
+  done
+  pass "worker-skill task temp uses private directories and exclusive files"
 }
 
 test_missing_worker_skill_warns_once_and_launches() {
@@ -783,6 +864,10 @@ test_active_dispatch_profile_allows_raw_launch_command() {
     "$id" "$PROJ_DIR" "custom-agent --flag")
   status=$?
   expect_code 0 "$status" "raw launch command should satisfy active dispatch-profile requirement"
+  [ "$(printf '%s\n' "$out" | grep -c '^SKILLS:')" = 1 ] \
+    || fail "raw launch did not print exactly one SKILLS diagnostic"
+  assert_contains "$out" "SKILLS: raw launches get no skill injection" \
+    "raw launch did not explain its worker-skill exclusion"
   assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
   launch=$(cat "$LAUNCH_LOG")
@@ -1559,7 +1644,9 @@ test_non_cursor_launch_clears_inherited_cursor_markers
 test_claude_loads_concatenated_worker_skill_prompt
 test_pi_family_loads_each_worker_skill_directory
 test_omp_loads_concatenated_worker_skill_prompt
+test_omp_without_append_support_uses_worker_skill_brief
 test_fallback_harness_gets_worker_skill_brief_prefix
+test_task_tmp_uses_private_directories_and_exclusive_files
 test_missing_worker_skill_warns_once_and_launches
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths

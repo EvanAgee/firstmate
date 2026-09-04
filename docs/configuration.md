@@ -249,9 +249,7 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 ## Harness support
 
 claude, codex, opencode, omp, pi, pi-signed, grok, kimi, and cursor are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
-Every crewmate and scout spawn activates caveman and ponytail at `full` from the resolved `~/.agents/skills/caveman/SKILL.md` and `~/.agents/skills/ponytail/SKILL.md` files.
-The [`fm-spawn.sh` header](../bin/fm-spawn.sh) records each harness's launch mechanism and the successful fallback when a skill file is missing.
-Secondmate launches do not receive these worker-only skills.
+The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns worker-skill delivery, including the raw launch-command exclusion and missing-file fallback.
 OMP is verified as a primary, crewmate, scout, and secondmate runtime only on tmux and Herdr; Zellij, Orca, and cmux reject OMP before endpoint creation and carry no live OMP claim.
 A cursor secondmate or primary runs the tracked project-scope `.cursor/hooks.json` in its own home and must be launched with `--trust`, or no project hook loads; [`docs/supervision-protocols/cursor.md`](supervision-protocols/cursor.md) owns its supervision protocol.
 Cursor delivery confirmation is verified on tmux and Herdr only.
