@@ -1465,9 +1465,15 @@ task_tmp_directory_prepare() {  # <directory>
   }
   platform=$(uname -s 2>/dev/null || true)
   if [ "$platform" = Darwin ]; then
-    owner=$(stat -f %u "$path" 2>/dev/null) || return 1
+    owner=$(stat -f %u "$path" 2>/dev/null) || {
+      echo "error: could not read task temp directory owner: $path" >&2
+      return 1
+    }
   else
-    owner=$(stat -c %u "$path" 2>/dev/null) || return 1
+    owner=$(stat -c %u "$path" 2>/dev/null) || {
+      echo "error: could not read task temp directory owner: $path" >&2
+      return 1
+    }
   fi
   [ "$owner" = "$current_uid" ] || {
     echo "error: task temp directory is not owned by the current user: $path" >&2
@@ -1478,9 +1484,15 @@ task_tmp_directory_prepare() {  # <directory>
     return 1
   }
   if [ "$platform" = Darwin ]; then
-    mode=$(stat -f %Lp "$path" 2>/dev/null) || return 1
+    mode=$(stat -f %Lp "$path" 2>/dev/null) || {
+      echo "error: could not read task temp directory mode: $path" >&2
+      return 1
+    }
   else
-    mode=$(stat -c %a "$path" 2>/dev/null) || return 1
+    mode=$(stat -c %a "$path" 2>/dev/null) || {
+      echo "error: could not read task temp directory mode: $path" >&2
+      return 1
+    }
   fi
   [ "$mode" = 700 ] || {
     echo "error: task temp directory mode is $mode, expected 700: $path" >&2

@@ -732,15 +732,17 @@ test_worker_skills_section_reaches_ship_and_scout_only() {
   home="$TMP_ROOT/worker-skills-home"
   # shellcheck disable=SC2088 # The generated brief keeps these portable user-home pointers literal.
   skill_root='~/.agents/skills'
+  secondmate="$home/data/worker-skills-secondmate/brief.md"
   mkdir -p "$home/data"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" worker-skills-ship sample --mode no-mistakes >/dev/null 2>&1
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" worker-skills-scout sample --scout >/dev/null 2>&1
   FM_HOME="$home" FM_SECONDMATE_CHARTER='sample charter' \
-    "$ROOT/bin/fm-brief.sh" worker-skills-secondmate --secondmate --no-projects >/dev/null 2>&1
+    "$ROOT/bin/fm-brief.sh" worker-skills-secondmate --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate scaffold failed before creating $secondmate"
   ship="$home/data/worker-skills-ship/brief.md"
   scout="$home/data/worker-skills-scout/brief.md"
-  secondmate="$home/data/worker-skills-secondmate/brief.md"
+  assert_present "$secondmate" "secondmate scaffold did not create $secondmate"
 
   for brief in "$ship" "$scout"; do
     assert_grep '# Session skills' "$brief" "worker brief omitted the session skills section"

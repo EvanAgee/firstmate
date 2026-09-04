@@ -131,7 +131,14 @@ if [ -n "${FM_FAKE_MKTEMP_PATTERN:-}" ] && [ "${1:-}" = "$FM_FAKE_MKTEMP_PATTERN
 fi
 exec /usr/bin/mktemp "$@"
 SH
-  chmod +x "$fakebin/cat" "$fakebin/id" "$fakebin/mktemp"
+  cat > "$fakebin/stat" <<'SH'
+#!/usr/bin/env bash
+if [ -n "${FM_FAKE_STAT_FAILURE_FORMAT:-}" ] && [ "${2:-}" = "$FM_FAKE_STAT_FAILURE_FORMAT" ]; then
+  exit 1
+fi
+exec /usr/bin/stat "$@"
+SH
+  chmod +x "$fakebin/cat" "$fakebin/id" "$fakebin/mktemp" "$fakebin/stat"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
   cat > "$fakebin/herdr" <<'SH'
@@ -318,6 +325,7 @@ run_spawn() {
     FM_FAKE_CAT_FAILURE_PATH="${FM_TEST_CAT_FAILURE_PATH:-}" \
     FM_FAKE_CURRENT_UID="${FM_TEST_CURRENT_UID:-}" \
     FM_FAKE_MKTEMP_PATTERN="${FM_TEST_MKTEMP_PATTERN:-}" \
+    FM_FAKE_STAT_FAILURE_FORMAT="${FM_TEST_STAT_FAILURE_FORMAT:-}" \
     FM_FAKE_PRINTF_FAILURE_FORMAT="${FM_TEST_PRINTF_FAILURE_FORMAT:-}" \
     FM_FAKE_HERDR_PANE_FLAG="$herdrpaneflag" \
     FM_FAKE_HERDR_REFUSE_CLOSE="${FM_TEST_HERDR_REFUSE_CLOSE:-0}" \
@@ -681,6 +689,32 @@ test_task_tmp_refusal_precedes_endpoint_and_worktree_allocation() {
     "task temp ownership refusal wrote task metadata"
   rm -rf "$tasktmp"
   pass "task temp validation runs before endpoint and worktree allocation"
+}
+
+test_task_tmp_stat_failures_report_the_path() {
+  local kind format kind_format rec id out status tasktmp
+  if [ "$(uname -s)" = Darwin ]; then
+    set -- owner:%u mode:%Lp
+  else
+    set -- owner:%u mode:%a
+  fi
+  for kind_format in "$@"; do
+    kind=${kind_format%%:*}
+    format=${kind_format#*:}
+    id=$(profile_id "profile-task-tmp-stat-$kind")
+    rec=$(make_spawn_case "profile-task-tmp-stat-$kind" claude "$id")
+    read_case_record "$rec"
+    tasktmp="/tmp/fm-$id"
+
+    out=$(FM_TEST_STAT_FAILURE_FORMAT="$format" \
+      run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 1 "$status" "spawn should refuse a task temp $kind read failure"
+    assert_contains "$out" "could not read task temp directory $kind: $tasktmp" \
+      "task temp $kind read failure did not name $tasktmp"
+    rm -rf "$tasktmp"
+  done
+  pass "task temp stat failures name the affected path"
 }
 
 test_worker_skill_artifact_creation_failure_precedes_allocation() {
@@ -1823,6 +1857,7 @@ test_task_tmp_uses_private_directories_and_exclusive_files
 test_missing_worker_skill_warns_once_and_launches
 test_worker_skill_read_failure_warns_once_and_drops_only_failed_skill
 test_task_tmp_refusal_precedes_endpoint_and_worktree_allocation
+test_task_tmp_stat_failures_report_the_path
 test_worker_skill_artifact_creation_failure_precedes_allocation
 test_single_skill_prompt_write_failure_is_not_masked
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
