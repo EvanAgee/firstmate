@@ -224,6 +224,25 @@ def as_int(value) -> int:
     return value if isinstance(value, int) else 0
 
 
+def mark_turn(row: dict, moment: datetime, since: datetime) -> bool:
+    """Fold one turn's timestamp into the row; True when it is inside --since.
+
+    first_turn spans the whole log so attribution never moves with the cutoff,
+    while start and end span only the counted turns. All three track time
+    rather than the order records happen to be written in.
+    """
+    if row["first_turn"] is None or moment < row["first_turn"]:
+        row["first_turn"] = moment
+    if moment < since:
+        return False
+    if row["start"] is None or moment < row["start"]:
+        row["start"] = moment
+    if row["end"] is None or moment > row["end"]:
+        row["end"] = moment
+    row["turns"] += 1
+    return True
+
+
 def blank_session(harness: str, path: Path) -> dict:
     return {
         "harness": harness,
@@ -254,13 +273,8 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
         moment = parse_stamp(record.get("timestamp"))
         if moment is None:
             continue
-        if row["first_turn"] is None or moment < row["first_turn"]:
-            row["first_turn"] = moment
-        if moment < since:
+        if not mark_turn(row, moment, since):
             continue
-        row["turns"] += 1
-        row["start"] = row["start"] or moment
-        row["end"] = moment
         row["model"] = message.get("model") or row["model"]
         details = usage.get("output_tokens_details")
         tokens = row["tokens"]
@@ -290,13 +304,8 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
         moment = parse_stamp(record.get("timestamp") or message.get("timestamp"))
         if moment is None:
             continue
-        if row["first_turn"] is None or moment < row["first_turn"]:
-            row["first_turn"] = moment
-        if moment < since:
+        if not mark_turn(row, moment, since):
             continue
-        row["turns"] += 1
-        row["start"] = row["start"] or moment
-        row["end"] = moment
         tokens = row["tokens"]
         tokens["input"] += as_int(usage.get("input"))
         tokens["cache_write"] += as_int(usage.get("cacheWrite"))

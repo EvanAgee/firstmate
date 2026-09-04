@@ -10,9 +10,10 @@
 # no-guess rule that keeps a session outside every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
-# that records no cwd and for a log whose records are not in time order,
-# firstmate's own session, --since filtering, compare totals and shared-task
-# rows, compare's one-line error on a non-numeric cell, and the task subcommand.
+# that records no cwd and for a log whose records are not in time order, the
+# start and end columns spanning the counted turns in time order, firstmate's
+# own session, --since filtering, compare totals and shared-task rows, compare's
+# one-line error on a non-numeric cell, and the task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -29,6 +30,10 @@ LATE_SPAWN=1788510000
 
 iso_at() {  # <epoch-seconds> -> the UTC ISO-8601 stamp the logs use
   python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1]),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"
+}
+
+show_stamp_at() {  # <epoch-seconds> -> the local stamp the start and end columns print
+  python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1])).strftime("%Y-%m-%dT%H:%M:%S"))' "$1"
 }
 
 # claude_session <sessions-root> <session-id> <cwd> <branch> <model> <epoch> <in> <cw> <cr> <out> <think>
@@ -373,6 +378,49 @@ test_out_of_order_log_attributes_on_its_earliest_turn() {
   pass "attribution reads a log's earliest turn, not the first one written"
 }
 
+test_out_of_order_log_reports_its_counted_window_in_time_order() {
+  local home claude pi nm out slot middle
+  home=$(make_home window-order)
+  claude=$TMP_ROOT/window-order-claude
+  pi=$TMP_ROOT/window-order-pi
+  nm=$TMP_ROOT/window-order-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/slot/13/jumbled
+  middle=$((EARLY_SPAWN + 1800))
+
+  # Written newest first, then oldest, then a turn in between.
+  claude_session "$claude" sess-window "$slot" fm/window claude-opus-5 \
+    $((EARLY_SPAWN + 3600)) 1 1 1 1 0
+  claude_session "$claude" sess-window "$slot" fm/window claude-opus-5 \
+    "$EARLY_SPAWN" 1 1 1 1 0
+  claude_session "$claude" sess-window "$slot" fm/window claude-opus-5 \
+    "$middle" 1 1 1 1 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot failed on the out-of-order window fixture"
+
+  [ "$(field "$out" sess-window 7)" = "$(show_stamp_at "$EARLY_SPAWN")" ] \
+    || fail "start is not the earliest counted turn"
+  [ "$(field "$out" sess-window 8)" = "$(show_stamp_at $((EARLY_SPAWN + 3600)))" ] \
+    || fail "end is not the latest counted turn"
+  [[ "$(field "$out" sess-window 7)" < "$(field "$out" sess-window 8)" ]] \
+    || fail "a row printed a start later than its end"
+  [ "$(field "$out" sess-window 9)" = 3 ] || fail "the turn count is wrong"
+
+  # A cutoff between the earliest and middle turns trims the counted window
+  # from its start, and the remaining window still reads in time order.
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot \
+    --since "$(iso_at $((EARLY_SPAWN + 60)))" --stdout) \
+    || fail "snapshot with a cutoff inside the window failed"
+
+  [ "$(field "$out" sess-window 7)" = "$(show_stamp_at "$middle")" ] \
+    || fail "--since did not move start to the earliest turn it counted"
+  [ "$(field "$out" sess-window 8)" = "$(show_stamp_at $((EARLY_SPAWN + 3600)))" ] \
+    || fail "--since changed the end of the counted window"
+  [ "$(field "$out" sess-window 9)" = 2 ] || fail "--since counted the wrong number of turns"
+  pass "start and end span the counted turns in time order, not file order"
+}
+
 test_earlier_occupant_window_closes_at_the_next_spawn() {
   local home claude pi nm out slot
   home=$(make_home window-close)
@@ -597,6 +645,7 @@ test_reused_slot_never_guesses
 test_since_never_moves_a_session_onto_another_task
 test_a_session_with_no_cwd_stays_unattributed
 test_out_of_order_log_attributes_on_its_earliest_turn
+test_out_of_order_log_reports_its_counted_window_in_time_order
 test_earlier_occupant_window_closes_at_the_next_spawn
 test_firstmate_and_since_filter
 test_snapshot_writes_a_labelled_file_and_totals
