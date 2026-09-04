@@ -1,0 +1,206 @@
+Real fm-spawn CLI with fixture terminal and worker binaries. Commands below were captured at terminal delivery; no live model was started.
+
+Scenario: claude
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-claude/home/data/profile-evidence-claude-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-claude-t73522-13149 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-claude-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-claude/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-system-prompt-file '/tmp/fm-profile-evidence-claude-t73522-13149/worker-skills.j1Kx8Q4x' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-claude/home/data/profile-evidence-claude-t73522-13149/brief.md')"
+Delivered file: /tmp/fm-profile-evidence-claude-t73522-13149/worker-skills.j1Kx8Q4x
+Active skill levels: caveman: full, ponytail: full
+
+CAVEMAN_FIXTURE_BODY
+
+PONYTAIL_FIXTURE_BODY
+Persisted launch identity:
+harness=claude
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-claude-t73522-13149
+model=default
+
+Scenario: pi
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi/home/data/profile-evidence-pi-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-pi-t73522-13149 harness=pi kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-pi-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_PI_HARNESS=pi '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi/fake/fakebin/pi' --tui-mode regular --no-extensions -e '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi/home/state/profile-evidence-pi-t73522-13149.pi-ext.ts' --skill '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi/worker-home/.agents/skills/caveman' --skill '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi/worker-home/.agents/skills/ponytail' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi/home/data/profile-evidence-pi-t73522-13149/brief.md')"
+Persisted launch identity:
+harness=pi
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-pi-t73522-13149
+model=default
+
+Scenario: pi-signed
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi-signed/home/data/profile-evidence-pi-signed-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-pi-signed-t73522-13149 harness=pi-signed kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-pi-signed-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi-signed/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_PI_HARNESS=pi-signed '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi-signed/fake/fakebin/pi-signed' --tui-mode regular --no-extensions -e '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi-signed/home/state/profile-evidence-pi-signed-t73522-13149.pi-ext.ts' --skill '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi-signed/worker-home/.agents/skills/caveman' --skill '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi-signed/worker-home/.agents/skills/ponytail' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-pi-signed/home/data/profile-evidence-pi-signed-t73522-13149/brief.md')"
+Persisted launch identity:
+harness=pi-signed
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-pi-signed-t73522-13149
+model=default
+
+Scenario: omp
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp/home/data/profile-evidence-omp-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-omp-t73522-13149 harness=omp kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-omp-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_OMP_HARNESS=omp '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp/fake/fakebin/bun' '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp/fake/fakebin/omp' --session-dir '/tmp/fm-profile-evidence-omp-t73522-13149/omp-sessions' --auto-approve -e '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp/home/state/profile-evidence-omp-t73522-13149.omp-ext.ts' --append-system-prompt='/tmp/fm-profile-evidence-omp-t73522-13149/worker-skills.qlQAH1ta' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp/home/data/profile-evidence-omp-t73522-13149/brief.md')"
+Delivered file: /tmp/fm-profile-evidence-omp-t73522-13149/worker-skills.qlQAH1ta
+Active skill levels: caveman: full, ponytail: full
+
+CAVEMAN_FIXTURE_BODY
+
+PONYTAIL_FIXTURE_BODY
+Persisted launch identity:
+harness=omp
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-omp-t73522-13149
+model=default
+
+Scenario: omp-fallback
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp-fallback/home/data/profile-evidence-omp-fallback-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-omp-fallback-t73522-13149 harness=omp kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-omp-fallback-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp-fallback/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_OMP_HARNESS=omp '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp-fallback/fake/fakebin/bun' '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp-fallback/fake/fakebin/omp' --session-dir '/tmp/fm-profile-evidence-omp-fallback-t73522-13149/omp-sessions' --auto-approve -e '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp-fallback/home/state/profile-evidence-omp-fallback-t73522-13149.omp-ext.ts' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-profile-evidence-omp-fallback-t73522-13149/brief.w2ZT9chq')"
+Delivered file: /tmp/fm-profile-evidence-omp-fallback-t73522-13149/brief.w2ZT9chq
+Caveman and ponytail are active for this session. Load their rules from /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp-fallback/worker-home/.agents/skills/caveman/SKILL.md and /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-omp-fallback/worker-home/.agents/skills/ponytail/SKILL.md.
+brief for profile-evidence-omp-fallback-t73522-13149
+Persisted launch identity:
+harness=omp
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-omp-fallback-t73522-13149
+model=default
+
+Scenario: codex
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-codex/home/data/profile-evidence-codex-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-codex-t73522-13149 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-codex-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-codex/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS codex --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-codex/home/state/profile-evidence-codex-t73522-13149.turn-ended'\"]" "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-profile-evidence-codex-t73522-13149/brief.tkATqB6w')"
+Delivered file: /tmp/fm-profile-evidence-codex-t73522-13149/brief.tkATqB6w
+Caveman and ponytail are active for this session. Load their rules from /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-codex/worker-home/.agents/skills/caveman/SKILL.md and /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-codex/worker-home/.agents/skills/ponytail/SKILL.md.
+brief for profile-evidence-codex-t73522-13149
+Persisted launch identity:
+harness=codex
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-codex-t73522-13149
+model=default
+
+Scenario: grok
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-grok/home/data/profile-evidence-grok-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-grok-t73522-13149 harness=grok kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-grok-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-grok/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS grok --always-approve "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-profile-evidence-grok-t73522-13149/brief.tAbuzszB')"
+Delivered file: /tmp/fm-profile-evidence-grok-t73522-13149/brief.tAbuzszB
+Caveman and ponytail are active for this session. Load their rules from /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-grok/worker-home/.agents/skills/caveman/SKILL.md and /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-grok/worker-home/.agents/skills/ponytail/SKILL.md.
+brief for profile-evidence-grok-t73522-13149
+Persisted launch identity:
+harness=grok
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-grok-t73522-13149
+model=default
+
+Scenario: cursor
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-cursor/home/data/profile-evidence-cursor-t73522-13149/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-cursor-t73522-13149 harness=cursor kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-cursor-t73522-13149 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-cursor/wt
+Terminal command:
+env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u CURSOR_INVOKED_AS '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-cursor/fake/fakebin/cursor-agent' --trust --yolo --workspace '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-cursor/wt' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-profile-evidence-cursor-t73522-13149/brief.KP7cAyq4')"
+Delivered file: /tmp/fm-profile-evidence-cursor-t73522-13149/brief.KP7cAyq4
+Caveman and ponytail are active for this session. Load their rules from /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-cursor/worker-home/.agents/skills/caveman/SKILL.md and /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.0suvFe/evidence-cursor/worker-home/.agents/skills/ponytail/SKILL.md.
+brief for profile-evidence-cursor-t73522-13149
+Persisted launch identity:
+harness=cursor
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-cursor-t73522-13149
+model=default
+
+Scenario: muse
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-muse/home/data/profile-evidence-muse-t99976-5418/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-muse-t99976-5418 harness=muse kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-muse-t99976-5418 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-muse/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS XDG_CONFIG_HOME='/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-muse/worker-home/.config' XDG_DATA_HOME='/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-muse/worker-home/.local/share' MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=on '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-muse/fake/fakebin/muse' --yolo "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-profile-evidence-muse-t99976-5418/brief.22ELUq1w')"
+Delivered file: /tmp/fm-profile-evidence-muse-t99976-5418/brief.22ELUq1w
+Caveman and ponytail are active for this session. Load their rules from /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-muse/worker-home/.agents/skills/caveman/SKILL.md and /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-muse/worker-home/.agents/skills/ponytail/SKILL.md.
+brief for profile-evidence-muse-t99976-5418
+Persisted launch identity:
+harness=muse
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-muse-t99976-5418
+model=default
+
+Scenario: opencode
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-opencode/home/data/profile-evidence-opencode-t99976-5418/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned profile-evidence-opencode-t99976-5418 harness=opencode kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-opencode-t99976-5418 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-opencode/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS OPENCODE_CONFIG_CONTENT='{"permission":{"*":"allow"}}' opencode --prompt "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-profile-evidence-opencode-t99976-5418/brief.AVy9KUGR')"
+Delivered file: /tmp/fm-profile-evidence-opencode-t99976-5418/brief.AVy9KUGR
+Caveman and ponytail are active for this session. Load their rules from /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-opencode/worker-home/.agents/skills/caveman/SKILL.md and /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-opencode/worker-home/.agents/skills/ponytail/SKILL.md.
+brief for profile-evidence-opencode-t99976-5418
+Persisted launch identity:
+harness=opencode
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-opencode-t99976-5418
+model=default
+
+Scenario: one-missing
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-one-missing/home/data/profile-evidence-one-missing-t99976-5418/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+SKILLS: unavailable worker skill file(s): /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-one-missing/worker-home/.agents/skills/ponytail/SKILL.md; continuing without the unavailable skill(s)
+spawned profile-evidence-one-missing-t99976-5418 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-one-missing-t99976-5418 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-one-missing/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-system-prompt-file '/tmp/fm-profile-evidence-one-missing-t99976-5418/worker-skills.6pmsQ8ZT' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-one-missing/home/data/profile-evidence-one-missing-t99976-5418/brief.md')"
+Delivered file: /tmp/fm-profile-evidence-one-missing-t99976-5418/worker-skills.6pmsQ8ZT
+Active skill levels: caveman: full
+
+CAVEMAN_FIXTURE_BODY
+Persisted launch identity:
+harness=claude
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-one-missing-t99976-5418
+model=default
+
+Scenario: both-missing
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-both-missing/home/data/profile-evidence-both-missing-t99976-5418/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+SKILLS: unavailable worker skill file(s): /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-both-missing/worker-home/.agents/skills/caveman/SKILL.md, /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-both-missing/worker-home/.agents/skills/ponytail/SKILL.md; continuing without the unavailable skill(s)
+spawned profile-evidence-both-missing-t99976-5418 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-both-missing-t99976-5418 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-both-missing/wt
+Terminal command:
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-both-missing/home/data/profile-evidence-both-missing-t99976-5418/brief.md')"
+Persisted launch identity:
+harness=claude
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-both-missing-t99976-5418
+model=default
+
+Scenario: raw
+CLI response:
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-raw/home/data/profile-evidence-raw-t99976-5418/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+SKILLS: raw launches get no skill injection
+spawned profile-evidence-raw-t99976-5418 harness=custom-agent kind=ship mode=no-mistakes yolo=off window=firstmate:fm-profile-evidence-raw-t99976-5418 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/.test-phase-tmp/fm-spawn-dispatch-profile.gNb3GN/evidence-raw/wt
+Terminal command:
+custom-agent --flag
+Persisted launch identity:
+harness=custom-agent
+kind=ship
+tasktmp=/tmp/fm-profile-evidence-raw-t99976-5418
+model=default
+
+Scenario: secondmate
+CLI response:
+warning: secondmate profile-evidence-secondmate-t11212-14898 sync skipped before launch: primary default-branch commit cannot be resolved
+spawned profile-evidence-secondmate-t11212-14898 harness=claude kind=secondmate mode=secondmate yolo=off window=firstmate:fm-profile-evidence-secondmate-t11212-14898 worktree=/private/tmp/fm-worker-skills-validation.9Fpzgq/fm-spawn-dispatch-profile.bEEnd7/evidence-secondmate/secondmate-home
+Terminal command:
+FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME='/tmp/fm-worker-skills-validation.9Fpzgq/fm-spawn-dispatch-profile.bEEnd7/evidence-secondmate/home' FM_HOME='/private/tmp/fm-worker-skills-validation.9Fpzgq/fm-spawn-dispatch-profile.bEEnd7/evidence-secondmate/secondmate-home' FM_TRACE_CONTEXT=off FM_SUPERVISION_MODEL=autoarm env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1Q023ZTRQQQTWZ1GGC9AEJQ/bin/fm-operational-input.sh' encode launch-brief < '/private/tmp/fm-worker-skills-validation.9Fpzgq/fm-spawn-dispatch-profile.bEEnd7/evidence-secondmate/secondmate-home/data/charter.md')"
+Persisted launch identity:
+harness=claude
+kind=secondmate
+tasktmp=/tmp/fm-profile-evidence-secondmate-t11212-14898
+model=default

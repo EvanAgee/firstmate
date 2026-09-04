@@ -1,0 +1,62 @@
+Scenario: immediate signature
+API read 1: current body received
+Found no-mistakes signature in PR #102 body.
+Exit: 0; API reads: 1
+
+Scenario: transient API failure
+API read 1: HTTP 503 fixture
+Retry delay: 2 seconds (test clock)
+API read 2: HTTP 503 fixture
+Retry delay: 2 seconds (test clock)
+API read 3: current body received
+Found no-mistakes signature in PR #102 body.
+Exit: 0; API reads: 3
+
+Scenario: body update race
+API read 1: body update still pending
+Retry delay: 2 seconds (test clock)
+API read 2: body update still pending
+Retry delay: 2 seconds (test clock)
+API read 3: current body received
+Found no-mistakes signature in PR #102 body.
+Exit: 0; API reads: 3
+
+Scenario: exhausted API failures
+API read 1: HTTP 503 fixture
+Retry delay: 2 seconds (test clock)
+API read 2: HTTP 503 fixture
+Retry delay: 2 seconds (test clock)
+API read 3: HTTP 503 fixture
+Retry delay: 2 seconds (test clock)
+API read 4: HTTP 503 fixture
+Retry delay: 2 seconds (test clock)
+API read 5: HTTP 503 fixture
+::error::Could not read PR #102 after 5 attempts.
+Exit: 1; API reads: 5
+
+Scenario: missing signature
+API read 1: body update still pending
+Retry delay: 2 seconds (test clock)
+API read 2: body update still pending
+Retry delay: 2 seconds (test clock)
+API read 3: body update still pending
+Retry delay: 2 seconds (test clock)
+API read 4: body update still pending
+Retry delay: 2 seconds (test clock)
+API read 5: body update still pending
+::error::This PR was not raised through no-mistakes.
+
+Contributions to this repository must be submitted via 'git push no-mistakes'.
+That pipeline runs the required review/test/lint/CI steps and writes a
+deterministic '## Pipeline' section into the PR body containing:
+
+    Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+
+See CONTRIBUTING.md for setup and the full workflow.
+
+PR author: fixture-author
+Exit: 1; API reads: 5
+
+Pre-fix regression (bc6d93c): two transient failures before success
+API read 1: HTTP 503 fixture
+Exit: 1; API reads: 1. Exited before retrying.

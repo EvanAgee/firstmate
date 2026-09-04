@@ -1,0 +1,14 @@
+Scenario: secondmate scaffold exits 7, expected file absent
+Expected file: /tmp/fm-worker-skills-validation.9Fpzgq/fm-brief.kSj6Gm/worker-skills-home/data/worker-skills-secondmate/brief.md
+not ok - secondmate scaffold failed before creating /tmp/fm-worker-skills-validation.9Fpzgq/fm-brief.kSj6Gm/worker-skills-home/data/worker-skills-secondmate/brief.md
+Test exit: 1
+
+Scenario: secondmate scaffold exits 0, expected file absent
+Expected file: /tmp/fm-worker-skills-validation.9Fpzgq/fm-brief.C71k7V/worker-skills-home/data/worker-skills-secondmate/brief.md
+not ok - secondmate scaffold did not create /tmp/fm-worker-skills-validation.9Fpzgq/fm-brief.C71k7V/worker-skills-home/data/worker-skills-secondmate/brief.md
+Test exit: 1
+
+Scenario: task-temp lookup fails inside command substitution
+not ok - injected lookup failure under /tmp/fm-profile-worker-skills-claude-t50446-31062
+not ok - could not locate the Claude worker-skill prompt
+Test exit: 1
