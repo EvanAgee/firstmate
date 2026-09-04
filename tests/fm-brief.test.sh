@@ -317,10 +317,14 @@ test_matt_flow_is_explicit_and_thin() {
     "Matt-flow brief missing its explicit declaration"
   assert_grep "Enter at the project-installed \`to-spec\` skill, or \`triage\` for bug work." "$brief" \
     "Matt-flow brief missing its normal and bug entry points"
-  assert_grep "Follow the flow's own instructions phase by phase through \`code-review\`, without skipping phases." "$brief" \
-    "Matt-flow brief duplicated phase instructions instead of delegating to the flow"
-  assert_grep "Leave each phase's natural artifact (spec file, tickets folder, failing-test commit, and review notes) and append one status line at every phase transition." "$brief" \
+  assert_grep "Follow the flow's own instructions phase by phase through \`tdd\`, then stop the flow there." "$brief" \
+    "Matt-flow brief did not stop its skill flow after tdd"
+  assert_grep "The no-mistakes pipeline in the Definition of done owns review, so do not run a separate review skill, review sub-agent, or hand review pass before validation." "$brief" \
+    "Matt-flow brief duplicated review before no-mistakes validation"
+  assert_grep "Leave each phase's natural artifact (spec file, tickets folder, and failing-test commit) and append one status line at every phase transition." "$brief" \
     "Matt-flow brief missing its artifact and phase-transition status contract"
+  assert_no_grep "\`code-review\`" "$brief" \
+    "Matt-flow brief still named the superseded review skill"
   assert_no_grep "\`to-tickets\`" "$brief" \
     "Matt-flow brief retained the superseded per-skill guidance"
   assert_no_grep "\`diagnosing-bugs\`" "$brief" \
