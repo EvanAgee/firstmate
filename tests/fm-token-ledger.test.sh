@@ -8,8 +8,9 @@
 # Covered: Claude parent and child token columns, response deduplication,
 # Claude cumulative cost, Pi token and cost columns, Pi compaction and branch
 # summary usage, pipeline
-# attribution by manager branch and by the no-mistakes worktrees root, the
-# no-guess rule that keeps a session outside every spawn window unattributed
+# attribution by agreeing manager-branch and no-mistakes cwd evidence, the
+# no-guess rule that keeps conflicting pipeline evidence or a session outside
+# every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
 # that records no cwd, two tasks with the same spawn epoch staying ambiguous,
@@ -488,11 +489,13 @@ test_pi_model_comes_from_the_latest_usage_message() {
 }
 
 test_pipeline_attribution() {
-  local home claude pi nm out
+  local home claude pi nm out conflict_cwd conflict_storage
   home=$(make_home pipeline)
   claude=$TMP_ROOT/pipeline-claude
   pi=$TMP_ROOT/pipeline-pi
   nm=$TMP_ROOT/pipeline-nm
+  conflict_cwd=$nm/repohash/RUN-B/apps/admin
+  conflict_storage=$TMP_ROOT/pipeline-conflict
   mkdir -p "$claude" "$pi" "$nm/repohash"
 
   claude_session "$claude" sess-manager "$TMP_ROOT/anywhere" manager/RUN-BRANCH claude-opus-5 \
@@ -503,6 +506,10 @@ test_pipeline_attribution() {
     claude-opus-5 $((EARLY_SPAWN + 12)) 1 2 3 4 0
   claude_session "$claude" sess-nmtree "$nm/repohash/RUN-CWD/apps/admin" HEAD claude-opus-5 \
     $((EARLY_SPAWN + 20)) 1 2 3 4 0
+  claude_session "$claude" sess-pipeline-conflict "$conflict_storage" manager/RUN-A \
+    claude-opus-5 $((EARLY_SPAWN + 30)) 1 2 3 4 0 msg-conflict-a
+  claude_session "$claude" sess-pipeline-conflict "$conflict_cwd" manager/RUN-A \
+    claude-opus-5 $((EARLY_SPAWN + 31)) 1 2 3 4 0 msg-conflict-b "$conflict_storage"
 
   out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
     || fail "snapshot failed on the manager-branch fixture"
@@ -521,7 +528,11 @@ test_pipeline_attribution() {
     || fail "a nested cwd under a no-mistakes run did not attribute to its run id"
   [ "$(field "$out" sess-nmtree 2)" = pipeline ] \
     || fail "a no-mistakes worktree session was not classified as pipeline"
-  pass "pipeline sessions attribute by manager branch and by the no-mistakes worktrees root"
+  [ "$(field "$out" sess-pipeline-conflict 1)" = "-" ] \
+    || fail "conflicting manager and cwd run ids assigned a pipeline task"
+  [ "$(field "$out" sess-pipeline-conflict 2)" = "-" ] \
+    || fail "conflicting manager and cwd run ids assigned a pipeline kind"
+  pass "pipeline attribution requires every run id to agree"
 }
 
 test_reused_slot_never_guesses() {

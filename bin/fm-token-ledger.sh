@@ -85,11 +85,12 @@
 #     Unattributed is the correct answer here; a guess would silently move real
 #     spend onto the wrong task.
 #
-#   pipeline      a no-mistakes agent session, identified by any
-#     manager/<run-id> branch in the parent transcript or by a cwd under the
-#     no-mistakes worktrees root. The run id is the branch suffix, else the
-#     run-directory component directly under the repo-hash directory. For
-#     example, <root>/<repo-hash>/RUN/apps/admin attributes to RUN.
+#   pipeline      a no-mistakes agent session, identified by manager/<run-id>
+#     branches in the parent transcript or by cwd values under the no-mistakes
+#     worktrees root. Every run id found by either source must agree; conflicting
+#     evidence stays unattributed. The cwd run id is the run-directory component
+#     directly under the repo-hash directory. For example,
+#     <root>/<repo-hash>/RUN/apps/admin identifies RUN.
 #
 #   firstmate     a session whose cwd is this home's own primary checkout.
 #
@@ -279,8 +280,7 @@ def blank_session(harness: str, path: Path) -> dict:
         "model": "-",
         "worktree_time": None,
         "branch_time": None,
-        "manager_task": None,
-        "manager_branch_time": None,
+        "pipeline_tasks": set(),
         "model_time": None,
         "start": None,
         "end": None,
@@ -309,20 +309,20 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
             if source == path:
                 mark_record(row, moment)
                 worktree = record.get("cwd")
+                pipeline_task = pipeline_task_from_worktree(worktree)
+                if pipeline_task:
+                    row["pipeline_tasks"].add(pipeline_task)
                 if worktree and moment is not None and (
                     row["worktree_time"] is None or moment < row["worktree_time"]
                 ):
                     row["worktree"] = worktree
                     row["worktree_time"] = moment
                 branch = record.get("gitBranch")
-                if branch and moment is not None:
+                if branch:
                     manager_branch = MANAGER_BRANCH.match(branch)
-                    if manager_branch and (
-                        row["manager_branch_time"] is None
-                        or moment < row["manager_branch_time"]
-                    ):
-                        row["manager_task"] = manager_branch.group(1)
-                        row["manager_branch_time"] = moment
+                    if manager_branch:
+                        row["pipeline_tasks"].add(manager_branch.group(1))
+                if branch and moment is not None:
                     if row["branch_time"] is None or moment < row["branch_time"]:
                         row["branch"] = branch
                         row["branch_time"] = moment
@@ -396,6 +396,9 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
             stamp = message.get("timestamp")
         moment = parse_stamp(stamp)
         mark_record(row, moment)
+        pipeline_task = pipeline_task_from_worktree(record.get("cwd"))
+        if pipeline_task:
+            row["pipeline_tasks"].add(pipeline_task)
         if record.get("type") == "session":
             row["worktree"] = record.get("cwd") or row["worktree"]
         record_type = record.get("type")
@@ -462,6 +465,17 @@ def resolve(path: str | Path) -> Path:
         return Path(path)
 
 
+def pipeline_task_from_worktree(worktree) -> str | None:
+    if not isinstance(worktree, str) or not worktree:
+        return None
+    resolved = resolve(worktree)
+    no_mistakes_root = resolve(NO_MISTAKES_WORKTREES)
+    if not resolved.is_relative_to(no_mistakes_root):
+        return None
+    relative = resolved.relative_to(no_mistakes_root)
+    return relative.parts[1] if len(relative.parts) >= 2 else None
+
+
 def spawn_windows(
     snapshot_time: datetime,
 ) -> dict[str, list[tuple[datetime, datetime, str, str]]]:
@@ -513,15 +527,14 @@ def attribute(
     first_turn = row["first_turn"]
     if first_turn is not None and first_turn >= snapshot_time:
         return "-", "-"
-    if row["manager_task"]:
-        return row["manager_task"], "pipeline"
+    pipeline_tasks = row["pipeline_tasks"]
+    if len(pipeline_tasks) == 1:
+        return next(iter(pipeline_tasks)), "pipeline"
+    if pipeline_tasks:
+        return "-", "-"
     worktree = row["worktree"] or ""
     if worktree:
         resolved = resolve(worktree)
-        if resolved.is_relative_to(resolve(NO_MISTAKES_WORKTREES)):
-            relative = resolved.relative_to(resolve(NO_MISTAKES_WORKTREES))
-            if len(relative.parts) >= 2:
-                return relative.parts[1], "pipeline"
         if resolved == resolve(ROOT):
             return "firstmate", "firstmate"
         if first_turn is not None:
