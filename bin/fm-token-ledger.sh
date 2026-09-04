@@ -34,9 +34,10 @@
 #     output_tokens_details.thinking_tokens), plus message.model, cwd,
 #     gitBranch, and timestamp. cost-state records carry cumulative
 #     totalCostUSD. Cost is the last cumulative total at or before the counted
-#     window end minus the last total before its start, or zero when no earlier
-#     total exists. Parent and child cost streams are calculated separately and
-#     then added.
+#     window end minus the last total before --since, or zero when no earlier
+#     total exists. An untimestamped cost state inherits the preceding raw usage
+#     occurrence's timestamp before response deduplication. Parent and child
+#     cost streams are calculated separately and then added.
 #   Pi           ~/.pi/agent/sessions/<cwd-slug>/<session>.jsonl
 #     A session record carries cwd. Assistant records carry message.provider,
 #     message.model, and message.usage (input, output, cacheRead, cacheWrite,
@@ -62,23 +63,21 @@
 #
 # ATTRIBUTION
 #   A session is attributed only on evidence, never on proximity.
-#   A parent transcript whose earliest record is at or after snapshot time stays
+#   A parent transcript whose opening turn is at or after snapshot time stays
 #   unattributed, even when its branch or cwd would otherwise identify an owner.
 #
 #   worker/scout  state/<id>.meta names a worktree= and a spawn_gen=
 #     s<epoch>.<pid>.<rand>. A session in that worktree is that task's only when
-#     the parent session began inside the task's spawn window. That test reads
-#     the parent transcript's earliest record of any kind, not just a counted
-#     turn, because a session opens on a user turn well before its first
-#     assistant reply. It is therefore independent of --since, which only
-#     scopes which usage records are counted. Because spawn_gen records only
-#     whole seconds, a window starts at the next whole second and leaves the
-#     recorded spawn second unattributed. It ends at the next spawn epoch for
-#     that same worktree, or at snapshot time when that comes first. The meta's
-#     kind= chooses scout or secondmate; everything else, a ship spawn included,
-#     is a worker. A parent user turn without a usable timestamp makes the
-#     opening time uncertain, so spawn-window attribution stays unset. Direct
-#     pipeline and firstmate evidence can still attribute that session.
+#     its opening user turn began inside the task's spawn window. When no user
+#     turn exists, the earliest user or assistant turn is the fallback. This is
+#     independent of --since, which only scopes counted usage. Because spawn_gen
+#     records only whole seconds, a window starts at the next whole second and
+#     leaves the recorded spawn second unattributed. It ends at the next spawn
+#     epoch for that same worktree, or at snapshot time when that comes first.
+#     The meta's kind= chooses scout or secondmate; everything else, a ship spawn
+#     included, is a worker. An opening user turn without a usable timestamp
+#     makes the opening time uncertain, so spawn-window attribution stays unset.
+#     Direct pipeline and firstmate evidence can still attribute that session.
 #
 #     Treehouse and Orca reuse a worktree slot across tasks, so a slot's path is
 #     not an identity. A session that started before the current occupant's
@@ -242,25 +241,31 @@ def as_int(value) -> int:
     return value if isinstance(value, int) else 0
 
 
-def record_is_user_turn(record: dict) -> bool:
+def record_turn_role(record: dict) -> str | None:
     message = record.get("message")
-    return record.get("type") == "user" or (
-        isinstance(message, dict) and message.get("role") == "user"
-    )
+    record_type = record.get("type")
+    if record_type in ("user", "assistant"):
+        return record_type
+    if isinstance(message, dict) and message.get("role") in ("user", "assistant"):
+        return message["role"]
+    return None
 
 
-def mark_record(row: dict, moment: datetime | None, user_turn: bool) -> None:
-    """Fold any record's timestamp into first_turn, the session's own beginning.
+def mark_turn(row: dict, moment: datetime | None, role: str | None) -> None:
+    """Fold a parent user or assistant turn into session ownership timing.
 
-    Every record counts here, not just the usage-bearing ones, because a session
-    opens on a user turn well before its first assistant reply. Attribution asks
-    when the session began, so it must see that opening turn.
+    The first user record is the opening turn. Sessions without a user record
+    fall back to their earliest timestamped assistant turn.
     """
-    if moment is None:
-        if user_turn:
-            row["uncertain_opening"] = True
+    if role is None:
         return
-    if row["first_turn"] is None or moment < row["first_turn"]:
+    if role == "user" and not row["opening_user_seen"]:
+        row["opening_user_seen"] = True
+        row["opening_user_time"] = moment
+        row["uncertain_opening"] = moment is None
+    if moment is not None and (
+        row["first_turn"] is None or moment < row["first_turn"]
+    ):
         row["first_turn"] = moment
 
 
@@ -296,6 +301,8 @@ def blank_session(harness: str, path: Path) -> dict:
         "start": None,
         "end": None,
         "first_turn": None,
+        "opening_user_seen": False,
+        "opening_user_time": None,
         "uncertain_opening": False,
         "turns": 0,
         "has_usage": False,
@@ -315,17 +322,28 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
     cost_streams = []
     for source in paths:
         cost_points = []
-        last_usage_key = None
+        last_usage_time = None
         for index, record in enumerate(read_records(source)):
             moment = parse_stamp(record.get("timestamp"))
             if source == path:
-                mark_record(row, moment, record_is_user_turn(record))
+                role = record_turn_role(record)
+                opening_user = role == "user" and not row["opening_user_seen"]
+                mark_turn(row, moment, role)
                 worktree = record.get("cwd")
                 pipeline_task = pipeline_task_from_worktree(worktree)
                 if pipeline_task:
                     row["pipeline_tasks"].add(pipeline_task)
-                if worktree and moment is not None and (
-                    row["worktree_time"] is None or moment < row["worktree_time"]
+                if opening_user:
+                    row["worktree"] = worktree if isinstance(worktree, str) else ""
+                    row["worktree_time"] = moment
+                elif (
+                    not row["opening_user_seen"]
+                    and worktree
+                    and moment is not None
+                    and (
+                        row["worktree_time"] is None
+                        or moment < row["worktree_time"]
+                    )
                 ):
                     row["worktree"] = worktree
                     row["worktree_time"] = moment
@@ -341,8 +359,9 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
 
             if record.get("type") == "cost-state":
                 total = record.get("totalCostUSD")
-                if isinstance(total, (int, float)) and (moment or last_usage_key):
-                    cost_points.append((moment, last_usage_key, float(total)))
+                cost_time = moment or last_usage_time
+                if isinstance(total, (int, float)) and cost_time is not None:
+                    cost_points.append((cost_time, len(cost_points), float(total)))
                 continue
 
             message = record.get("message")
@@ -358,7 +377,7 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
             current = usage_records.get(key)
             if current is None or moment > current[0]:
                 usage_records[key] = (moment, message, usage)
-            last_usage_key = key
+            last_usage_time = moment
         if cost_points:
             cost_streams.append(cost_points)
 
@@ -381,16 +400,10 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
     if not row["has_usage"]:
         return None
     for cost_points in cost_streams:
-        resolved = []
-        for index, (moment, usage_key, total) in enumerate(cost_points):
-            if moment is None and usage_key in usage_records:
-                moment = usage_records[usage_key][0]
-            if moment is not None:
-                resolved.append((moment, index, total))
         before = 0.0
         ending = None
-        for moment, _, total in sorted(resolved):
-            if moment < row["start"]:
+        for moment, _, total in sorted(cost_points):
+            if moment < since:
                 before = total
             if moment <= row["end"]:
                 ending = total
@@ -407,7 +420,7 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
         if not stamp and isinstance(message, dict):
             stamp = message.get("timestamp")
         moment = parse_stamp(stamp)
-        mark_record(row, moment, record_is_user_turn(record))
+        mark_turn(row, moment, record_turn_role(record))
         pipeline_task = pipeline_task_from_worktree(record.get("cwd"))
         if pipeline_task:
             row["pipeline_tasks"].add(pipeline_task)
@@ -536,7 +549,11 @@ def attribute(
     row: dict, windows: dict, snapshot_time: datetime
 ) -> tuple[str, str]:
     """One session's (task, kind); ("-", "-") when nothing proves an owner."""
-    first_turn = row["first_turn"]
+    first_turn = (
+        row["opening_user_time"]
+        if row["opening_user_seen"]
+        else row["first_turn"]
+    )
     if first_turn is not None and first_turn >= snapshot_time:
         return "-", "-"
     pipeline_tasks = row["pipeline_tasks"]

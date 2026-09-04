@@ -6,21 +6,21 @@
 # FM_PI_SESSIONS_ROOT, so no case ever reads the captain's real session logs.
 #
 # Covered: Claude parent and child token columns, response deduplication,
-# Claude cumulative cost, Pi token and cost columns, Pi compaction and branch
-# summary usage, pipeline
+# Claude cumulative cost association, Pi token and cost columns, Pi compaction
+# and branch summary usage, pipeline
 # attribution by agreeing manager-branch and no-mistakes cwd evidence, the
 # no-guess rule that keeps conflicting pipeline evidence or a session outside
 # every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
 # that records no cwd, two tasks with the same spawn epoch staying ambiguous,
-# sessions inside a whole-second spawn boundary, sessions whose opening user
-# timestamp is unusable, a session that opened on a user turn before the slot
-# was respawned, and a log whose records are not in time order, the start and end
-# columns spanning the counted turns in time order, model columns naming the
-# latest usage-bearing model, local-midnight cutoff behavior across DST,
-# firstmate's own session, --since filtering, compare totals and shared-task
-# rows, one-line read and write errors, and the task subcommand.
+# sessions inside a whole-second spawn boundary, non-turn preludes, unusable
+# opening timestamps and later malformed user turns, a session that opened on a
+# user turn before the slot was respawned, and a log whose records are not in
+# time order, the start and end columns spanning the counted turns in time order,
+# model columns naming the latest usage-bearing model, local-midnight cutoff
+# behavior across DST, firstmate's own session, --since filtering, compare totals
+# and shared-task rows, one-line read and write errors, and the task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -119,6 +119,21 @@ record = {
     "cwd": cwd,
     "message": {"role": "user", "content": "go"},
 }
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record) + "\n")
+PY
+}
+
+claude_prelude() {
+  local root=$1 id=$2 cwd=$3 type=$4 epoch=$5
+  local storage_cwd=${6:-$cwd} slug dir
+  slug=$(printf '%s' "$storage_cwd" | tr '/.' '--')
+  dir=$root/$slug
+  mkdir -p "$(dirname "$dir/$id.jsonl")"
+  python3 - "$dir/$id.jsonl" "$cwd" "$type" "$(iso_at "$epoch")" <<'PY'
+import json, sys
+path, cwd, record_type, stamp = sys.argv[1:5]
+record = {"type": record_type, "timestamp": stamp, "cwd": cwd}
 with open(path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(record) + "\n")
 PY
@@ -354,11 +369,19 @@ test_claude_cost_uses_the_counted_window_delta() {
   claude_session "$claude" sess-cost "$TMP_ROOT/cost/session" HEAD model-new \
     $((EARLY_SPAWN + 1000)) 20 0 0 2 0 msg-after
   claude_cost_state "$claude" sess-cost "$TMP_ROOT/cost/session" 5.5
+  claude_session "$claude" sess-stream-cost "$TMP_ROOT/cost/stream" HEAD model \
+    $((EARLY_SPAWN + 100)) 10 0 0 1 0 msg-stream
+  claude_cost_state "$claude" sess-stream-cost "$TMP_ROOT/cost/stream" 2.0
+  claude_session "$claude" sess-stream-cost "$TMP_ROOT/cost/stream" HEAD model \
+    $((EARLY_SPAWN + 1000)) 20 0 0 2 0 msg-stream
+  claude_cost_state "$claude" sess-stream-cost "$TMP_ROOT/cost/stream" 5.0
 
   out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
     || fail "full-history snapshot failed on the Claude cost fixture"
   [ "$(field "$out" sess-cost 15)" = 5.5000 ] \
     || fail "a fully included Claude session did not report its cumulative cost"
+  [ "$(field "$out" sess-stream-cost 15)" = 5.0000 ] \
+    || fail "a fully included streamed response did not report its cumulative cost"
 
   out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot \
     --since "$(iso_at $((EARLY_SPAWN + 500)))" --stdout) \
@@ -367,6 +390,10 @@ test_claude_cost_uses_the_counted_window_delta() {
   [ "$(field "$out" sess-cost 10)" = 20 ] || fail "the cost window counted earlier tokens"
   [ "$(field "$out" sess-cost 15)" = 3.5000 ] \
     || fail "Claude cost did not subtract the cumulative total before the window"
+  [ "$(field "$out" sess-stream-cost 10)" = 20 ] \
+    || fail "the streamed response did not keep its final token usage"
+  [ "$(field "$out" sess-stream-cost 15)" = 3.0000 ] \
+    || fail "streamed response deduplication collapsed the cost baseline"
   pass "Claude cost reports the cumulative delta for the counted window"
 }
 
@@ -735,6 +762,35 @@ test_a_session_that_opened_before_the_respawn_stays_unattributed() {
   pass "a session that opened before the current occupant's spawn stays unattributed"
 }
 
+test_non_turn_prelude_does_not_control_attribution() {
+  local home claude pi nm out slot second_spawn
+  home=$(make_home non-turn-prelude)
+  claude=$TMP_ROOT/non-turn-prelude-claude
+  pi=$TMP_ROOT/non-turn-prelude-pi
+  nm=$TMP_ROOT/non-turn-prelude-nm
+  slot=$TMP_ROOT/reused/21/repo
+  second_spawn=$((EARLY_SPAWN + 60))
+  mkdir -p "$claude" "$pi" "$nm"
+
+  fm_write_meta "$home/state/first-occupant.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$EARLY_SPAWN.122.222"
+  fm_write_meta "$home/state/second-occupant.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$second_spawn.123.223"
+  claude_prelude "$claude" sess-prelude "$slot" attachment $((EARLY_SPAWN + 50))
+  claude_user_turn "$claude" sess-prelude "$slot" $((EARLY_SPAWN + 70))
+  claude_session "$claude" sess-prelude "$slot" fm/prelude claude-opus-5 \
+    $((EARLY_SPAWN + 80)) 1 0 0 1 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot failed on the non-turn prelude fixture"
+
+  [ "$(field "$out" sess-prelude 1)" = second-occupant ] \
+    || fail "a non-turn prelude replaced the opening user turn for attribution"
+  [ "$(field "$out" sess-prelude 2)" = worker ] \
+    || fail "the opening user turn did not assign the second worker"
+  pass "non-turn preludes do not control spawn attribution"
+}
+
 test_unknown_opening_time_refuses_spawn_attribution() {
   local home claude pi nm out slot
   home=$(make_home unknown-opening)
@@ -748,8 +804,14 @@ test_unknown_opening_time_refuses_spawn_attribution() {
     "worktree=$slot" "kind=ship" "spawn_gen=s$EARLY_SPAWN.121.221"
   claude_user_turn "$claude" sess-unknown-opening "$slot" "$EARLY_SPAWN" \
     "$slot" 0 not-a-timestamp
-  claude_session "$claude" sess-unknown-opening "$slot" fm/unknown claude-opus-5 \
-    $((EARLY_SPAWN + 120)) 7 0 0 8 0
+  claude_session "$claude" sess-unknown-opening "$home" fm/unknown claude-opus-5 \
+    $((EARLY_SPAWN + 120)) 7 0 0 8 0 msg-unknown-opening "$slot"
+
+  claude_user_turn "$claude" sess-later-invalid "$slot" $((EARLY_SPAWN + 10))
+  claude_session "$claude" sess-later-invalid "$slot" fm/known claude-opus-5 \
+    $((EARLY_SPAWN + 20)) 1 0 0 1 0
+  claude_user_turn "$claude" sess-later-invalid "$slot" $((EARLY_SPAWN + 30)) \
+    "$slot" 0 not-a-timestamp
 
   claude_user_turn "$claude" sess-unknown-firstmate "$home" "$EARLY_SPAWN" \
     "$home" 0 not-a-timestamp
@@ -772,6 +834,10 @@ test_unknown_opening_time_refuses_spawn_attribution() {
     || fail "the unknown-opening session lost its worktree"
   [ "$(field "$out" sess-unknown-opening 10)" = 7 ] \
     || fail "the unknown-opening session lost its counted usage"
+  [ "$(field "$out" sess-later-invalid 1)" = new-occupant ] \
+    || fail "a malformed later user turn erased the known opening owner"
+  [ "$(field "$out" sess-later-invalid 2)" = worker ] \
+    || fail "a malformed later user turn erased the known opening kind"
   [ "$(field "$out" sess-unknown-firstmate 1)" = firstmate ] \
     || fail "an unknown opening time blocked direct firstmate evidence"
   [ "$(field "$out" sess-unknown-pipeline 1)" = RUN-UNKNOWN ] \
@@ -1269,6 +1335,7 @@ test_future_sessions_stay_unattributed
 test_since_never_moves_a_session_onto_another_task
 test_a_session_with_no_cwd_stays_unattributed
 test_a_session_that_opened_before_the_respawn_stays_unattributed
+test_non_turn_prelude_does_not_control_attribution
 test_unknown_opening_time_refuses_spawn_attribution
 test_model_is_the_latest_turn_not_the_last_written
 test_out_of_order_log_attributes_on_its_earliest_turn
