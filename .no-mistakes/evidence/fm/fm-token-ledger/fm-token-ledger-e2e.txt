@@ -1,0 +1,49 @@
+$ fm-token-ledger.sh snapshot --since 2026-09-04 --label before
+wrote <fixture>/home/data/token-ledger/before.tsv (2 sessions since 2026-09-04T05:00:00Z)
+
+all: sessions=2 turns=2 input=15 cache_write=20 cache_read=45 output=60 thinking=9 cost_usd=1.50
+
+by harness
+  claude: sessions=1 turns=1 input=10 cache_write=20 cache_read=30 output=40 thinking=5 cost_usd=1.25
+  pi: sessions=1 turns=1 input=5 cache_write=0 cache_read=15 output=20 thinking=4 cost_usd=0.25
+
+by kind
+  worker: sessions=2 turns=2 input=15 cache_write=20 cache_read=45 output=60 thinking=9 cost_usd=1.50
+
+$ fm-token-ledger.sh snapshot --since 2026-09-04 --label after
+wrote <fixture>/home/data/token-ledger/after.tsv (2 sessions since 2026-09-04T05:00:00Z)
+
+all: sessions=2 turns=4 input=30 cache_write=20 cache_read=110 output=150 thinking=25 cost_usd=2.60
+
+by harness
+  claude: sessions=1 turns=2 input=20 cache_write=20 cache_read=70 output=100 thinking=15 cost_usd=2.00
+  pi: sessions=1 turns=2 input=10 cache_write=0 cache_read=40 output=50 thinking=10 cost_usd=0.60
+
+by kind
+  worker: sessions=2 turns=4 input=30 cache_write=20 cache_read=110 output=150 thinking=25 cost_usd=2.60
+
+$ fm-token-ledger.sh compare before.tsv after.tsv
+a: <fixture>/home/data/token-ledger/before.tsv
+b: <fixture>/home/data/token-ledger/after.tsv
+
+metric                     a               b      change
+sessions                   2               2       +0.0%
+turns                      2               4     +100.0%
+input                     15              30     +100.0%
+cache_write               20              20       +0.0%
+cache_read                45             110     +144.4%
+output                    60             150     +150.0%
+thinking                   9              25     +177.8%
+cost_usd                1.50            2.60      +73.3%
+
+tasks in both (1)
+  demo-task: tokens 140 -> 310 (+121.4%), cost 1.50 -> 2.60
+only in a (0): -
+only in b (0): -
+
+$ fm-token-ledger.sh task demo-task
+task	kind	harness	worktree	branch	model	start	end	turns	input	cache_write	cache_read	output	thinking	cost_usd	session
+demo-task	worker	claude	<fixture>/slot/demo	fm/demo	claude-opus-5	2026-09-04T06:53:26Z	2026-09-04T06:53:28Z	2	20	20	70	100	15	2.0000	claude-demo
+demo-task	worker	pi	<fixture>/slot/demo	-	xai/grok-4.6	2026-09-04T06:53:27Z	2026-09-04T06:53:29Z	2	10	0	40	50	10	0.6000	pi-demo
+
+demo-task: sessions=2 turns=4 input=30 cache_write=20 cache_read=110 output=150 thinking=25 cost_usd=2.60

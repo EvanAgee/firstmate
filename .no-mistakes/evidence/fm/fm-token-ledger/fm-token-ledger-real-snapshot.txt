@@ -1,0 +1,12 @@
+$ FM_DATA_OVERRIDE=<temporary-data> bin/fm-token-ledger.sh snapshot --since 2026-09-01 --label local-redacted
+wrote <temporary-data>/data/token-ledger/local-redacted.tsv (1572 sessions since 2026-09-01T05:00:00Z)
+
+all: sessions=1572 turns=89225 input=29,802,794 cache_write=316,903,553 cache_read=16,926,550,702 output=38,110,806 thinking=4,436,121 cost_usd=8443.55
+
+by harness
+  claude: sessions=1511 turns=84416 input=981,633 cache_write=316,903,553 cache_read=16,168,695,598 output=35,620,275 thinking=2,947,855 cost_usd=8027.53
+  pi: sessions=61 turns=4809 input=28,821,161 cache_write=0 cache_read=757,855,104 output=2,490,531 thinking=1,488,266 cost_usd=416.01
+
+by kind
+  unattributed: sessions=371 turns=43439 input=29,711,852 cache_write=143,859,847 cache_read=12,317,497,930 output=20,469,141 thinking=4,269,834 cost_usd=8443.55
+  pipeline: sessions=1201 turns=45786 input=90,942 cache_write=173,043,706 cache_read=4,609,052,772 output=17,641,665 thinking=166,287 cost_usd=0.00
