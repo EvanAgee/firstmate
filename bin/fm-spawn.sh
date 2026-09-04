@@ -2540,6 +2540,126 @@ if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
   task_tmp_directory_prepare "$OMP_SESSION_DIR" || exit 1
 fi
 
+WORKER_SKILL_CLAUDE=
+WORKER_SKILL_PI=
+WORKER_SKILL_OMP=
+BRIEF_DELIVERY=$BRIEF
+KIMI_BRIEF_DELIVERY=$BRIEF_REAL
+if [ "$KIND" != secondmate ]; then
+  if [ "$RAW_LAUNCH" -eq 1 ]; then
+    echo "SKILLS: raw launches get no skill injection" >&2
+  else
+    WORKER_SKILLS_ROOT="${HOME:-}/.agents/skills"
+    WORKER_CAVEMAN_SOURCE="$WORKER_SKILLS_ROOT/caveman/SKILL.md"
+    WORKER_PONYTAIL_SOURCE="$WORKER_SKILLS_ROOT/ponytail/SKILL.md"
+    WORKER_CAVEMAN=
+    WORKER_PONYTAIL=
+    WORKER_CAVEMAN_BODY=
+    WORKER_PONYTAIL_BODY=
+    WORKER_SKILLS_MISSING=
+    if ! WORKER_CAVEMAN=$(resolve_worker_skill_file "$WORKER_CAVEMAN_SOURCE"); then
+      WORKER_SKILLS_MISSING=$WORKER_CAVEMAN_SOURCE
+    fi
+    if ! WORKER_PONYTAIL=$(resolve_worker_skill_file "$WORKER_PONYTAIL_SOURCE"); then
+      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
+    fi
+    if [ -n "$WORKER_CAVEMAN" ] \
+       && ! WORKER_CAVEMAN_BODY=$(cat "$WORKER_CAVEMAN"); then
+      WORKER_CAVEMAN=
+      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_CAVEMAN_SOURCE"
+    fi
+    if [ -n "$WORKER_PONYTAIL" ] \
+       && ! WORKER_PONYTAIL_BODY=$(cat "$WORKER_PONYTAIL"); then
+      WORKER_PONYTAIL=
+      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
+    fi
+    if [ -n "$WORKER_SKILLS_MISSING" ]; then
+      echo "SKILLS: unavailable worker skill file(s): $WORKER_SKILLS_MISSING; continuing without the unavailable skill(s)" >&2
+    fi
+
+    WORKER_SKILL_LEVELS=
+    WORKER_SKILL_PATHS=
+    if [ -n "$WORKER_CAVEMAN" ]; then
+      WORKER_SKILL_LEVELS='caveman: full'
+      WORKER_SKILL_PATHS=$WORKER_CAVEMAN
+    fi
+    if [ -n "$WORKER_PONYTAIL" ]; then
+      WORKER_SKILL_LEVELS="${WORKER_SKILL_LEVELS}${WORKER_SKILL_LEVELS:+, }ponytail: full"
+      WORKER_SKILL_PATHS="${WORKER_SKILL_PATHS}${WORKER_SKILL_PATHS:+ and }$WORKER_PONYTAIL"
+    fi
+
+    write_worker_skill_prompt() {
+      WORKER_SKILL_PROMPT=$(mktemp "$TASK_TMP/worker-skills.XXXXXXXX") || return 1
+      if ! (
+        printf 'Active skill levels: %s\n\n' "$WORKER_SKILL_LEVELS" || exit 1
+        if [ -n "$WORKER_CAVEMAN" ]; then
+          printf '%s\n' "$WORKER_CAVEMAN_BODY" || exit 1
+        fi
+        if [ -n "$WORKER_PONYTAIL" ]; then
+          if [ -n "$WORKER_CAVEMAN" ]; then
+            printf '\n' || exit 1
+          fi
+          printf '%s\n' "$WORKER_PONYTAIL_BODY" || exit 1
+        fi
+        exit 0
+      ) > "$WORKER_SKILL_PROMPT"; then
+        rm -f "$WORKER_SKILL_PROMPT"
+        return 1
+      fi
+    }
+    write_worker_skill_brief() {
+      BRIEF_DELIVERY=$(mktemp "$TASK_TMP/brief.XXXXXXXX") || return 1
+      KIMI_BRIEF_DELIVERY=$BRIEF_DELIVERY
+      if [ -n "$WORKER_CAVEMAN" ] && [ -n "$WORKER_PONYTAIL" ]; then
+        printf 'Caveman and ponytail are active for this session. Load their rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY" || {
+          rm -f "$BRIEF_DELIVERY"
+          return 1
+        }
+      elif [ -n "$WORKER_CAVEMAN" ]; then
+        printf 'Caveman is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY" || {
+          rm -f "$BRIEF_DELIVERY"
+          return 1
+        }
+      else
+        printf 'Ponytail is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY" || {
+          rm -f "$BRIEF_DELIVERY"
+          return 1
+        }
+      fi
+      cat "$BRIEF_REAL" >> "$BRIEF_DELIVERY" || {
+        rm -f "$BRIEF_DELIVERY"
+        return 1
+      }
+    }
+
+    if [ -n "$WORKER_SKILL_LEVELS" ]; then
+      case "$HARNESS" in
+        claude)
+          write_worker_skill_prompt || exit 1
+          WORKER_SKILL_CLAUDE="--append-system-prompt-file $(shell_quote "$WORKER_SKILL_PROMPT") "
+          ;;
+        omp)
+          if [ "$OMP_WORKER_SKILL_MODE" = append-system-prompt ]; then
+            write_worker_skill_prompt || exit 1
+            WORKER_SKILL_OMP="--append-system-prompt=$(shell_quote "$WORKER_SKILL_PROMPT") "
+          else
+            write_worker_skill_brief || exit 1
+          fi
+          ;;
+        pi|pi-signed)
+          [ -z "$WORKER_CAVEMAN" ] \
+            || WORKER_SKILL_PI="--skill $(shell_quote "$(dirname "$WORKER_CAVEMAN")") "
+          [ -z "$WORKER_PONYTAIL" ] \
+            || WORKER_SKILL_PI="${WORKER_SKILL_PI}--skill $(shell_quote "$(dirname "$WORKER_PONYTAIL")") "
+          ;;
+        codex|grok|kimi|cursor|muse|opencode)
+          write_worker_skill_brief || exit 1
+          ;;
+      esac
+    fi
+  fi
+fi
+
 W="fm-$ID"
 RELAUNCH_HERDR_WORKSPACE_CHANGED=0
 if [ "$RELAUNCH" -eq 1 ]; then
@@ -3024,106 +3144,6 @@ if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
     echo "error: OMP spawn could not bind cleanup to the initial worktree HEAD" >&2
     exit 1
   }
-fi
-
-WORKER_SKILL_CLAUDE=
-WORKER_SKILL_PI=
-WORKER_SKILL_OMP=
-BRIEF_DELIVERY=$BRIEF
-KIMI_BRIEF_DELIVERY=$BRIEF_REAL
-if [ "$KIND" != secondmate ]; then
-  if [ "$RAW_LAUNCH" -eq 1 ]; then
-    echo "SKILLS: raw launches get no skill injection" >&2
-  else
-    WORKER_SKILLS_ROOT="${HOME:-}/.agents/skills"
-    WORKER_CAVEMAN_SOURCE="$WORKER_SKILLS_ROOT/caveman/SKILL.md"
-    WORKER_PONYTAIL_SOURCE="$WORKER_SKILLS_ROOT/ponytail/SKILL.md"
-    WORKER_CAVEMAN=
-    WORKER_PONYTAIL=
-    WORKER_CAVEMAN_BODY=
-    WORKER_PONYTAIL_BODY=
-    WORKER_SKILLS_MISSING=
-    if ! WORKER_CAVEMAN=$(resolve_worker_skill_file "$WORKER_CAVEMAN_SOURCE"); then
-      WORKER_SKILLS_MISSING=$WORKER_CAVEMAN_SOURCE
-    fi
-    if ! WORKER_PONYTAIL=$(resolve_worker_skill_file "$WORKER_PONYTAIL_SOURCE"); then
-      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
-    fi
-    if [ -n "$WORKER_CAVEMAN" ] \
-       && ! WORKER_CAVEMAN_BODY=$(cat "$WORKER_CAVEMAN"); then
-      WORKER_CAVEMAN=
-      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_CAVEMAN_SOURCE"
-    fi
-    if [ -n "$WORKER_PONYTAIL" ] \
-       && ! WORKER_PONYTAIL_BODY=$(cat "$WORKER_PONYTAIL"); then
-      WORKER_PONYTAIL=
-      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
-    fi
-    if [ -n "$WORKER_SKILLS_MISSING" ]; then
-      echo "SKILLS: unavailable worker skill file(s): $WORKER_SKILLS_MISSING; continuing without the unavailable skill(s)" >&2
-    fi
-
-    WORKER_SKILL_LEVELS=
-    WORKER_SKILL_PATHS=
-    if [ -n "$WORKER_CAVEMAN" ]; then
-      WORKER_SKILL_LEVELS='caveman: full'
-      WORKER_SKILL_PATHS=$WORKER_CAVEMAN
-    fi
-    if [ -n "$WORKER_PONYTAIL" ]; then
-      WORKER_SKILL_LEVELS="${WORKER_SKILL_LEVELS}${WORKER_SKILL_LEVELS:+, }ponytail: full"
-      WORKER_SKILL_PATHS="${WORKER_SKILL_PATHS}${WORKER_SKILL_PATHS:+ and }$WORKER_PONYTAIL"
-    fi
-
-    write_worker_skill_prompt() {
-      WORKER_SKILL_PROMPT=$(mktemp "$TASK_TMP/worker-skills.XXXXXXXX") || return 1
-      {
-        printf 'Active skill levels: %s\n\n' "$WORKER_SKILL_LEVELS"
-        [ -z "$WORKER_CAVEMAN" ] || printf '%s\n' "$WORKER_CAVEMAN_BODY"
-        if [ -n "$WORKER_PONYTAIL" ]; then
-          [ -z "$WORKER_CAVEMAN" ] || printf '\n'
-          printf '%s\n' "$WORKER_PONYTAIL_BODY"
-        fi
-      } > "$WORKER_SKILL_PROMPT"
-    }
-    write_worker_skill_brief() {
-      BRIEF_DELIVERY=$(mktemp "$TASK_TMP/brief.XXXXXXXX") || return 1
-      KIMI_BRIEF_DELIVERY=$BRIEF_DELIVERY
-      if [ -n "$WORKER_CAVEMAN" ] && [ -n "$WORKER_PONYTAIL" ]; then
-        printf 'Caveman and ponytail are active for this session. Load their rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
-      elif [ -n "$WORKER_CAVEMAN" ]; then
-        printf 'Caveman is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
-      else
-        printf 'Ponytail is active for this session. Load its rules from %s.\n' "$WORKER_SKILL_PATHS" > "$BRIEF_DELIVERY"
-      fi
-      cat "$BRIEF_REAL" >> "$BRIEF_DELIVERY"
-    }
-
-    if [ -n "$WORKER_SKILL_LEVELS" ]; then
-      case "$HARNESS" in
-        claude)
-          write_worker_skill_prompt || exit 1
-          WORKER_SKILL_CLAUDE="--append-system-prompt-file $(shell_quote "$WORKER_SKILL_PROMPT") "
-          ;;
-        omp)
-          if [ "$OMP_WORKER_SKILL_MODE" = append-system-prompt ]; then
-            write_worker_skill_prompt || exit 1
-            WORKER_SKILL_OMP="--append-system-prompt=$(shell_quote "$WORKER_SKILL_PROMPT") "
-          else
-            write_worker_skill_brief || exit 1
-          fi
-          ;;
-        pi|pi-signed)
-          [ -z "$WORKER_CAVEMAN" ] \
-            || WORKER_SKILL_PI="--skill $(shell_quote "$(dirname "$WORKER_CAVEMAN")") "
-          [ -z "$WORKER_PONYTAIL" ] \
-            || WORKER_SKILL_PI="${WORKER_SKILL_PI}--skill $(shell_quote "$(dirname "$WORKER_PONYTAIL")") "
-          ;;
-        codex|grok|kimi|cursor|muse|opencode)
-          write_worker_skill_brief || exit 1
-          ;;
-      esac
-    fi
-  fi
 fi
 
 # Per-harness turn-end hook where enabled: a file that touches

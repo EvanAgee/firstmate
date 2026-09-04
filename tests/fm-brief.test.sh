@@ -744,10 +744,14 @@ test_worker_skills_section_reaches_ship_and_scout_only() {
 
   for brief in "$ship" "$scout"; do
     assert_grep '# Session skills' "$brief" "worker brief omitted the session skills section"
-    assert_grep "Firstmate delivers caveman (\`full\`) and ponytail (\`full\`) for this session when their installed skill files are available." "$brief" \
-      "worker brief did not make skill delivery availability-neutral"
-    assert_grep "commits, PRs, issues, and docs stay normal prose" "$brief" \
-      "worker brief let caveman compress durable prose"
+    assert_grep "Every structured launch delivers caveman (\`full\`) and ponytail (\`full\`) when their installed skill files are available." "$brief" \
+      "worker brief did not describe structured skill delivery"
+    assert_grep "On a raw launch, load caveman and ponytail yourself before starting." "$brief" \
+      "worker brief falsely described raw-launch skill delivery"
+    assert_grep "caveman keeps chat terse; every durable output stays normal prose, for example commits, PRs, issues, docs, scout reports, review comments, and plans." "$brief" \
+      "worker brief narrowed caveman's durable-output rule"
+    assert_grep "The examples are not an exhaustive list." "$brief" \
+      "worker brief treated the durable-output examples as exhaustive"
     assert_grep "without dropping required validation, error handling, security, accessibility, or brief-required tests" "$brief" \
       "worker brief let ponytail drop required safeguards"
     assert_grep "This brief's test requirements win over ponytail's test rule." "$brief" \

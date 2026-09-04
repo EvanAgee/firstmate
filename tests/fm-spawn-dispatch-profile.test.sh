@@ -124,7 +124,14 @@ if [ "${1:-}" = -u ] && [ -n "${FM_FAKE_CURRENT_UID:-}" ]; then
 fi
 exec /usr/bin/id "$@"
 SH
-  chmod +x "$fakebin/cat" "$fakebin/id"
+  cat > "$fakebin/mktemp" <<'SH'
+#!/usr/bin/env bash
+if [ -n "${FM_FAKE_MKTEMP_PATTERN:-}" ] && [ "${1:-}" = "$FM_FAKE_MKTEMP_PATTERN" ]; then
+  exit 1
+fi
+exec /usr/bin/mktemp "$@"
+SH
+  chmod +x "$fakebin/cat" "$fakebin/id" "$fakebin/mktemp"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
   cat > "$fakebin/herdr" <<'SH'
@@ -310,10 +317,12 @@ run_spawn() {
     FM_FAKE_OMP_APPEND="${FM_TEST_OMP_APPEND:-yes}" \
     FM_FAKE_CAT_FAILURE_PATH="${FM_TEST_CAT_FAILURE_PATH:-}" \
     FM_FAKE_CURRENT_UID="${FM_TEST_CURRENT_UID:-}" \
+    FM_FAKE_MKTEMP_PATTERN="${FM_TEST_MKTEMP_PATTERN:-}" \
+    FM_FAKE_PRINTF_FAILURE_FORMAT="${FM_TEST_PRINTF_FAILURE_FORMAT:-}" \
     FM_FAKE_HERDR_PANE_FLAG="$herdrpaneflag" \
     FM_FAKE_HERDR_REFUSE_CLOSE="${FM_TEST_HERDR_REFUSE_CLOSE:-0}" \
     FM_FAKE_OMP_META_TAMPER="${FM_TEST_OMP_META_TAMPER:-}" \
-    GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
+    BASH_ENV="${FM_TEST_BASH_ENV:-}" GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
   rc=$?
   if [ "$rc" -eq 0 ] && [ "${FM_TEST_KEEP_TASK_TMP:-0}" != 1 ]; then
@@ -664,6 +673,64 @@ test_task_tmp_refusal_precedes_endpoint_and_worktree_allocation() {
     "task temp ownership refusal wrote task metadata"
   rm -rf "$tasktmp"
   pass "task temp validation runs before endpoint and worktree allocation"
+}
+
+test_worker_skill_artifact_creation_failure_precedes_allocation() {
+  local rec id out status tasktmp
+  id=$(profile_id profile-worker-skills-artifact-failure)
+  rec=$(make_spawn_case profile-worker-skills-artifact-failure claude "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+
+  out=$(FM_TEST_MKTEMP_PATTERN="$tasktmp/worker-skills.XXXXXXXX" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "spawn should refuse a worker-skill artifact creation failure"
+  [ ! -s "$CASE_DIR/endpoint.log" ] \
+    || fail "worker-skill artifact failure created a backend endpoint"
+  [ ! -s "$CASE_DIR/treehouse.log" ] \
+    || fail "worker-skill artifact failure allocated a worktree"
+  [ ! -s "$LAUNCH_LOG" ] \
+    || fail "worker-skill artifact failure typed a launch command"
+  assert_absent "$HOME_DIR/state/$id.meta" \
+    "worker-skill artifact failure wrote task metadata"
+  rm -rf "$tasktmp"
+  pass "worker-skill artifacts are created before endpoint and worktree allocation"
+}
+
+test_single_skill_prompt_write_failure_is_not_masked() {
+  local rec id out status tasktmp bash_env
+  id=$(profile_id profile-worker-skills-prompt-write-failure)
+  rec=$(make_spawn_case profile-worker-skills-prompt-write-failure claude "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+  rm "$CASE_DIR/worker-home/.agents/skills/ponytail/SKILL.md"
+  bash_env="$CASE_DIR/bash-env"
+  cat > "$bash_env" <<'SH'
+printf() {
+  if [ -n "${FM_FAKE_PRINTF_FAILURE_FORMAT:-}" ] \
+     && [ "${1:-}" = "$FM_FAKE_PRINTF_FAILURE_FORMAT" ]; then
+    return 1
+  fi
+  builtin printf "$@"
+}
+SH
+
+  out=$(FM_TEST_BASH_ENV="$bash_env" \
+    FM_TEST_PRINTF_FAILURE_FORMAT='Active skill levels: %s\n\n' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "spawn should propagate a single-skill prompt write failure"
+  [ ! -s "$CASE_DIR/endpoint.log" ] \
+    || fail "single-skill prompt write failure created a backend endpoint"
+  [ ! -s "$CASE_DIR/treehouse.log" ] \
+    || fail "single-skill prompt write failure allocated a worktree"
+  [ ! -s "$LAUNCH_LOG" ] \
+    || fail "single-skill prompt write failure typed a launch command"
+  assert_absent "$HOME_DIR/state/$id.meta" \
+    "single-skill prompt write failure wrote task metadata"
+  rm -rf "$tasktmp"
+  pass "single-skill prompt write failures stop before allocation"
 }
 
 test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
@@ -1748,6 +1815,8 @@ test_task_tmp_uses_private_directories_and_exclusive_files
 test_missing_worker_skill_warns_once_and_launches
 test_worker_skill_read_failure_warns_once_and_drops_only_failed_skill
 test_task_tmp_refusal_precedes_endpoint_and_worktree_allocation
+test_worker_skill_artifact_creation_failure_precedes_allocation
+test_single_skill_prompt_write_failure_is_not_masked
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths

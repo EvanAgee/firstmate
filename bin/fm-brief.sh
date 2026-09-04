@@ -309,8 +309,10 @@ fi
 
 IFS= read -r -d '' WORKER_SKILLS_SECTION <<'EOF' || true
 # Session skills
-Firstmate delivers caveman (`full`) and ponytail (`full`) for this session when their installed skill files are available.
-Caveman keeps chat terse; commits, PRs, issues, and docs stay normal prose.
+Every structured launch delivers caveman (`full`) and ponytail (`full`) when their installed skill files are available.
+On a raw launch, load caveman and ponytail yourself before starting.
+caveman keeps chat terse; every durable output stays normal prose, for example commits, PRs, issues, docs, scout reports, review comments, and plans.
+The examples are not an exhaustive list.
 Ponytail means building the simplest thing that works without dropping required validation, error handling, security, accessibility, or brief-required tests.
 This brief's test requirements win over ponytail's test rule.
 The skill files own the details: `~/.agents/skills/caveman/SKILL.md` and `~/.agents/skills/ponytail/SKILL.md`.
