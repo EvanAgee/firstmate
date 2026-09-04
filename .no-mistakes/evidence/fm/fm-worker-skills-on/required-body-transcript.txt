@@ -1,49 +1,16 @@
-Scenario: immediate signature
-API read 1: current body received
+Scenario: immediate signature; API calls: 1; exit: 0
 Found no-mistakes signature in PR #102 body.
-Exit: 0; API reads: 1
 
-Scenario: transient API failure
-API read 1: HTTP 503 fixture
-Retry delay: 2 seconds (test clock)
-API read 2: HTTP 503 fixture
-Retry delay: 2 seconds (test clock)
-API read 3: current body received
+Scenario: transient API failure; API calls: 2; exit: 0
 Found no-mistakes signature in PR #102 body.
-Exit: 0; API reads: 3
 
-Scenario: body update race
-API read 1: body update still pending
-Retry delay: 2 seconds (test clock)
-API read 2: body update still pending
-Retry delay: 2 seconds (test clock)
-API read 3: current body received
+Scenario: delayed body update; API calls: 2; exit: 0
 Found no-mistakes signature in PR #102 body.
-Exit: 0; API reads: 3
 
-Scenario: exhausted API failures
-API read 1: HTTP 503 fixture
-Retry delay: 2 seconds (test clock)
-API read 2: HTTP 503 fixture
-Retry delay: 2 seconds (test clock)
-API read 3: HTTP 503 fixture
-Retry delay: 2 seconds (test clock)
-API read 4: HTTP 503 fixture
-Retry delay: 2 seconds (test clock)
-API read 5: HTTP 503 fixture
+Scenario: exhausted API failures; API calls: 5; exit: 1
 ::error::Could not read PR #102 after 5 attempts.
-Exit: 1; API reads: 5
 
-Scenario: missing signature
-API read 1: body update still pending
-Retry delay: 2 seconds (test clock)
-API read 2: body update still pending
-Retry delay: 2 seconds (test clock)
-API read 3: body update still pending
-Retry delay: 2 seconds (test clock)
-API read 4: body update still pending
-Retry delay: 2 seconds (test clock)
-API read 5: body update still pending
+Scenario: missing signature; API calls: 5; exit: 1
 ::error::This PR was not raised through no-mistakes.
 
 Contributions to this repository must be submitted via 'git push no-mistakes'.
@@ -55,8 +22,4 @@ deterministic '## Pipeline' section into the PR body containing:
 See CONTRIBUTING.md for setup and the full workflow.
 
 PR author: fixture-author
-Exit: 1; API reads: 5
 
-Pre-fix regression (bc6d93c): two transient failures before success
-API read 1: HTTP 503 fixture
-Exit: 1; API reads: 1. Exited before retrying.

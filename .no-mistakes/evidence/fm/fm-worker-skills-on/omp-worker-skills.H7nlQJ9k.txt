@@ -1,0 +1,5 @@
+Active skill levels: caveman: full, ponytail: full
+
+CAVEMAN_FIXTURE_BODY
+
+PONYTAIL_FIXTURE_BODY

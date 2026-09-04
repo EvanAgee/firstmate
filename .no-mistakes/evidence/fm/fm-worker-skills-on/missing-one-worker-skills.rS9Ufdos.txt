@@ -1,0 +1,3 @@
+Active skill levels: caveman: full
+
+CAVEMAN_FIXTURE_BODY
