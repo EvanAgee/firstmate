@@ -14,13 +14,13 @@
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
 # that records no cwd, two tasks with the same spawn epoch staying ambiguous,
-# sessions inside a whole-second spawn boundary, a session that opened on a user
-# turn before the slot was respawned, and a log whose records are not in time
-# order, the start and end columns spanning the counted turns in time order,
-# model columns naming the latest usage-bearing model, local-midnight cutoff
-# behavior across DST, firstmate's own session, --since filtering, compare
-# totals and shared-task rows, one-line read and write errors, and the task
-# subcommand.
+# sessions inside a whole-second spawn boundary, sessions whose opening user
+# timestamp is unusable, a session that opened on a user turn before the slot
+# was respawned, and a log whose records are not in time order, the start and end
+# columns spanning the counted turns in time order, model columns naming the
+# latest usage-bearing model, local-midnight cutoff behavior across DST,
+# firstmate's own session, --since filtering, compare totals and shared-task
+# rows, one-line read and write errors, and the task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -99,15 +99,18 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
-# claude_user_turn <sessions-root> <session-id> <cwd> <epoch> [storage-cwd] [milliseconds]
-# A user record: timestamped and part of the session, but carrying no usage.
+# claude_user_turn <sessions-root> <session-id> <cwd> <epoch> [storage-cwd] [milliseconds] [stamp]
+# A parent user record carrying no usage; stamp overrides the generated timestamp.
 claude_user_turn() {
   local root=$1 id=$2 cwd=$3 epoch=$4
-  local storage_cwd=${5:-$cwd} milliseconds=${6:-0} slug dir
+  local storage_cwd=${5:-$cwd} milliseconds=${6:-0} stamp=${7:-} slug dir
   slug=$(printf '%s' "$storage_cwd" | tr '/.' '--')
   dir=$root/$slug
   mkdir -p "$(dirname "$dir/$id.jsonl")"
-  python3 - "$dir/$id.jsonl" "$cwd" "$(iso_at_ms "$epoch" "$milliseconds")" <<'PY'
+  if [ -z "$stamp" ]; then
+    stamp=$(iso_at_ms "$epoch" "$milliseconds")
+  fi
+  python3 - "$dir/$id.jsonl" "$cwd" "$stamp" <<'PY'
 import json, sys
 path, cwd, stamp = sys.argv[1:4]
 record = {
@@ -732,6 +735,50 @@ test_a_session_that_opened_before_the_respawn_stays_unattributed() {
   pass "a session that opened before the current occupant's spawn stays unattributed"
 }
 
+test_unknown_opening_time_refuses_spawn_attribution() {
+  local home claude pi nm out slot
+  home=$(make_home unknown-opening)
+  claude=$TMP_ROOT/unknown-opening-claude
+  pi=$TMP_ROOT/unknown-opening-pi
+  nm=$TMP_ROOT/unknown-opening-nm
+  slot=$TMP_ROOT/reused/20/repo
+  mkdir -p "$claude" "$pi" "$nm/repohash"
+
+  fm_write_meta "$home/state/new-occupant.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$EARLY_SPAWN.121.221"
+  claude_user_turn "$claude" sess-unknown-opening "$slot" "$EARLY_SPAWN" \
+    "$slot" 0 not-a-timestamp
+  claude_session "$claude" sess-unknown-opening "$slot" fm/unknown claude-opus-5 \
+    $((EARLY_SPAWN + 120)) 7 0 0 8 0
+
+  claude_user_turn "$claude" sess-unknown-firstmate "$home" "$EARLY_SPAWN" \
+    "$home" 0 not-a-timestamp
+  claude_session "$claude" sess-unknown-firstmate "$home" HEAD claude-opus-5 \
+    $((EARLY_SPAWN + 120)) 1 0 0 1 0
+
+  claude_user_turn "$claude" sess-unknown-pipeline "$nm/repohash/RUN-UNKNOWN/app" \
+    "$EARLY_SPAWN" "$nm/repohash/RUN-UNKNOWN/app" 0 not-a-timestamp
+  claude_session "$claude" sess-unknown-pipeline "$nm/repohash/RUN-UNKNOWN/app" HEAD \
+    claude-opus-5 $((EARLY_SPAWN + 120)) 1 0 0 1 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot failed on the unknown-opening fixture"
+
+  [ "$(field "$out" sess-unknown-opening 1)" = "-" ] \
+    || fail "an unknown opening time assigned the reused slot's new task"
+  [ "$(field "$out" sess-unknown-opening 2)" = "-" ] \
+    || fail "an unknown opening time assigned a worker kind"
+  [ "$(field "$out" sess-unknown-opening 4)" = "$slot" ] \
+    || fail "the unknown-opening session lost its worktree"
+  [ "$(field "$out" sess-unknown-opening 10)" = 7 ] \
+    || fail "the unknown-opening session lost its counted usage"
+  [ "$(field "$out" sess-unknown-firstmate 1)" = firstmate ] \
+    || fail "an unknown opening time blocked direct firstmate evidence"
+  [ "$(field "$out" sess-unknown-pipeline 1)" = RUN-UNKNOWN ] \
+    || fail "an unknown opening time blocked direct pipeline evidence"
+  pass "unknown opening times refuse only spawn-window attribution"
+}
+
 test_model_is_the_latest_turn_not_the_last_written() {
   local home claude pi nm out slot
   home=$(make_home model-order)
@@ -1222,6 +1269,7 @@ test_future_sessions_stay_unattributed
 test_since_never_moves_a_session_onto_another_task
 test_a_session_with_no_cwd_stays_unattributed
 test_a_session_that_opened_before_the_respawn_stays_unattributed
+test_unknown_opening_time_refuses_spawn_attribution
 test_model_is_the_latest_turn_not_the_last_written
 test_out_of_order_log_attributes_on_its_earliest_turn
 test_out_of_order_log_reports_its_counted_window_in_time_order

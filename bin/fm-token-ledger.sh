@@ -76,7 +76,9 @@
 #     recorded spawn second unattributed. It ends at the next spawn epoch for
 #     that same worktree, or at snapshot time when that comes first. The meta's
 #     kind= chooses scout or secondmate; everything else, a ship spawn included,
-#     is a worker.
+#     is a worker. A parent user turn without a usable timestamp makes the
+#     opening time uncertain, so spawn-window attribution stays unset. Direct
+#     pipeline and firstmate evidence can still attribute that session.
 #
 #     Treehouse and Orca reuse a worktree slot across tasks, so a slot's path is
 #     not an identity. A session that started before the current occupant's
@@ -240,7 +242,14 @@ def as_int(value) -> int:
     return value if isinstance(value, int) else 0
 
 
-def mark_record(row: dict, moment: datetime | None) -> None:
+def record_is_user_turn(record: dict) -> bool:
+    message = record.get("message")
+    return record.get("type") == "user" or (
+        isinstance(message, dict) and message.get("role") == "user"
+    )
+
+
+def mark_record(row: dict, moment: datetime | None, user_turn: bool) -> None:
     """Fold any record's timestamp into first_turn, the session's own beginning.
 
     Every record counts here, not just the usage-bearing ones, because a session
@@ -248,6 +257,8 @@ def mark_record(row: dict, moment: datetime | None) -> None:
     when the session began, so it must see that opening turn.
     """
     if moment is None:
+        if user_turn:
+            row["uncertain_opening"] = True
         return
     if row["first_turn"] is None or moment < row["first_turn"]:
         row["first_turn"] = moment
@@ -285,6 +296,7 @@ def blank_session(harness: str, path: Path) -> dict:
         "start": None,
         "end": None,
         "first_turn": None,
+        "uncertain_opening": False,
         "turns": 0,
         "has_usage": False,
         "cost_usd": 0.0,
@@ -307,7 +319,7 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
         for index, record in enumerate(read_records(source)):
             moment = parse_stamp(record.get("timestamp"))
             if source == path:
-                mark_record(row, moment)
+                mark_record(row, moment, record_is_user_turn(record))
                 worktree = record.get("cwd")
                 pipeline_task = pipeline_task_from_worktree(worktree)
                 if pipeline_task:
@@ -395,7 +407,7 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
         if not stamp and isinstance(message, dict):
             stamp = message.get("timestamp")
         moment = parse_stamp(stamp)
-        mark_record(row, moment)
+        mark_record(row, moment, record_is_user_turn(record))
         pipeline_task = pipeline_task_from_worktree(record.get("cwd"))
         if pipeline_task:
             row["pipeline_tasks"].add(pipeline_task)
@@ -537,6 +549,8 @@ def attribute(
         resolved = resolve(worktree)
         if resolved == resolve(ROOT):
             return "firstmate", "firstmate"
+        if row["uncertain_opening"]:
+            return "-", "-"
         if first_turn is not None:
             for spawned, ends, task, kind in windows.get(str(resolved), []):
                 if first_turn >= spawned and first_turn < ends:
