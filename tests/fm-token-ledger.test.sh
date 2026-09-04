@@ -12,12 +12,12 @@
 # no-guess rule that keeps a session outside every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
-# that records no cwd, for a session that opened on a user turn before the slot
-# was respawned, and for a log whose records are not in time order, the start and
-# end columns spanning the counted turns in time order, model columns naming
-# the latest usage-bearing model, firstmate's own session, --since filtering,
-# compare totals and shared-task rows, one-line read and write errors, and the
-# task subcommand.
+# that records no cwd, two tasks with the same spawn epoch staying ambiguous,
+# a session that opened on a user turn before the slot was respawned, and a log
+# whose records are not in time order, the start and end columns spanning the
+# counted turns in time order, model columns naming the latest usage-bearing
+# model, firstmate's own session, --since filtering, compare totals and
+# shared-task rows, one-line read and write errors, and the task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -876,6 +876,34 @@ test_earlier_occupant_window_closes_at_the_next_spawn() {
   pass "an earlier occupant's window closes at the next spawn on the same slot"
 }
 
+test_equal_spawn_epochs_stay_unattributed() {
+  local home claude pi nm out slot
+  home=$(make_home equal-spawn)
+  claude=$TMP_ROOT/equal-spawn-claude
+  pi=$TMP_ROOT/equal-spawn-pi
+  nm=$TMP_ROOT/equal-spawn-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/reused/18/repo
+
+  fm_write_meta "$home/state/first-occupant.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$LATE_SPAWN.118.218"
+  fm_write_meta "$home/state/second-occupant.meta" \
+    "worktree=$slot" "kind=scout" "spawn_gen=s$LATE_SPAWN.119.219"
+  claude_session "$claude" sess-equal-spawn "$slot" fm/equal claude-opus-5 \
+    $((LATE_SPAWN + 100)) 1 2 3 4 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the equal-spawn fixture"
+
+  [ "$(field "$out" sess-equal-spawn 1)" = "-" ] \
+    || fail "sort order assigned a task when spawn epochs were equal"
+  [ "$(field "$out" sess-equal-spawn 2)" = "-" ] \
+    || fail "an equal-spawn session was given a kind"
+  [ "$(field "$out" sess-equal-spawn 4)" = "$slot" ] \
+    || fail "the equal-spawn session lost its worktree"
+  pass "equal spawn epochs keep a reused slot unattributed"
+}
+
 test_firstmate_and_since_filter() {
   local home claude pi nm out
   home=$(make_home firstmate-own)
@@ -1100,6 +1128,7 @@ test_out_of_order_log_attributes_on_its_earliest_turn
 test_out_of_order_log_reports_its_counted_window_in_time_order
 test_dst_fallback_keeps_timestamps_and_rows_chronological
 test_earlier_occupant_window_closes_at_the_next_spawn
+test_equal_spawn_epochs_stay_unattributed
 test_firstmate_and_since_filter
 test_snapshot_writes_a_labelled_file_and_totals
 test_compare_totals_and_shared_tasks

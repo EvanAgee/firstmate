@@ -485,6 +485,12 @@ def spawn_windows(
         entries.sort()
         bounded = []
         for index, (spawned, task, kind) in enumerate(entries):
+            same_second = (
+                (index > 0 and entries[index - 1][0] == spawned)
+                or (index + 1 < len(entries) and entries[index + 1][0] == spawned)
+            )
+            if same_second:
+                continue
             next_spawn = (
                 entries[index + 1][0]
                 if index + 1 < len(entries)
