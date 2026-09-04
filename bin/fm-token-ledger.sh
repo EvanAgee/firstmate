@@ -19,11 +19,14 @@
 # or after --since are dropped entirely.
 #
 # compare prints the two files' totals side by side with percent change, then
-# every task id present in both with its own before/after. Rows in only one file
-# are listed by id so a disappearance is never silent.
+# every task id present in both with its own before/after. A per-task token
+# figure sums input, cache_write, cache_read, and output only, because thinking
+# is already counted inside output. Rows in only one file are listed by id so a
+# disappearance is never silent.
 #
 # task prints one task's sessions and its totals, in the same column order, for
-# quoting in a teardown report.
+# quoting in a teardown report. It counts the task's whole history rather than
+# one window, so it needs no --since.
 #
 # SOURCES
 #   Claude Code  ~/.claude/projects/<cwd-slug>/<session>.jsonl and
@@ -74,6 +77,8 @@
 #     records only whole seconds, a window starts at the next whole second and
 #     leaves the recorded spawn second unattributed. It ends at the next spawn
 #     epoch for that same worktree, or at snapshot time when that comes first.
+#     Two tasks on one worktree that record the same whole-second spawn_gen are
+#     ambiguous, so neither gets a window and sort order never picks an owner.
 #     The meta's kind= chooses scout or secondmate; everything else, a ship spawn
 #     included, is a worker. An opening user turn without a usable timestamp
 #     makes the opening time uncertain, so spawn-window attribution stays unset.
