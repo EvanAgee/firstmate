@@ -8,8 +8,10 @@
 # Covered: Claude token columns, Pi token and cost columns, pipeline
 # attribution by manager branch and by the no-mistakes worktrees root, the
 # no-guess rule that keeps a session outside every spawn window unattributed
-# when a worktree slot is reused, firstmate's own session, --since filtering,
-# compare totals and shared-task rows, and the task subcommand.
+# when a worktree slot is reused, the same no-guess rule holding under a --since
+# cutoff placed after the slot was respawned, firstmate's own session, --since
+# filtering, compare totals and shared-task rows, compare's one-line error on a
+# non-numeric cell, and the task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -257,6 +259,48 @@ test_reused_slot_never_guesses() {
   pass "a session outside every spawn window stays unattributed on a reused slot"
 }
 
+test_since_never_moves_a_session_onto_another_task() {
+  local home claude pi nm out slot now first_turn respawn
+  home=$(make_home since-attribution)
+  claude=$TMP_ROOT/since-attribution-claude
+  pi=$TMP_ROOT/since-attribution-pi
+  nm=$TMP_ROOT/since-attribution-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/reused/11/repo
+  now=$(date +%s)
+  first_turn=$((now - 30 * 3600))
+  respawn=$((now - 3600))
+
+  # An overnight session that still runs, in a slot respawned an hour ago for a
+  # different task. Only the new occupant has a meta, so nothing proves the old
+  # session's owner and it must stay unattributed under every cutoff.
+  fm_write_meta "$home/state/today-task.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$respawn.110.210"
+  claude_session "$claude" sess-overnight "$slot" fm/overnight claude-opus-5 \
+    "$first_turn" 1 2 3 4 0
+  claude_session "$claude" sess-overnight "$slot" fm/overnight claude-opus-5 \
+    $((now - 600)) 1 2 3 4 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot with full history failed"
+  [ "$(field "$out" sess-overnight 1)" = "-" ] \
+    || fail "with full history the overnight session was charged to the new occupant"
+
+  # The cutoff sits after the respawn, so only the recent turns are counted.
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot \
+    --since "$(iso_at $((respawn + 60)))" --stdout) \
+    || fail "snapshot with a cutoff after the respawn failed"
+  [ "$(field "$out" sess-overnight 1)" = "-" ] \
+    || fail "--since moved the overnight session onto the task that now holds the slot"
+  [ "$(field "$out" sess-overnight 2)" = "-" ] \
+    || fail "--since gave the overnight session a kind it has no evidence for"
+  [ "$(field "$out" sess-overnight 4)" = "$slot" ] \
+    || fail "the unattributed overnight session lost its worktree"
+  [ "$(field "$out" sess-overnight 9)" = 1 ] \
+    || fail "--since should still count only the turns at or after the cutoff"
+  pass "--since scopes which turns are counted and never which task is billed"
+}
+
 test_earlier_occupant_window_closes_at_the_next_spawn() {
   local home claude pi nm out slot
   home=$(make_home window-close)
@@ -431,6 +475,31 @@ test_task_subcommand() {
   pass "task prints one task's sessions and its totals"
 }
 
+test_compare_rejects_a_non_numeric_cell() {
+  local home claude pi nm good bad out
+  home=$(make_home bad-cell)
+  claude=$TMP_ROOT/bad-cell-claude
+  pi=$TMP_ROOT/bad-cell-pi
+  nm=$TMP_ROOT/bad-cell-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  claude_session "$claude" sess-cell "$TMP_ROOT/elsewhere" HEAD claude-opus-5 \
+    $((EARLY_SPAWN + 1)) 1 2 3 4 0
+  run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --label good >/dev/null \
+    || fail "the snapshot that seeds the bad-cell fixture failed"
+
+  good=$home/data/token-ledger/good.tsv
+  bad=$home/data/token-ledger/bad.tsv
+  awk -F'\t' 'BEGIN {OFS = "\t"} NR > 1 {$15 = "N/A"} {print}' "$good" >"$bad"
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" compare "$good" "$bad" 2>&1)
+  expect_code 1 "$?" "compare on a non-numeric cost_usd"
+  assert_contains "$out" "non-numeric cost_usd" \
+    "compare did not name the bad cost cell in a one-line error"
+  assert_not_contains "$out" "Traceback" "compare leaked a Python traceback"
+  pass "compare reports a non-numeric cell as a one-line error"
+}
+
 test_usage_errors() {
   local home claude pi nm
   home=$(make_home usage)
@@ -453,11 +522,13 @@ test_claude_columns_and_worker_attribution
 test_pi_columns_cost_and_scout_kind
 test_pipeline_attribution
 test_reused_slot_never_guesses
+test_since_never_moves_a_session_onto_another_task
 test_earlier_occupant_window_closes_at_the_next_spawn
 test_firstmate_and_since_filter
 test_snapshot_writes_a_labelled_file_and_totals
 test_compare_totals_and_shared_tasks
 test_task_subcommand
+test_compare_rejects_a_non_numeric_cell
 test_usage_errors
 
 echo "# all fm-token-ledger tests passed"

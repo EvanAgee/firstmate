@@ -56,10 +56,13 @@
 #
 #   worker/scout  state/<id>.meta names a worktree= and a spawn_gen=
 #     s<epoch>.<pid>.<rand>. A session in that worktree is that task's only when
-#     its first counted turn falls inside the task's spawn window. A window runs
-#     from its own spawn epoch to the next spawn epoch recorded for that same
-#     worktree, and to now for the newest one. The meta's kind= chooses scout or
-#     secondmate; everything else, a ship spawn included, is a worker.
+#     its first turn falls inside the task's spawn window. That test reads the
+#     session's true first turn, the earliest turn in the whole log, so --since
+#     changes only which turns are counted and never who a session belongs to.
+#     A window runs from its own spawn epoch to the next spawn epoch recorded
+#     for that same worktree, and to now for the newest one. The meta's kind=
+#     chooses scout or secondmate; everything else, a ship spawn included, is a
+#     worker.
 #
 #     Treehouse and Orca reuse a worktree slot across tasks, so a slot's path is
 #     not an identity. A session that started before the current occupant's
@@ -152,6 +155,8 @@ MANAGER_BRANCH = re.compile(r"^manager/(.+)$")
 # anything else that holds a worktree and a spawn generation.
 META_KIND = {"scout": "scout", "secondmate": "secondmate"}
 SPAWN_GEN = re.compile(r"^s(\d+)\.")
+INTEGER_CELL = re.compile(r"^-?\d+$")
+NUMBER_CELL = re.compile(r"^-?\d+(\.\d+)?$")
 
 
 class LedgerError(Exception):
@@ -228,6 +233,7 @@ def blank_session(harness: str, path: Path) -> dict:
         "model": "-",
         "start": None,
         "end": None,
+        "first_turn": None,
         "turns": 0,
         "cost_usd": 0.0,
         "tokens": Counter(),
@@ -246,7 +252,10 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
         if not isinstance(usage, dict):
             continue
         moment = parse_stamp(record.get("timestamp"))
-        if moment is None or moment < since:
+        if moment is None:
+            continue
+        row["first_turn"] = row["first_turn"] or moment
+        if moment < since:
             continue
         row["turns"] += 1
         row["start"] = row["start"] or moment
@@ -278,7 +287,10 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
         if not isinstance(usage, dict) or "totalTokens" not in usage:
             continue
         moment = parse_stamp(record.get("timestamp") or message.get("timestamp"))
-        if moment is None or moment < since:
+        if moment is None:
+            continue
+        row["first_turn"] = row["first_turn"] or moment
+        if moment < since:
             continue
         row["turns"] += 1
         row["start"] = row["start"] or moment
@@ -370,10 +382,10 @@ def attribute(row: dict, windows: dict) -> tuple[str, str]:
             return resolved.name, "pipeline"
         if resolved == resolve(ROOT):
             return "firstmate", "firstmate"
-    start = row["start"]
-    if start is not None:
+    first_turn = row["first_turn"]
+    if first_turn is not None:
         for spawned, ends, task, kind in windows.get(str(resolve(worktree)), []):
-            if start >= spawned and (ends is None or start < ends):
+            if first_turn >= spawned and (ends is None or first_turn < ends):
                 return task, kind
     return "-", "-"
 
@@ -463,7 +475,13 @@ def read_tsv(path: Path) -> list[dict]:
         values = line.split("\t")
         if len(values) != len(header):
             die(f"error: {path} has a row with {len(values)} fields, expected {len(header)}")
-        rows.append(dict(zip(header, values)))
+        row = dict(zip(header, values))
+        for column in ["turns"] + TOKEN_COLUMNS:
+            if not INTEGER_CELL.match(row[column]):
+                die(f"error: {path} has a non-numeric {column}: {row[column]!r}")
+        if not NUMBER_CELL.match(row["cost_usd"]):
+            die(f"error: {path} has a non-numeric cost_usd: {row['cost_usd']!r}")
+        rows.append(row)
     return rows
 
 
