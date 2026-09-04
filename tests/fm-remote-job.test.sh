@@ -203,16 +203,13 @@ case "$LONG_CMD" in
 esac
 pass "process_command keeps the worker name beyond the default ps width"
 
-# Match the Linux start path: job control puts the restart supervisor in its
-# own process group so later ensure stops can signal the whole tree. Without
-# that, worker.pid is a serving child in this test's group, stop_worker_tree
-# refuses to signal it, and a leftover supervisor wins the next lock race.
-set -m
+# Start through the Linux entry point so replacement exercises the same process
+# group contract as production.
 HOME="$ACCOUNT_HOME" PATH="$RUNTIME_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_FAKE_PERL_LOG="$FAKE_PERL_LOG" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_REMOTE_JOB_TIMEOUT=5 \
-  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" > "$TMP_ROOT/worker.out" 2> "$TMP_ROOT/worker.err" &
-set +m
+  fm_remote_job_start_linux_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
+  || fail "$FM_REMOTE_JOB_ERROR"
 for _ in $(seq 1 100); do
   [ -f "$STATE_ROOT/worker.ready" ] && break
   sleep 0.05
