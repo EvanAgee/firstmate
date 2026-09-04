@@ -83,7 +83,9 @@
 #
 #   pipeline      a no-mistakes agent session, identified by a manager/<run-id>
 #     branch or by a cwd under the no-mistakes worktrees root. The run id is the
-#     branch suffix, else the last path segment of the cwd.
+#     branch suffix, else the run-directory component directly under the
+#     repo-hash directory. For example, <root>/<repo-hash>/RUN/apps/admin
+#     attributes to RUN.
 #
 #   firstmate     a session whose cwd is this home's own primary checkout.
 #
