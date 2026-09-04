@@ -2527,6 +2527,19 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
   esac
 }
 
+# Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
+# create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
+# Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
+# later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
+# targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
+TASK_TMP="/tmp/fm-$ID"
+task_tmp_directory_prepare "$TASK_TMP" || exit 1
+task_tmp_directory_prepare "$TASK_TMP/gotmp" || exit 1
+if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
+  OMP_SESSION_DIR="$TASK_TMP/omp-sessions"
+  task_tmp_directory_prepare "$OMP_SESSION_DIR" || exit 1
+fi
+
 W="fm-$ID"
 RELAUNCH_HERDR_WORKSPACE_CHANGED=0
 if [ "$RELAUNCH" -eq 1 ]; then
@@ -3013,19 +3026,6 @@ if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
   }
 fi
 
-# Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
-# create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
-# Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
-# later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
-# targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
-TASK_TMP="/tmp/fm-$ID"
-task_tmp_directory_prepare "$TASK_TMP" || exit 1
-task_tmp_directory_prepare "$TASK_TMP/gotmp" || exit 1
-if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
-  OMP_SESSION_DIR="$TASK_TMP/omp-sessions"
-  task_tmp_directory_prepare "$OMP_SESSION_DIR" || exit 1
-fi
-
 WORKER_SKILL_CLAUDE=
 WORKER_SKILL_PI=
 WORKER_SKILL_OMP=
@@ -3040,6 +3040,8 @@ if [ "$KIND" != secondmate ]; then
     WORKER_PONYTAIL_SOURCE="$WORKER_SKILLS_ROOT/ponytail/SKILL.md"
     WORKER_CAVEMAN=
     WORKER_PONYTAIL=
+    WORKER_CAVEMAN_BODY=
+    WORKER_PONYTAIL_BODY=
     WORKER_SKILLS_MISSING=
     if ! WORKER_CAVEMAN=$(resolve_worker_skill_file "$WORKER_CAVEMAN_SOURCE"); then
       WORKER_SKILLS_MISSING=$WORKER_CAVEMAN_SOURCE
@@ -3047,8 +3049,18 @@ if [ "$KIND" != secondmate ]; then
     if ! WORKER_PONYTAIL=$(resolve_worker_skill_file "$WORKER_PONYTAIL_SOURCE"); then
       WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
     fi
+    if [ -n "$WORKER_CAVEMAN" ] \
+       && ! WORKER_CAVEMAN_BODY=$(cat "$WORKER_CAVEMAN"); then
+      WORKER_CAVEMAN=
+      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_CAVEMAN_SOURCE"
+    fi
+    if [ -n "$WORKER_PONYTAIL" ] \
+       && ! WORKER_PONYTAIL_BODY=$(cat "$WORKER_PONYTAIL"); then
+      WORKER_PONYTAIL=
+      WORKER_SKILLS_MISSING="${WORKER_SKILLS_MISSING}${WORKER_SKILLS_MISSING:+, }$WORKER_PONYTAIL_SOURCE"
+    fi
     if [ -n "$WORKER_SKILLS_MISSING" ]; then
-      echo "SKILLS: missing worker skill file(s): $WORKER_SKILLS_MISSING; continuing without the missing skill(s)" >&2
+      echo "SKILLS: unavailable worker skill file(s): $WORKER_SKILLS_MISSING; continuing without the unavailable skill(s)" >&2
     fi
 
     WORKER_SKILL_LEVELS=
@@ -3066,10 +3078,10 @@ if [ "$KIND" != secondmate ]; then
       WORKER_SKILL_PROMPT=$(mktemp "$TASK_TMP/worker-skills.XXXXXXXX") || return 1
       {
         printf 'Active skill levels: %s\n\n' "$WORKER_SKILL_LEVELS"
-        [ -z "$WORKER_CAVEMAN" ] || cat "$WORKER_CAVEMAN"
+        [ -z "$WORKER_CAVEMAN" ] || printf '%s\n' "$WORKER_CAVEMAN_BODY"
         if [ -n "$WORKER_PONYTAIL" ]; then
           [ -z "$WORKER_CAVEMAN" ] || printf '\n'
-          cat "$WORKER_PONYTAIL"
+          printf '%s\n' "$WORKER_PONYTAIL_BODY"
         fi
       } > "$WORKER_SKILL_PROMPT"
     }
@@ -3601,7 +3613,7 @@ EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__WORKERSKILLCLAUDE__/$WORKER_SKILL_CLAUDE}
-LAUNCH=${LAUNCH//__WORKERSKILLPI__/$WORKER_SKILL_PI}
+LAUNCH=${LAUNCH//__WORKERSKILLPI__/"$WORKER_SKILL_PI"}
 LAUNCH=${LAUNCH//__WORKERSKILLOMP__/$WORKER_SKILL_OMP}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}

@@ -22,6 +22,7 @@ cleanup() {
     meta="$home/state/$id.meta"
     tasktmp=$(sed -n 's/^tasktmp=//p' "$meta" 2>/dev/null)
     [ -n "$tasktmp" ] || tasktmp=$(sed -n 's/^tasktmp=//p' "$meta.test-owner" 2>/dev/null)
+    [ -n "$tasktmp" ] || tasktmp="/tmp/fm-$id"
     case "$id:$tasktmp" in
       profile-*:/tmp/fm-"$id") rm -rf "$tasktmp" ;;
     esac
@@ -107,6 +108,23 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/timeout" "$fakebin/cursor-agent"
+  cat > "$fakebin/cat" <<'SH'
+#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ -n "${FM_FAKE_CAT_FAILURE_PATH:-}" ] \
+   && [ "$1" = "$FM_FAKE_CAT_FAILURE_PATH" ]; then
+  exit 1
+fi
+exec /bin/cat "$@"
+SH
+  cat > "$fakebin/id" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -u ] && [ -n "${FM_FAKE_CURRENT_UID:-}" ]; then
+  printf '%s\n' "$FM_FAKE_CURRENT_UID"
+  exit 0
+fi
+exec /usr/bin/id "$@"
+SH
+  chmod +x "$fakebin/cat" "$fakebin/id"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
   cat > "$fakebin/herdr" <<'SH'
@@ -290,6 +308,8 @@ run_spawn() {
     FM_FAKE_ENDPOINT_LOG="$endpointlog" \
     FM_FAKE_TREEHOUSE_LOG="$treehouselog" FM_FAKE_OMP_ACK="${FM_TEST_OMP_ACK:-}" \
     FM_FAKE_OMP_APPEND="${FM_TEST_OMP_APPEND:-yes}" \
+    FM_FAKE_CAT_FAILURE_PATH="${FM_TEST_CAT_FAILURE_PATH:-}" \
+    FM_FAKE_CURRENT_UID="${FM_TEST_CURRENT_UID:-}" \
     FM_FAKE_HERDR_PANE_FLAG="$herdrpaneflag" \
     FM_FAKE_HERDR_REFUSE_CLOSE="${FM_TEST_HERDR_REFUSE_CLOSE:-0}" \
     FM_FAKE_OMP_META_TAMPER="${FM_TEST_OMP_META_TAMPER:-}" \
@@ -438,6 +458,31 @@ test_pi_family_loads_each_worker_skill_directory() {
   pass "Pi and pi-signed launch with each worker skill directory"
 }
 
+test_pi_worker_skill_paths_preserve_ampersands() {
+  local rec id out status launch worker_home tasktmp
+  id=$(profile_id profile-worker-skills-pi-ampersand)
+  rec=$(make_spawn_case profile-worker-skills-pi-ampersand pi "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+  worker_home="$CASE_DIR/worker&home"
+  mv "$CASE_DIR/worker-home" "$worker_home"
+  worker_home=$(cd "$worker_home" && pwd -P)
+
+  out=$(FM_TEST_KEEP_TASK_TMP=1 FM_TEST_WORKER_HOME="$worker_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "Pi worker-skill spawn with an ampersand-bearing HOME should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--skill '$worker_home/.agents/skills/caveman'" \
+    "Pi launch corrupted the caveman skill directory"
+  assert_contains "$launch" "--skill '$worker_home/.agents/skills/ponytail'" \
+    "Pi launch corrupted the ponytail skill directory"
+  assert_not_contains "$launch" '__WORKERSKILLPI__' \
+    "Pi launch expanded an ampersand into the worker-skill placeholder"
+  rm -rf "$tasktmp"
+  pass "Pi preserves ampersands in worker skill paths"
+}
+
 test_omp_loads_concatenated_worker_skill_prompt() {
   local rec id out status launch prompt tasktmp
   id=$(profile_id profile-worker-skills-omp)
@@ -567,6 +612,58 @@ test_missing_worker_skill_warns_once_and_launches() {
     "spawn passed a missing ponytail skill directory"
   rm -rf "$tasktmp"
   pass "a missing worker skill warns once and does not fail the launch"
+}
+
+test_worker_skill_read_failure_warns_once_and_drops_only_failed_skill() {
+  local rec id out status prompt caveman_source caveman_resolved tasktmp
+  id=$(profile_id profile-worker-skills-read-failure)
+  rec=$(make_spawn_case profile-worker-skills-read-failure claude "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+  caveman_source="$CASE_DIR/worker-home/.agents/skills/caveman/SKILL.md"
+  caveman_resolved=$(cd "$(dirname "$caveman_source")" && pwd -P)/SKILL.md
+
+  out=$(FM_TEST_KEEP_TASK_TMP=1 FM_TEST_CAT_FAILURE_PATH="$caveman_resolved" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "spawn should continue when one resolved worker skill cannot be read"
+  [ "$(printf '%s\n' "$out" | grep -c '^SKILLS:')" = 1 ] \
+    || fail "unreadable worker skill did not produce exactly one SKILLS diagnostic"
+  assert_contains "$out" "$caveman_source" \
+    "unreadable worker skill diagnostic did not name the failed file"
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+  [ "$(sed -n '1p' "$prompt")" = 'Active skill levels: ponytail: full' ] \
+    || fail "worker skill prompt claimed the unreadable caveman skill was active"
+  assert_no_grep 'CAVEMAN_FIXTURE_BODY' "$prompt" \
+    "worker skill prompt included the unreadable caveman body"
+  assert_grep 'PONYTAIL_FIXTURE_BODY' "$prompt" \
+    "worker skill prompt dropped the readable ponytail body"
+  rm -rf "$tasktmp"
+  pass "an unreadable worker skill warns once and is not claimed active"
+}
+
+test_task_tmp_refusal_precedes_endpoint_and_worktree_allocation() {
+  local rec id out status tasktmp
+  id=$(profile_id profile-task-tmp-ordering)
+  rec=$(make_spawn_case profile-task-tmp-ordering claude "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+  mkdir "$tasktmp"
+
+  out=$(FM_TEST_CURRENT_UID=999999 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "spawn should refuse a task temp root owned by another user"
+  assert_contains "$out" "task temp directory is not owned by the current user" \
+    "task temp ownership refusal was not reported"
+  [ ! -s "$CASE_DIR/endpoint.log" ] \
+    || fail "task temp ownership refusal created a backend endpoint"
+  [ ! -s "$CASE_DIR/treehouse.log" ] \
+    || fail "task temp ownership refusal allocated a worktree"
+  assert_absent "$HOME_DIR/state/$id.meta" \
+    "task temp ownership refusal wrote task metadata"
+  rm -rf "$tasktmp"
+  pass "task temp validation runs before endpoint and worktree allocation"
 }
 
 test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
@@ -1643,11 +1740,14 @@ test_no_profile_keeps_claude_profile_defaults
 test_non_cursor_launch_clears_inherited_cursor_markers
 test_claude_loads_concatenated_worker_skill_prompt
 test_pi_family_loads_each_worker_skill_directory
+test_pi_worker_skill_paths_preserve_ampersands
 test_omp_loads_concatenated_worker_skill_prompt
 test_omp_without_append_support_uses_worker_skill_brief
 test_fallback_harness_gets_worker_skill_brief_prefix
 test_task_tmp_uses_private_directories_and_exclusive_files
 test_missing_worker_skill_warns_once_and_launches
+test_worker_skill_read_failure_warns_once_and_drops_only_failed_skill
+test_task_tmp_refusal_precedes_endpoint_and_worktree_allocation
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
