@@ -9,11 +9,10 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
-# GitHub concurrency groups retain at most one pending run, replacing older
-# pending runs even when cancel-in-progress is false. Give body-bearing events
-# an immutable per-event group so first-time-fork approvals can never collapse
-# opened/edited checks. Keep synchronize/reopened coalescing as before.
+# Keep body-bearing events independent, then read the current PR body below so
+# a multi-write no-mistakes update cannot strand an intermediate body snapshot.
 concurrency:
   group: no-mistakes-required-${{ github.event.pull_request.number }}-${{ (github.event.action == 'opened' || github.event.action == 'edited') && github.run_id || 'head-change' }}
   cancel-in-progress: true
@@ -28,16 +27,23 @@ jobs:
     steps:
       - name: Verify no-mistakes signature in PR body
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -eu
           marker='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
-          if printf '%s' "${PR_BODY:-}" | grep -qF -- "$marker"; then
-            echo "Found no-mistakes signature in PR #${PR_NUMBER} body."
-            exit 0
-          fi
+          attempt=1
+          while [ "$attempt" -le 5 ]; do
+            pr_body=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
+            if printf '%s' "$pr_body" | grep -qF -- "$marker"; then
+              echo "Found no-mistakes signature in PR #${PR_NUMBER} body."
+              exit 0
+            fi
+            [ "$attempt" -eq 5 ] || sleep 2
+            attempt=$((attempt + 1))
+          done
           {
             echo "::error::This PR was not raised through no-mistakes."
             echo
