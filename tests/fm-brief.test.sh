@@ -332,6 +332,30 @@ test_matt_flow_is_explicit_and_thin() {
   pass "fm-brief.sh: Matt-flow is explicit, complete, and thin"
 }
 
+test_matt_flow_without_pipeline_keeps_code_review() {
+  local home mode id brief
+  home="$TMP_ROOT/matt-flow-without-pipeline-home"
+  mkdir -p "$home/data"
+
+  for mode in direct-PR local-only; do
+    id="brief-matt-flow-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --matt-flow >/dev/null 2>&1 \
+      || fail "$mode Matt-flow brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Matt-flow" "$brief" \
+      "$mode Matt-flow brief missing its thin trigger section"
+    assert_grep "Follow the flow's own instructions phase by phase through \`code-review\`, without skipping phases." "$brief" \
+      "$mode Matt-flow brief did not retain review before delivery"
+    assert_grep "Leave each phase's natural artifact (spec file, tickets folder, failing-test commit, and review notes) and append one status line at every phase transition." "$brief" \
+      "$mode Matt-flow brief did not retain its review artifact"
+    assert_no_grep "through \`tdd\`, then stop the flow there" "$brief" \
+      "$mode Matt-flow brief stopped before its required review"
+    assert_no_grep "The no-mistakes pipeline in the Definition of done owns review" "$brief" \
+      "$mode Matt-flow brief assigned review to a pipeline it does not run"
+  done
+  pass "fm-brief.sh: Matt-flow retains review when no pipeline follows"
+}
+
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
 # unusable value must stop the scaffold instead of silently defaulting. The
 # no-mistakes-prod-only row is the conditional registry policy: it is never a task
@@ -898,6 +922,7 @@ test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
+test_matt_flow_without_pipeline_keeps_code_review
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply

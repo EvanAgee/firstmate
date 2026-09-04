@@ -457,12 +457,25 @@ IFS= read -r -d '' MATT_FLOW_SECTION <<'EOF' || true
 # Matt-flow
 This brief declares this task a Matt-flow task.
 Enter at the project-installed `to-spec` skill, or `triage` for bug work.
+EOF
+MATT_FLOW_SECTION=${MATT_FLOW_SECTION%$'\n'}
+case "$MODE" in
+  no-mistakes)
+    IFS= read -r -d '' MATT_FLOW_MODE_SECTION <<'EOF' || true
 Follow the flow's own instructions phase by phase through `tdd`, then stop the flow there.
 The no-mistakes pipeline in the Definition of done owns review, so do not run a separate review skill, review sub-agent, or hand review pass before validation.
 Leave each phase's natural artifact (spec file, tickets folder, and failing-test commit) and append one status line at every phase transition.
 EOF
-MATT_FLOW_SECTION=${MATT_FLOW_SECTION%$'\n'}
-MATT_FLOW_SECTION=$'\n'"$MATT_FLOW_SECTION"$'\n'
+    ;;
+  *)
+    IFS= read -r -d '' MATT_FLOW_MODE_SECTION <<'EOF' || true
+Follow the flow's own instructions phase by phase through `code-review`, without skipping phases.
+Leave each phase's natural artifact (spec file, tickets folder, failing-test commit, and review notes) and append one status line at every phase transition.
+EOF
+    ;;
+esac
+MATT_FLOW_MODE_SECTION=${MATT_FLOW_MODE_SECTION%$'\n'}
+MATT_FLOW_SECTION=$'\n'"$MATT_FLOW_SECTION"$'\n'"$MATT_FLOW_MODE_SECTION"$'\n'
 fi
 
 cat > "$BRIEF" <<EOF
