@@ -199,15 +199,19 @@ SH
 }
 
 make_spawn_case() {
-  local name=$1 harness=$2 case_dir home proj wt fakebin launchlog id
+  local name=$1 harness=$2 case_dir home proj wt fakebin launchlog worker_home id
   shift 2
   case_dir="$TMP_ROOT/$name"
   home="$case_dir/home"
   proj="$case_dir/project"
   wt="$case_dir/wt"
   launchlog="$case_dir/launch.log"
+  worker_home="$case_dir/worker-home"
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
-  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
+  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config" \
+    "$worker_home/.agents/skills/caveman" "$worker_home/.agents/skills/ponytail"
+  printf '%s\n' 'CAVEMAN_FIXTURE_BODY' > "$worker_home/.agents/skills/caveman/SKILL.md"
+  printf '%s\n' 'PONYTAIL_FIXTURE_BODY' > "$worker_home/.agents/skills/ponytail/SKILL.md"
   printf '%s\n' "$harness" > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
@@ -260,11 +264,12 @@ make_seeded_secondmate_home() {
 }
 
 run_spawn() {
-  local home=$1 wt=$2 fakebin=$3 launchlog=$4 endpointlog treehouselog herdrpaneflag rc meta tasktmp
+  local home=$1 wt=$2 fakebin=$3 launchlog=$4 endpointlog treehouselog herdrpaneflag worker_home rc meta tasktmp
   shift 4
   endpointlog="${launchlog%/*}/endpoint.log"
   treehouselog="${launchlog%/*}/treehouse.log"
   herdrpaneflag="${launchlog%/*}/herdr-pane"
+  worker_home="${FM_TEST_WORKER_HOME:-${launchlog%/*}/worker-home}"
   : > "$launchlog"
   : > "$endpointlog"
   : > "$treehouselog"
@@ -273,7 +278,7 @@ run_spawn() {
   # explicitly (empty by default) instead of leaking the invoking shell's value,
   # which would make launch assertions depend on the developer's environment.
   # A test opts in to the set case via FM_TEST_CLAUDE_CONFIG_DIR.
-  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+  HOME="$worker_home" FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
@@ -289,7 +294,7 @@ run_spawn() {
     GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
   rc=$?
-  if [ "$rc" -eq 0 ]; then
+  if [ "$rc" -eq 0 ] && [ "${FM_TEST_KEEP_TASK_TMP:-0}" != 1 ]; then
     for meta in "$home/state"/*.meta; do
       [ -f "$meta" ] || continue
       tasktmp=$(sed -n 's/^tasktmp=//p' "$meta")
@@ -337,7 +342,7 @@ test_no_profile_keeps_claude_profile_defaults() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude default default
 
   launch=$(cat "$LAUNCH_LOG")
-  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-system-prompt-file '/tmp/fm-$id/worker-skills.md' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
   [ "$launch" = "$expected" ] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
@@ -356,6 +361,131 @@ test_non_cursor_launch_clears_inherited_cursor_markers() {
   assert_contains "$launch" "env -u CURSOR_AGENT -u CURSOR_INVOKED_AS" \
     "non-cursor launch must clear both inherited Cursor identity markers"
   pass "non-cursor launches clear inherited Cursor identity markers"
+}
+
+assert_worker_skill_prompt() {  # <prompt-file>
+  local prompt=$1
+  [ "$(sed -n '1p' "$prompt")" = 'Active skill levels: caveman: full, ponytail: full' ] \
+    || fail "worker skill prompt did not start with both full levels"
+  assert_grep 'CAVEMAN_FIXTURE_BODY' "$prompt" "worker skill prompt lost the caveman body"
+  assert_grep 'PONYTAIL_FIXTURE_BODY' "$prompt" "worker skill prompt lost the ponytail body"
+}
+
+test_claude_loads_concatenated_worker_skill_prompt() {
+  local rec id out status launch prompt tasktmp
+  id=$(profile_id profile-worker-skills-claude)
+  rec=$(make_spawn_case profile-worker-skills-claude claude "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+
+  out=$(FM_TEST_KEEP_TASK_TMP=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "Claude worker-skill spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  prompt="$tasktmp/worker-skills.md"
+  assert_contains "$launch" "--append-system-prompt-file '$prompt'" \
+    "Claude launch omitted its worker skill prompt file"
+  assert_worker_skill_prompt "$prompt"
+  rm -rf "$tasktmp"
+  pass "Claude launch appends one prompt containing both worker skills"
+}
+
+test_pi_family_loads_each_worker_skill_directory() {
+  local harness rec id out status launch worker_home tasktmp
+  for harness in pi pi-signed; do
+    id=$(profile_id "profile-worker-skills-$harness")
+    rec=$(make_spawn_case "profile-worker-skills-$harness" "$harness" "$id")
+    read_case_record "$rec"
+    tasktmp="/tmp/fm-$id"
+    worker_home=$(cd "$CASE_DIR/worker-home" && pwd -P)
+
+    out=$(FM_TEST_KEEP_TASK_TMP=1 \
+      run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 0 "$status" "$harness worker-skill spawn should succeed"
+    launch=$(cat "$LAUNCH_LOG")
+    assert_contains "$launch" "--skill '$worker_home/.agents/skills/caveman'" \
+      "$harness launch omitted the caveman skill directory"
+    assert_contains "$launch" "--skill '$worker_home/.agents/skills/ponytail'" \
+      "$harness launch omitted the ponytail skill directory"
+    [ "$(grep -Fo -- '--skill' "$LAUNCH_LOG" | wc -l | tr -d ' ')" = 2 ] \
+      || fail "$harness launch did not pass exactly two --skill flags"
+    rm -rf "$tasktmp"
+  done
+  pass "Pi and pi-signed launch with each worker skill directory"
+}
+
+test_omp_loads_concatenated_worker_skill_prompt() {
+  local rec id out status launch prompt tasktmp
+  id=$(profile_id profile-worker-skills-omp)
+  rec=$(make_spawn_case profile-worker-skills-omp omp "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+
+  out=$(FM_TEST_KEEP_TASK_TMP=1 FM_TEST_OMP_ACK="$HOME_DIR/state/$id.omp-started" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "OMP worker-skill spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  prompt="$tasktmp/worker-skills.md"
+  assert_contains "$launch" "--append-system-prompt='$prompt'" \
+    "OMP launch omitted its worker skill prompt file"
+  assert_worker_skill_prompt "$prompt"
+  rm -rf "$tasktmp"
+  pass "OMP launch appends one prompt containing both worker skills"
+}
+
+test_fallback_harness_gets_worker_skill_brief_prefix() {
+  local rec id out status launch delivered worker_home tasktmp expected
+  id=$(profile_id profile-worker-skills-fallback)
+  rec=$(make_spawn_case profile-worker-skills-fallback codex "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+  delivered="$tasktmp/brief.md"
+  worker_home=$(cd "$CASE_DIR/worker-home" && pwd -P)
+  expected="Caveman and ponytail are active for this session. Load their rules from $worker_home/.agents/skills/caveman/SKILL.md and $worker_home/.agents/skills/ponytail/SKILL.md."
+
+  out=$(FM_TEST_KEEP_TASK_TMP=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "fallback worker-skill spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "encode launch-brief < '$delivered'" \
+    "fallback launch did not deliver the prefixed brief"
+  [ "$(sed -n '1p' "$delivered")" = "$expected" ] \
+    || fail "fallback brief did not name both active skill paths"
+  [ "$(sed -n '2p' "$delivered")" = "brief for $id" ] \
+    || fail "fallback brief prefix replaced the original brief"
+  rm -rf "$tasktmp"
+  pass "fallback launch prepends both worker skill paths to the delivered brief"
+}
+
+test_missing_worker_skill_warns_once_and_launches() {
+  local rec id out status launch worker_home missing tasktmp
+  id=$(profile_id profile-worker-skills-missing)
+  rec=$(make_spawn_case profile-worker-skills-missing pi "$id")
+  read_case_record "$rec"
+  tasktmp="/tmp/fm-$id"
+  worker_home=$(cd "$CASE_DIR/worker-home" && pwd -P)
+  missing="$CASE_DIR/worker-home/.agents/skills/ponytail/SKILL.md"
+  rm "$missing"
+
+  out=$(FM_TEST_KEEP_TASK_TMP=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "spawn should continue when one worker skill is missing"
+  [ "$(printf '%s\n' "$out" | grep -c '^SKILLS:')" = 1 ] \
+    || fail "missing worker skill did not produce exactly one SKILLS diagnostic"
+  assert_contains "$out" "$missing" \
+    "missing worker skill diagnostic did not name the absent file"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--skill '$worker_home/.agents/skills/caveman'" \
+    "spawn dropped the available caveman skill"
+  assert_not_contains "$launch" "--skill '$worker_home/.agents/skills/ponytail'" \
+    "spawn passed a missing ponytail skill directory"
+  rm -rf "$tasktmp"
+  pass "a missing worker skill warns once and does not fail the launch"
 }
 
 test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
@@ -1332,6 +1462,7 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular -e '$sm/.pi/extensions/fm-primary-turnend-guard.ts' -e '$sm/.pi/extensions/fm-primary-pi-watch.ts'" \
     "pi-signed secondmate did not force the regular TUI with Pi's primary extension launch shape"
+  assert_not_contains "$launch" "--skill" "secondmate launch received worker skill flags"
   pass "pi-signed is a distinct persistent secondmate runtime with shared Pi supervision semantics"
 }
 
@@ -1425,6 +1556,11 @@ test_active_dispatch_profile_does_not_block_secondmate_launch() {
 
 test_no_profile_keeps_claude_profile_defaults
 test_non_cursor_launch_clears_inherited_cursor_markers
+test_claude_loads_concatenated_worker_skill_prompt
+test_pi_family_loads_each_worker_skill_directory
+test_omp_loads_concatenated_worker_skill_prompt
+test_fallback_harness_gets_worker_skill_brief_prefix
+test_missing_worker_skill_warns_once_and_launches
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths

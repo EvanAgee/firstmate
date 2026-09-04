@@ -877,6 +877,43 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+test_worker_skills_section_reaches_ship_and_scout_only() {
+  local home ship scout secondmate skill_root
+  home="$TMP_ROOT/worker-skills-home"
+  # shellcheck disable=SC2088 # The generated brief keeps these portable user-home pointers literal.
+  skill_root='~/.agents/skills'
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" worker-skills-ship sample --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" worker-skills-scout sample --scout >/dev/null 2>&1
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample charter' \
+    "$ROOT/bin/fm-brief.sh" worker-skills-secondmate --secondmate --no-projects >/dev/null 2>&1
+  ship="$home/data/worker-skills-ship/brief.md"
+  scout="$home/data/worker-skills-scout/brief.md"
+  secondmate="$home/data/worker-skills-secondmate/brief.md"
+
+  for brief in "$ship" "$scout"; do
+    assert_grep '# Session skills' "$brief" "worker brief omitted the session skills section"
+    assert_grep "Caveman (\`full\`) and ponytail (\`full\`) are active for this session." "$brief" \
+      "worker brief omitted both active skill levels"
+    assert_grep "commits, PRs, issues, and docs stay normal prose" "$brief" \
+      "worker brief let caveman compress durable prose"
+    assert_grep "without dropping required validation, error handling, security, accessibility, or tests" "$brief" \
+      "worker brief let ponytail drop required safeguards"
+    assert_grep "This brief's test requirements win over ponytail's test rule." "$brief" \
+      "worker brief did not resolve the ponytail test-rule collision"
+    assert_grep "$skill_root/caveman/SKILL.md" "$brief" \
+      "worker brief omitted the caveman source pointer"
+    assert_grep "$skill_root/ponytail/SKILL.md" "$brief" \
+      "worker brief omitted the ponytail source pointer"
+    assert_grep "Use \`stop caveman\` or \`stop ponytail\` to turn each skill off." "$brief" \
+      "worker brief omitted the two off-switch phrases"
+  done
+  assert_no_grep '# Session skills' "$secondmate" \
+    "secondmate charter received worker-only skills"
+  pass "ship and scout briefs activate both worker skills without changing secondmate charters"
+}
+
 test_no_subagents_rule_emits_in_every_variant() {
   # Item 7 of fm-anti-drift-hardening (captain standing order 2026-08-21): the
   # no-subagents standing rule must reach every worker through the generated
@@ -940,6 +977,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+test_worker_skills_section_reaches_ship_and_scout_only
 
 # Four worker-silence gaps closed on 2026-09-01 after five of fifteen workers
 # stalled without firstmate ever acting on what they needed. Each stall traced to
