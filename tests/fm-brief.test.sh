@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-brief.sh.
-#
-# Regression coverage for the heredoc-in-command-substitution parse bug (issues
-# #166, #958, #1069). Building a variable with `VAR=$(cat <<EOF ... EOF)` is
-# unsafe on Bash 3.2 (macOS /bin/bash): the lexer scans for the matching `)` of
-# the command substitution textually and tracks quote state through the heredoc
-# body, so a single apostrophe, unbalanced quote, or unbalanced paren anywhere
-# in that body breaks parsing of the *entire rest of the script* - `bash -n`
-# fails, not just the generated brief. The DOD and Herdr-section builders now
-# use `IFS= read -r -d '' VAR <<EOF || true` instead, which removes the `$(...)`
-# wrapper and eliminates the whole defect class regardless of future prose.
-# test_no_heredoc_in_command_substitution guards that structure directly.
-# Ambient `bash -n` here is Bash 5 and cannot see the bug, so the real
-# cross-version enforcement lives in the macos-stock-bash CI job.
+# This suite checks ambient Bash syntax, guards heredoc source structure, and
+# generates a brief with /bin/bash, which is Bash 5 on Ubuntu CI.
+# The macos-stock-bash CI job separately parses changed shell files with Bash 3.2.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -22,10 +12,6 @@ TMP_ROOT=$(fm_test_tmproot fm-brief)
 BRIEF_HOME="$TMP_ROOT/home"
 mkdir -p "$BRIEF_HOME/data"
 
-# The script itself must always parse under the ambient bash. That is Bash 5 in
-# CI and locally, where the issue #958/#1069 parser bug does not fire, so this
-# is a weak guard on its own; test_no_heredoc_in_command_substitution and the
-# macos-stock-bash CI job carry the real cross-version enforcement.
 test_script_parses() {
   local out rc
   out=$(bash -n "$ROOT/bin/fm-brief.sh" 2>&1); rc=$?
@@ -34,12 +20,6 @@ test_script_parses() {
   pass "fm-brief.sh: bash -n succeeds"
 }
 
-# Structural class guard (issues #166, #958, #1069): never build a variable by
-# wrapping a heredoc in a command substitution (`VAR=$(cat <<EOF ... EOF)`).
-# That construct is what breaks Bash 3.2 parsing, and pinning one historical
-# apostrophe phrase (as the old test did) missed the #945 reintroduction. This
-# guards the *shape* directly against the whole file, so any future DOD or
-# section builder that reintroduces the class fails here regardless of prose.
 test_no_heredoc_in_command_substitution() {
   local unsafe safe
   unsafe="$TMP_ROOT/heredoc-in-substitution.sh"
@@ -168,6 +148,19 @@ while (my $line = <$source>) {
 
 exit 0;
 PERL
+}
+
+test_stock_bash_generates_worker_brief() {
+  local home brief out status
+  home="$TMP_ROOT/stock-bash-home"
+  mkdir -p "$home/data"
+  out=$(FM_HOME="$home" /bin/bash "$ROOT/bin/fm-brief.sh" stock-bash-worker sample --scout 2>&1)
+  status=$?
+  expect_code 0 "$status" "stock Bash should generate a worker brief (got: $out)"
+  brief="$home/data/stock-bash-worker/brief.md"
+  assert_present "$brief" "stock Bash did not generate the worker brief"
+  assert_grep '# Session skills' "$brief" "stock Bash lost the session skills section"
+  pass "fm-brief.sh: stock Bash generates the worker brief"
 }
 
 test_help_includes_entire_header() {
@@ -486,12 +479,8 @@ test_no_mistakes_dod_wording() {
     "no-mistakes DOD must keep direct requirements and exclude generic scaffold boilerplate from --intent"
   assert_grep "exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific" "$brief" \
     "no-mistakes DOD must exclude non-task-specific scaffold boilerplate from --intent"
-  # The apostrophe in "firstmate's authority check" is now structurally safe
-  # (no `$(...)` wrapper around the heredoc), so it renders verbatim instead of
-  # being reworded or escaped away. test_no_heredoc_in_command_substitution
-  # guards the structure that makes it safe.
   assert_grep "firstmate's authority check" "$brief" \
-    "no-mistakes DOD lost the apostrophe prose that the structural fix makes parse-safe"
+    "no-mistakes DOD lost its authority-check wording"
   assert_grep ".agents/skills/review-loop-stop/SKILL.md" "$brief" \
     "no-mistakes DOD must load the repeated-review stop before another fix response"
   assert_grep "$ROOT/bin/fm-review-loop-stop.sh" "$brief" \
@@ -877,6 +866,49 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+test_worker_skills_section_reaches_ship_and_scout_only() {
+  local home ship scout secondmate skill_root
+  home="$TMP_ROOT/worker-skills-home"
+  # shellcheck disable=SC2088 # The generated brief keeps these portable user-home pointers literal.
+  skill_root='~/.agents/skills'
+  secondmate="$home/data/worker-skills-secondmate/brief.md"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" worker-skills-ship sample --mode no-mistakes >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" worker-skills-scout sample --scout >/dev/null 2>&1
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample charter' \
+    "$ROOT/bin/fm-brief.sh" worker-skills-secondmate --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate scaffold failed before creating $secondmate"
+  ship="$home/data/worker-skills-ship/brief.md"
+  scout="$home/data/worker-skills-scout/brief.md"
+  assert_present "$secondmate" "secondmate scaffold did not create $secondmate"
+
+  for brief in "$ship" "$scout"; do
+    assert_grep '# Session skills' "$brief" "worker brief omitted the session skills section"
+    assert_grep "Every structured launch delivers caveman (\`full\`) and ponytail (\`full\`) when their installed skill files are available." "$brief" \
+      "worker brief did not describe structured skill delivery"
+    assert_grep "On a raw launch, load caveman and ponytail yourself before starting." "$brief" \
+      "worker brief falsely described raw-launch skill delivery"
+    assert_grep "caveman keeps chat terse; every durable output stays normal prose, for example commits, PRs, issues, docs, scout reports, review comments, and plans." "$brief" \
+      "worker brief narrowed caveman's durable-output rule"
+    assert_grep "The examples are not an exhaustive list." "$brief" \
+      "worker brief treated the durable-output examples as exhaustive"
+    assert_grep "without dropping required validation, error handling, security, accessibility, or brief-required tests" "$brief" \
+      "worker brief let ponytail drop required safeguards"
+    assert_grep "This brief's test requirements win over ponytail's test rule." "$brief" \
+      "worker brief did not resolve the ponytail test-rule collision"
+    assert_grep "$skill_root/caveman/SKILL.md" "$brief" \
+      "worker brief omitted the caveman source pointer"
+    assert_grep "$skill_root/ponytail/SKILL.md" "$brief" \
+      "worker brief omitted the ponytail source pointer"
+    assert_grep "For delivered skills, the skill-defined off phrases \`stop caveman\` and \`stop ponytail\` are available." "$brief" \
+      "worker brief omitted the two off-switch phrases"
+  done
+  assert_no_grep '# Session skills' "$secondmate" \
+    "secondmate charter received worker-only skills"
+  pass "ship and scout briefs describe available worker skills without changing secondmate charters"
+}
+
 test_no_subagents_rule_emits_in_every_variant() {
   # Item 7 of fm-anti-drift-hardening (captain standing order 2026-08-21): the
   # no-subagents standing rule must reach every worker through the generated
@@ -918,6 +950,7 @@ test_no_subagents_rule_emits_in_every_variant() {
 test_no_subagents_rule_emits_in_every_variant
 test_script_parses
 test_no_heredoc_in_command_substitution
+test_stock_bash_generates_worker_brief
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_pr_producing_modes_own_feedback_until_landing
@@ -940,6 +973,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+test_worker_skills_section_reaches_ship_and_scout_only
 
 # Four worker-silence gaps closed on 2026-09-01 after five of fifteen workers
 # stalled without firstmate ever acting on what they needed. Each stall traced to

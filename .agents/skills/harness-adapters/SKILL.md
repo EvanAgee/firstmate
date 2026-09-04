@@ -122,6 +122,7 @@ When changing any primary watcher adapter, update `docs/supervision-protocols/`,
 ## Launch profile axes
 
 `bin/fm-spawn.sh` accepts `--class` and resolves its concrete harness, model, and effort through `bin/fm-dispatch-resolve.sh`.
+The [`fm-spawn.sh` header](../../../bin/fm-spawn.sh) owns the per-harness caveman and ponytail launch mechanisms and their missing-file fallback.
 Concrete runtime flags alongside a class are captain overrides and require a recorded reason.
 Do not make shell scripts parse or match the human `when`, `why`, or `note` fields.
 

@@ -23,6 +23,7 @@ case "\${1:-}" in
 --session-dir=<value>
 -e, --extension=<value>
 -r, --resume=<value>
+--append-system-prompt=<path>
 EOF
     ;;
   --version) printf 'omp/17.1.8\n' ;;
@@ -112,7 +113,7 @@ test_launch_boundary_marker_preserves_exact_omp_identity() {
 }
 
 test_capability_probe_accepts_required_surface() {
-  local fakebin out status
+  local fakebin out status mode
   fakebin="$TMP_ROOT/capabilities-ok"
   mkdir -p "$fakebin"
   write_fake_omp "$fakebin/omp"
@@ -120,7 +121,21 @@ test_capability_probe_accepts_required_surface() {
   status=$?
   expect_code 0 "$status" "complete OMP capability surface should pass"
   [ "$out" = "$fakebin/omp" ] || fail "capability probe did not print the exact selected OMP executable: $out"
+  mode=$(PATH="$fakebin:/usr/bin:/bin" "$CAPABILITIES" --print-worker-skill-mode 2>&1)
+  [ "$mode" = append-system-prompt ] || fail "capability probe did not select OMP's worker-skill flag: $mode"
   pass "OMP capability probe accepts the required launch and recovery surface"
+}
+
+test_capability_probe_selects_brief_without_append_support() {
+  local fakebin out status
+  fakebin="$TMP_ROOT/no-worker-skill-flag"
+  mkdir -p "$fakebin"
+  write_fake_omp "$fakebin/omp" '--append-system-prompt=<path>'
+  out=$(PATH="$fakebin:/usr/bin:/bin" "$CAPABILITIES" --print-worker-skill-mode 2>&1)
+  status=$?
+  expect_code 0 "$status" "OMP without append-system-prompt should retain its verified base capabilities"
+  [ "$out" = brief ] || fail "OMP without append-system-prompt did not select brief delivery: $out"
+  pass "OMP capability probe selects brief delivery when its worker-skill flag is absent"
 }
 
 test_capability_probe_rejects_non_bun_entrypoint() {
@@ -165,6 +180,7 @@ test_capability_probe_never_falls_back_when_omp_is_missing() {
 
 test_launch_boundary_marker_preserves_exact_omp_identity
 test_capability_probe_accepts_required_surface
+test_capability_probe_selects_brief_without_append_support
 test_capability_probe_rejects_non_bun_entrypoint
 test_capability_probe_reports_every_missing_requirement
 test_capability_probe_never_falls_back_when_omp_is_missing

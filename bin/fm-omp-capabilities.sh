@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Verify the selected OMP executable has Firstmate's required lifecycle and exact process-ownership surface.
-# Usage: fm-omp-capabilities.sh [--print-binary]
-# Success is silent unless --print-binary prints the resolved executable path.
+# Usage: fm-omp-capabilities.sh [--print-binary|--print-worker-skill-mode]
+# Success is silent unless a print option requests the resolved executable path
+# or the append-system-prompt/brief worker-skill delivery mode.
 # Capability checks, rather than a semantic-version floor, own compatibility.
 set -u
 
 PRINT_BINARY=0
+PRINT_WORKER_SKILL_MODE=0
 case "${1:-}" in
   '') ;;
   --print-binary) PRINT_BINARY=1 ;;
+  --print-worker-skill-mode) PRINT_WORKER_SKILL_MODE=1 ;;
   -h|--help)
     sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
@@ -72,3 +75,10 @@ if [ -n "$missing" ]; then
 fi
 
 [ "$PRINT_BINARY" -eq 0 ] || printf '%s\n' "$binary"
+if [ "$PRINT_WORKER_SKILL_MODE" -eq 1 ]; then
+  if printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:]])--append-system-prompt([[:space:]=]|$)'; then
+    printf '%s\n' append-system-prompt
+  else
+    printf '%s\n' brief
+  fi
+fi
