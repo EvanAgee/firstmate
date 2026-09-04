@@ -53,9 +53,10 @@
 #   worktree    the parent session's opening cwd
 #   branch      the parent session's opening gitBranch, "-" for Pi
 #   model       last model the session used
-#   start,end   first and last counted usage record, ISO-8601 local, second precision
+#   start,end   first and last counted usage record, ISO-8601 UTC, second precision
 #   turns       counted assistant turns
-#   input, cache_write, cache_read, output, thinking   token totals
+#   input, cache_write, cache_read, output   token totals
+#   thinking    reasoning tokens included within output, exposed as detail
 #   cost_usd    cost recorded by the harness
 #   session     the session file's basename without .jsonl
 #
@@ -157,6 +158,7 @@ COLUMNS = [
     "session",
 ]
 TOKEN_COLUMNS = ["input", "cache_write", "cache_read", "output", "thinking"]
+TOTAL_TOKEN_COLUMNS = ["input", "cache_write", "cache_read", "output"]
 MANAGER_BRANCH = re.compile(r"^manager/(.+)$")
 # state/<id>.meta kind= to a ledger kind. A ship spawn is a worker, and so is
 # anything else that holds a worktree and a spawn generation.
@@ -205,7 +207,7 @@ def parse_stamp(text: str) -> datetime | None:
 def show_stamp(moment: datetime | None) -> str:
     if moment is None:
         return "-"
-    return moment.astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def read_records(path: Path):
@@ -482,8 +484,13 @@ def spawn_windows(
     return windows
 
 
-def attribute(row: dict, windows: dict) -> tuple[str, str]:
+def attribute(
+    row: dict, windows: dict, snapshot_time: datetime
+) -> tuple[str, str]:
     """One session's (task, kind); ("-", "-") when nothing proves an owner."""
+    first_turn = row["first_turn"]
+    if first_turn is not None and first_turn >= snapshot_time:
+        return "-", "-"
     branch = MANAGER_BRANCH.match(row["branch"] or "")
     if branch:
         return branch.group(1), "pipeline"
@@ -496,7 +503,6 @@ def attribute(row: dict, windows: dict) -> tuple[str, str]:
                 return relative.parts[1], "pipeline"
         if resolved == resolve(ROOT):
             return "firstmate", "firstmate"
-        first_turn = row["first_turn"]
         if first_turn is not None:
             for spawned, ends, task, kind in windows.get(str(resolved), []):
                 if first_turn >= spawned and first_turn < ends:
@@ -508,7 +514,7 @@ def build_rows(since: datetime, snapshot_time: datetime) -> list[dict]:
     windows = spawn_windows(snapshot_time)
     rows = []
     for row in read_sessions(since):
-        task, kind = attribute(row, windows)
+        task, kind = attribute(row, windows, snapshot_time)
         tokens = row["tokens"]
         rows.append(
             {
@@ -691,8 +697,8 @@ def cmd_compare(args: list[str]) -> int:
     for name in shared:
         first = totals(before_tasks[name])
         second = totals(after_tasks[name])
-        total_a = sum(first[column] for column in TOKEN_COLUMNS)
-        total_b = sum(second[column] for column in TOKEN_COLUMNS)
+        total_a = sum(first[column] for column in TOTAL_TOKEN_COLUMNS)
+        total_b = sum(second[column] for column in TOTAL_TOKEN_COLUMNS)
         print(
             f"  {name}: tokens {total_a:,} -> {total_b:,} "
             f"({percent_change(total_a, total_b)}), "

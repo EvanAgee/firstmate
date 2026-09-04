@@ -36,8 +36,8 @@ iso_at() {  # <epoch-seconds> -> the UTC ISO-8601 stamp the logs use
   python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1]),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"
 }
 
-show_stamp_at() {  # <epoch-seconds> -> the local stamp the start and end columns print
-  python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1])).strftime("%Y-%m-%dT%H:%M:%S"))' "$1"
+show_stamp_at() {  # <epoch-seconds> -> the UTC stamp the start and end columns print
+  python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1]),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"
 }
 
 # claude_session <sessions-root> <session-id> <cwd> <branch> <model> <epoch> <in> <cw> <cr> <out> <think> [response-id] [storage-cwd]
@@ -509,7 +509,7 @@ test_reused_slot_never_guesses() {
   pass "a session outside every spawn window stays unattributed on a reused slot"
 }
 
-test_future_session_stays_outside_the_current_spawn_window() {
+test_future_sessions_stay_unattributed() {
   local home claude pi nm out slot now
   home=$(make_home future-window)
   claude=$TMP_ROOT/future-window-claude
@@ -523,6 +523,12 @@ test_future_session_stays_outside_the_current_spawn_window() {
     "worktree=$slot" "kind=ship" "spawn_gen=s$((now - 60)).117.217"
   claude_session "$claude" sess-future "$slot" fm/future claude-opus-5 \
     $((now + 3600)) 1 2 3 4 0
+  claude_session "$claude" sess-future-manager "$TMP_ROOT/future/manager" \
+    manager/RUN-FUTURE claude-opus-5 $((now + 3600)) 1 2 3 4 0
+  claude_session "$claude" sess-future-nm "$nm/repo-hash/RUN-FUTURE-CWD/apps/admin" \
+    HEAD claude-opus-5 $((now + 3600)) 1 2 3 4 0
+  claude_session "$claude" sess-future-firstmate "$home" HEAD claude-opus-5 \
+    $((now + 3600)) 1 2 3 4 0
 
   out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
     || fail "snapshot failed on the future-session fixture"
@@ -533,7 +539,19 @@ test_future_session_stays_outside_the_current_spawn_window() {
     || fail "a future-dated session was given a kind"
   [ "$(field "$out" sess-future 4)" = "$slot" ] \
     || fail "the unattributed future-dated session lost its worktree"
-  pass "snapshot time closes the current occupant's attribution window"
+  [ "$(field "$out" sess-future-manager 1)" = "-" ] \
+    || fail "a future-dated manager session was attributed to a pipeline"
+  [ "$(field "$out" sess-future-manager 2)" = "-" ] \
+    || fail "a future-dated manager session was given a pipeline kind"
+  [ "$(field "$out" sess-future-nm 1)" = "-" ] \
+    || fail "a future-dated no-mistakes session was attributed to a pipeline"
+  [ "$(field "$out" sess-future-nm 2)" = "-" ] \
+    || fail "a future-dated no-mistakes session was given a pipeline kind"
+  [ "$(field "$out" sess-future-firstmate 1)" = "-" ] \
+    || fail "a future-dated primary-checkout session was attributed to firstmate"
+  [ "$(field "$out" sess-future-firstmate 2)" = "-" ] \
+    || fail "a future-dated primary-checkout session was given a firstmate kind"
+  pass "snapshot time keeps future-dated sessions unattributed"
 }
 
 test_since_never_moves_a_session_onto_another_task() {
@@ -751,6 +769,38 @@ test_out_of_order_log_reports_its_counted_window_in_time_order() {
   pass "start and end span the counted turns in time order, not file order"
 }
 
+test_dst_fallback_keeps_timestamps_and_rows_chronological() {
+  local home claude pi nm out first_session
+  home=$(make_home dst-fallback)
+  claude=$TMP_ROOT/dst-fallback-claude
+  pi=$TMP_ROOT/dst-fallback-pi
+  nm=$TMP_ROOT/dst-fallback-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  claude_session "$claude" sess-fallback-window "$TMP_ROOT/dst/window" HEAD model \
+    1762065000 1 0 0 1 0
+  claude_session "$claude" sess-fallback-window "$TMP_ROOT/dst/window" HEAD model \
+    1762067700 1 0 0 1 0
+  claude_session "$claude" sess-fallback-later "$TMP_ROOT/dst/later" HEAD model \
+    1762066800 1 0 0 1 0
+
+  out=$(TZ=America/Chicago run_ledger "$home" "$claude" "$pi" "$nm" \
+    snapshot --since 2025-01-01 --stdout) \
+    || fail "snapshot failed on the DST fallback fixture"
+
+  [ "$(field "$out" sess-fallback-window 7)" = 2025-11-02T06:30:00Z ] \
+    || fail "DST fallback obscured the counted window start"
+  [ "$(field "$out" sess-fallback-window 8)" = 2025-11-02T07:15:00Z ] \
+    || fail "DST fallback obscured the counted window end"
+  [[ "$(field "$out" sess-fallback-window 7)" < \
+    "$(field "$out" sess-fallback-window 8)" ]] \
+    || fail "DST fallback printed a start later than its end"
+  first_session=$(printf '%s\n' "$out" | awk -F'\t' '$16 ~ /^sess-fallback/ {print $16; exit}')
+  [ "$first_session" = sess-fallback-window ] \
+    || fail "DST fallback reversed session row order"
+  pass "UTC timestamps stay chronological through DST fallback"
+}
+
 test_earlier_occupant_window_closes_at_the_next_spawn() {
   local home claude pi nm out slot
   home=$(make_home window-close)
@@ -869,7 +919,7 @@ test_compare_totals_and_shared_tasks() {
   fm_write_meta "$home/state/new-task.meta" \
     "worktree=$TMP_ROOT/slot/9/new" "kind=ship" "spawn_gen=s$EARLY_SPAWN.108.208"
   claude_session "$claude" sess-shared-b "$TMP_ROOT/slot/7/shared" fm/shared claude-opus-5 \
-    $((EARLY_SPAWN + 3)) 0 0 0 50 0
+    $((EARLY_SPAWN + 3)) 0 0 0 50 50
   claude_session "$claude" sess-new "$TMP_ROOT/slot/9/new" fm/new claude-opus-5 \
     $((EARLY_SPAWN + 4)) 0 0 0 5 0
   run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --label after >/dev/null \
@@ -996,13 +1046,14 @@ test_pi_summary_usage_counts_tokens_but_not_turns
 test_pi_model_comes_from_the_latest_usage_message
 test_pipeline_attribution
 test_reused_slot_never_guesses
-test_future_session_stays_outside_the_current_spawn_window
+test_future_sessions_stay_unattributed
 test_since_never_moves_a_session_onto_another_task
 test_a_session_with_no_cwd_stays_unattributed
 test_a_session_that_opened_before_the_respawn_stays_unattributed
 test_model_is_the_latest_turn_not_the_last_written
 test_out_of_order_log_attributes_on_its_earliest_turn
 test_out_of_order_log_reports_its_counted_window_in_time_order
+test_dst_fallback_keeps_timestamps_and_rows_chronological
 test_earlier_occupant_window_closes_at_the_next_spawn
 test_firstmate_and_since_filter
 test_snapshot_writes_a_labelled_file_and_totals
