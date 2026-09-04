@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-brief.sh.
-# The macos-stock-bash CI job runs this behavior suite with Bash 3.2 to cover
-# the heredoc parser regressions from issues #166, #958, and #1069.
+# This suite checks ambient Bash syntax, guards heredoc source structure, and
+# generates a brief with /bin/bash, which is Bash 5 on Ubuntu CI.
+# The macos-stock-bash CI job separately parses changed shell files with Bash 3.2.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -10,6 +11,144 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-brief)
 BRIEF_HOME="$TMP_ROOT/home"
 mkdir -p "$BRIEF_HOME/data"
+
+test_script_parses() {
+  local out rc
+  out=$(bash -n "$ROOT/bin/fm-brief.sh" 2>&1); rc=$?
+  expect_code 0 "$rc" "bash -n bin/fm-brief.sh must parse cleanly (got: $out)"
+  [ -z "$out" ] || fail "bash -n bin/fm-brief.sh emitted unexpected output: $out"
+  pass "fm-brief.sh: bash -n succeeds"
+}
+
+test_no_heredoc_in_command_substitution() {
+  local unsafe safe
+  unsafe="$TMP_ROOT/heredoc-in-substitution.sh"
+  safe="$TMP_ROOT/plain-heredoc.sh"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'value=$(' '  cat <<EOF' 'body' 'EOF' ')' > "$unsafe"
+  # shellcheck disable=SC2016 # Literal shell fixtures must remain unexpanded.
+  printf '%s\n' 'cat <<EOF' '$(' '  cat <<INNER' 'INNER' ')' 'EOF' > "$safe"
+  if no_heredoc_in_command_substitution "$unsafe"; then
+    fail "structural guard accepted a multiline heredoc nested in a command substitution"
+  fi
+  no_heredoc_in_command_substitution "$safe" \
+    || fail "structural guard treated heredoc body prose as shell structure"
+  no_heredoc_in_command_substitution "$ROOT/bin/fm-brief.sh" \
+    || fail "fm-brief.sh wraps a heredoc in a command substitution (breaks Bash 3.2 parsing)"
+  pass "fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)"
+}
+
+no_heredoc_in_command_substitution() {
+  perl - "$1" <<'PERL'
+use strict;
+use warnings;
+
+my $path = shift;
+open my $source, '<', $path or die "$path: $!\n";
+my @frames;
+my @heredocs;
+my $quote = '';
+my $line_number = 0;
+
+while (my $line = <$source>) {
+  $line_number++;
+  if (@heredocs) {
+    my $candidate = $line;
+    $candidate =~ s/\r?\n\z//;
+    $candidate =~ s/^\t+// if $heredocs[0]{strip_tabs};
+    shift @heredocs if $candidate eq $heredocs[0]{delimiter};
+    next;
+  }
+
+  my $length = length $line;
+  for (my $i = 0; $i < $length; $i++) {
+    my $char = substr($line, $i, 1);
+    if ($quote eq "'") {
+      $quote = '' if $char eq "'";
+      next;
+    }
+    if ($char eq '\\') {
+      $i++;
+      next;
+    }
+    if ($quote eq '"' && $char eq '"') {
+      $quote = '';
+      next;
+    }
+    if ($char eq "'" && $quote eq '') {
+      $quote = "'";
+      next;
+    }
+    if ($char eq '"' && $quote eq '') {
+      $quote = '"';
+      next;
+    }
+    if ($char eq '#' && $quote eq '' && ($i == 0 || substr($line, $i - 1, 1) =~ /[\s;|&()]/)) {
+      last;
+    }
+    if ($char eq '$' && substr($line, $i + 1, 1) eq '(') {
+      push @frames, { depth => 1, quote => $quote };
+      $quote = '';
+      $i++;
+      next;
+    }
+    if (@frames && $quote eq '' && $char eq '(') {
+      $frames[-1]{depth}++;
+      next;
+    }
+    if (@frames && $quote eq '' && $char eq ')') {
+      $frames[-1]{depth}--;
+      if ($frames[-1]{depth} == 0) {
+        my $frame = pop @frames;
+        $quote = $frame->{quote};
+      }
+      next;
+    }
+    next unless $quote eq '' && $char eq '<' && substr($line, $i + 1, 1) eq '<';
+    if (@frames) {
+      print STDERR "$path:$line_number\n";
+      exit 1;
+    }
+
+    my $j = $i + 2;
+    my $strip_tabs = substr($line, $j, 1) eq '-';
+    $j++ if $strip_tabs;
+    $j++ while substr($line, $j, 1) =~ /[ \t]/;
+    my $delimiter = '';
+    my $delimiter_quote = '';
+    for (; $j < $length; $j++) {
+      my $token = substr($line, $j, 1);
+      if ($delimiter_quote) {
+        if ($token eq $delimiter_quote) {
+          $delimiter_quote = '';
+        } elsif ($token eq '\\' && $delimiter_quote eq '"') {
+          $j++;
+          $delimiter .= substr($line, $j, 1);
+        } else {
+          $delimiter .= $token;
+        }
+        next;
+      }
+      if ($token eq "'" || $token eq '"') {
+        $delimiter_quote = $token;
+        next;
+      }
+      if ($token eq '\\') {
+        $j++;
+        $delimiter .= substr($line, $j, 1);
+        next;
+      }
+      last if $token =~ /[\s;|&()<>]/;
+      $delimiter .= $token;
+    }
+    push @heredocs, { delimiter => $delimiter, strip_tabs => $strip_tabs };
+    $i = $j - 1;
+  }
+}
+
+exit 0;
+PERL
+}
 
 test_stock_bash_generates_worker_brief() {
   local home brief out status
@@ -809,6 +948,8 @@ test_no_subagents_rule_emits_in_every_variant() {
 }
 
 test_no_subagents_rule_emits_in_every_variant
+test_script_parses
+test_no_heredoc_in_command_substitution
 test_stock_bash_generates_worker_brief
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
