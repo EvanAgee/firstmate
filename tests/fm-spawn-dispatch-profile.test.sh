@@ -588,7 +588,7 @@ test_task_tmp_uses_private_directories_and_exclusive_files() {
     victim="$CASE_DIR/victim"
     printf '%s\n' untouched > "$victim"
     mkdir "$tasktmp"
-    chmod 0777 "$tasktmp"
+    chmod 0755 "$tasktmp"
     ln -s "$victim" "$tasktmp/$leaf"
 
     out=$(FM_TEST_KEEP_TASK_TMP=1 \
