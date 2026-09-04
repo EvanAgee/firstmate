@@ -35,15 +35,24 @@ jobs:
           set -eu
           marker='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
           attempt=1
+          api_read_failed=0
           while [ "$attempt" -le 5 ]; do
-            pr_body=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
-            if printf '%s' "$pr_body" | grep -qF -- "$marker"; then
-              echo "Found no-mistakes signature in PR #${PR_NUMBER} body."
-              exit 0
+            if pr_body=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '.body // ""'); then
+              api_read_failed=0
+              if printf '%s' "$pr_body" | grep -qF -- "$marker"; then
+                echo "Found no-mistakes signature in PR #${PR_NUMBER} body."
+                exit 0
+              fi
+            else
+              api_read_failed=1
             fi
             [ "$attempt" -eq 5 ] || sleep 2
             attempt=$((attempt + 1))
           done
+          if [ "$api_read_failed" -eq 1 ]; then
+            echo "::error::Could not read PR #${PR_NUMBER} after 5 attempts." >&2
+            exit 1
+          fi
           {
             echo "::error::This PR was not raised through no-mistakes."
             echo

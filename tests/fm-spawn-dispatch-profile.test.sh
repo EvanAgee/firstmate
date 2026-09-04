@@ -391,7 +391,8 @@ test_no_profile_keeps_claude_profile_defaults() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude default default
 
   launch=$(cat "$LAUNCH_LOG")
-  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills) \
+    || fail "could not locate the no-profile Claude worker-skill prompt"
   expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-system-prompt-file '$prompt' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
   [ "$launch" = "$expected" ] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   rm -rf "$tasktmp"
@@ -434,7 +435,8 @@ test_claude_loads_concatenated_worker_skill_prompt() {
   status=$?
   expect_code 0 "$status" "Claude worker-skill spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills) \
+    || fail "could not locate the Claude worker-skill prompt"
   assert_contains "$launch" "--append-system-prompt-file '$prompt'" \
     "Claude launch omitted its worker skill prompt file"
   assert_worker_skill_prompt "$prompt"
@@ -504,7 +506,8 @@ test_omp_loads_concatenated_worker_skill_prompt() {
   status=$?
   expect_code 0 "$status" "OMP worker-skill spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills) \
+    || fail "could not locate the OMP worker-skill prompt"
   assert_contains "$launch" "--append-system-prompt='$prompt'" \
     "OMP launch omitted its worker skill prompt file"
   assert_worker_skill_prompt "$prompt"
@@ -527,7 +530,8 @@ test_omp_without_append_support_uses_worker_skill_brief() {
   status=$?
   expect_code 0 "$status" "OMP without append-system-prompt should use brief delivery"
   launch=$(cat "$LAUNCH_LOG")
-  delivered=$(find_single_task_tmp_file "$tasktmp" brief)
+  delivered=$(find_single_task_tmp_file "$tasktmp" brief) \
+    || fail "could not locate the OMP fallback brief"
   assert_not_contains "$launch" "--append-system-prompt" \
     "OMP fallback launch used an unsupported append-system-prompt flag"
   assert_contains "$launch" "encode launch-brief < '$delivered'" \
@@ -552,7 +556,8 @@ test_fallback_harness_gets_worker_skill_brief_prefix() {
   status=$?
   expect_code 0 "$status" "fallback worker-skill spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  delivered=$(find_single_task_tmp_file "$tasktmp" brief)
+  delivered=$(find_single_task_tmp_file "$tasktmp" brief) \
+    || fail "could not locate the fallback worker-skill brief"
   assert_contains "$launch" "encode launch-brief < '$delivered'" \
     "fallback launch did not deliver the prefixed brief"
   [ "$(sed -n '1p' "$delivered")" = "$expected" ] \
@@ -586,9 +591,11 @@ test_task_tmp_uses_private_directories_and_exclusive_files() {
     [ "$(task_tmp_mode "$tasktmp")" = 700 ] || fail "$harness task temp root was not mode 0700"
     [ "$(task_tmp_mode "$tasktmp/gotmp")" = 700 ] || fail "$harness Go temp directory was not mode 0700"
     if [ "$harness" = claude ]; then
-      generated=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+      generated=$(find_single_task_tmp_file "$tasktmp" worker-skills) \
+        || fail "could not locate the private Claude worker-skill prompt"
     else
-      generated=$(find_single_task_tmp_file "$tasktmp" brief)
+      generated=$(find_single_task_tmp_file "$tasktmp" brief) \
+        || fail "could not locate the private fallback brief"
     fi
     [ ! -L "$generated" ] || fail "$harness generated a symlinked worker-skill file"
     rm -rf "$tasktmp"
@@ -640,7 +647,8 @@ test_worker_skill_read_failure_warns_once_and_drops_only_failed_skill() {
     || fail "unreadable worker skill did not produce exactly one SKILLS diagnostic"
   assert_contains "$out" "$caveman_source" \
     "unreadable worker skill diagnostic did not name the failed file"
-  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills)
+  prompt=$(find_single_task_tmp_file "$tasktmp" worker-skills) \
+    || fail "could not locate the partial worker-skill prompt"
   [ "$(sed -n '1p' "$prompt")" = 'Active skill levels: ponytail: full' ] \
     || fail "worker skill prompt claimed the unreadable caveman skill was active"
   assert_no_grep 'CAVEMAN_FIXTURE_BODY' "$prompt" \
