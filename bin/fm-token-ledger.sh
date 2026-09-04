@@ -56,13 +56,14 @@
 #
 #   worker/scout  state/<id>.meta names a worktree= and a spawn_gen=
 #     s<epoch>.<pid>.<rand>. A session in that worktree is that task's only when
-#     its first turn falls inside the task's spawn window. That test reads the
-#     session's true first turn, the earliest turn in the whole log, so --since
-#     changes only which turns are counted and never who a session belongs to.
-#     A window runs from its own spawn epoch to the next spawn epoch recorded
-#     for that same worktree, and to now for the newest one. The meta's kind=
-#     chooses scout or secondmate; everything else, a ship spawn included, is a
-#     worker.
+#     the session began inside the task's spawn window. That test reads the
+#     session's earliest record of any kind, not just a counted turn, because a
+#     session opens on a user turn well before its first assistant reply. It is
+#     therefore independent of --since, which only scopes which turns are
+#     counted. A window runs from its own spawn epoch to the next spawn epoch
+#     recorded for that same worktree, and to now for the newest one. The meta's
+#     kind= chooses scout or secondmate; everything else, a ship spawn included,
+#     is a worker.
 #
 #     Treehouse and Orca reuse a worktree slot across tasks, so a slot's path is
 #     not an identity. A session that started before the current occupant's
@@ -101,7 +102,6 @@ case "${1:-}" in
 esac
 
 FM_LEDGER_ROOT=$FM_ROOT \
-FM_LEDGER_HOME=$FM_HOME \
 FM_LEDGER_STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}" \
 FM_LEDGER_DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}" \
   exec python3 - "$@" <<'PY'
@@ -224,15 +224,25 @@ def as_int(value) -> int:
     return value if isinstance(value, int) else 0
 
 
-def mark_turn(row: dict, moment: datetime, since: datetime) -> bool:
-    """Fold one turn's timestamp into the row; True when it is inside --since.
+def mark_record(row: dict, moment: datetime | None) -> None:
+    """Fold any record's timestamp into first_turn, the session's own beginning.
 
-    first_turn spans the whole log so attribution never moves with the cutoff,
-    while start and end span only the counted turns. All three track time
-    rather than the order records happen to be written in.
+    Every record counts here, not just the usage-bearing ones, because a session
+    opens on a user turn well before its first assistant reply. Attribution asks
+    when the session began, so it must see that opening turn.
     """
+    if moment is None:
+        return
     if row["first_turn"] is None or moment < row["first_turn"]:
         row["first_turn"] = moment
+
+
+def mark_turn(row: dict, moment: datetime, since: datetime) -> bool:
+    """Fold one counted turn into the row; True when it is inside --since.
+
+    start and end span the counted turns only, and track time rather than the
+    order records happen to be written in.
+    """
     if moment < since:
         return False
     if row["start"] is None or moment < row["start"]:
@@ -262,20 +272,20 @@ def blank_session(harness: str, path: Path) -> dict:
 def read_claude_session(path: Path, since: datetime) -> dict | None:
     row = blank_session("claude", path)
     for record in read_records(path):
+        moment = parse_stamp(record.get("timestamp"))
+        mark_record(row, moment)
         row["worktree"] = record.get("cwd") or row["worktree"]
         branch = record.get("gitBranch")
         if branch:
             row["branch"] = branch
         message = record.get("message")
         usage = message.get("usage") if isinstance(message, dict) else None
-        if not isinstance(usage, dict):
-            continue
-        moment = parse_stamp(record.get("timestamp"))
-        if moment is None:
+        if not isinstance(usage, dict) or moment is None:
             continue
         if not mark_turn(row, moment, since):
             continue
-        row["model"] = message.get("model") or row["model"]
+        if moment == row["end"]:
+            row["model"] = message.get("model") or row["model"]
         details = usage.get("output_tokens_details")
         tokens = row["tokens"]
         tokens["input"] += as_int(usage.get("input_tokens"))
@@ -290,6 +300,12 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
 def read_pi_session(path: Path, since: datetime) -> dict | None:
     row = blank_session("pi", path)
     for record in read_records(path):
+        message = record.get("message")
+        stamp = record.get("timestamp")
+        if not stamp and isinstance(message, dict):
+            stamp = message.get("timestamp")
+        moment = parse_stamp(stamp)
+        mark_record(row, moment)
         if record.get("type") == "session":
             row["worktree"] = record.get("cwd") or row["worktree"]
         if record.get("type") == "model_change":
@@ -297,12 +313,8 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
             model = record.get("modelId")
             if model:
                 row["model"] = f"{provider}/{model}"
-        message = record.get("message")
         usage = message.get("usage") if isinstance(message, dict) else None
-        if not isinstance(usage, dict) or "totalTokens" not in usage:
-            continue
-        moment = parse_stamp(record.get("timestamp") or message.get("timestamp"))
-        if moment is None:
+        if not isinstance(usage, dict) or "totalTokens" not in usage or moment is None:
             continue
         if not mark_turn(row, moment, since):
             continue

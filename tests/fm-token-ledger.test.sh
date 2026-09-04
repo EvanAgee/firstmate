@@ -10,10 +10,12 @@
 # no-guess rule that keeps a session outside every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
-# that records no cwd and for a log whose records are not in time order, the
-# start and end columns spanning the counted turns in time order, firstmate's
-# own session, --since filtering, compare totals and shared-task rows, compare's
-# one-line error on a non-numeric cell, and the task subcommand.
+# that records no cwd, for a session that opened on a user turn before the slot
+# was respawned, and for a log whose records are not in time order, the start and
+# end columns spanning the counted turns in time order, the model column naming
+# the latest turn's model, firstmate's own session, --since filtering, compare
+# totals and shared-task rows, compare's one-line error on a non-numeric cell,
+# and the task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -65,6 +67,28 @@ record = {
             "output_tokens_details": {"thinking_tokens": numbers[4]},
         },
     },
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record) + "\n")
+PY
+}
+
+# claude_user_turn <sessions-root> <session-id> <cwd> <epoch>
+# A user record: timestamped and part of the session, but carrying no usage.
+claude_user_turn() {
+  local root=$1 id=$2 cwd=$3 epoch=$4
+  local slug dir
+  slug=$(printf '%s' "$cwd" | tr '/.' '--')
+  dir=$root/$slug
+  mkdir -p "$dir"
+  python3 - "$dir/$id.jsonl" "$cwd" "$(iso_at "$epoch")" <<'PY'
+import json, sys
+path, cwd, stamp = sys.argv[1:4]
+record = {
+    "type": "user",
+    "timestamp": stamp,
+    "cwd": cwd,
+    "message": {"role": "user", "content": "go"},
 }
 with open(path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(record) + "\n")
@@ -344,6 +368,65 @@ PY
   [ "$(field "$out" sess-nocwd 4)" = "-" ] \
     || fail "a session with no cwd should report no worktree"
   pass "a session that records no cwd stays unattributed"
+}
+
+test_a_session_that_opened_before_the_respawn_stays_unattributed() {
+  local home claude pi nm out slot
+  home=$(make_home opened-before)
+  claude=$TMP_ROOT/opened-before-claude
+  pi=$TMP_ROOT/opened-before-pi
+  nm=$TMP_ROOT/opened-before-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/reused/14/repo
+
+  # The session opens on a user turn five minutes before the slot is respawned,
+  # then its first assistant reply lands inside the new occupant's window. Only
+  # the new occupant has a meta, so nothing proves this session belongs to it.
+  fm_write_meta "$home/state/new-occupant.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$EARLY_SPAWN.113.213"
+  claude_user_turn "$claude" sess-early-open "$slot" $((EARLY_SPAWN - 300))
+  claude_session "$claude" sess-early-open "$slot" fm/early claude-opus-5 \
+    $((EARLY_SPAWN + 120)) 9999 0 0 9999 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot failed on the early-open fixture"
+
+  [ "$(field "$out" sess-early-open 1)" = "-" ] \
+    || fail "a session that opened before the respawn was charged to the new occupant"
+  [ "$(field "$out" sess-early-open 2)" = "-" ] \
+    || fail "a session that opened before the respawn was given a kind"
+  [ "$(field "$out" sess-early-open 4)" = "$slot" ] \
+    || fail "the unattributed early-open session lost its worktree"
+  [ "$(field "$out" sess-early-open 9)" = 1 ] \
+    || fail "the user turn should not be counted as a turn"
+  [ "$(field "$out" sess-early-open 10)" = 9999 ] \
+    || fail "the counted assistant turn's tokens went missing"
+  [ "$(field "$out" sess-early-open 7)" = "$(show_stamp_at $((EARLY_SPAWN + 120)))" ] \
+    || fail "start should be the first counted turn, not the opening user turn"
+  pass "a session that opened before the current occupant's spawn stays unattributed"
+}
+
+test_model_is_the_latest_turn_not_the_last_written() {
+  local home claude pi nm out slot
+  home=$(make_home model-order)
+  claude=$TMP_ROOT/model-order-claude
+  pi=$TMP_ROOT/model-order-pi
+  nm=$TMP_ROOT/model-order-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/slot/15/model
+
+  # The newer turn is written first, so the last line names the older model.
+  claude_session "$claude" sess-model "$slot" fm/model model-new \
+    $((EARLY_SPAWN + 3600)) 1 1 1 1 0
+  claude_session "$claude" sess-model "$slot" fm/model model-old \
+    "$EARLY_SPAWN" 1 1 1 1 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot failed on the model-order fixture"
+
+  [ "$(field "$out" sess-model 6)" = model-new ] \
+    || fail "the model column reported the last model written, not the last one used"
+  pass "the model column names the latest turn's model, not the last one written"
 }
 
 test_out_of_order_log_attributes_on_its_earliest_turn() {
@@ -644,6 +727,8 @@ test_pipeline_attribution
 test_reused_slot_never_guesses
 test_since_never_moves_a_session_onto_another_task
 test_a_session_with_no_cwd_stays_unattributed
+test_a_session_that_opened_before_the_respawn_stays_unattributed
+test_model_is_the_latest_turn_not_the_last_written
 test_out_of_order_log_attributes_on_its_earliest_turn
 test_out_of_order_log_reports_its_counted_window_in_time_order
 test_earlier_occupant_window_closes_at_the_next_spawn
