@@ -254,7 +254,8 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
         moment = parse_stamp(record.get("timestamp"))
         if moment is None:
             continue
-        row["first_turn"] = row["first_turn"] or moment
+        if row["first_turn"] is None or moment < row["first_turn"]:
+            row["first_turn"] = moment
         if moment < since:
             continue
         row["turns"] += 1
@@ -289,7 +290,8 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
         moment = parse_stamp(record.get("timestamp") or message.get("timestamp"))
         if moment is None:
             continue
-        row["first_turn"] = row["first_turn"] or moment
+        if row["first_turn"] is None or moment < row["first_turn"]:
+            row["first_turn"] = moment
         if moment < since:
             continue
         row["turns"] += 1
@@ -382,11 +384,11 @@ def attribute(row: dict, windows: dict) -> tuple[str, str]:
             return resolved.name, "pipeline"
         if resolved == resolve(ROOT):
             return "firstmate", "firstmate"
-    first_turn = row["first_turn"]
-    if first_turn is not None:
-        for spawned, ends, task, kind in windows.get(str(resolve(worktree)), []):
-            if first_turn >= spawned and (ends is None or first_turn < ends):
-                return task, kind
+        first_turn = row["first_turn"]
+        if first_turn is not None:
+            for spawned, ends, task, kind in windows.get(str(resolved), []):
+                if first_turn >= spawned and (ends is None or first_turn < ends):
+                    return task, kind
     return "-", "-"
 
 

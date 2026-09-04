@@ -9,9 +9,10 @@
 # attribution by manager branch and by the no-mistakes worktrees root, the
 # no-guess rule that keeps a session outside every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
-# cutoff placed after the slot was respawned, firstmate's own session, --since
-# filtering, compare totals and shared-task rows, compare's one-line error on a
-# non-numeric cell, and the task subcommand.
+# cutoff placed after the slot was respawned, the same rule holding for a session
+# that records no cwd and for a log whose records are not in time order,
+# firstmate's own session, --since filtering, compare totals and shared-task
+# rows, compare's one-line error on a non-numeric cell, and the task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -301,6 +302,77 @@ test_since_never_moves_a_session_onto_another_task() {
   pass "--since scopes which turns are counted and never which task is billed"
 }
 
+test_a_session_with_no_cwd_stays_unattributed() {
+  local home claude pi nm caller out
+  home=$(make_home no-cwd)
+  claude=$TMP_ROOT/no-cwd-claude
+  pi=$TMP_ROOT/no-cwd-pi
+  nm=$TMP_ROOT/no-cwd-nm
+  caller=$TMP_ROOT/no-cwd-caller
+  mkdir -p "$claude/empty-slug" "$pi" "$nm" "$caller"
+
+  # A task whose worktree is the very directory the ledger is invoked from. A
+  # session that records no cwd must not be billed to it just for lining up.
+  fm_write_meta "$home/state/caller-task.meta" \
+    "worktree=$caller" "kind=ship" "spawn_gen=s$EARLY_SPAWN.111.211"
+  python3 - "$claude/empty-slug/sess-nocwd.jsonl" "$(iso_at $((EARLY_SPAWN + 60)))" <<'PY'
+import json, sys
+path, stamp = sys.argv[1:3]
+record = {
+    "type": "assistant",
+    "timestamp": stamp,
+    "cwd": "",
+    "message": {"model": "claude-opus-5", "usage": {"input_tokens": 5, "output_tokens": 6}},
+}
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(record) + "\n")
+PY
+
+  out=$(cd "$caller" && run_ledger "$home" "$claude" "$pi" "$nm" \
+    snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the empty-cwd fixture"
+
+  [ "$(field "$out" sess-nocwd 1)" = "-" ] \
+    || fail "a session with no cwd was billed to the task holding the ledger's own directory"
+  [ "$(field "$out" sess-nocwd 2)" = "-" ] \
+    || fail "a session with no cwd was given a kind it has no evidence for"
+  [ "$(field "$out" sess-nocwd 4)" = "-" ] \
+    || fail "a session with no cwd should report no worktree"
+  pass "a session that records no cwd stays unattributed"
+}
+
+test_out_of_order_log_attributes_on_its_earliest_turn() {
+  local home claude pi nm out slot now first_turn respawn
+  home=$(make_home out-of-order)
+  claude=$TMP_ROOT/out-of-order-claude
+  pi=$TMP_ROOT/out-of-order-pi
+  nm=$TMP_ROOT/out-of-order-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/reused/12/repo
+  now=$(date +%s)
+  first_turn=$((now - 30 * 3600))
+  respawn=$((now - 3600))
+
+  fm_write_meta "$home/state/today-task.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$respawn.112.212"
+  # The recent turn is written first, so file order and time order disagree.
+  claude_session "$claude" sess-jumbled "$slot" fm/jumbled claude-opus-5 \
+    $((now - 600)) 1 2 3 4 0
+  claude_session "$claude" sess-jumbled "$slot" fm/jumbled claude-opus-5 \
+    "$first_turn" 1 2 3 4 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot failed on the out-of-order fixture"
+
+  [ "$(field "$out" sess-jumbled 1)" = "-" ] \
+    || fail "an out-of-order log was attributed on a later turn instead of its earliest"
+  [ "$(field "$out" sess-jumbled 2)" = "-" ] \
+    || fail "an out-of-order log was given a kind it has no evidence for"
+  [ "$(field "$out" sess-jumbled 4)" = "$slot" ] \
+    || fail "the unattributed out-of-order session lost its worktree"
+  pass "attribution reads a log's earliest turn, not the first one written"
+}
+
 test_earlier_occupant_window_closes_at_the_next_spawn() {
   local home claude pi nm out slot
   home=$(make_home window-close)
@@ -523,6 +595,8 @@ test_pi_columns_cost_and_scout_kind
 test_pipeline_attribution
 test_reused_slot_never_guesses
 test_since_never_moves_a_session_onto_another_task
+test_a_session_with_no_cwd_stays_unattributed
+test_out_of_order_log_attributes_on_its_earliest_turn
 test_earlier_occupant_window_closes_at_the_next_spawn
 test_firstmate_and_since_filter
 test_snapshot_writes_a_labelled_file_and_totals
