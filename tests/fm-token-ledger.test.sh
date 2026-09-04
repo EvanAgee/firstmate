@@ -424,6 +424,40 @@ test_pi_summary_usage_counts_tokens_but_not_turns() {
   pass "Pi compaction and branch summary usage is billed without adding assistant turns"
 }
 
+test_pi_summary_only_window_keeps_the_session_model() {
+  local home claude pi nm out
+  home=$(make_home pi-summary-model)
+  claude=$TMP_ROOT/pi-summary-model-claude
+  pi=$TMP_ROOT/pi-summary-model-logs
+  nm=$TMP_ROOT/pi-summary-model-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  pi_session "$pi" sess-summary-model "$TMP_ROOT/pi/summary-model" openai model-x \
+    $((EARLY_SPAWN + 10)) 100 100 100 100 100 9
+  pi_summary_usage "$pi" sess-summary-model "$TMP_ROOT/pi/summary-model" compaction \
+    $((EARLY_SPAWN + 1000)) 2 3 4 5 6 0.5
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot \
+    --since "$(iso_at $((EARLY_SPAWN + 500)))" --stdout) \
+    || fail "snapshot failed on the Pi summary-only model fixture"
+
+  [ "$(field "$out" sess-summary-model 6)" = openai/model-x ] \
+    || fail "a summary-only counted window lost the session's model"
+  [ "$(field "$out" sess-summary-model 7)" = \
+    "$(show_stamp_at $((EARLY_SPAWN + 1000)))" ] \
+    || fail "the pre-cutoff assistant usage changed the counted window start"
+  [ "$(field "$out" sess-summary-model 8)" = \
+    "$(show_stamp_at $((EARLY_SPAWN + 1000)))" ] \
+    || fail "the pre-cutoff assistant usage changed the counted window end"
+  [ "$(field "$out" sess-summary-model 9)" = 0 ] \
+    || fail "the pre-cutoff assistant usage added a counted turn"
+  [ "$(field "$out" sess-summary-model 10)" = 2 ] \
+    || fail "the pre-cutoff assistant input entered the counted window"
+  [ "$(field "$out" sess-summary-model 15)" = 0.5000 ] \
+    || fail "the pre-cutoff assistant cost entered the counted window"
+  pass "a summary-only counted window keeps the full session's Pi model"
+}
+
 test_pi_model_comes_from_the_latest_usage_message() {
   local home claude pi nm out
   home=$(make_home pi-model)
@@ -1043,6 +1077,7 @@ test_claude_child_rollup_deduplicates_responses
 test_claude_cost_uses_the_counted_window_delta
 test_pi_columns_cost_and_scout_kind
 test_pi_summary_usage_counts_tokens_but_not_turns
+test_pi_summary_only_window_keeps_the_session_model
 test_pi_model_comes_from_the_latest_usage_message
 test_pipeline_attribution
 test_reused_slot_never_guesses

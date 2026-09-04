@@ -394,8 +394,6 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
             assistant = False
         if not isinstance(usage, dict) or "totalTokens" not in usage or moment is None:
             continue
-        if not mark_usage(row, moment, since, assistant):
-            continue
         if assistant and (
             row["model_time"] is None or moment > row["model_time"]
         ):
@@ -404,6 +402,8 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
             if model:
                 row["model"] = f"{provider}/{model}"
                 row["model_time"] = moment
+        if not mark_usage(row, moment, since, assistant):
+            continue
         tokens = row["tokens"]
         tokens["input"] += as_int(usage.get("input"))
         tokens["cache_write"] += as_int(usage.get("cacheWrite"))
