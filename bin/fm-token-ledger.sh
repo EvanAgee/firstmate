@@ -81,11 +81,11 @@
 #     Unattributed is the correct answer here; a guess would silently move real
 #     spend onto the wrong task.
 #
-#   pipeline      a no-mistakes agent session, identified by a manager/<run-id>
-#     branch or by a cwd under the no-mistakes worktrees root. The run id is the
-#     branch suffix, else the run-directory component directly under the
-#     repo-hash directory. For example, <root>/<repo-hash>/RUN/apps/admin
-#     attributes to RUN.
+#   pipeline      a no-mistakes agent session, identified by any
+#     manager/<run-id> branch in the parent transcript or by a cwd under the
+#     no-mistakes worktrees root. The run id is the branch suffix, else the
+#     run-directory component directly under the repo-hash directory. For
+#     example, <root>/<repo-hash>/RUN/apps/admin attributes to RUN.
 #
 #   firstmate     a session whose cwd is this home's own primary checkout.
 #
@@ -275,6 +275,8 @@ def blank_session(harness: str, path: Path) -> dict:
         "model": "-",
         "worktree_time": None,
         "branch_time": None,
+        "manager_task": None,
+        "manager_branch_time": None,
         "model_time": None,
         "start": None,
         "end": None,
@@ -309,11 +311,17 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
                     row["worktree"] = worktree
                     row["worktree_time"] = moment
                 branch = record.get("gitBranch")
-                if branch and moment is not None and (
-                    row["branch_time"] is None or moment < row["branch_time"]
-                ):
-                    row["branch"] = branch
-                    row["branch_time"] = moment
+                if branch and moment is not None:
+                    manager_branch = MANAGER_BRANCH.match(branch)
+                    if manager_branch and (
+                        row["manager_branch_time"] is None
+                        or moment < row["manager_branch_time"]
+                    ):
+                        row["manager_task"] = manager_branch.group(1)
+                        row["manager_branch_time"] = moment
+                    if row["branch_time"] is None or moment < row["branch_time"]:
+                        row["branch"] = branch
+                        row["branch_time"] = moment
 
             if record.get("type") == "cost-state":
                 total = record.get("totalCostUSD")
@@ -493,9 +501,8 @@ def attribute(
     first_turn = row["first_turn"]
     if first_turn is not None and first_turn >= snapshot_time:
         return "-", "-"
-    branch = MANAGER_BRANCH.match(row["branch"] or "")
-    if branch:
-        return branch.group(1), "pipeline"
+    if row["manager_task"]:
+        return row["manager_task"], "pipeline"
     worktree = row["worktree"] or ""
     if worktree:
         resolved = resolve(worktree)

@@ -491,6 +491,10 @@ test_pipeline_attribution() {
 
   claude_session "$claude" sess-manager "$TMP_ROOT/anywhere" manager/RUN-BRANCH claude-opus-5 \
     $((EARLY_SPAWN + 10)) 1 2 3 4 0
+  claude_session "$claude" sess-manager-late "$TMP_ROOT/anywhere-late" HEAD claude-opus-5 \
+    $((EARLY_SPAWN + 11)) 1 2 3 4 0
+  claude_session "$claude" sess-manager-late "$TMP_ROOT/anywhere-late" manager/RUN-LATE \
+    claude-opus-5 $((EARLY_SPAWN + 12)) 1 2 3 4 0
   claude_session "$claude" sess-nmtree "$nm/repohash/RUN-CWD/apps/admin" HEAD claude-opus-5 \
     $((EARLY_SPAWN + 20)) 1 2 3 4 0
 
@@ -501,6 +505,12 @@ test_pipeline_attribution() {
     || fail "a manager/<run-id> branch did not attribute to that run id"
   [ "$(field "$out" sess-manager 2)" = pipeline ] \
     || fail "a manager-branch session was not classified as pipeline"
+  [ "$(field "$out" sess-manager-late 1)" = RUN-LATE ] \
+    || fail "a later manager branch did not attribute to that run id"
+  [ "$(field "$out" sess-manager-late 2)" = pipeline ] \
+    || fail "a later manager branch was not classified as pipeline"
+  [ "$(field "$out" sess-manager-late 5)" = HEAD ] \
+    || fail "manager evidence changed the displayed opening branch"
   [ "$(field "$out" sess-nmtree 1)" = RUN-CWD ] \
     || fail "a nested cwd under a no-mistakes run did not attribute to its run id"
   [ "$(field "$out" sess-nmtree 2)" = pipeline ] \
