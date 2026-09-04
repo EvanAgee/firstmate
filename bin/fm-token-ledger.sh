@@ -62,6 +62,8 @@
 #
 # ATTRIBUTION
 #   A session is attributed only on evidence, never on proximity.
+#   A parent transcript whose earliest record is at or after snapshot time stays
+#   unattributed, even when its branch or cwd would otherwise identify an owner.
 #
 #   worker/scout  state/<id>.meta names a worktree= and a spawn_gen=
 #     s<epoch>.<pid>.<rand>. A session in that worktree is that task's only when
