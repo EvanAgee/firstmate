@@ -152,7 +152,7 @@ family_for_basename() {
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
     fm-test-run.test.sh|fm-test-isolation-proof.test.sh|fm-skills-lock.test.sh|\
-    fm-workflow-concurrency.test.sh)
+    fm-token-ledger.test.sh|fm-workflow-concurrency.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
     fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-omp-primary.test.sh|fm-omp-primary-live-e2e.test.sh|fm-pi-watch-extension.test.sh|\
@@ -935,6 +935,9 @@ families_for_changed_path() {
       printf '%s\n' "__script__:$(basename "$path")"
       ;;
     bin/fm-test-run.sh|bin/fm-test-isolation-proof.sh)
+      printf '%s\n' pure-contract-unit
+      ;;
+    bin/fm-token-ledger.sh)
       printf '%s\n' pure-contract-unit
       ;;
     bin/backends/herdr*|bin/fm-herdr-lab.sh|tests/herdr-test-safety.sh)

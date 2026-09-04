@@ -25,6 +25,13 @@ Wake, watcher, away-mode, and Relay-specific state mechanics remain with their n
 `AGENTS.md` retains the run-once and read-once operator rules, lock-refusal safety, installation consent, and direct-report recovery boundaries because those facts apply at every session start.
 Ordinary dead-direct-report recovery is owned by `stuck-crewmate-recovery`, while persistent-secondmate recovery is owned by `secondmate-provisioning`.
 
+## Token ledger (data/token-ledger)
+
+`bin/fm-token-ledger.sh` reads the Claude Code and Pi session logs and reports what each worker, scout, pipeline run, and Firstmate session spent.
+It writes its snapshots to `data/token-ledger/` under the effective Firstmate home and never reads or writes a project.
+`snapshot` records one row per session and prints totals by harness and by kind, `compare` puts two snapshots side by side with percent change, and `task` prints one task's sessions for a completion report.
+The script header is the single owner of the row fields, the log-record shapes it reads, and the spawn-window rule that leaves a session unattributed rather than charging it to whichever task now holds a reused worktree slot.
+
 ## Pi Calm preference (config/calm)
 
 The Pi Calm extension stores the captain's home-local presentation choice in gitignored `config/calm` under the effective Firstmate home, resolved from `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the tracked code root derived from the extension path, or under `FM_CONFIG_OVERRIDE` when that test and specialized-setup override is present.
