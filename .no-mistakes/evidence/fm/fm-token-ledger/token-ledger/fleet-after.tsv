@@ -1,0 +1,5 @@
+task	kind	harness	worktree	branch	model	start	end	turns	input	cache_write	cache_read	output	thinking	cost_usd	session
+shared-task	worker	claude	/review/worktrees/shared	fm/shared	claude-opus-5	2026-09-04T07:00:00Z	2026-09-04T07:00:00Z	1	100	20	30	100	40	0.2500	sess-worker
+RUN-42	pipeline	claude	/review/pipeline	HEAD	claude-opus-5	2026-09-04T07:10:00Z	2026-09-04T07:11:00Z	2	15	0	0	75	0	0.0000	sess-pipeline
+scout-task	scout	pi	/review/worktrees/scout	-	xai/grok-4.6	2026-09-04T07:21:00Z	2026-09-04T07:21:00Z	1	25	2	10	75	15	0.1200	sess-scout
+-	-	claude	/review/worktrees/reused-slot	fm/old	claude-opus-5	2026-09-04T07:32:00Z	2026-09-04T07:32:00Z	1	8	0	0	16	0	0.0000	sess-before-respawn
