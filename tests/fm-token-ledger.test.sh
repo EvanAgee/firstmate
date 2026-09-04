@@ -5,17 +5,19 @@
 # root and points the ledger at them with FM_CLAUDE_SESSIONS_ROOT and
 # FM_PI_SESSIONS_ROOT, so no case ever reads the captain's real session logs.
 #
-# Covered: Claude token columns, Pi token and cost columns, pipeline
+# Covered: Claude parent and child token columns, response deduplication,
+# Claude cumulative cost, Pi token and cost columns, Pi compaction and branch
+# summary usage, pipeline
 # attribution by manager branch and by the no-mistakes worktrees root, the
 # no-guess rule that keeps a session outside every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
 # that records no cwd, for a session that opened on a user turn before the slot
 # was respawned, and for a log whose records are not in time order, the start and
-# end columns spanning the counted turns in time order, the model column naming
-# the latest turn's model, firstmate's own session, --since filtering, compare
-# totals and shared-task rows, compare's one-line error on a non-numeric cell,
-# and the task subcommand.
+# end columns spanning the counted turns in time order, model columns naming
+# the latest usage-bearing model, firstmate's own session, --since filtering,
+# compare totals and shared-task rows, one-line read and write errors, and the
+# task subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -38,26 +40,28 @@ show_stamp_at() {  # <epoch-seconds> -> the local stamp the start and end column
   python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1])).strftime("%Y-%m-%dT%H:%M:%S"))' "$1"
 }
 
-# claude_session <sessions-root> <session-id> <cwd> <branch> <model> <epoch> <in> <cw> <cr> <out> <think>
+# claude_session <sessions-root> <session-id> <cwd> <branch> <model> <epoch> <in> <cw> <cr> <out> <think> [response-id] [storage-cwd]
 # One Claude session file with a single assistant turn carrying message.usage.
 claude_session() {
   local root=$1 id=$2 cwd=$3 branch=$4 model=$5 epoch=$6
   local input=$7 cache_write=$8 cache_read=$9 output=${10} thinking=${11}
-  local slug dir
-  slug=$(printf '%s' "$cwd" | tr '/.' '--')
+  local response_id=${12:-msg-$epoch} storage_cwd=${13:-$cwd} slug dir
+  slug=$(printf '%s' "$storage_cwd" | tr '/.' '--')
   dir=$root/$slug
-  mkdir -p "$dir"
+  mkdir -p "$(dirname "$dir/$id.jsonl")"
   python3 - "$dir/$id.jsonl" "$cwd" "$branch" "$model" "$(iso_at "$epoch")" \
-    "$input" "$cache_write" "$cache_read" "$output" "$thinking" <<'PY'
+    "$input" "$cache_write" "$cache_read" "$output" "$thinking" "$response_id" <<'PY'
 import json, sys
 path, cwd, branch, model, stamp = sys.argv[1:6]
 numbers = [int(value) for value in sys.argv[6:11]]
+response_id = sys.argv[11]
 record = {
     "type": "assistant",
     "timestamp": stamp,
     "cwd": cwd,
     "gitBranch": branch,
     "message": {
+        "id": response_id,
         "model": model,
         "usage": {
             "input_tokens": numbers[0],
@@ -73,14 +77,29 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
-# claude_user_turn <sessions-root> <session-id> <cwd> <epoch>
+claude_cost_state() {
+  local root=$1 id=$2 cwd=$3 total=$4
+  local storage_cwd=${5:-$cwd} slug dir
+  slug=$(printf '%s' "$storage_cwd" | tr '/.' '--')
+  dir=$root/$slug
+  mkdir -p "$(dirname "$dir/$id.jsonl")"
+  python3 - "$dir/$id.jsonl" "${id##*/}" "$total" <<'PY'
+import json, sys
+path, session_id, total = sys.argv[1:4]
+record = {"type": "cost-state", "sessionId": session_id, "totalCostUSD": float(total)}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record) + "\n")
+PY
+}
+
+# claude_user_turn <sessions-root> <session-id> <cwd> <epoch> [storage-cwd]
 # A user record: timestamped and part of the session, but carrying no usage.
 claude_user_turn() {
   local root=$1 id=$2 cwd=$3 epoch=$4
-  local slug dir
-  slug=$(printf '%s' "$cwd" | tr '/.' '--')
+  local storage_cwd=${5:-$cwd} slug dir
+  slug=$(printf '%s' "$storage_cwd" | tr '/.' '--')
   dir=$root/$slug
-  mkdir -p "$dir"
+  mkdir -p "$(dirname "$dir/$id.jsonl")"
   python3 - "$dir/$id.jsonl" "$cwd" "$(iso_at "$epoch")" <<'PY'
 import json, sys
 path, cwd, stamp = sys.argv[1:4]
@@ -117,6 +136,8 @@ lines = [
         "timestamp": stamp,
         "message": {
             "role": "assistant",
+            "provider": provider,
+            "model": model,
             "usage": {
                 "input": numbers[0],
                 "cacheWrite": numbers[1],
@@ -135,6 +156,90 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 }
 
+pi_message() {
+  local root=$1 id=$2 cwd=$3 provider=$4 model=$5 epoch=$6
+  local input=$7 cache_write=$8 cache_read=$9 output=${10} reasoning=${11} cost=${12}
+  local slug dir
+  slug=$(printf '%s' "$cwd" | tr '/.' '--')
+  dir=$root/$slug
+  python3 - "$dir/$id.jsonl" "$provider" "$model" "$(iso_at "$epoch")" \
+    "$input" "$cache_write" "$cache_read" "$output" "$reasoning" "$cost" <<'PY'
+import json, sys
+path, provider, model, stamp = sys.argv[1:5]
+numbers = [int(value) for value in sys.argv[5:10]]
+cost = float(sys.argv[10])
+record = {
+    "type": "message",
+    "timestamp": stamp,
+    "message": {
+        "role": "assistant",
+        "provider": provider,
+        "model": model,
+        "usage": {
+            "input": numbers[0],
+            "cacheWrite": numbers[1],
+            "cacheRead": numbers[2],
+            "output": numbers[3],
+            "reasoning": numbers[4],
+            "totalTokens": sum(numbers),
+            "cost": {"total": cost},
+        },
+    },
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record) + "\n")
+PY
+}
+
+pi_summary_usage() {
+  local root=$1 id=$2 cwd=$3 type=$4 epoch=$5
+  local input=$6 cache_write=$7 cache_read=$8 output=$9 reasoning=${10} cost=${11}
+  local slug dir
+  slug=$(printf '%s' "$cwd" | tr '/.' '--')
+  dir=$root/$slug
+  python3 - "$dir/$id.jsonl" "$type" "$(iso_at "$epoch")" \
+    "$input" "$cache_write" "$cache_read" "$output" "$reasoning" "$cost" <<'PY'
+import json, sys
+path, record_type, stamp = sys.argv[1:4]
+numbers = [int(value) for value in sys.argv[4:9]]
+cost = float(sys.argv[9])
+record = {
+    "type": record_type,
+    "timestamp": stamp,
+    "usage": {
+        "input": numbers[0],
+        "cacheWrite": numbers[1],
+        "cacheRead": numbers[2],
+        "output": numbers[3],
+        "reasoning": numbers[4],
+        "totalTokens": sum(numbers),
+        "cost": {"total": cost},
+    },
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record) + "\n")
+PY
+}
+
+pi_model_change() {
+  local root=$1 id=$2 cwd=$3 provider=$4 model=$5 epoch=$6
+  local slug dir
+  slug=$(printf '%s' "$cwd" | tr '/.' '--')
+  dir=$root/$slug
+  python3 - "$dir/$id.jsonl" "$provider" "$model" "$(iso_at "$epoch")" <<'PY'
+import json, sys
+path, provider, model, stamp = sys.argv[1:5]
+record = {
+    "type": "model_change",
+    "timestamp": stamp,
+    "provider": provider,
+    "modelId": model,
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record) + "\n")
+PY
+}
+
 # make_home <name>: a firstmate home with empty state/ and data/, echoed.
 make_home() {
   local home=$TMP_ROOT/$1
@@ -146,7 +251,10 @@ make_home() {
 run_ledger() {
   local home=$1 claude_root=$2 pi_root=$3 nm_root=$4
   shift 4
-  FM_ROOT_OVERRIDE="$home" \
+  FM_HOME="$home" \
+    FM_ROOT_OVERRIDE="$home" \
+    FM_STATE_OVERRIDE="$home/state" \
+    FM_DATA_OVERRIDE="$home/data" \
     FM_CLAUDE_SESSIONS_ROOT="$claude_root" \
     FM_PI_SESSIONS_ROOT="$pi_root" \
     FM_NO_MISTAKES_WORKTREES="$nm_root" \
@@ -194,6 +302,85 @@ test_claude_columns_and_worker_attribution() {
   pass "a Claude session reports its token columns and its owning worker task"
 }
 
+test_claude_child_rollup_deduplicates_responses() {
+  local home claude pi nm out slot child_slot
+  home=$(make_home claude-rollup)
+  claude=$TMP_ROOT/claude-rollup-logs
+  pi=$TMP_ROOT/claude-rollup-pi
+  nm=$TMP_ROOT/claude-rollup-nm
+  slot=$TMP_ROOT/slot/16/parent
+  child_slot=$TMP_ROOT/slot/16/child
+  mkdir -p "$claude" "$pi" "$nm"
+
+  fm_write_meta "$home/state/parent-task.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$EARLY_SPAWN.116.216"
+  claude_user_turn "$claude" sess-parent "$slot" $((EARLY_SPAWN + 5))
+  claude_session "$claude" sess-parent "$slot" fm/parent model-parent \
+    $((EARLY_SPAWN + 10)) 1 2 3 4 5 msg-parent
+  claude_cost_state "$claude" sess-parent "$slot" 1.0
+  claude_session "$claude" sess-parent/subagents/agent-child "$child_slot" fm/child \
+    model-child $((EARLY_SPAWN + 20)) 10 20 30 40 50 msg-child "$slot"
+  claude_cost_state "$claude" sess-parent/subagents/agent-child "$child_slot" 2.5 "$slot"
+  claude_session "$claude" sess-parent/subagents/agent-copy "$child_slot" fm/child \
+    model-child $((EARLY_SPAWN + 21)) 10 20 30 40 50 msg-child "$slot"
+  claude_user_turn "$claude" sess-parent "$child_slot" $((EARLY_SPAWN + 30)) "$slot"
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the Claude child fixture"
+
+  [ "$(field "$out" sess-parent 1)" = parent-task ] \
+    || fail "a child transcript or later cwd replaced the parent session's owner"
+  [ "$(field "$out" sess-parent 4)" = "$slot" ] \
+    || fail "the rolled-up row did not keep the parent session's opening cwd"
+  [ "$(field "$out" sess-parent 5)" = fm/parent ] \
+    || fail "the rolled-up row did not keep the parent session's opening branch"
+  [ "$(field "$out" sess-parent 9)" = 2 ] \
+    || fail "a repeated Claude response was counted more than once"
+  [ "$(field "$out" sess-parent 10)" = 11 ] || fail "child input was not rolled up once"
+  [ "$(field "$out" sess-parent 11)" = 22 ] \
+    || fail "child cache creation was not rolled up once"
+  [ "$(field "$out" sess-parent 12)" = 33 ] \
+    || fail "child cache reads were not rolled up once"
+  [ "$(field "$out" sess-parent 13)" = 44 ] || fail "child output was not rolled up once"
+  [ "$(field "$out" sess-parent 14)" = 55 ] \
+    || fail "child thinking tokens were not rolled up once"
+  [ "$(field "$out" sess-parent 15)" = 3.5000 ] \
+    || fail "parent and child Claude cost were not added"
+  assert_contains "$out" "all: sessions=1 turns=2" \
+    "a nested Claude transcript produced a separate session row"
+  pass "Claude child usage rolls into its parent once without replacing parent identity"
+}
+
+test_claude_cost_uses_the_counted_window_delta() {
+  local home claude pi nm out
+  home=$(make_home claude-cost)
+  claude=$TMP_ROOT/claude-cost-logs
+  pi=$TMP_ROOT/claude-cost-pi
+  nm=$TMP_ROOT/claude-cost-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  claude_session "$claude" sess-cost "$TMP_ROOT/cost/session" HEAD model-old \
+    $((EARLY_SPAWN + 10)) 10 0 0 1 0 msg-before
+  claude_cost_state "$claude" sess-cost "$TMP_ROOT/cost/session" 2.0
+  claude_session "$claude" sess-cost "$TMP_ROOT/cost/session" HEAD model-new \
+    $((EARLY_SPAWN + 1000)) 20 0 0 2 0 msg-after
+  claude_cost_state "$claude" sess-cost "$TMP_ROOT/cost/session" 5.5
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "full-history snapshot failed on the Claude cost fixture"
+  [ "$(field "$out" sess-cost 15)" = 5.5000 ] \
+    || fail "a fully included Claude session did not report its cumulative cost"
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot \
+    --since "$(iso_at $((EARLY_SPAWN + 500)))" --stdout) \
+    || fail "windowed snapshot failed on the Claude cost fixture"
+  [ "$(field "$out" sess-cost 9)" = 1 ] || fail "the cost window counted an earlier turn"
+  [ "$(field "$out" sess-cost 10)" = 20 ] || fail "the cost window counted earlier tokens"
+  [ "$(field "$out" sess-cost 15)" = 3.5000 ] \
+    || fail "Claude cost did not subtract the cumulative total before the window"
+  pass "Claude cost reports the cumulative delta for the counted window"
+}
+
 test_pi_columns_cost_and_scout_kind() {
   local home claude pi nm out
   home=$(make_home pi-columns)
@@ -217,7 +404,7 @@ test_pi_columns_cost_and_scout_kind() {
   [ "$(field "$out" sess-beta 2)" = scout ] || fail "a kind=scout meta did not produce a scout row"
   [ "$(field "$out" sess-beta 3)" = pi ] || fail "the harness column is not pi"
   [ "$(field "$out" sess-beta 6)" = xai/grok-4.6 ] \
-    || fail "model_change provider and modelId did not compose the model column"
+    || fail "the Pi usage message did not compose the model column"
   [ "$(field "$out" sess-beta 10)" = 7 ] || fail "Pi input did not land in input"
   [ "$(field "$out" sess-beta 11)" = 8 ] || fail "Pi cacheWrite did not land in cache_write"
   [ "$(field "$out" sess-beta 12)" = 9 ] || fail "Pi cacheRead did not land in cache_read"
@@ -225,6 +412,60 @@ test_pi_columns_cost_and_scout_kind() {
   [ "$(field "$out" sess-beta 14)" = 11 ] || fail "Pi reasoning did not land in thinking"
   [ "$(field "$out" sess-beta 15)" = 1.2500 ] || fail "Pi cost.total did not land in cost_usd"
   pass "a Pi session reports its token columns, its recorded cost, and its scout kind"
+}
+
+test_pi_summary_usage_counts_tokens_but_not_turns() {
+  local home claude pi nm out
+  home=$(make_home pi-summary)
+  claude=$TMP_ROOT/pi-summary-claude
+  pi=$TMP_ROOT/pi-summary-logs
+  nm=$TMP_ROOT/pi-summary-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  pi_session "$pi" sess-summary "$TMP_ROOT/pi/summary" xai grok-4.6 \
+    $((EARLY_SPAWN + 10)) 1 1 1 1 1 0.25
+  pi_summary_usage "$pi" sess-summary "$TMP_ROOT/pi/summary" compaction \
+    $((EARLY_SPAWN + 20)) 2 2 2 2 2 0.5
+  pi_summary_usage "$pi" sess-summary "$TMP_ROOT/pi/summary" branch_summary \
+    $((EARLY_SPAWN + 30)) 3 3 3 3 3 0.75
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the Pi summary fixture"
+
+  [ "$(field "$out" sess-summary 9)" = 1 ] \
+    || fail "Pi compaction or branch summary usage added an assistant turn"
+  [ "$(field "$out" sess-summary 10)" = 6 ] || fail "Pi summary input was omitted"
+  [ "$(field "$out" sess-summary 11)" = 6 ] || fail "Pi summary cache writes were omitted"
+  [ "$(field "$out" sess-summary 12)" = 6 ] || fail "Pi summary cache reads were omitted"
+  [ "$(field "$out" sess-summary 13)" = 6 ] || fail "Pi summary output was omitted"
+  [ "$(field "$out" sess-summary 14)" = 6 ] || fail "Pi summary reasoning was omitted"
+  [ "$(field "$out" sess-summary 15)" = 1.5000 ] || fail "Pi summary cost was omitted"
+  [ "$(field "$out" sess-summary 8)" = "$(show_stamp_at $((EARLY_SPAWN + 30)))" ] \
+    || fail "the counted window did not include the last Pi summary usage"
+  pass "Pi compaction and branch summary usage is billed without adding assistant turns"
+}
+
+test_pi_model_comes_from_the_latest_usage_message() {
+  local home claude pi nm out
+  home=$(make_home pi-model)
+  claude=$TMP_ROOT/pi-model-claude
+  pi=$TMP_ROOT/pi-model-logs
+  nm=$TMP_ROOT/pi-model-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  pi_session "$pi" sess-pi-model "$TMP_ROOT/pi/model" openai model-new \
+    $((EARLY_SPAWN + 200)) 1 0 0 1 0 0.1
+  pi_message "$pi" sess-pi-model "$TMP_ROOT/pi/model" anthropic model-old \
+    $((EARLY_SPAWN + 100)) 1 0 0 1 0 0.1
+  pi_model_change "$pi" sess-pi-model "$TMP_ROOT/pi/model" xai model-unused \
+    $((EARLY_SPAWN + 300))
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the Pi model fixture"
+
+  [ "$(field "$out" sess-pi-model 6)" = openai/model-new ] \
+    || fail "Pi reported a model that was unused or belonged to an older turn"
+  pass "Pi reports the latest usage message's model, not a later unused selection"
 }
 
 test_pipeline_attribution() {
@@ -237,7 +478,7 @@ test_pipeline_attribution() {
 
   claude_session "$claude" sess-manager "$TMP_ROOT/anywhere" manager/RUN-BRANCH claude-opus-5 \
     $((EARLY_SPAWN + 10)) 1 2 3 4 0
-  claude_session "$claude" sess-nmtree "$nm/repohash/RUN-CWD" HEAD claude-opus-5 \
+  claude_session "$claude" sess-nmtree "$nm/repohash/RUN-CWD/apps/admin" HEAD claude-opus-5 \
     $((EARLY_SPAWN + 20)) 1 2 3 4 0
 
   out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
@@ -248,7 +489,7 @@ test_pipeline_attribution() {
   [ "$(field "$out" sess-manager 2)" = pipeline ] \
     || fail "a manager-branch session was not classified as pipeline"
   [ "$(field "$out" sess-nmtree 1)" = RUN-CWD ] \
-    || fail "a session under the no-mistakes worktrees root did not attribute to its run id"
+    || fail "a nested cwd under a no-mistakes run did not attribute to its run id"
   [ "$(field "$out" sess-nmtree 2)" = pipeline ] \
     || fail "a no-mistakes worktree session was not classified as pipeline"
   pass "pipeline sessions attribute by manager branch and by the no-mistakes worktrees root"
@@ -703,6 +944,26 @@ test_compare_rejects_a_non_numeric_cell() {
   pass "compare reports a non-numeric cell as a one-line error"
 }
 
+test_snapshot_reports_a_write_failure_without_a_traceback() {
+  local home claude pi nm out
+  home=$(make_home write-failure)
+  claude=$TMP_ROOT/write-failure-claude
+  pi=$TMP_ROOT/write-failure-pi
+  nm=$TMP_ROOT/write-failure-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  : >"$home/data/token-ledger"
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot \
+    --since 2026-01-01 --label blocked 2>&1)
+  expect_code 1 "$?" "snapshot with an unwritable output path"
+  assert_contains "$out" "error: cannot write " \
+    "snapshot did not report that its output write failed"
+  assert_contains "$out" "/data/token-ledger/blocked.tsv" \
+    "snapshot did not name its failed output path"
+  assert_not_contains "$out" "Traceback" "snapshot leaked a Python traceback"
+  pass "snapshot reports a write failure as one line without a traceback"
+}
+
 test_usage_errors() {
   local home claude pi nm
   home=$(make_home usage)
@@ -722,7 +983,11 @@ test_usage_errors() {
 }
 
 test_claude_columns_and_worker_attribution
+test_claude_child_rollup_deduplicates_responses
+test_claude_cost_uses_the_counted_window_delta
 test_pi_columns_cost_and_scout_kind
+test_pi_summary_usage_counts_tokens_but_not_turns
+test_pi_model_comes_from_the_latest_usage_message
 test_pipeline_attribution
 test_reused_slot_never_guesses
 test_since_never_moves_a_session_onto_another_task
@@ -737,6 +1002,7 @@ test_snapshot_writes_a_labelled_file_and_totals
 test_compare_totals_and_shared_tasks
 test_task_subcommand
 test_compare_rejects_a_non_numeric_cell
+test_snapshot_reports_a_write_failure_without_a_traceback
 test_usage_errors
 
 echo "# all fm-token-ledger tests passed"

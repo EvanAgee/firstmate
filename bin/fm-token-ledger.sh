@@ -15,8 +15,8 @@
 # snapshot writes data/token-ledger/<label-or-YYYY-MM-DD>.tsv and prints totals
 # by harness and by kind. --stdout prints the rows instead of writing a file.
 # --since defaults to midnight local time today; a bare date (2026-09-04) or a
-# full ISO-8601 timestamp are both accepted. Sessions with no turn at or after
-# --since are dropped entirely.
+# full ISO-8601 timestamp are both accepted. Sessions with no usage record at
+# or after --since are dropped entirely.
 #
 # compare prints the two files' totals side by side with percent change, then
 # every task id present in both with its own before/after. Rows in only one file
@@ -26,15 +26,23 @@
 # quoting in a teardown report.
 #
 # SOURCES
-#   Claude Code  ~/.claude/projects/<cwd-slug>/<session>.jsonl
+#   Claude Code  ~/.claude/projects/<cwd-slug>/<session>.jsonl and
+#     <session>/**/*.jsonl child transcripts. Child usage rolls into the parent
+#     row, and repeated message IDs count once across that whole row.
 #     Assistant records carry message.usage (input_tokens,
 #     cache_creation_input_tokens, cache_read_input_tokens, output_tokens, and
 #     output_tokens_details.thinking_tokens), plus message.model, cwd,
-#     gitBranch, and timestamp. Claude logs record no cost, so cost is 0.
+#     gitBranch, and timestamp. cost-state records carry cumulative
+#     totalCostUSD. Cost is the last cumulative total at or before the counted
+#     window end minus the last total before its start, or zero when no earlier
+#     total exists. Parent and child cost streams are calculated separately and
+#     then added.
 #   Pi           ~/.pi/agent/sessions/<cwd-slug>/<session>.jsonl
-#     A session record carries cwd; model_change records carry provider and
-#     modelId; assistant records carry message.usage (input, output, cacheRead,
-#     cacheWrite, reasoning) and message.usage.cost.total.
+#     A session record carries cwd. Assistant records carry message.provider,
+#     message.model, and message.usage (input, output, cacheRead, cacheWrite,
+#     reasoning, and cost.total). compaction and branch_summary records carry
+#     the same usage shape at the top level. Their usage is billed but does not
+#     add an assistant turn.
 #   Both roots are overridable for tests: FM_CLAUDE_SESSIONS_ROOT and
 #   FM_PI_SESSIONS_ROOT.
 #
@@ -42,13 +50,13 @@
 #   task        attributed task id, pipeline run id, "firstmate", or "-"
 #   kind        worker | scout | secondmate | pipeline | firstmate | -
 #   harness     claude | pi
-#   worktree    the session's own cwd
-#   branch      gitBranch for Claude, "-" for Pi (Pi logs record no branch)
+#   worktree    the parent session's opening cwd
+#   branch      the parent session's opening gitBranch, "-" for Pi
 #   model       last model the session used
-#   start,end   first and last counted turn, ISO-8601 local, second precision
+#   start,end   first and last counted usage record, ISO-8601 local, second precision
 #   turns       counted assistant turns
 #   input, cache_write, cache_read, output, thinking   token totals
-#   cost_usd    Pi's own recorded cost; 0 for Claude
+#   cost_usd    cost recorded by the harness
 #   session     the session file's basename without .jsonl
 #
 # ATTRIBUTION
@@ -56,14 +64,14 @@
 #
 #   worker/scout  state/<id>.meta names a worktree= and a spawn_gen=
 #     s<epoch>.<pid>.<rand>. A session in that worktree is that task's only when
-#     the session began inside the task's spawn window. That test reads the
-#     session's earliest record of any kind, not just a counted turn, because a
-#     session opens on a user turn well before its first assistant reply. It is
-#     therefore independent of --since, which only scopes which turns are
-#     counted. A window runs from its own spawn epoch to the next spawn epoch
-#     recorded for that same worktree, and to now for the newest one. The meta's
-#     kind= chooses scout or secondmate; everything else, a ship spawn included,
-#     is a worker.
+#     the parent session began inside the task's spawn window. That test reads
+#     the parent transcript's earliest record of any kind, not just a counted
+#     turn, because a session opens on a user turn well before its first
+#     assistant reply. It is therefore independent of --since, which only
+#     scopes which usage records are counted. A window runs from its own spawn
+#     epoch to the next spawn epoch recorded for that same worktree, and to now
+#     for the newest one. The meta's kind= chooses scout or secondmate;
+#     everything else, a ship spawn included, is a worker.
 #
 #     Treehouse and Orca reuse a worktree slot across tasks, so a slot's path is
 #     not an identity. A session that started before the current occupant's
@@ -79,7 +87,7 @@
 #   firstmate     a session whose cwd is this home's own primary checkout.
 #
 # EXIT STATUS
-#   0 on success, 2 on a usage error, 1 on an unreadable input file.
+#   0 on success, 2 on a usage error, 1 on an input or snapshot file error.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -107,7 +115,6 @@ FM_LEDGER_DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}" \
   exec python3 - "$@" <<'PY'
 from __future__ import annotations
 
-import glob
 import json
 import os
 import re
@@ -237,11 +244,11 @@ def mark_record(row: dict, moment: datetime | None) -> None:
         row["first_turn"] = moment
 
 
-def mark_turn(row: dict, moment: datetime, since: datetime) -> bool:
-    """Fold one counted turn into the row; True when it is inside --since.
+def mark_usage(row: dict, moment: datetime, since: datetime, assistant: bool) -> bool:
+    """Fold one usage record into the counted window when it is inside --since.
 
-    start and end span the counted turns only, and track time rather than the
-    order records happen to be written in.
+    start and end track time rather than the order records happen to be written
+    in. Only assistant usage increments turns.
     """
     if moment < since:
         return False
@@ -249,7 +256,9 @@ def mark_turn(row: dict, moment: datetime, since: datetime) -> bool:
         row["start"] = moment
     if row["end"] is None or moment > row["end"]:
         row["end"] = moment
-    row["turns"] += 1
+    if assistant:
+        row["turns"] += 1
+    row["has_usage"] = True
     return True
 
 
@@ -260,10 +269,14 @@ def blank_session(harness: str, path: Path) -> dict:
         "worktree": "",
         "branch": "-",
         "model": "-",
+        "worktree_time": None,
+        "branch_time": None,
+        "model_time": None,
         "start": None,
         "end": None,
         "first_turn": None,
         "turns": 0,
+        "has_usage": False,
         "cost_usd": 0.0,
         "tokens": Counter(),
     }
@@ -271,21 +284,63 @@ def blank_session(harness: str, path: Path) -> dict:
 
 def read_claude_session(path: Path, since: datetime) -> dict | None:
     row = blank_session("claude", path)
-    for record in read_records(path):
-        moment = parse_stamp(record.get("timestamp"))
-        mark_record(row, moment)
-        row["worktree"] = record.get("cwd") or row["worktree"]
-        branch = record.get("gitBranch")
-        if branch:
-            row["branch"] = branch
-        message = record.get("message")
-        usage = message.get("usage") if isinstance(message, dict) else None
-        if not isinstance(usage, dict) or moment is None:
+    child_root = path.with_suffix("")
+    paths = [path]
+    if child_root.is_dir():
+        paths.extend(sorted(child_root.rglob("*.jsonl")))
+
+    usage_records = {}
+    cost_streams = []
+    for source in paths:
+        cost_points = []
+        last_usage_key = None
+        for index, record in enumerate(read_records(source)):
+            moment = parse_stamp(record.get("timestamp"))
+            if source == path:
+                mark_record(row, moment)
+                worktree = record.get("cwd")
+                if worktree and moment is not None and (
+                    row["worktree_time"] is None or moment < row["worktree_time"]
+                ):
+                    row["worktree"] = worktree
+                    row["worktree_time"] = moment
+                branch = record.get("gitBranch")
+                if branch and moment is not None and (
+                    row["branch_time"] is None or moment < row["branch_time"]
+                ):
+                    row["branch"] = branch
+                    row["branch_time"] = moment
+
+            if record.get("type") == "cost-state":
+                total = record.get("totalCostUSD")
+                if isinstance(total, (int, float)) and (moment or last_usage_key):
+                    cost_points.append((moment, last_usage_key, float(total)))
+                continue
+
+            message = record.get("message")
+            usage = message.get("usage") if isinstance(message, dict) else None
+            if not isinstance(usage, dict) or moment is None:
+                continue
+            response_id = message.get("id")
+            key = (
+                f"message:{response_id}"
+                if response_id
+                else f"record:{source}:{index}"
+            )
+            current = usage_records.get(key)
+            if current is None or moment < current[0]:
+                usage_records[key] = (moment, message, usage)
+            last_usage_key = key
+        if cost_points:
+            cost_streams.append(cost_points)
+
+    for moment, message, usage in sorted(usage_records.values(), key=lambda item: item[0]):
+        if not mark_usage(row, moment, since, True):
             continue
-        if not mark_turn(row, moment, since):
-            continue
-        if moment == row["end"]:
-            row["model"] = message.get("model") or row["model"]
+        model = message.get("model")
+        if model:
+            row["model"] = model
+            row["model_time"] = moment
         details = usage.get("output_tokens_details")
         tokens = row["tokens"]
         tokens["input"] += as_int(usage.get("input_tokens"))
@@ -294,7 +349,26 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
         tokens["output"] += as_int(usage.get("output_tokens"))
         if isinstance(details, dict):
             tokens["thinking"] += as_int(details.get("thinking_tokens"))
-    return row if row["turns"] else None
+
+    if not row["has_usage"]:
+        return None
+    for cost_points in cost_streams:
+        resolved = []
+        for index, (moment, usage_key, total) in enumerate(cost_points):
+            if moment is None and usage_key in usage_records:
+                moment = usage_records[usage_key][0]
+            if moment is not None:
+                resolved.append((moment, index, total))
+        before = 0.0
+        ending = None
+        for moment, _, total in sorted(resolved):
+            if moment < row["start"]:
+                before = total
+            if moment <= row["end"]:
+                ending = total
+        if ending is not None:
+            row["cost_usd"] += ending - before
+    return row
 
 
 def read_pi_session(path: Path, since: datetime) -> dict | None:
@@ -308,16 +382,24 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
         mark_record(row, moment)
         if record.get("type") == "session":
             row["worktree"] = record.get("cwd") or row["worktree"]
-        if record.get("type") == "model_change":
-            provider = record.get("provider") or "?"
-            model = record.get("modelId")
-            if model:
-                row["model"] = f"{provider}/{model}"
+        record_type = record.get("type")
         usage = message.get("usage") if isinstance(message, dict) else None
+        assistant = isinstance(message, dict) and message.get("role") == "assistant"
+        if record_type in ("compaction", "branch_summary"):
+            usage = record.get("usage")
+            assistant = False
         if not isinstance(usage, dict) or "totalTokens" not in usage or moment is None:
             continue
-        if not mark_turn(row, moment, since):
+        if not mark_usage(row, moment, since, assistant):
             continue
+        if assistant and (
+            row["model_time"] is None or moment > row["model_time"]
+        ):
+            provider = message.get("provider") or "?"
+            model = message.get("model")
+            if model:
+                row["model"] = f"{provider}/{model}"
+                row["model_time"] = moment
         tokens = row["tokens"]
         tokens["input"] += as_int(usage.get("input"))
         tokens["cache_write"] += as_int(usage.get("cacheWrite"))
@@ -327,17 +409,17 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
         cost = usage.get("cost")
         if isinstance(cost, dict) and isinstance(cost.get("total"), (int, float)):
             row["cost_usd"] += float(cost["total"])
-    return row if row["turns"] else None
+    return row if row["has_usage"] else None
 
 
 def read_sessions(since: datetime) -> list[dict]:
     rows = []
-    for pattern, reader in (
-        (CLAUDE_ROOT / "*" / "*.jsonl", read_claude_session),
-        (PI_ROOT / "*" / "*.jsonl", read_pi_session),
+    for root, reader in (
+        (CLAUDE_ROOT, read_claude_session),
+        (PI_ROOT, read_pi_session),
     ):
-        for name in sorted(glob.glob(str(pattern))):
-            row = reader(Path(name), since)
+        for path in sorted(root.glob("*/*.jsonl")):
+            row = reader(path, since)
             if row:
                 rows.append(row)
     return rows
@@ -402,7 +484,9 @@ def attribute(row: dict, windows: dict) -> tuple[str, str]:
     if worktree:
         resolved = resolve(worktree)
         if resolved.is_relative_to(resolve(NO_MISTAKES_WORKTREES)):
-            return resolved.name, "pipeline"
+            relative = resolved.relative_to(resolve(NO_MISTAKES_WORKTREES))
+            if len(relative.parts) >= 2:
+                return relative.parts[1], "pipeline"
         if resolved == resolve(ROOT):
             return "firstmate", "firstmate"
         first_turn = row["first_turn"]
@@ -477,8 +561,11 @@ def totals_line(label: str, rows: list[dict]) -> str:
 def write_tsv(path: Path, rows: list[dict]) -> None:
     lines = ["\t".join(COLUMNS)]
     lines += ["\t".join(row[column] for column in COLUMNS) for row in rows]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as err:
+        die(f"error: cannot write {path}: {err}")
 
 
 def read_tsv(path: Path) -> list[dict]:

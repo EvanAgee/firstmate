@@ -27,10 +27,8 @@ Ordinary dead-direct-report recovery is owned by `stuck-crewmate-recovery`, whil
 
 ## Token ledger (data/token-ledger)
 
-`bin/fm-token-ledger.sh` reads the Claude Code and Pi session logs and reports what each worker, scout, pipeline run, and Firstmate session spent.
-It writes its snapshots to `data/token-ledger/` under the effective Firstmate home and never reads or writes a project.
-`snapshot` records one row per session and prints totals by harness and by kind, `compare` puts two snapshots side by side with percent change, and `task` prints one task's sessions for a completion report.
-The script header is the single owner of the row fields, the log-record shapes it reads, and the spawn-window rule that leaves a session unattributed rather than charging it to whichever task now holds a reused worktree slot.
+Use `bin/fm-token-ledger.sh` to report and compare session token and cost use under the effective Firstmate home.
+Its header owns the commands, fields, source records, output paths, and attribution rules.
 
 ## Pi Calm preference (config/calm)
 
