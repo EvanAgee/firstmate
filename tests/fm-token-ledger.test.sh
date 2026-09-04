@@ -13,11 +13,13 @@
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
 # that records no cwd, two tasks with the same spawn epoch staying ambiguous,
-# a session that opened on a user turn before the slot was respawned, and a log
-# whose records are not in time order, the start and end columns spanning the
-# counted turns in time order, model columns naming the latest usage-bearing
-# model, firstmate's own session, --since filtering, compare totals and
-# shared-task rows, one-line read and write errors, and the task subcommand.
+# sessions inside a whole-second spawn boundary, a session that opened on a user
+# turn before the slot was respawned, and a log whose records are not in time
+# order, the start and end columns spanning the counted turns in time order,
+# model columns naming the latest usage-bearing model, local-midnight cutoff
+# behavior across DST, firstmate's own session, --since filtering, compare
+# totals and shared-task rows, one-line read and write errors, and the task
+# subcommand.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -33,7 +35,11 @@ EARLY_SPAWN=1788500000
 LATE_SPAWN=1788510000
 
 iso_at() {  # <epoch-seconds> -> the UTC ISO-8601 stamp the logs use
-  python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1]),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"
+  iso_at_ms "$1" 0
+}
+
+iso_at_ms() {  # <epoch-seconds> <milliseconds> -> a UTC ISO-8601 stamp
+  python3 -c 'import sys,datetime;moment=datetime.datetime.fromtimestamp(int(sys.argv[1]),datetime.timezone.utc);print(f"{moment:%Y-%m-%dT%H:%M:%S}.{int(sys.argv[2]):03d}Z")' "$1" "$2"
 }
 
 show_stamp_at() {  # <epoch-seconds> -> the UTC stamp the start and end columns print
@@ -92,15 +98,15 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
-# claude_user_turn <sessions-root> <session-id> <cwd> <epoch> [storage-cwd]
+# claude_user_turn <sessions-root> <session-id> <cwd> <epoch> [storage-cwd] [milliseconds]
 # A user record: timestamped and part of the session, but carrying no usage.
 claude_user_turn() {
   local root=$1 id=$2 cwd=$3 epoch=$4
-  local storage_cwd=${5:-$cwd} slug dir
+  local storage_cwd=${5:-$cwd} milliseconds=${6:-0} slug dir
   slug=$(printf '%s' "$storage_cwd" | tr '/.' '--')
   dir=$root/$slug
   mkdir -p "$(dirname "$dir/$id.jsonl")"
-  python3 - "$dir/$id.jsonl" "$cwd" "$(iso_at "$epoch")" <<'PY'
+  python3 - "$dir/$id.jsonl" "$cwd" "$(iso_at_ms "$epoch" "$milliseconds")" <<'PY'
 import json, sys
 path, cwd, stamp = sys.argv[1:4]
 record = {
@@ -904,6 +910,88 @@ test_equal_spawn_epochs_stay_unattributed() {
   pass "equal spawn epochs keep a reused slot unattributed"
 }
 
+test_spawn_boundary_second_stays_unattributed() {
+  local home claude pi nm out slot
+  home=$(make_home spawn-boundary)
+  claude=$TMP_ROOT/spawn-boundary-claude
+  pi=$TMP_ROOT/spawn-boundary-pi
+  nm=$TMP_ROOT/spawn-boundary-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/reused/19/repo
+
+  fm_write_meta "$home/state/current-occupant.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$LATE_SPAWN.120.220"
+  claude_user_turn "$claude" sess-spawn-boundary "$slot" "$LATE_SPAWN" "$slot" 100
+  claude_session "$claude" sess-spawn-boundary "$slot" fm/boundary claude-opus-5 \
+    $((LATE_SPAWN + 60)) 1 2 3 4 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the spawn-boundary fixture"
+
+  [ "$(field "$out" sess-spawn-boundary 1)" = "-" ] \
+    || fail "a session inside the recorded spawn second was assigned to the new task"
+  [ "$(field "$out" sess-spawn-boundary 2)" = "-" ] \
+    || fail "a session inside the recorded spawn second was given a kind"
+  [ "$(field "$out" sess-spawn-boundary 4)" = "$slot" ] \
+    || fail "the spawn-boundary session lost its worktree"
+  pass "the whole-second spawn boundary stays unattributed"
+}
+
+test_default_since_uses_midnights_dst_offset() {
+  local home claude pi nm out transition_tz before_midnight after_midnight
+  home=$(make_home default-since-dst)
+  claude=$TMP_ROOT/default-since-dst-claude
+  pi=$TMP_ROOT/default-since-dst-pi
+  nm=$TMP_ROOT/default-since-dst-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  read -r transition_tz before_midnight after_midnight < <(python3 <<'PY'
+from datetime import datetime, timedelta, timezone
+
+now = datetime.now(timezone.utc)
+standard_offset = 12 - now.hour
+local_day = (now + timedelta(hours=standard_offset)).date()
+week = (local_day.day - 1) // 7 + 1
+weekday = (local_day.weekday() + 1) % 7
+if local_day.month == 12:
+    end_month = 1
+else:
+    end_month = local_day.month + 1
+end_day = local_day.replace(month=end_month, day=1)
+if end_month == 1:
+    end_day = end_day.replace(year=local_day.year + 1)
+end_weekday = (end_day.weekday() + 1) % 7
+posix_standard = -standard_offset
+posix_daylight = posix_standard - 1
+zone = (
+    f"STD{posix_standard}DST{posix_daylight},"
+    f"M{local_day.month}.{week}.{weekday}/1,M{end_month}.1.{end_weekday}/0"
+)
+midnight_utc = datetime.combine(local_day, datetime.min.time(), timezone.utc)
+midnight_utc -= timedelta(hours=standard_offset)
+print(
+    zone,
+    int((midnight_utc - timedelta(minutes=30)).timestamp()),
+    int((midnight_utc + timedelta(minutes=30)).timestamp()),
+)
+PY
+)
+
+  claude_session "$claude" sess-before-midnight "$home" HEAD model \
+    "$before_midnight" 1 0 0 1 0
+  claude_session "$claude" sess-after-midnight "$home" HEAD model \
+    "$after_midnight" 1 0 0 1 0
+
+  out=$(TZ="$transition_tz" run_ledger "$home" "$claude" "$pi" "$nm" \
+    snapshot --stdout) || fail "default snapshot failed on the DST-midnight fixture"
+
+  assert_not_contains "$out" "sess-before-midnight" \
+    "the default cutoff used the snapshot's later DST offset for midnight"
+  assert_contains "$out" "sess-after-midnight" \
+    "the default cutoff dropped usage after local midnight"
+  pass "the default cutoff uses the offset in effect at local midnight"
+}
+
 test_firstmate_and_since_filter() {
   local home claude pi nm out
   home=$(make_home firstmate-own)
@@ -1129,6 +1217,8 @@ test_out_of_order_log_reports_its_counted_window_in_time_order
 test_dst_fallback_keeps_timestamps_and_rows_chronological
 test_earlier_occupant_window_closes_at_the_next_spawn
 test_equal_spawn_epochs_stay_unattributed
+test_spawn_boundary_second_stays_unattributed
+test_default_since_uses_midnights_dst_offset
 test_firstmate_and_since_filter
 test_snapshot_writes_a_labelled_file_and_totals
 test_compare_totals_and_shared_tasks

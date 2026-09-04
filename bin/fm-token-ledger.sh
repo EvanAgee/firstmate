@@ -71,10 +71,12 @@
 #     the parent transcript's earliest record of any kind, not just a counted
 #     turn, because a session opens on a user turn well before its first
 #     assistant reply. It is therefore independent of --since, which only
-#     scopes which usage records are counted. A window runs from its own spawn
-#     epoch to the next spawn epoch recorded for that same worktree, or to the
-#     snapshot time when that comes first. The meta's kind= chooses scout or
-#     secondmate; everything else, a ship spawn included, is a worker.
+#     scopes which usage records are counted. Because spawn_gen records only
+#     whole seconds, a window starts at the next whole second and leaves the
+#     recorded spawn second unattributed. It ends at the next spawn epoch for
+#     that same worktree, or at snapshot time when that comes first. The meta's
+#     kind= chooses scout or secondmate; everything else, a ship spawn included,
+#     is a worker.
 #
 #     Treehouse and Orca reuse a worktree slot across tasks, so a slot's path is
 #     not an identity. A session that started before the current occupant's
@@ -125,7 +127,7 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(os.environ["FM_LEDGER_ROOT"])
@@ -182,8 +184,8 @@ def die(message: str, code: int = 1) -> None:
 
 def parse_since(text: str | None, snapshot_time: datetime) -> datetime:
     if not text:
-        now = snapshot_time.astimezone()
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+        local_day = snapshot_time.astimezone().date()
+        return datetime.combine(local_day, datetime.min.time()).astimezone()
     raw = text.strip()
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
@@ -497,7 +499,9 @@ def spawn_windows(
                 else snapshot_time
             )
             ends = min(next_spawn, snapshot_time)
-            bounded.append((spawned, ends, task, kind))
+            safe_start = spawned + timedelta(seconds=1)
+            if safe_start < ends:
+                bounded.append((safe_start, ends, task, kind))
         windows[worktree] = bounded
     return windows
 
