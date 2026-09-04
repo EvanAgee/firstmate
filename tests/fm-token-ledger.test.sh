@@ -117,43 +117,22 @@ PY
 # pi_session <sessions-root> <session-id> <cwd> <provider> <model> <epoch> <in> <cw> <cr> <out> <reason> <cost>
 pi_session() {
   local root=$1 id=$2 cwd=$3 provider=$4 model=$5 epoch=$6
-  local input=$7 cache_write=$8 cache_read=$9 output=${10} reasoning=${11} cost=${12}
   local slug dir
   slug=$(printf '%s' "$cwd" | tr '/.' '--')
   dir=$root/$slug
   mkdir -p "$dir"
-  python3 - "$dir/$id.jsonl" "$cwd" "$provider" "$model" "$(iso_at "$epoch")" \
-    "$input" "$cache_write" "$cache_read" "$output" "$reasoning" "$cost" <<'PY'
+  python3 - "$dir/$id.jsonl" "$cwd" "$provider" "$model" "$(iso_at "$epoch")" <<'PY'
 import json, sys
 path, cwd, provider, model, stamp = sys.argv[1:6]
-numbers = [int(value) for value in sys.argv[6:11]]
-cost = float(sys.argv[11])
 lines = [
     {"type": "session", "timestamp": stamp, "cwd": cwd},
     {"type": "model_change", "timestamp": stamp, "provider": provider, "modelId": model},
-    {
-        "type": "message",
-        "timestamp": stamp,
-        "message": {
-            "role": "assistant",
-            "provider": provider,
-            "model": model,
-            "usage": {
-                "input": numbers[0],
-                "cacheWrite": numbers[1],
-                "cacheRead": numbers[2],
-                "output": numbers[3],
-                "reasoning": numbers[4],
-                "totalTokens": sum(numbers),
-                "cost": {"total": cost},
-            },
-        },
-    },
 ]
 with open(path, "w", encoding="utf-8") as handle:
     for line in lines:
         handle.write(json.dumps(line) + "\n")
 PY
+  pi_message "$@"
 }
 
 pi_message() {
@@ -319,7 +298,7 @@ test_claude_child_rollup_deduplicates_responses() {
     $((EARLY_SPAWN + 10)) 1 2 3 4 5 msg-parent
   claude_cost_state "$claude" sess-parent "$slot" 1.0
   claude_session "$claude" sess-parent/subagents/agent-child "$child_slot" fm/child \
-    model-child $((EARLY_SPAWN + 20)) 10 20 30 40 50 msg-child "$slot"
+    model-child $((EARLY_SPAWN + 20)) 10 20 30 4 5 msg-child "$slot"
   claude_cost_state "$claude" sess-parent/subagents/agent-child "$child_slot" 2.5 "$slot"
   claude_session "$claude" sess-parent/subagents/agent-copy "$child_slot" fm/child \
     model-child $((EARLY_SPAWN + 21)) 10 20 30 40 50 msg-child "$slot"
@@ -528,6 +507,33 @@ test_reused_slot_never_guesses() {
   [ "$(field "$out" sess-before 4)" = "$slot" ] \
     || fail "an unattributed session lost its worktree"
   pass "a session outside every spawn window stays unattributed on a reused slot"
+}
+
+test_future_session_stays_outside_the_current_spawn_window() {
+  local home claude pi nm out slot now
+  home=$(make_home future-window)
+  claude=$TMP_ROOT/future-window-claude
+  pi=$TMP_ROOT/future-window-pi
+  nm=$TMP_ROOT/future-window-nm
+  mkdir -p "$claude" "$pi" "$nm"
+  slot=$TMP_ROOT/reused/17/repo
+  now=$(date +%s)
+
+  fm_write_meta "$home/state/current-occupant.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$((now - 60)).117.217"
+  claude_session "$claude" sess-future "$slot" fm/future claude-opus-5 \
+    $((now + 3600)) 1 2 3 4 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2020-01-01 --stdout) \
+    || fail "snapshot failed on the future-session fixture"
+
+  [ "$(field "$out" sess-future 1)" = "-" ] \
+    || fail "a future-dated session was charged to the current occupant"
+  [ "$(field "$out" sess-future 2)" = "-" ] \
+    || fail "a future-dated session was given a kind"
+  [ "$(field "$out" sess-future 4)" = "$slot" ] \
+    || fail "the unattributed future-dated session lost its worktree"
+  pass "snapshot time closes the current occupant's attribution window"
 }
 
 test_since_never_moves_a_session_onto_another_task() {
@@ -990,6 +996,7 @@ test_pi_summary_usage_counts_tokens_but_not_turns
 test_pi_model_comes_from_the_latest_usage_message
 test_pipeline_attribution
 test_reused_slot_never_guesses
+test_future_session_stays_outside_the_current_spawn_window
 test_since_never_moves_a_session_onto_another_task
 test_a_session_with_no_cwd_stays_unattributed
 test_a_session_that_opened_before_the_respawn_stays_unattributed

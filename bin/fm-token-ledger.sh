@@ -69,9 +69,9 @@
 #     turn, because a session opens on a user turn well before its first
 #     assistant reply. It is therefore independent of --since, which only
 #     scopes which usage records are counted. A window runs from its own spawn
-#     epoch to the next spawn epoch recorded for that same worktree, and to now
-#     for the newest one. The meta's kind= chooses scout or secondmate;
-#     everything else, a ship spawn included, is a worker.
+#     epoch to the next spawn epoch recorded for that same worktree, or to the
+#     snapshot time when that comes first. The meta's kind= chooses scout or
+#     secondmate; everything else, a ship spawn included, is a worker.
 #
 #     Treehouse and Orca reuse a worktree slot across tasks, so a slot's path is
 #     not an identity. A session that started before the current occupant's
@@ -174,9 +174,9 @@ def die(message: str, code: int = 1) -> None:
     raise LedgerError(f"{message}|{code}")
 
 
-def parse_since(text: str | None) -> datetime:
+def parse_since(text: str | None, snapshot_time: datetime) -> datetime:
     if not text:
-        now = datetime.now().astimezone()
+        now = snapshot_time.astimezone()
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     raw = text.strip()
     if raw.endswith("Z"):
@@ -328,7 +328,7 @@ def read_claude_session(path: Path, since: datetime) -> dict | None:
                 else f"record:{source}:{index}"
             )
             current = usage_records.get(key)
-            if current is None or moment < current[0]:
+            if current is None or moment > current[0]:
                 usage_records[key] = (moment, message, usage)
             last_usage_key = key
         if cost_points:
@@ -446,11 +446,13 @@ def resolve(path: str | Path) -> Path:
         return Path(path)
 
 
-def spawn_windows() -> dict[str, list[tuple[datetime, datetime | None, str, str]]]:
+def spawn_windows(
+    snapshot_time: datetime,
+) -> dict[str, list[tuple[datetime, datetime, str, str]]]:
     """Per worktree, each task's [spawn, next spawn) window, oldest first.
 
     A slot is reused across tasks, so the window - not the path - is what makes
-    an attribution safe. Only the newest window per worktree stays open.
+    an attribution safe. Snapshot time closes every otherwise open window.
     """
     by_worktree: dict[str, list] = {}
     for meta_path in sorted(STATE.glob("*.meta")):
@@ -469,7 +471,12 @@ def spawn_windows() -> dict[str, list[tuple[datetime, datetime | None, str, str]
         entries.sort()
         bounded = []
         for index, (spawned, task, kind) in enumerate(entries):
-            ends = entries[index + 1][0] if index + 1 < len(entries) else None
+            next_spawn = (
+                entries[index + 1][0]
+                if index + 1 < len(entries)
+                else snapshot_time
+            )
+            ends = min(next_spawn, snapshot_time)
             bounded.append((spawned, ends, task, kind))
         windows[worktree] = bounded
     return windows
@@ -492,13 +499,13 @@ def attribute(row: dict, windows: dict) -> tuple[str, str]:
         first_turn = row["first_turn"]
         if first_turn is not None:
             for spawned, ends, task, kind in windows.get(str(resolved), []):
-                if first_turn >= spawned and (ends is None or first_turn < ends):
+                if first_turn >= spawned and first_turn < ends:
                     return task, kind
     return "-", "-"
 
 
-def build_rows(since: datetime) -> list[dict]:
-    windows = spawn_windows()
+def build_rows(since: datetime, snapshot_time: datetime) -> list[dict]:
+    windows = spawn_windows(snapshot_time)
     rows = []
     for row in read_sessions(since):
         task, kind = attribute(row, windows)
@@ -628,12 +635,13 @@ def cmd_snapshot(args: list[str]) -> int:
     if label is not None and (not label or re.search(r"[^A-Za-z0-9._-]|^[.-]", label)):
         die(f"error: --label must be a plain file name: {label}", 2)
 
-    since = parse_since(since_text)
-    rows = build_rows(since)
+    snapshot_time = datetime.now(timezone.utc)
+    since = parse_since(since_text, snapshot_time)
+    rows = build_rows(since, snapshot_time)
     if to_stdout:
         print_rows(rows)
     else:
-        name = label or f"{datetime.now().astimezone():%Y-%m-%d}"
+        name = label or f"{snapshot_time.astimezone():%Y-%m-%d}"
         out = LEDGER_DIR / f"{name}.tsv"
         write_tsv(out, rows)
         print(f"wrote {out} ({len(rows)} sessions since {show_stamp(since)})")
@@ -701,7 +709,9 @@ def cmd_task(args: list[str]) -> int:
     if len(args) != 1 or not args[0]:
         die("error: task takes exactly one task id", 2)
     wanted = args[0]
-    rows = [row for row in build_rows(parse_since("1970-01-01")) if row["task"] == wanted]
+    snapshot_time = datetime.now(timezone.utc)
+    since = parse_since("1970-01-01", snapshot_time)
+    rows = [row for row in build_rows(since, snapshot_time) if row["task"] == wanted]
     if not rows:
         print(f"no sessions attributed to {wanted}")
         return 0
