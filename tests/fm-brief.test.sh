@@ -353,6 +353,86 @@ test_matt_flow_without_pipeline_keeps_code_review() {
 # unusable value must stop the scaffold instead of silently defaulting. The
 # no-mistakes-prod-only row is the conditional registry policy: it is never a task
 # mode, and its refusal must say to classify the task's surface first.
+# The aos hardening review (2026-09-04) found six holes of one shape: the builder
+# proved the path it designed and never walked the path a real person takes. Every
+# ship mode therefore demands the walk before done, with or without --matt-flow. A
+# scout produces a report rather than a user-visible change, so it stays out.
+test_ship_modes_demand_a_walked_path_before_done() {
+  local home id mode brief flow flow_label walk_line done_line report_marker
+  home="$TMP_ROOT/walked-path-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR local-only; do
+    for flow in plain matt-flow; do
+      case "$flow" in
+        plain)
+          id="brief-walk-$mode"
+          flow_label="$mode"
+          FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+            || fail "$flow_label: ship brief failed to scaffold"
+          ;;
+        matt-flow)
+          id="brief-walk-$mode-matt-flow"
+          flow_label="$mode --matt-flow"
+          FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --matt-flow >/dev/null 2>&1 \
+            || fail "$flow_label: ship brief failed to scaffold"
+          ;;
+      esac
+      brief="$home/data/$id/brief.md"
+      assert_grep "For any change a user can see, walk it before reporting done" "$brief" \
+        "$flow_label: ship brief did not demand the walk before done"
+      assert_grep "on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to)" "$brief" \
+        "$flow_label: ship brief did not require the neighbouring paths"
+      # local-only never pushes, so a preview deployment is unreachable and a one-line
+      # status file cannot carry a heading; its proof lands in the final commit message.
+      case "$mode" in
+        local-only)
+          assert_grep "as a signed-in user on a local build," "$brief" \
+            "$flow_label: ship brief did not send the walk to a local build"
+          assert_no_grep "on the preview deployment" "$brief" \
+            "$flow_label: ship brief sent a never-pushed branch to a preview deployment"
+          assert_grep "Write what you saw, step by step, under a \`## What I walked\` section in the body of your final commit message on this branch, in plain text and with no screenshots." "$brief" \
+            "$flow_label: ship brief did not route the What I walked section to the commit message"
+          assert_grep "walked {the path you walked}" "$brief" \
+            "$flow_label: ship brief did not make the done line name the path walked"
+          report_marker="append \`done: ready in branch"
+          ;;
+        no-mistakes)
+          assert_grep "as a signed-in user on the preview deployment (or a local build when the project has no preview)" "$brief" \
+            "$flow_label: ship brief did not say where to walk the change"
+          assert_grep "Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path." "$brief" \
+            "$flow_label: ship brief did not require the What I walked section and its screenshots"
+          report_marker="After /no-mistakes reports CI green"
+          ;;
+        *)
+          assert_grep "as a signed-in user on the preview deployment (or a local build when the project has no preview)" "$brief" \
+            "$flow_label: ship brief did not say where to walk the change"
+          assert_grep "Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path." "$brief" \
+            "$flow_label: ship brief did not require the What I walked section and its screenshots"
+          report_marker="push your branch and open a PR"
+          ;;
+      esac
+      assert_grep "A done without that section is not done; firstmate sends it back." "$brief" \
+        "$flow_label: ship brief did not give the walk a consequence"
+      walk_line=$(grep -n -F -- "walk it before reporting done" "$brief" | head -1 | cut -d: -f1)
+      done_line=$(grep -n -F -- "$report_marker" "$brief" | head -1 | cut -d: -f1)
+      [ -n "$walk_line" ] && [ -n "$done_line" ] \
+        || fail "$flow_label: ship brief is missing the walk line or the report-done line"
+      [ "$walk_line" -lt "$done_line" ] \
+        || fail "$flow_label: ship brief puts the walk demand after the report-done step"
+    done
+  done
+
+  id="brief-walk-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 \
+    || fail "scout brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "## What I walked" "$brief" \
+    "scout brief demanded a walked-path proof for a deliverable that ships no change"
+
+  pass "fm-brief.sh: every ship mode demands a walked-path proof; scout stays out"
+}
+
 test_ship_mode_is_required_and_closed_set() {
   local home id out status label flag expect
   home="$TMP_ROOT/mode-required-home"
@@ -956,6 +1036,7 @@ test_ship_modes_generate_clean_briefs
 test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
 test_matt_flow_without_pipeline_keeps_code_review
+test_ship_modes_demand_a_walked_path_before_done
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
