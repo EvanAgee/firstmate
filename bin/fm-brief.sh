@@ -43,6 +43,8 @@
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
+# Every ship brief requires a walked-path proof under "## What I walked" before done:
+# the worker walks the change plus its neighbouring paths and pastes what it saw.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns approval decisions, so yolo is
@@ -403,6 +405,9 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path.
+A done without that section is not done; firstmate sends it back.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and enter the PR watch below.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 $PR_WATCH
@@ -419,6 +424,9 @@ Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+Paste what you saw, step by step, under \`## What I walked\` in your final status note, with a viewport screenshot per path.
+A done without that section is not done; firstmate sends it back.
 When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
@@ -450,6 +458,9 @@ Two firstmate-specific rules layer on top of that guidance:
   Its resolved Firstmate code root is \`$FM_ROOT\`.
   Use \`$FM_ROOT/bin/fm-review-loop-stop.sh\` for every record and resolve call.
 
+For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path.
+A done without that section is not done; firstmate sends it back.
 After /no-mistakes reports CI green (the CI-ready return point), append \`done: PR {url} checks green\` and enter the PR watch below.
 Do not wait for no-mistakes to keep monitoring in the background.
 $PR_WATCH
