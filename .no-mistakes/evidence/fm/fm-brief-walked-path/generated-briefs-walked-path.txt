@@ -1,0 +1,93 @@
+==============================================================
+BRIEF: ev-no-mistakes   (real output of bin/fm-brief.sh)
+==============================================================
+98-  Its resolved Firstmate code root is `/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1W7DKZHSNZRG1039NMN3NKC`.
+99-  Use `/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1W7DKZHSNZRG1039NMN3NKC/bin/fm-review-loop-stop.sh` for every record and resolve call.
+100-
+101:For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+102-Paste what you saw, step by step, under `## What I walked` in the PR body, with a viewport screenshot per path.
+103-A done without that section is not done; firstmate sends it back.
+104-After /no-mistakes reports CI green (the CI-ready return point), append `done: PR {url} checks green` and enter the PR watch below.
+
+--- report-done line, must come AFTER the walk line ---
+104:After /no-mistakes reports CI green (the CI-ready return point), append `done: PR {url} checks green` and enter the PR watch below.
+
+==============================================================
+BRIEF: ev-no-mistakes-matt   (real output of bin/fm-brief.sh)
+==============================================================
+105-  Its resolved Firstmate code root is `/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1W7DKZHSNZRG1039NMN3NKC`.
+106-  Use `/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M1W7DKZHSNZRG1039NMN3NKC/bin/fm-review-loop-stop.sh` for every record and resolve call.
+107-
+108:For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+109-Paste what you saw, step by step, under `## What I walked` in the PR body, with a viewport screenshot per path.
+110-A done without that section is not done; firstmate sends it back.
+111-After /no-mistakes reports CI green (the CI-ready return point), append `done: PR {url} checks green` and enter the PR watch below.
+
+--- report-done line, must come AFTER the walk line ---
+111:After /no-mistakes reports CI green (the CI-ready return point), append `done: PR {url} checks green` and enter the PR watch below.
+
+==============================================================
+BRIEF: ev-direct-PR   (real output of bin/fm-brief.sh)
+==============================================================
+79-Delivery contract: mode=direct-PR
+80-This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+81-The task is complete only when committed on your branch.
+82:For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+83-Paste what you saw, step by step, under `## What I walked` in the PR body, with a viewport screenshot per path.
+84-A done without that section is not done; firstmate sends it back.
+85-When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and enter the PR watch below.
+
+--- report-done line, must come AFTER the walk line ---
+85:When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and enter the PR watch below.
+
+==============================================================
+BRIEF: ev-direct-PR-matt   (real output of bin/fm-brief.sh)
+==============================================================
+85-Delivery contract: mode=direct-PR
+86-This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+87-The task is complete only when committed on your branch.
+88:For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+89-Paste what you saw, step by step, under `## What I walked` in the PR body, with a viewport screenshot per path.
+90-A done without that section is not done; firstmate sends it back.
+91-When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and enter the PR watch below.
+
+--- report-done line, must come AFTER the walk line ---
+91:When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and enter the PR watch below.
+
+==============================================================
+BRIEF: ev-local-only   (real output of bin/fm-brief.sh)
+==============================================================
+80-This task ships **local-only**: no remote, no PR, no pipeline.
+81-The task is complete only when committed on your branch `fm/ev-local-only`. Do NOT push, do NOT open a PR, do NOT merge.
+82-Keep your branch a clean fast-forward onto the current default branch - if `main` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+83:For any change a user can see, walk it before reporting done: as a signed-in user on a local build, on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+84-Write what you saw, step by step, under a `## What I walked` section in the body of your final commit message on this branch, in plain text and with no screenshots.
+85-A done without that section is not done; firstmate sends it back.
+86-When it is implemented and committed, append `done: ready in branch fm/ev-local-only, walked {the path you walked}` to the status file and stop.
+
+--- report-done line, must come AFTER the walk line ---
+86:When it is implemented and committed, append `done: ready in branch fm/ev-local-only, walked {the path you walked}` to the status file and stop.
+
+==============================================================
+BRIEF: ev-local-only-matt   (real output of bin/fm-brief.sh)
+==============================================================
+86-This task ships **local-only**: no remote, no PR, no pipeline.
+87-The task is complete only when committed on your branch `fm/ev-local-only-matt`. Do NOT push, do NOT open a PR, do NOT merge.
+88-Keep your branch a clean fast-forward onto the current default branch - if `main` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+89:For any change a user can see, walk it before reporting done: as a signed-in user on a local build, on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+90-Write what you saw, step by step, under a `## What I walked` section in the body of your final commit message on this branch, in plain text and with no screenshots.
+91-A done without that section is not done; firstmate sends it back.
+92-When it is implemented and committed, append `done: ready in branch fm/ev-local-only-matt, walked {the path you walked}` to the status file and stop.
+
+--- report-done line, must come AFTER the walk line ---
+==============================================================
+SCOUT BRIEF: ev-scout - walked-path proof must be ABSENT
+==============================================================
+grep -c '## What I walked'        -> 0
+grep -c 'walk it before reporting done' -> 0
+
+==============================================================
+bin/fm-brief.sh --help (walked-path mention)
+==============================================================
+45:Every ship brief requires a walked-path proof under "## What I walked" before done:
+46:the worker walks the change plus its neighbouring paths and pastes what it saw.
