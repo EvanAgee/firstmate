@@ -424,10 +424,10 @@ Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
-Paste what you saw, step by step, under \`## What I walked\` in your final status note, with a viewport screenshot per path.
+For any change a user can see, walk it before reporting done: as a signed-in user on a local build, on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+Write what you saw, step by step, under a \`## What I walked\` section in the body of your final commit message on this branch, in plain text and with no screenshots.
 A done without that section is not done; firstmate sends it back.
-When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
+When it is implemented and committed, append \`done: ready in branch fm/$ID, walked {the path you walked}\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
     ;;

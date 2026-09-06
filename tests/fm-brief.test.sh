@@ -358,7 +358,7 @@ test_matt_flow_without_pipeline_keeps_code_review() {
 # ship mode therefore demands the walk before done, with or without --matt-flow. A
 # scout produces a report rather than a user-visible change, so it stays out.
 test_ship_modes_demand_a_walked_path_before_done() {
-  local home id mode brief flow flow_label walk_destination
+  local home id mode brief flow flow_label walk_line done_line report_marker
   home="$TMP_ROOT/walked-path-home"
   mkdir -p "$home/data"
 
@@ -381,19 +381,45 @@ test_ship_modes_demand_a_walked_path_before_done() {
       brief="$home/data/$id/brief.md"
       assert_grep "For any change a user can see, walk it before reporting done" "$brief" \
         "$flow_label: ship brief did not demand the walk before done"
-      assert_grep "as a signed-in user on the preview deployment (or a local build when the project has no preview)" "$brief" \
-        "$flow_label: ship brief did not say where to walk the change"
       assert_grep "on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to)" "$brief" \
         "$flow_label: ship brief did not require the neighbouring paths"
-      # local-only opens no PR, so its walk lands in the final status note instead.
+      # local-only never pushes, so a preview deployment is unreachable and a one-line
+      # status file cannot carry a heading; its proof lands in the final commit message.
       case "$mode" in
-        local-only) walk_destination="in your final status note" ;;
-        *)          walk_destination="in the PR body" ;;
+        local-only)
+          assert_grep "as a signed-in user on a local build," "$brief" \
+            "$flow_label: ship brief did not send the walk to a local build"
+          assert_no_grep "on the preview deployment" "$brief" \
+            "$flow_label: ship brief sent a never-pushed branch to a preview deployment"
+          assert_grep "Write what you saw, step by step, under a \`## What I walked\` section in the body of your final commit message on this branch, in plain text and with no screenshots." "$brief" \
+            "$flow_label: ship brief did not route the What I walked section to the commit message"
+          assert_grep "walked {the path you walked}" "$brief" \
+            "$flow_label: ship brief did not make the done line name the path walked"
+          report_marker="append \`done: ready in branch"
+          ;;
+        no-mistakes)
+          assert_grep "as a signed-in user on the preview deployment (or a local build when the project has no preview)" "$brief" \
+            "$flow_label: ship brief did not say where to walk the change"
+          assert_grep "Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path." "$brief" \
+            "$flow_label: ship brief did not require the What I walked section and its screenshots"
+          report_marker="After /no-mistakes reports CI green"
+          ;;
+        *)
+          assert_grep "as a signed-in user on the preview deployment (or a local build when the project has no preview)" "$brief" \
+            "$flow_label: ship brief did not say where to walk the change"
+          assert_grep "Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path." "$brief" \
+            "$flow_label: ship brief did not require the What I walked section and its screenshots"
+          report_marker="push your branch and open a PR"
+          ;;
       esac
-      assert_grep "Paste what you saw, step by step, under \`## What I walked\` $walk_destination, with a viewport screenshot per path." "$brief" \
-        "$flow_label: ship brief did not require the What I walked section and its screenshots"
       assert_grep "A done without that section is not done; firstmate sends it back." "$brief" \
         "$flow_label: ship brief did not give the walk a consequence"
+      walk_line=$(grep -n -F -- "walk it before reporting done" "$brief" | head -1 | cut -d: -f1)
+      done_line=$(grep -n -F -- "$report_marker" "$brief" | head -1 | cut -d: -f1)
+      [ -n "$walk_line" ] && [ -n "$done_line" ] \
+        || fail "$flow_label: ship brief is missing the walk line or the report-done line"
+      [ "$walk_line" -lt "$done_line" ] \
+        || fail "$flow_label: ship brief puts the walk demand after the report-done step"
     done
   done
 
