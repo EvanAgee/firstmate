@@ -44,7 +44,11 @@
 # recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Every ship brief requires a walked-path proof under "## What I walked" before done:
-# the worker walks the change plus its neighbouring paths and pastes what it saw.
+# the worker walks the change plus its neighbouring paths and writes what it saw.
+# The two PR modes walk the preview deployment and paste that section with screenshots
+# into the PR body; local-only walks a local build and writes the section, plain text
+# and no screenshots, into the body of its final commit message, because that mode
+# never pushes and has no PR to write to.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns approval decisions, so yolo is
