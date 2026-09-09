@@ -1,0 +1,10 @@
+Premise check in a real aos worktree (/Users/evanagee/.treehouse/aos-6bde45/10/aos/.claude/skills):
+
+installed flow skills: code-review grill-with-docs implement tdd to-tickets triage
+  to-spec        : NOT INSTALLED  -> old brief's entry point did not exist
+  triage         : disable-model-invocation: true  -> Skill tool refuses it
+  implement      : disable-model-invocation: true  -> Skill tool refuses it
+  grill-with-docs: disable-model-invocation: true  -> Skill tool refuses it
+  tdd            : agent-invocable                 -> the only runnable entry point
+
+The fixed brief enters at `tdd` and names the other phases as done-or-human-only.
