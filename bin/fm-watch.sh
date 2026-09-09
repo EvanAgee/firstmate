@@ -101,6 +101,10 @@ fm_supervision_env_load "$CONFIG"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# Bounded no-mistakes reads for the wedge gate's pipeline-activity check. The
+# same owner fm-crew-state.sh uses, so both read a run through one contract.
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -323,6 +327,138 @@ persist_pane_tail() {  # <task-id> <captured-text>
 # below).
 FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 
+# --- the two-signal wedge rule ----------------------------------------------
+#
+# A pane going idle is ONE signal, never proof of a wedge. A worker doing its
+# real work inside a no-mistakes run renders nothing in its pane for the run's
+# whole duration, and a worker firstmate deliberately stopped on a green PR has
+# no pane at all. Escalating on the idle pane alone is what produced the
+# 2026-09-01 (five mid-run workers) and 2026-09-09 (three stopped green-PR
+# workers) false-alarm batches, each costing firstmate a full handling turn.
+#
+# So a pane-idle worker escalates only when its SECOND signal is quiet too:
+# no declared pause, no live pipeline, and no armed PR watch. The two helpers
+# below own that second signal; pause_state_class and wedge_timer_check consult
+# them.
+
+# Seconds of no-mistakes activity that still count as a live pipeline. A step
+# whose last activity is inside the stale window is working, not wedged.
+PIPELINE_ACTIVE_SECS=${FM_PIPELINE_ACTIVE_SECS:-$STALE_ESCALATE_SECS}
+# Bound the axi read the same way every other watcher check is bounded.
+PIPELINE_CHECK_TIMEOUT=${FM_PIPELINE_CHECK_TIMEOUT:-${FM_CHECK_TIMEOUT:-30}}
+
+meta_field() {  # <task> <field>
+  local task=$1 field=$2
+  grep "^$field=" "$STATE/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
+# Seconds represented by an axi duration such as "12s", "51m55s", "15h29m", or
+# "2d3h". Prints the total, or nothing when the string holds no recognized unit.
+# Verified against real `axi status` output on the installed binary: the
+# active_steps table renders ages in exactly this compact form.
+pipeline_age_secs() {  # <duration>
+  local raw=$1 total=0 num unit rest matched=0
+  rest=$raw
+  while [ -n "$rest" ]; do
+    num=${rest%%[!0-9]*}
+    [ -n "$num" ] || break
+    rest=${rest#"$num"}
+    unit=${rest%%[0-9]*}
+    unit=${unit:0:1}
+    rest=${rest#?}
+    case "$unit" in
+      s) total=$(( total + num )); matched=1 ;;
+      m) total=$(( total + num * 60 )); matched=1 ;;
+      h) total=$(( total + num * 3600 )); matched=1 ;;
+      d) total=$(( total + num * 86400 )); matched=1 ;;
+      *) break ;;
+    esac
+  done
+  [ "$matched" = 1 ] || return 0
+  printf '%s' "$total"
+}
+
+# 0 if <task> has a no-mistakes step whose last activity is inside
+# PIPELINE_ACTIVE_SECS.
+#
+# The activity signal is the active_steps table's last_activity column, NOT the
+# run's top-level status. Verified on the installed binary against the live
+# fleet on 2026-09-09: a worker deliberately stopped on a green PR still reports
+# `status: running`, because its ci step keeps monitoring for the merge for as
+# long as the PR is open - that run had been "running" for 15h29m with its last
+# activity "quiet 51m55s ago". Reading the top-level status would therefore call
+# every stopped green-PR worker permanently active and suppress its wedge
+# escalation forever, which is the opposite of the two-signal rule.
+#
+# Deliberately cheap in the common case: a task with no mode= in its meta never
+# drives a pipeline (a scout, a secondmate, a pre-validation ship), so it skips
+# the call entirely, as does a missing worktree or an uninstalled no-mistakes.
+# FM_FAKE_AXI_STATUS lets tests supply the axi output without a running daemon.
+pipeline_recently_active() {  # <task>
+  local task=$1 mode
+  [ -n "$task" ] || return 1
+  mode=$(meta_field "$task" mode)
+  [ -n "$mode" ] || return 1
+  case "$mode" in secondmate) return 1 ;; esac
+  pipeline_activity_fresh "$task"
+}
+
+# The activity read itself, without the mode= cheap-skip. Callers that have
+# already established a run exists (crew_absorb_class reported `working`) ask
+# this directly: for them the run is known, so skipping on a thin meta record
+# would answer "not moving" for a pipeline that is in fact moving.
+# Exit 2 (not 1) means "no answer available": no readable worktree, no
+# no-mistakes, or output carrying no active_steps table at all. A caller that
+# already holds positive run evidence keeps trusting it rather than reading an
+# unanswerable probe as proof the run stopped.
+pipeline_activity_fresh() {  # <task>
+  local task=$1 wt out row activity age secs
+  [ -n "$task" ] || return 2
+  if [ -n "${FM_FAKE_AXI_STATUS+x}" ]; then
+    out=$FM_FAKE_AXI_STATUS
+  else
+    wt=$(meta_field "$task" worktree)
+    [ -n "$wt" ] && [ -d "$wt" ] || return 2
+    command -v no-mistakes >/dev/null 2>&1 || return 2
+    out=$(fm_nm_run "$wt" "$PIPELINE_CHECK_TIMEOUT" axi status)
+  fi
+  [ -n "$out" ] || return 2
+  # An answer with no active step is a real negative: a terminal, parked, or
+  # not-yet-started run cannot be the reason a pane is legitimately quiet.
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*active_steps\[' || return 2
+  row=$(printf '%s\n' "$out" | grep -A"${PIPELINE_ROWS_MAX:-20}" '^[[:space:]]*active_steps\[' \
+    | grep -E '^[[:space:]]*[a-z_]+,(running|fixing),' | head -1) || true
+  [ -n "$row" ] || return 1
+  # last_activity is the quoted 4th column: "<age> ago: <note>", optionally
+  # prefixed "quiet " when the step has gone silent.
+  activity=${row#*\"}
+  activity=${activity%%\"*}
+  [ -n "$activity" ] || return 1
+  age=${activity#quiet }
+  age=${age%% ago*}
+  [ "$age" != "$activity" ] || case "$activity" in *" ago"*) ;; *) return 1 ;; esac
+  secs=$(pipeline_age_secs "$age")
+  [ -n "$secs" ] || return 1
+  [ "$secs" -lt "$PIPELINE_ACTIVE_SECS" ]
+}
+
+# 0 if <task> is a finished worker awaiting its merge rather than a wedge: the
+# agent is gone, its last status line announced a green PR, and a PR watch is
+# armed for it. That worker has nothing left to render, so its idle pane is the
+# expected shape of the work, not a symptom.
+finished_awaiting_merge() {  # <window> <task>
+  local win=$1 task=$2 last agent_alive
+  [ -n "$task" ] || return 1
+  [ -e "$STATE/$task.check.sh" ] || return 1
+  last=$(last_status_line "$STATE/$task.status")
+  case "$last" in
+    done:*PR*) ;;
+    *) return 1 ;;
+  esac
+  agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
+  [ "$agent_alive" = dead ]
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -332,7 +468,7 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # and the stale_is_terminal-overridden path (a captain-relevant status-log
 # line that an active run/busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason task
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -342,6 +478,17 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
+        # Second signal, checked only here at the threshold so the ordinary
+        # poll stays cheap: an idle pane whose pipeline is still moving is a
+        # worker mid-run, not a wedge. Restart the timer so it is re-checked a
+        # window later rather than escalating on the pane alone.
+        task=$(window_to_task "$win" "$STATE")
+        if pipeline_recently_active "$task"; then
+          date +%s > "$since_file"
+          rm -f "$escalation_file"
+          triage_log "absorbed $label (pipeline still active, pane idle only): $win"
+          return
+        fi
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
@@ -422,7 +569,7 @@ clear_pause_tracking() {  # <window>
 # Only a confidently dead ordinary crew may recover paused classification after
 # fm-crew-state has fallen back to stopped or unknown.
 pause_state_class() {  # <window> <task>
-  local win=$1 task=$2 key last recheck_file class agent_alive
+  local win=$1 task=$2 key last recheck_file class agent_alive activity_verdict
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
@@ -430,13 +577,20 @@ pause_state_class() {  # <window> <task>
   recheck_file="$STATE/.paused-rechecked-$key"
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
+    # A worker with a green PR, an armed merge watch, and a gone agent has
+    # nothing left to render. Its idle pane is the finished shape of the work,
+    # so recheck it on the long pause cadence instead of the wedge ladder.
+    if finished_awaiting_merge "$win" "$task"; then
+      printf 'paused'
+      return
+    fi
     crew_absorb_class "$task"
     return
   fi
   if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     if [ "$(window_kind "$win")" != secondmate ]; then
       agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
-      if [ "$agent_alive" != dead ]; then
+      if [ "$agent_alive" = alive ]; then
         rm -f "$recheck_file"
         printf 'none'
         return
@@ -446,25 +600,51 @@ pause_state_class() {  # <window> <task>
     return
   fi
   class=$(crew_absorb_class "$task")
-  if [ "$class" = working ]; then
+  # A `working` verdict is proof the RUN exists, never proof it is MOVING. A
+  # worker firstmate stopped on a green PR keeps a `working` run-step for as
+  # long as its ci step monitors the open PR: measured on the live fleet
+  # 2026-09-09, all three escalated workers read `state: working · source:
+  # run-step · validating (running)` behind a `paused: [key=await-merge]` line,
+  # one of them 15h29m into a `running` run whose last activity was 51m55s old.
+  # Honoring that verdict over the worker's own declared pause is what put them
+  # on the wedge timer.
+  #
+  # Pipeline activity, not the bare verdict, separates that case from a run that
+  # is genuinely progressing behind a declared pause - which must still resume
+  # wedge tracking, so a frozen run escalates rather than hiding behind a stale
+  # `paused:` line.
+  pipeline_activity_fresh "$task"
+  activity_verdict=$?
+  if [ "$class" = working ] && [ "$activity_verdict" -ne 1 ]; then
     rm -f "$recheck_file"
     printf 'working'
     return
   fi
   if [ "$(window_kind "$win")" != secondmate ]; then
     agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
-    if [ "$agent_alive" != dead ]; then
-      rm -f "$recheck_file"
-      printf 'none'
-      return
-    fi
   fi
-  [ "$class" = none ] && [ "${agent_alive:-unknown}" = dead ] && class=paused
-  case "$class" in
-    paused) date +%s > "$recheck_file" ;;
-    *) rm -f "$recheck_file" ;;
-  esac
-  printf '%s' "$class"
+  if [ "${agent_alive:-unknown}" = alive ]; then
+    rm -f "$recheck_file"
+    printf 'none'
+    return
+  fi
+  # Everything below is reached only for a worker that declared a pause or a
+  # captain hold AND whose agent is not confidently alive AND whose pane is
+  # already idle (pause_state_class runs only on the stale paths). Both signals
+  # are therefore quiet, so the worker's own declared reason for being quiet
+  # decides: absorb on the long pause cadence, never the wedge ladder.
+  #
+  # The gate used to demand a confidently `dead` agent, which no unverified
+  # backend and no unreadable meta can ever report - both map to `unknown` (see
+  # fm_backend_agent_state). Those workers fell through to whatever
+  # crew_absorb_class said, and `none` is what it prints for a run-step reading
+  # `done`, so the 2026-09-09 batch of deliberately stopped green-PR workers
+  # wedge-escalated to level 3 with a `paused: [key=await-merge]` line sitting
+  # at the end of each status log. `alive` is the only verdict that can
+  # legitimately override a declared pause, because only a live agent could
+  # still be silencing a decision gate.
+  date +%s > "$recheck_file"
+  printf 'paused'
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
