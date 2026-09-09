@@ -146,8 +146,14 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|send-keys|set-window-option) exit 0 ;;
+  list-windows) [ ! -f "$0.windows" ] || cat "$0.windows"; exit 0 ;;
+  new-window)
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" > "$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
+  has-session|new-session|send-keys|set-window-option) exit 0 ;;
 esac
 exit 0
 SH
@@ -228,6 +234,9 @@ case "${1:-}" in
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
     printf '%%1\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
+  list-windows)
+    sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta 2>/dev/null
+    exit 0 ;;
 esac
 exit 0
 SH

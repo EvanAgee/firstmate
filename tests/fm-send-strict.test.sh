@@ -68,10 +68,16 @@ case "${1:-}" in
     fi
     exit 0 ;;
   list-windows)
+    case " $* " in
+      *' -a '*)
+        printf 'foreign:%s\n' "${FM_FAKE_TMUX_WINDOW:-fm-lost}"
+        exit 0
+        ;;
+    esac
     if [ -n "${FM_FAKE_TMUX_INVENTORY:-}" ]; then
       printf '%s\n' "$FM_FAKE_TMUX_INVENTORY"
-    else
-      printf 'foreign:%s\n' "${FM_FAKE_TMUX_WINDOW:-fm-lost}"
+    elif [ -n "${FM_HOME:-}" ]; then
+      sed -n 's/^window=[^:]*://p' "$FM_HOME"/state/*.meta 2>/dev/null
     fi
     exit 0 ;;
 esac

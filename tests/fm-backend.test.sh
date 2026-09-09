@@ -649,7 +649,7 @@ case "${1:-}" in
       printf '╭────╮\n│    │\n╰────╯\n'
     fi
     exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) printf 'win\n'; exit 0 ;;
 esac
 exit 0
 SH
@@ -780,7 +780,13 @@ case "\${1:-}" in
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) [ ! -f "\$0.windows" ] || cat "\$0.windows"; exit 0 ;;
+  new-window)
+    while [ "\$#" -gt 1 ]; do
+      [ "\$1" != -n ] || { printf '%s\n' "\$2" > "\$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
 esac
 exit 0
 SH
@@ -850,7 +856,13 @@ case "\${1:-}" in
       exit 0
     ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) [ ! -f "\$0.windows" ] || cat "\$0.windows"; exit 0 ;;
+  new-window)
+    while [ "\$#" -gt 1 ]; do
+      [ "\$1" != -n ] || { printf '%s\n' "\$2" > "\$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
 esac
 exit 0
 SH

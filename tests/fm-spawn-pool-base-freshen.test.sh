@@ -25,7 +25,15 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows|has-session|new-session|new-window|kill-window|send-keys) exit 0 ;;
+  list-windows) [ ! -f "$0.windows" ] || cat "$0.windows"; exit 0 ;;
+  new-window)
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" > "$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
+  kill-window) rm -f "$0.windows"; exit 0 ;;
+  has-session|new-session|send-keys) exit 0 ;;
 esac
 exit 0
 SH
