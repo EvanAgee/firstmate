@@ -1,0 +1,52 @@
+Watcher two-signal wedge rule: end-to-end behavior transcript
+branch: fm/fm-wedge-false-alarms   target: 7058bab
+Produced by driving the REAL bin/fm-watch.sh (sourced classifiers and a live poll)
+over hermetic fixtures built from the incident shapes in the bug report.
+
+
+========================================================
+SCENARIO A - worker deliberately stopped on a green PR (2026-09-09 incident)
+========================================================
+Worker status log (what the operator sees):
+  paused: [key=await-merge] PR green, waiting on the serial merge queue
+
+Watcher verdict: paused
+Meaning: "paused" = long re-surface cadence, NOT the 1/2/3 wedge ladder.
+
+========================================================
+SCENARIO B - worker mid-run inside an active no-mistakes pipeline (2026-09-01 incident)
+========================================================
+Pipeline the worker is inside (real axi status shape):
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "926dceca264f35d74b4bcc05fd9cefd2c2132776"
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,33m1s,"12s ago: log: building the new body","77305",starting
+
+Watcher verdict: pipeline ACTIVE -> no wedge escalation
+
+========================================================
+SCENARIO C - finished worker awaiting merge, driven through the REAL watcher poll
+========================================================
+Worker status log:
+  done: PR https://github.com/EvanAgee/firstmate/pull/13 checks green
+Armed PR merge watch: 2 pr-poll artifacts present
+
+What firstmate actually received in the wake queue:
+  1788972657	1	stale	fmtest:fm-am	stale: fmtest:fm-am (paused 211114257s, awaiting external - finished worker awaiting merge - PR is green and its merge watch is armed, rechecked on a long cadence not a wedge; confirm the wait still holds)
+
+Wedge escalation files created: 0 (0 = never treated as a wedge)
+Pause markers created: 2
+
+========================================================
+SCENARIO D - genuinely wedged worker: no pause, no PR watch, no pipeline
+========================================================
+Worker status log:
+  working: still going
+Pipeline: run still `running`, but last activity was 51m55s ago (quiet)
+
+Watcher verdict: pipeline QUIET -> escalation proceeds, exactly as before
+Classification: none (none = eligible for the wedge ladder)
+
