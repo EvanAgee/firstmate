@@ -642,8 +642,15 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  list-windows) [ ! -f "$0.windows" ] || cat "$0.windows"; exit 0 ;;
+  new-window)
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" > "$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
+  kill-window) rm -f "$0.windows"; exit 0 ;;
+  has-session|new-session) exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -1057,6 +1064,10 @@ if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
 fi
 case "$*" in
+  list-windows*)
+    sed -n 's/^window=[^:]*://p' "${FM_STATE_OVERRIDE:-${FM_HOME:?}/state}"/*.meta
+    exit 0
+    ;;
   *display-message*'#{pane_current_command}'*) printf '%s\n' codex; exit 0 ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
   *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;

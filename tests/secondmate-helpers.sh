@@ -26,7 +26,16 @@ make_fake_tmux() {
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  has-session|new-session|new-window|send-keys|kill-window)
+  new-window)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" > "$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'
+    exit 0
+    ;;
+  has-session|new-session|send-keys|kill-window)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     exit 0
     ;;
@@ -34,6 +43,7 @@ case "${1:-}" in
     if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
       printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
     fi
+    [ ! -f "$0.windows" ] || cat "$0.windows"
     exit 0
     ;;
   display-message)
