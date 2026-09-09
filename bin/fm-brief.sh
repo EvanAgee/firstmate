@@ -378,7 +378,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
 8. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
-9. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from .env.local\` and stop; never fetch it.
+9. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -574,7 +574,7 @@ $RULE1
    After embedding the URLs, push a commit (an empty one is fine) so push-triggered checks re-run against the current head; editing the PR body alone does not re-run them.
 10. Run \`npx unslop\` on every changed file and fix all findings before any PR.
 11. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
-12. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from .env.local\` and stop; never fetch it.
+12. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
