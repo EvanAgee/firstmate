@@ -683,7 +683,7 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
 # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
 NO_1PASSWORD_RULE='Never run the 1Password CLI (`op run`, `op read`, `op item`, `op environment`, or any other `op` subcommand) for anything. Secrets come from this worktree'"'"'s `.env.local` or the app'"'"'s equivalent local env file. If a variable you need is missing there, append `blocked [key=missing-env-<NAME>]: <NAME> is missing from .env.local` and stop; never fetch it.'
 # shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
-NO_1PASSWORD_INTENT_CLAUSE='the intent must carry the no-1Password rule verbatim so the pipeline'"'"'s review, test, document, and CI-fix agents inherit it'
+NO_1PASSWORD_INTENT_CLAUSE='The no-1Password rule above is not scaffold boilerplate: the intent must carry the no-1Password rule verbatim so the pipeline'"'"'s review, test, document, and CI-fix agents inherit it'
 
 test_no_1password_rule_in_ship_and_scout_scaffolds() {
   local home id brief

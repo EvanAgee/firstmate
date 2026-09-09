@@ -455,7 +455,7 @@ Do not stop and wait for firstmate to instruct you - proceed directly to validat
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
-Rule 12 above is not scaffold boilerplate: the intent must carry the no-1Password rule verbatim so the pipeline's review, test, document, and CI-fix agents inherit it.
+The no-1Password rule above is not scaffold boilerplate: the intent must carry the no-1Password rule verbatim so the pipeline's review, test, document, and CI-fix agents inherit it.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 While a validation gate is open, the turn is not finished: drive the gate and process every return until it reaches an outcome.
 Ending a turn with a gate still open makes no progress, because nothing is waiting on firstmate and no step is running.
