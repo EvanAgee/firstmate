@@ -486,6 +486,31 @@ pipeline_activity_fresh() {  # <task>
   [ "$secs" -lt "$PIPELINE_ACTIVE_SECS" ]
 }
 
+# 0 if <task>'s absorbed pause state belongs to the finished-awaiting-merge rule
+# rather than a declared pause. That absorb is a third legitimate reason to hold
+# pause tracking, so the poll's reset must not tear it down and force
+# handle_paused_stale to rebuild the .paused-resurfaced-<key> throttle from
+# scratch on every watcher restart - which would re-surface the worker once per
+# restart instead of once per PAUSE_RESURFACE_SECS.
+#
+# Deliberately CHEAP: this runs for every window on every poll, so it reads only
+# the already-computed status line and the poll sidecar's own path. It does NOT
+# read agent liveness or validate the poll artifacts the way
+# finished_awaiting_merge does. Those stricter checks still gate the absorb
+# itself; this only decides whether existing pause state survives one more poll,
+# and a worker that has genuinely left the condition still gets cleared, because
+# its status line moves on or its PR poll retires and removes the sidecar.
+absorbed_awaiting_merge() {  # <task> <last-status-line>
+  local task=$1 last=$2
+  [ -n "$task" ] || return 1
+  case "$last" in
+    done:*) ;;
+    *) return 1 ;;
+  esac
+  [ -e "$STATE/$task.pr-poll" ] || return 1
+  fm_pr_announced_url "$last" >/dev/null
+}
+
 # 0 if <task> is a finished worker awaiting its merge rather than a wedge: the
 # agent is gone, its last status line announced a green PR, and a PR merge watch
 # is genuinely armed for it. That worker has nothing left to render, so its idle
@@ -1412,7 +1437,8 @@ EOF
     key=${key//\//_}
     key=${key//./_}
     last=$(last_status_line "$STATE/$task.status")
-    if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
+    if [ -e "$STATE/.paused-$key" ] && ! status_is_paused_or_captain_held "$last" \
+      && ! absorbed_awaiting_merge "$task" "$last"; then
       clear_pause_tracking "$w"
     fi
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue

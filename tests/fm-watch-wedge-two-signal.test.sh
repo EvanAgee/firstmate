@@ -184,6 +184,39 @@ seed_stale_pane() {  # <dir> <id> <window> <pane-text>
 # Run the watcher over <dir>'s state until <marker> appears or a wake is queued,
 # then stop it. For cases whose .stale-<key> suppressor is pre-seeded, so the
 # generic "has it been classified yet" wait would return before the poll acts.
+# Run the watcher over <dir>'s state for <seconds>, letting it complete several
+# poll cycles, then stop it. The throttle defect only shows from the SECOND poll
+# onward, so a case that stops at the first marker cannot see it.
+run_for_seconds() {  # <dir> <window> <seconds> [extra-env-assignments...]
+  local dir=$1 window=$2 secs=$3 pid deadline
+  shift 3
+  env PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_STATE_OVERRIDE="$dir/state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$@" "$WATCH" > "$dir/watch.out" 2>&1 &
+  pid=$!
+  deadline=$(( $(date +%s) + secs ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  reap "$pid"
+}
+
+# Stale wakes queued for <window>, as a plain integer.
+count_stale_wakes() {  # <state> <window>
+  local n
+  n=$(grep -e stale "$1/.wake-queue" 2>/dev/null | grep -c -F "$2" || true)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  printf '%s' "$n"
+}
+
+# Acknowledge whatever the last watcher run queued, the way the real supervisor
+# does between restarts, so the next run starts from a settled queue.
+drain_wakes() {  # <state>
+  FM_STATE_OVERRIDE="$1" "$DRAIN" >/dev/null 2>&1 || true
+}
+
 run_until_marker() {  # <dir> <marker-path>
   local dir=$1 marker=$2 state pid i=0
   state="$dir/state"
@@ -578,6 +611,69 @@ test_unrelated_custom_check_is_not_an_armed_merge_watch() {
   fi
 }
 
+# The decisive case, and the one the single-run cases cannot reach: wake() exits
+# the watcher process after it reports one wake, so a supervisor restarts it and
+# the next cycle begins with the same state on disk. handle_paused_stale fires at
+# most one re-surface per PAUSE_RESURFACE_SECS, and .paused-resurfaced-<key> is
+# what enforces that ACROSS those restarts. A wake every restart would be
+# strictly worse than the wedge ladder this change replaced.
+test_awaiting_merge_absorb_stays_throttled_across_restarts() {
+  local dir state window run wakes
+  dir=$(make_wedge_case merge-throttle mt \
+    'done: PR https://github.com/EvanAgee/firstmate/pull/11 checks green' \
+    'mode=no-mistakes')
+  state="$dir/state"
+  window=fmtest:fm-mt
+  arm_pr_poll "$state" mt https://github.com/EvanAgee/firstmate/pull/11 \
+    || { fail "could not arm the merge watch fixture"; return; }
+  # Backdate the status file past the re-surface window so the FIRST absorb is
+  # entitled to one wake. This happens BEFORE seeding the pane, because
+  # seed_stale_pane primes the .seen-* suppressor from the status signature.
+  touch -t 202001010000 "$state/mt.status"
+  seed_stale_pane "$dir" mt "$window" 'idle waiting for merge'
+  FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+  for run in 1 2 3; do
+    run_for_seconds "$dir" "$window" 14 FM_PAUSE_RESURFACE_SECS=3600
+    drain_wakes "$state"
+  done
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  wakes=$(count_stale_wakes "$state" "$window")
+  if [ "$wakes" -gt 1 ]; then
+    fail "a finished green-PR worker re-surfaced $wakes times inside one pause window"
+  else
+    ok "an absorbed green-PR worker re-surfaces at most once per pause window"
+  fi
+}
+
+# The other side of that throttle: the absorb must not silence the worker
+# forever. With a one-second window the recheck is due again immediately, so a
+# permanently silenced worker would queue nothing at all.
+test_awaiting_merge_absorb_resurfaces_once_the_window_elapses() {
+  local dir state window wakes
+  dir=$(make_wedge_case merge-resurface ms \
+    'done: PR https://github.com/EvanAgee/firstmate/pull/13 checks green' \
+    'mode=no-mistakes')
+  state="$dir/state"
+  window=fmtest:fm-ms
+  arm_pr_poll "$state" ms https://github.com/EvanAgee/firstmate/pull/13 \
+    || { fail "could not arm the merge watch fixture"; return; }
+  touch -t 202001010000 "$state/ms.status"
+  seed_stale_pane "$dir" ms "$window" 'idle waiting for merge'
+  FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+  run_for_seconds "$dir" "$window" 14 FM_PAUSE_RESURFACE_SECS=1
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  wakes=$(count_stale_wakes "$state" "$window")
+  if [ "$wakes" -lt 1 ]; then
+    fail "an absorbed green-PR worker never re-surfaced after its window elapsed"
+  else
+    ok "an absorbed green-PR worker still re-surfaces once its window elapses"
+  fi
+}
+
 test_declared_pause_beats_run_step_done() {
   local dir out
   dir=$(make_wedge_case pause-vs-done pd \
@@ -812,5 +908,7 @@ test_blank_line_between_rows_does_not_hide_a_running_step
 test_unreadable_activity_is_no_answer_not_a_stop
 test_green_pr_awaiting_merge_absorbed_on_a_repeat_hash
 test_unrelated_custom_check_is_not_an_armed_merge_watch
+test_awaiting_merge_absorb_stays_throttled_across_restarts
+test_awaiting_merge_absorb_resurfaces_once_the_window_elapses
 
 exit "$FAILED"
