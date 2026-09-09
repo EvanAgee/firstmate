@@ -110,7 +110,33 @@ case "${1:-}" in
     done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
+  has-session) [ -f "$D/server" ]; exit $? ;;
+  list-windows)
+    if [ ! -f "$D/server" ]; then
+      printf 'no server running on fake socket\n' >&2
+      exit 1
+    fi
+    [ -f "$D/windows" ] && cat "$D/windows"
+    exit 0 ;;
+  new-window|new-session)
+    op=$1
+    shift
+    name=
+    cwd=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -n) name=$2; shift 2 ;;
+        -c) cwd=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ "$op" != new-session ] || : > "$D/server"
+    [ -f "$D/server" ] || exit 1
+    printf '%s\n' "$name" > "$D/windows"
+    printf '%s' "$cwd" > "$D/cwd"
+    printf '@fake\n'
+    exit 0 ;;
+  set-window-option) exit 0 ;;
 esac
 exit 0
 SH
@@ -130,6 +156,7 @@ new_case() {
   : > "$dir/fake/keys"
   printf 'claude' > "$dir/fake/command"
   printf 'claude' > "$dir/fake/becomes"
+  : > "$dir/fake/server"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
   make_tmux_stub "$dir"
   printf '%s\n' "$dir"
@@ -1375,6 +1402,35 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
   pass "fm-spawn --relaunch: refuses to start a replacement outside the copy holding the work"
 }
 
+test_relaunch_recreates_a_missing_tmux_window() {
+  local dir out rc
+  dir=$(new_case missing-window rl37)
+  add_ship_task "$dir" rl37 claude
+  : > "$dir/fake/windows"
+  out=$(run_control "$dir" rl37 relaunch --note "continue after window loss"); rc=$?
+  expect_code 0 "$rc" "a missing tmux window should be recreated"$'\n'"$out"
+  assert_contains "$out" "relaunched rl37" "the control command should report the relaunch"
+  assert_grep "fm-rl37" "$dir/fake/windows" "the recorded window name should be recreated"
+  [ "$(cat "$dir/fake/cwd")" = "$dir/wt" ] \
+    || fail "the recreated window should start in the recorded worktree"
+  pass "fm-control relaunch: a missing tmux window is recreated in the recorded worktree"
+}
+
+test_relaunch_recreates_a_missing_tmux_server() {
+  local dir out rc
+  dir=$(new_case missing-server rl38)
+  add_ship_task "$dir" rl38 claude
+  rm -f "$dir/fake/server" "$dir/fake/windows"
+  out=$(run_control "$dir" rl38 relaunch --note "continue after server loss"); rc=$?
+  expect_code 0 "$rc" "a missing tmux server should be recreated"$'\n'"$out"
+  assert_contains "$out" "relaunched rl38" "the control command should report the relaunch"
+  [ -f "$dir/fake/server" ] || fail "the missing tmux server should be recreated"
+  assert_grep "fm-rl38" "$dir/fake/windows" "the recorded window name should be recreated"
+  [ "$(cat "$dir/fake/cwd")" = "$dir/wt" ] \
+    || fail "the recreated server window should start in the recorded worktree"
+  pass "fm-control relaunch: a missing tmux server is recreated in the recorded worktree"
+}
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_preserves_durable_task_metadata
 test_relaunch_serializes_concurrent_durable_metadata_publication
@@ -1423,3 +1479,5 @@ test_spawn_relaunch_refuses_a_live_agent
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
+test_relaunch_recreates_a_missing_tmux_window
+test_relaunch_recreates_a_missing_tmux_server

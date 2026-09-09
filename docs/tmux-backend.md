@@ -46,6 +46,9 @@ Verify setup by spawning a small task and confirming its `fm-<id>` window appear
 
 ### Agent liveness probe
 
+A named-window pane read first verifies exact window membership, so tmux cannot answer from the current window when the target is gone.
+A relaunch recreates a missing window or server at the recorded worktree before it starts the replacement agent.
+
 A target-existence check proves only that the pane exists.
 The deeper tmux agent-liveness probe first verifies exact window membership, then reads process names to distinguish a running harness from a bare idle shell.
 It classifies recognized Claude, Codex, OpenCode, omp, Pi, pi-signed, Grok, Kimi, Cursor, and Muse process identities as `alive`, common shells as `dead`, an authoritatively absent window as `missing`, unreadable state as `unreadable`, and every other process as `ambiguous`.

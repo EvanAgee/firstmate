@@ -2679,7 +2679,13 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
-  if [ "$RELAUNCH_STATE" = missing ] && [ "$BACKEND" = herdr ]; then
+  if [ "$RELAUNCH_STATE" = missing ] && [ "$BACKEND" = tmux ]; then
+    SES=${RELAUNCH_TARGET%%:*}
+    W=${RELAUNCH_TARGET#*:}
+    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
+    T=$RELAUNCH_TARGET
+    WT_TARGET=$WID
+  elif [ "$RELAUNCH_STATE" = missing ] && [ "$BACKEND" = herdr ]; then
     # Only a proven-gone pane recreates. A present husk (dead) still adopts
     # the recorded target below so relaunch never mints a second copy of a
     # still-open pane. If the recorded workspace is still present, the new pane
@@ -2745,7 +2751,7 @@ EOF
     T=$RELAUNCH_TARGET
     SES=${T%%:*}
   fi
-  WT_TARGET=$T
+  [ -n "${WT_TARGET:-}" ] || WT_TARGET=$T
 else
 case "$BACKEND" in
   tmux)
