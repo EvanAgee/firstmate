@@ -156,6 +156,12 @@ if fm_backend_tmux_resolve_bare_selector "no-such-window-xyz" 2>/dev/null; then
 fi
 pass "real tmux: fm_backend_tmux_resolve_bare_selector fails for a window that does not exist"
 
+# A missing named window must not fall back to the current window's path.
+path=$(fm_backend_tmux_current_path "$SESSION:no-such-window-xyz")
+[ -z "$path" ] \
+  || fail "a missing named window should return an empty current path, got '$path'"
+pass "real tmux: a missing named window returns an empty current path"
+
 # --- kill and recovery-grade missing-window classification ------------------
 
 fm_backend_tmux_kill "$TARGET"
@@ -168,6 +174,12 @@ state=$(fm_backend_agent_state tmux "$TARGET")
 # Best-effort contract: killing an already-gone window must not error.
 fm_backend_tmux_kill "$TARGET" || fail "fm_backend_tmux_kill on an already-dead target must stay best-effort (never fail)"
 pass "real tmux: kill removes the window and the readable session inventory authoritatively classifies it missing"
+
+tmux kill-server
+path=$(fm_backend_tmux_current_path "$TARGET")
+[ -z "$path" ] \
+  || fail "a missing tmux server should return an empty current path, got '$path'"
+pass "real tmux: a missing server returns an empty current path"
 
 cleanup_all
 trap - EXIT

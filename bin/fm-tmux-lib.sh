@@ -48,6 +48,51 @@
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-omp-process-lib.sh"
 
+# fm_tmux_named_window_state: prove a session:window target names an exact live
+# window before any display-message read can let tmux fall back to the client's
+# current window. A missing server and a missing window are both `missing`.
+fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable
+  local target=${1:-} session window windows inventory_status
+  case "$target" in
+    *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
+    *:*) ;;
+    *) printf 'unreadable'; return 0 ;;
+  esac
+  session=${target%%:*}
+  window=${target#*:}
+  if windows=$(LC_ALL=C tmux list-windows -t "$session" -F '#{window_name}' 2>&1); then
+    inventory_status=0
+  else
+    inventory_status=$?
+  fi
+  if [ "$inventory_status" -ne 0 ]; then
+    case "$windows" in
+      *"can't find session:"*|*"no server running on "*|*"error connecting to "*" (No such file or directory)"|*"error connecting to "*" (Connection refused)")
+        printf 'missing'
+        ;;
+      *)
+        printf 'unreadable'
+        ;;
+    esac
+    return 0
+  fi
+  if printf '%s\n' "$windows" | grep -Fqx -- "$window"; then
+    printf 'present'
+  else
+    printf 'missing'
+  fi
+}
+
+# fm_tmux_display_message: read one pane field after proving exact membership
+# for a named session:window target. Stable window and pane ids remain direct.
+fm_tmux_display_message() {  # <target> <format>
+  local target=$1 format=$2
+  case "$target" in
+    *:*) [ "$(fm_tmux_named_window_state "$target")" = present ] || return 1 ;;
+  esac
+  tmux display-message -p -t "$target" "$format" 2>/dev/null
+}
+
 
 # fm_tmux_strip_ghost: thin adapter over the shared, fleet-wide ghost extractor
 # fm_composer_strip_ghost (bin/fm-composer-lib.sh). It drops de-emphasised
@@ -77,7 +122,7 @@ fm_tmux_composer_capture() {  # <target>
 # fm_tmux_composer_cursor_row: the pane's cursor row, zero-based, relative to
 # the visible pane - tmux's genuine primitive that no other backend has.
 fm_tmux_composer_cursor_row() {  # <target>
-  tmux display-message -p -t "$1" '#{cursor_y}' 2>/dev/null
+  fm_tmux_display_message "$1" '#{cursor_y}'
 }
 
 # fm_tmux_composer_caps: the tmux capability descriptor - static data, not
@@ -111,7 +156,7 @@ fm_tmux_composer_caps() {
 # pane is not a live pi-family agent.
 fm_tmux_composer_identity() {  # <target> [omp-bun] [omp-bin]
   local target=$1 omp_bun=${2:-} omp_bin=${3:-} tty pgid tpgid comm found=0 status agent=pi
-  tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || tty=
+  tty=$(fm_tmux_display_message "$target" '#{pane_tty}') || tty=
   case "$tty" in
     /dev/*)
       while read -r _ pgid tpgid comm; do
@@ -126,7 +171,7 @@ EOF
       ;;
   esac
   if [ "$found" -ne 1 ]; then
-    comm=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null) || comm=
+    comm=$(fm_tmux_display_message "$target" '#{pane_current_command}') || comm=
     case "${comm##*/}" in
       omp|pi|pi-signed|pi-launcher) found=1 ;;
     esac
@@ -155,7 +200,7 @@ EOF
 # shell, does not match and gets no OMP identity.
 fm_tmux_pane_is_bound_omp() {  # <target> <omp-bun> <omp-bin>
   local target=$1 omp_bun=$2 omp_bin=$3 pane_pid fg_pid comm args
-  pane_pid=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null) || return 1
+  pane_pid=$(fm_tmux_display_message "$target" '#{pane_pid}') || return 1
   case "$pane_pid" in ''|*[!0-9]*) return 1 ;; esac
   fg_pid=$(ps -o tpgid= -p "$pane_pid" 2>/dev/null | tr -d '[:space:]') || return 1
   case "$fg_pid" in ''|*[!0-9]*|0|1) return 1 ;; esac
@@ -217,7 +262,7 @@ fm_tmux_composer_state() {  # <target> [harness] [omp-bun] [omp-bin] -> empty|pe
 # no Cursor foreground process and gets no reclassification.
 fm_tmux_pane_is_cursor() {  # <target>
   local target=$1 tty pid pgid tpgid comm args argv0
-  tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || return 1
+  tty=$(fm_tmux_display_message "$target" '#{pane_tty}') || return 1
   case "$tty" in /dev/*) ;; *) return 1 ;; esac
   while read -r pid pgid tpgid comm; do
     [ -n "$comm" ] || continue

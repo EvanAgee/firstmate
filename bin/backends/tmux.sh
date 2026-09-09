@@ -46,7 +46,7 @@ fm_backend_tmux_capture() {  # <target> <lines>
 # `tmux display-message -p -t "$T" '#{pane_id}' >/dev/null`, then
 # `tmux send-keys -t "$T" "$2"`.
 fm_backend_tmux_send_key() {  # <target> <key>
-  tmux display-message -p -t "$1" '#{pane_id}' >/dev/null
+  fm_tmux_display_message "$1" '#{pane_id}' >/dev/null
   tmux send-keys -t "$1" "$2"
 }
 
@@ -79,10 +79,8 @@ fm_backend_tmux_container_ensure() {
   fi
 }
 
-# fm_backend_tmux_create_task: create the task's window in <proj-abs>,
-# refusing an existing <window-name> in <session>. Mirrors fm-spawn.sh's
-# duplicate-check-then-new-window sequence, including the exact error text
-# (session:window, matching how fm-spawn.sh composed its own $T). Prints the
+# fm_backend_tmux_create_task: create the task's window in <proj-abs>, creating
+# <session> when it is gone and refusing an existing <window-name>. Prints the
 # created window's stable window id on stdout for the caller to target.
 #
 # Robustness (fm-spawn tmux window handling under a non-default captain config):
@@ -95,12 +93,17 @@ fm_backend_tmux_container_ensure() {
 # The returned window id lets callers target the window even if its name is ever
 # lost, so worktree discovery cannot fall back to the active client's window.
 fm_backend_tmux_create_task() {  # <session> <window-name> <proj-abs> -> prints window id
-  local ses=$1 wname=$2 proj_abs=$3 wid
-  if tmux list-windows -t "$ses" -F '#{window_name}' | grep -qx "$wname"; then
-    echo "error: window $ses:$wname already exists" >&2
-    return 1
+  local ses=$1 wname=$2 proj_abs=$3 wid windows
+  if tmux has-session -t "$ses" 2>/dev/null; then
+    windows=$(tmux list-windows -t "$ses" -F '#{window_name}') || return 1
+    if printf '%s\n' "$windows" | grep -Fqx -- "$wname"; then
+      echo "error: window $ses:$wname already exists" >&2
+      return 1
+    fi
+    wid=$(tmux new-window -dP -F '#{window_id}' -t "$ses:" -n "$wname" -c "$proj_abs") || return 1
+  else
+    wid=$(tmux new-session -dP -F '#{window_id}' -s "$ses" -n "$wname" -c "$proj_abs") || return 1
   fi
-  wid=$(tmux new-window -dP -F '#{window_id}' -t "$ses:" -n "$wname" -c "$proj_abs") || return 1
   tmux set-window-option -t "$wid" automatic-rename off 2>/dev/null || true
   tmux set-window-option -t "$wid" allow-rename off 2>/dev/null || true
   printf '%s\n' "$wid"
@@ -110,7 +113,7 @@ fm_backend_tmux_create_task() {  # <session> <window-name> <proj-abs> -> prints 
 # empty on any tmux error. Mirrors fm-spawn.sh's worktree-discovery poll:
 # `tmux display-message -p -t "$T" '#{pane_current_path}'`.
 fm_backend_tmux_current_path() {  # <target>
-  tmux display-message -p -t "$1" '#{pane_current_path}' 2>/dev/null
+  fm_tmux_display_message "$1" '#{pane_current_path}' || return 0
 }
 
 # fm_backend_tmux_send_text_line: send one line of TEXT then Enter, with no
@@ -157,7 +160,7 @@ fm_backend_tmux_kill() {  # <target>
 # own name throughout; the value reverts to the shell's own name only once
 # the foreground command actually exits). Empty on any tmux error.
 fm_backend_tmux_current_command() {  # <target>
-  tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null
+  fm_tmux_display_message "$1" '#{pane_current_command}'
 }
 
 # fm_backend_tmux_classify_process_name: the single owner of the process-name
@@ -229,7 +232,7 @@ fm_backend_tmux_classify_process_name() {  # <path> [argv0] -> agent|shell|other
 # does, or they will describe some other pane entirely.
 fm_backend_tmux_foreground_comms() {  # <target>
   local target=$1 tty pid pgid tpgid comm
-  tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || return 0
+  tty=$(fm_tmux_display_message "$target" '#{pane_tty}') || return 0
   [ -n "$tty" ] || return 0
   LC_ALL=C ps -t "${tty#/dev/}" -o pid=,pgid=,tpgid=,comm= 2>/dev/null \
     | while read -r pid pgid tpgid comm; do
@@ -241,7 +244,7 @@ fm_backend_tmux_foreground_comms() {  # <target>
 
 fm_backend_tmux_foreground_argv0s() {  # <target>
   local target=$1 tty pid pgid tpgid comm args argv0
-  tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || return 0
+  tty=$(fm_tmux_display_message "$target" '#{pane_tty}') || return 0
   [ -n "$tty" ] || return 0
   LC_ALL=C ps -t "${tty#/dev/}" -o pid=,pgid=,tpgid=,comm= 2>/dev/null \
     | while read -r pid pgid tpgid comm; do
@@ -262,7 +265,7 @@ fm_backend_tmux_foreground_argv0s() {  # <target>
 # `ambiguous` on any mismatch, `unreadable` when the pane read fails.
 fm_backend_tmux_bun_agent_state() {  # <target> <bun-realpath> <omp-realpath> -> alive|ambiguous|unreadable
   local target=$1 expected_bun=${2:-} expected_omp=${3:-} pane_pid foreground_pid comm args
-  pane_pid=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null) || {
+  pane_pid=$(fm_tmux_display_message "$target" '#{pane_pid}') || {
     printf 'unreadable'
     return 0
   }
@@ -307,35 +310,14 @@ fm_backend_tmux_bun_agent_state() {  # <target> <bun-realpath> <omp-realpath> ->
 # distinguish a truly idle pane from a rewritten process title.
 fm_backend_tmux_agent_state() {  # <target> [bun-realpath] [omp-realpath]
   local target=$1 expected_bun=${2:-} expected_omp=${3:-}
-  local comm session window windows inventory_status
+  local comm window_state
   local foreground argv0s name fg_seen=0 fg_shell=0 fg_other=0
-  case "$target" in
-    *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
-    *:*) ;;
+  window_state=$(fm_tmux_named_window_state "$target")
+  case "$window_state" in
+    present) ;;
+    missing) printf 'missing'; return 0 ;;
     *) printf 'unreadable'; return 0 ;;
   esac
-  session=${target%%:*}
-  window=${target#*:}
-  if windows=$(LC_ALL=C tmux list-windows -t "$session" -F '#{window_name}' 2>&1); then
-    inventory_status=0
-  else
-    inventory_status=$?
-  fi
-  if [ "$inventory_status" -ne 0 ]; then
-    case "$windows" in
-      *"can't find session:"*|*"no server running on "*|*"error connecting to "*" (No such file or directory)"|*"error connecting to "*" (Connection refused)")
-        printf 'missing'
-        ;;
-      *)
-        printf 'unreadable'
-        ;;
-    esac
-    return 0
-  fi
-  if ! printf '%s\n' "$windows" | grep -Fqx "$window"; then
-    printf 'missing'
-    return 0
-  fi
 
   # An OMP worker runs as a generic `bun` (or `omp`) process, which the
   # name-only classifier below cannot attribute on its own. When an OMP-bound
