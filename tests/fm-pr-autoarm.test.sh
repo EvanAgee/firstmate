@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral tests for announcement and exact-worktree-branch PR auto-arming.
+# Behavioral tests for announcement and exact named-branch PR auto-arming.
 set -eu
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -200,9 +200,10 @@ pass "arming is idempotent across watcher cycles"
 
 dir=$(make_case scout github scout)
 out=$(run_sweep "$dir" one)
-[ -z "$out" ] || fail "a scout PR should arm silently: $out"
-[ -s "$dir/arm.log" ] || fail "a non-ship in-flight task was skipped"
-pass "a non-ship in-flight task is still caught"
+[ -z "$out" ] || fail "a scout sweep should be silent: $out"
+[ ! -s "$dir/forge.log" ] || fail "a scout sweep reached the forge"
+[ ! -s "$dir/arm.log" ] || fail "a scout sweep armed a PR"
+pass "scout metadata is excluded from the branch sweep"
 
 dir=$(make_case gitlab gitlab)
 out=$(run_sweep "$dir" one)
@@ -219,17 +220,60 @@ pass "GitLab merge requests use the same exact-branch arm path"
 dir=$(make_case no-branch)
 git -C "$dir/wt" checkout --detach >/dev/null 2>&1
 out=$(run_sweep "$dir" zero)
-case "$out" in *'task=different-task has no resolvable branch'*) ;; *) fail "missing branch was not surfaced: $out" ;; esac
+[ -z "$out" ] || fail "a detached worktree should be silent: $out"
 [ ! -s "$dir/forge.log" ] || fail "a detached worktree reached the forge"
-pass "a missing branch escalates without guessing"
+[ ! -s "$dir/arm.log" ] || fail "a detached worktree armed a PR"
+pass "a detached worktree waits for the next scan"
 
 dir=$(make_case no-upstream)
 git -C "$dir/wt" config --unset branch.actual-feature.remote
 git -C "$dir/wt" config --unset branch.actual-feature.merge
 out=$(run_sweep "$dir" zero)
-case "$out" in *'task=different-task branch actual-feature has no upstream'*) ;; *) fail "missing upstream was not surfaced: $out" ;; esac
-[ ! -s "$dir/forge.log" ] || fail "a branch without an upstream reached the forge"
-pass "a branch without an upstream escalates without guessing"
+[ -z "$out" ] || fail "a branch without an upstream should be silent: $out"
+grep -q -- 'head=acme:actual-feature' "$dir/forge.log" \
+  || fail "a branch without an upstream did not reach the forge"
+[ ! -s "$dir/arm.log" ] || fail "zero matches for a branch without an upstream armed a PR"
+pass "zero open PRs for a branch without an upstream is a silent no-op"
+
+dir=$(make_case no-upstream-match)
+git -C "$dir/wt" config --unset branch.actual-feature.remote
+git -C "$dir/wt" config --unset branch.actual-feature.merge
+out=$(run_sweep "$dir" one)
+[ -z "$out" ] || fail "one open PR for a branch without an upstream should arm silently: $out"
+grep -qxF 'different-task https://github.com/acme/widget/pull/41' "$dir/arm.log" \
+  || fail "a branch without an upstream did not arm its exact open PR"
+pass "a branch without an upstream arms one exact open PR"
+
+dir=$(make_case no-upstream-ambiguous)
+git -C "$dir/wt" config --unset branch.actual-feature.remote
+git -C "$dir/wt" config --unset branch.actual-feature.merge
+out=$(run_sweep "$dir" two)
+case "$out" in
+  *'task=different-task'*'more than one open PR for branch actual-feature'*) ;;
+  *) fail "two open PRs for a branch without an upstream did not wake: $out" ;;
+esac
+[ ! -s "$dir/arm.log" ] || fail "an ambiguous branch without an upstream armed a guessed PR"
+pass "multiple open PRs for a branch without an upstream still wake"
+
+for result in fail malformed; do
+  dir=$(make_case "no-upstream-$result")
+  git -C "$dir/wt" config --unset branch.actual-feature.remote
+  git -C "$dir/wt" config --unset branch.actual-feature.merge
+  out=$(run_sweep "$dir" "$result")
+  [ -z "$out" ] || fail "$result forge result for a branch without an upstream should be silent: $out"
+  [ ! -s "$dir/arm.log" ] || fail "$result forge result for a branch without an upstream armed a PR"
+done
+pass "forge failures stay silent for branches without upstreams"
+
+dir=$(make_case no-upstream-origin)
+git -C "$dir/wt" config --unset branch.actual-feature.remote
+git -C "$dir/wt" config --unset branch.actual-feature.merge
+git -C "$dir/wt" remote remove origin
+out=$(run_sweep "$dir" one)
+[ -z "$out" ] || fail "a missing origin for a branch without an upstream should be silent: $out"
+[ ! -s "$dir/forge.log" ] || fail "a missing origin reached the forge"
+[ ! -s "$dir/arm.log" ] || fail "a missing origin armed a PR"
+pass "a branch without an upstream or origin stays silent"
 
 dir=$(make_case sweep-progress)
 mv "$dir/home/state/different-task.meta" "$dir/home/state/a-slow.meta"
@@ -241,7 +285,7 @@ git -C "$dir/late-wt" config branch.actual-feature.remote origin
 git -C "$dir/late-wt" config branch.actual-feature.merge refs/heads/actual-feature
 fm_write_meta "$dir/home/state/z-late.meta" \
   "worktree=$dir/late-wt" \
-  'kind=scout' \
+  'kind=ship' \
   'mode=no-mistakes'
 FM_HOME="$dir/home" \
   FM_STATE_OVERRIDE="$dir/home/state" \
@@ -340,7 +384,7 @@ git -C "$dir/late-wt" config branch.actual-feature.remote origin
 git -C "$dir/late-wt" config branch.actual-feature.merge refs/heads/actual-feature
 fm_write_meta "$dir/home/state/z-late.meta" \
   "worktree=$dir/late-wt" \
-  'kind=scout' \
+  'kind=ship' \
   'mode=no-mistakes'
 cat > "$dir/slow-arm" <<'SH'
 #!/usr/bin/env bash
@@ -577,6 +621,18 @@ FM_HOME="$dir/home" \
   'done: child PR https://github.com/acme/widget/pull/71'
 [ ! -s "$dir/arm.log" ] || fail "a child PR was attached to secondmate metadata"
 pass "secondmate announcements cannot attach a child PR to the parent"
+
+dir=$(make_case scout-announcement github scout)
+FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_PR_CHECK_BIN="$dir/arm" \
+  FM_TEST_ARM_LOG="$dir/arm.log" \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$AUTOARM" announce different-task \
+  'done: scout report https://github.com/acme/widget/pull/72'
+grep -qxF 'different-task https://github.com/acme/widget/pull/72' "$dir/arm.log" \
+  || fail "the sweep-only scout exclusion changed announcement handling"
+pass "scout announcements keep existing handling"
 
 dir=$(make_case arm-race)
 cat > "$dir/racing-arm" <<'SH'

@@ -4,15 +4,13 @@
 # Usage: fm-pr-autoarm.sh sweep
 #        fm-pr-autoarm.sh announce <task-id> <status-line>
 #
-# sweep uses a durable fair cursor across ordinary non-secondmate task metadata
-# without pr=, resolves the recorded worktree's exact upstream branch and
-# repository, and checks that branch's forge. One exact match is armed through
-# fm-pr-check.sh. No match, forge failure, or malformed forge output stays
-# silent. Missing or unreadable worktrees, branches, or upstreams and multiple
-# exact matches queue a durable task wake before sweep progress advances.
-# announce extracts one canonical GitHub PR or GitLab MR URL from the supplied
-# status line and arms it through the same path. Existing pr= metadata is always
-# left alone, and secondmate metadata is always skipped.
+# sweep uses a durable fair cursor across task metadata without pr= and silently skips scouts and secondmates.
+# A named branch uses its exact upstream branch and repository, or its local name and origin when it has no upstream.
+# One exact open match is armed through fm-pr-check.sh.
+# No match, detached HEAD, an unreadable forge, forge failure, or malformed forge output stays silent.
+# A missing or unreadable worktree, an arm failure, or multiple exact matches queues a durable task wake before progress advances.
+# announce extracts one canonical GitHub PR or GitLab MR URL from the supplied status line and arms it through the same path.
+# Existing pr= metadata is always left alone, and secondmate announcements are always skipped.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -206,45 +204,33 @@ fm_pr_autoarm_sweep_one() {
     return 0
   fi
   fm_pr_autoarm_meta_has_pr "$meta" && return 0
-  [ "$(fm_pr_autoarm_meta_field "$meta" kind)" != secondmate ] || return 0
+  case "$(fm_pr_autoarm_meta_field "$meta" kind)" in
+    scout|secondmate) return 0 ;;
+  esac
   worktree=$(fm_pr_autoarm_meta_field "$meta" worktree)
   if [ -z "$worktree" ] || [ ! -d "$worktree" ] || [ -L "$worktree" ]; then
     fm_pr_autoarm_note "$task" "worktree is missing or unreadable"
     return 0
   fi
-  ref=$(git -C "$worktree" symbolic-ref --quiet HEAD 2>/dev/null) || {
-    fm_pr_autoarm_note "$task" "has no resolvable branch"
-    return 0
-  }
+  ref=$(git -C "$worktree" symbolic-ref --quiet HEAD 2>/dev/null) || return 0
   case "$ref" in
     refs/heads/*) ;;
-    *)
-      fm_pr_autoarm_note "$task" "has no resolvable branch"
-      return 0
-      ;;
+    *) return 0 ;;
   esac
   record=$(git -C "$worktree" for-each-ref \
     --format='%(refname)%09%(upstream:remotename)%09%(upstream:remoteref)' "$ref" 2>/dev/null | head -1)
   IFS=$'\t' read -r record_ref remote upstream_ref <<< "$record"
-  if [ "$record_ref" != "$ref" ] || [ -z "$remote" ] || [ "$remote" = . ]; then
-    fm_pr_autoarm_note "$task" "branch ${ref#refs/heads/} has no upstream"
-    return 0
-  fi
+  [ "$record_ref" = "$ref" ] || return 0
   case "$upstream_ref" in
     refs/heads/*) branch=${upstream_ref#refs/heads/} ;;
-    *)
-      fm_pr_autoarm_note "$task" "branch ${ref#refs/heads/} has no upstream"
-      return 0
-      ;;
+    *) remote=origin; branch=${ref#refs/heads/} ;;
   esac
-  remote_url=$(git -C "$worktree" remote get-url "$remote" 2>/dev/null) || {
-    fm_pr_autoarm_note "$task" "upstream remote is unreadable"
-    return 0
-  }
-  if ! fm_pr_autoarm_remote_parse "$remote_url"; then
-    fm_pr_autoarm_note "$task" "upstream forge is unreadable"
-    return 0
+  if [ -z "$remote" ] || [ "$remote" = . ]; then
+    remote=origin
+    branch=${ref#refs/heads/}
   fi
+  remote_url=$(git -C "$worktree" remote get-url "$remote" 2>/dev/null) || return 0
+  fm_pr_autoarm_remote_parse "$remote_url" || return 0
   lookup_rc=0
   fm_pr_autoarm_lookup "$FM_PR_AUTOARM_PROVIDER" "$FM_PR_AUTOARM_HOST" \
     "$FM_PR_AUTOARM_PATH" "$branch" || lookup_rc=$?
