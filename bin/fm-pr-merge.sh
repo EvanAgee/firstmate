@@ -4,7 +4,10 @@
 # The full canonical GitHub PR URL is parsed by bin/fm-pr-lib.sh and the derived
 # owner/repository and PR number are passed to gh-axi as separate arguments.
 # After a successful merge, available task and no-mistakes timing is appended to
-# the home-local data/delivery-log.jsonl without changing the merge result.
+# the home-local data/delivery-log.jsonl without changing the merge result, and
+# bin/fm-issue-close-after-merge.sh retires the task's linked issues so a PR
+# body without a closing keyword still closes what it fixed. Neither of those
+# records can turn a landed merge into a failure; both only warn.
 #
 # Merge method defaults to --squash when the caller passes none of --squash,
 # --merge, --rebase, or --method after the optional -- separator. Extra args
@@ -316,4 +319,13 @@ delivery_args=(
 [ -z "$MERGED_AT" ] || delivery_args+=(--merged-at "$MERGED_AT")
 if ! "$SCRIPT_DIR/fm-delivery-record.sh" "${delivery_args[@]}"; then
   echo "warning: delivery timing was not recorded for $ID after merging $URL" >&2
+fi
+
+# GitHub closes a linked issue only when the PR body carries a closing keyword,
+# and some lanes deliberately write "Refs #n" instead. Retire the task's linked
+# issues here so that never depends on the PR's wording. This runs after the
+# merge has already landed, so its failure is reported and never turns a
+# successful merge into a failed one.
+if ! "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$ID" "$URL"; then
+  echo "warning: linked issues were not all closed for $ID after merging $URL" >&2
 fi

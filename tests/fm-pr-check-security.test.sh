@@ -99,6 +99,21 @@ if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
   exit 0
 fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+# bin/fm-issue-close-after-merge.sh reads the merged PR state and each linked
+# issue before closing anything. Answer both so a merged poll can exercise the
+# close; every other call keeps its previous log-and-exit behavior.
+case "${1:-} ${2:-}" in
+  "pr view")
+    printf 'pull_request:\n  number: %s\n  state: %s\n' \
+      "$3" "${FM_TEST_GH_AXI_PR_STATE:-open}"
+    exit 0
+    ;;
+  "issue view")
+    printf 'issue:\n  number: %s\n  state: %s\n  labels: "%s"\n' \
+      "$3" "${FM_TEST_ISSUE_STATE:-open}" "${FM_TEST_ISSUE_LABELS:-agent-in-progress}"
+    exit 0
+    ;;
+esac
 exit "${FM_TEST_GH_AXI_RC:-0}"
 SH
   # Plain glab, reproducing the real CLI's contract: its field output on stdout
@@ -133,6 +148,18 @@ write_poll_meta() {
   local state=$1 id=$2 url=$3
   fm_write_meta "$state/$id.meta" \
     "window=fm-$id" \
+    "pr=$url"
+}
+
+# A dispatched-on-an-issue task's meta, in the order the real scripts write it:
+# fm-spawn records issues= at dispatch and fm-pr-check appends pr= later. The
+# poll's metadata binding refuses an unrecognized key after pr=, so a fixture
+# that appends issues= last would not be a real task's metadata.
+write_issue_poll_meta() {
+  local state=$1 id=$2 url=$3 issues=$4
+  fm_write_meta "$state/$id.meta" \
+    "window=fm-$id" \
+    "issues=$issues" \
     "pr=$url"
 }
 
@@ -760,6 +787,10 @@ run_watcher_bounded() {
   perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
     env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_GH_HEALTH_PROBE_CMD=: \
       FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
+      FM_TEST_GH_AXI_LOG="${FM_TEST_GH_AXI_LOG:-/dev/null}" \
+      FM_TEST_GH_AXI_PR_STATE="${FM_TEST_GH_AXI_PR_STATE:-open}" \
+      FM_TEST_ISSUE_STATE="${FM_TEST_ISSUE_STATE:-open}" \
+      FM_TEST_ISSUE_LABELS="${FM_TEST_ISSUE_LABELS:-agent-in-progress}" \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 
@@ -3299,6 +3330,60 @@ test_merged_poll_retires_once() {
   pass "validated merged polls notify once and retire before the next watcher cycle"
 }
 
+test_merged_poll_closes_linked_issues() {
+  local dir state rc
+  dir=$(make_case merged-closes-issues)
+  state="$dir/home/state"
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 o/r#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_TEST_GH_STATE=MERGED FM_TEST_GH_AXI_PR_STATE=merged FM_TEST_ISSUE_STATE=open \
+  FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "merged issue-close watcher failed: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "the merged notification was not preserved: $(cat "$dir/watch.out")" ;;
+  esac
+  grep -qF 'issue close 55 -R o/r --reason completed --comment Fixed by https://github.com/o/r/pull/1, merged to main.' \
+    "$dir/gh-axi.log" \
+    || fail "a merged poll did not close the task's linked issue (log: $(cat "$dir/gh-axi.log"))"
+  grep -qF 'issue edit 55 -R o/r --remove-label agent-in-progress' "$dir/gh-axi.log" \
+    || fail "a merged poll did not remove the agent-in-progress label"
+  ack_watcher_cycle "$state" || fail "merged issue-close acknowledgement failed"
+  pass "a PR merged outside fm-pr-merge still closes the task's linked issues"
+}
+
+test_merged_poll_issue_close_failure_keeps_the_merged_wake() {
+  local dir state rc
+  dir=$(make_case merged-issue-close-failure)
+  state="$dir/home/state"
+  # An issue in another repository is refused by the closer, so this exercises a
+  # failing close without needing the forge itself to break.
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 other/repo#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_TEST_GH_STATE=MERGED FM_TEST_GH_AXI_PR_STATE=merged FM_TEST_ISSUE_STATE=open \
+  FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "issue-close failure changed the watcher result: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "an issue-close failure suppressed the merged notification: $(cat "$dir/watch.out")" ;;
+  esac
+  assert_no_grep 'issue close' "$dir/gh-axi.log" \
+    "an issue outside the merged PR's repository was closed"
+  assert_poll_absent "$state" task-a
+  ack_watcher_cycle "$state" || fail "merged wake acknowledgement failed after an issue-close failure"
+  pass "an issue-close failure leaves the merged wake and poll retirement intact"
+}
+
 test_persistent_secondmate_retirement_is_poll_only() {
   local dir state meta_before status_before registry_before endpoint_before rc
   dir=$(make_case merged-retirement-secondmate)
@@ -3856,6 +3941,8 @@ test_legacy_retirement_receipt_is_discarded_but_tampering_is_refused
 test_parser_matrix
 test_gitlab_merge_watch
 test_merged_poll_retires_once
+test_merged_poll_closes_linked_issues
+test_merged_poll_issue_close_failure_keeps_the_merged_wake
 test_persistent_secondmate_retirement_is_poll_only
 test_retirement_crash_recovery
 test_external_merge_transition_retires_only_terminal_poll

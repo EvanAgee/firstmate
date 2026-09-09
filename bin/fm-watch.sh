@@ -59,6 +59,10 @@
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
+# A merged PR poll also retires that task's linked issues through
+# bin/fm-issue-close-after-merge.sh, so a PR that GitHub auto-merged without
+# firstmate running fm-pr-merge still closes what it fixed. That close only
+# reports into the triage log and never changes the merged wake.
 # Each successful recorded-window capture also replaces state/<id>.pane-tail
 # atomically with at most 40 lines and 65,536 characters for GET /tasks/<id>.
 # For normal supervision, resume the session-start primary-harness protocol
@@ -1347,6 +1351,16 @@ while :; do
         reason="check: $c: $out"
         fm_wake_append check "$c" "$reason" || exit 1
         if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+          # A PR that merges without firstmate running fm-pr-merge (GitHub
+          # auto-merge, or a merge from the web UI) still has to retire the
+          # issues the task was dispatched on, because a "Refs #n" body leaves
+          # them open. The close is reported into the triage log and never
+          # changes the merged wake this cycle already queued.
+          if ! issue_close_out=$("$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url" 2>&1 >/dev/null); then
+            # The closer stops on its first failing issue, so this is one line;
+            # flatten anyway so the bounded triage log stays one entry per event.
+            triage_log "linked issues were not all closed for $id after $url merged: $(printf '%s' "$issue_close_out" | tr '\n' ' ')"
+          fi
           if fm_pr_poll_retirement_publish "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" "$out"; then
             fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
               || triage_log "merged PR poll retirement remains recoverable for $id"
