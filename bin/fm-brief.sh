@@ -57,6 +57,11 @@
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
 # blocked when firstmate must act.
+# Every scaffold with a numbered Rules section (ship and scout) forbids the
+# 1Password CLI: secrets come from the worktree's .env.local or the app's
+# equivalent local env file, never `op`. The no-mistakes ship Definition of
+# done also requires `--intent` to carry that rule verbatim so the pipeline's
+# own review, test, document, and CI-fix agents inherit it.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -373,6 +378,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
 8. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
+9. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -449,6 +455,7 @@ Do not stop and wait for firstmate to instruct you - proceed directly to validat
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
+The no-1Password rule above is not scaffold boilerplate: the intent must carry the no-1Password rule verbatim so the pipeline's review, test, document, and CI-fix agents inherit it.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 While a validation gate is open, the turn is not finished: drive the gate and process every return until it reaches an outcome.
 Ending a turn with a gate still open makes no progress, because nothing is waiting on firstmate and no step is running.
@@ -567,6 +574,7 @@ $RULE1
    After embedding the URLs, push a commit (an empty one is fine) so push-triggered checks re-run against the current head; editing the PR body alone does not re-run them.
 10. Run \`npx unslop\` on every changed file and fix all findings before any PR.
 11. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
+12. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
