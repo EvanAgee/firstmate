@@ -217,7 +217,7 @@ test_quiet_pipeline_and_idle_pane_escalates() {
   stale_since="$state/.stale-since-fmtest_fm-pq"
   ewf="$state/.wedge-escalations-fmtest_fm-pq"
   printf '%s' "$(( $(date +%s) - 99999 ))" > "$stale_since"
-  run_in_watcher "$dir" wedge_timer_check fmtest:fm-pq "$stale_since" "test stale" "$ewf" >/dev/null 2>&1
+  run_in_watcher "$dir" wedge_timer_check fmtest:fm-pq "$stale_since" "test stale" "$ewf" 1 >/dev/null 2>&1
   unset FM_FAKE_AXI_STATUS
   if grep -q 'possible wedge' "$state/.wake-queue" 2>/dev/null; then
     ok "a quiet pipeline plus an idle pane still escalates as a possible wedge"
@@ -235,7 +235,7 @@ test_active_pipeline_resets_the_wedge_timer() {
   printf '%s' "$(( $(date +%s) - 99999 ))" > "$stale_since"
   export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
     ci,running,33m1s,"12s ago: log: building the new body","77305",starting' 
-  run_in_watcher "$dir" wedge_timer_check fmtest:fm-ph "$stale_since" "test stale" "$ewf" >/dev/null 2>&1
+  run_in_watcher "$dir" wedge_timer_check fmtest:fm-ph "$stale_since" "test stale" "$ewf" 1 >/dev/null 2>&1
   unset FM_FAKE_AXI_STATUS
   if grep -q 'possible wedge' "$state/.wake-queue" 2>/dev/null; then
     fail "an active pipeline must block the wedge escalation, but one was queued"
@@ -302,6 +302,73 @@ test_no_mode_skips_the_pipeline_read() {
   fi
 }
 
+# A secondmate gets no agent liveness read on this path, so it can never be
+# shown alive here. It must therefore never be absorbed onto the long pause
+# cadence by this rule - it surfaces so the captain sees it, exactly as it did
+# before the two-signal change.
+test_secondmate_with_declared_pause_is_not_absorbed() {
+  local dir out
+  dir=$(make_wedge_case secondmate-pause sm \
+    'paused: [key=await-answer] waiting on captain')
+  sed -i.bak 's/^kind=ship$/kind=secondmate/' "$dir/state/sm.meta"
+  rm -f "$dir/state/sm.meta.bak"
+  agent_gone
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-sm sm)
+  unset FM_FAKE_CREW_STATE
+  if [ "$out" = none ]; then
+    ok "a secondmate under a declared pause surfaces instead of being absorbed"
+  else
+    fail "secondmate + declared pause must classify none, got '$out'"
+  fi
+}
+
+# The pipeline read belongs to the pane-IDLE paths only. A genuinely BUSY pane
+# that has gone past BUSY_TURN_MAX_SECS with no completed turn is already its
+# own second signal, so a live pipeline must not suppress its escalation.
+test_busy_pane_escalates_even_with_an_active_pipeline() {
+  local dir state stale_since ewf
+  dir=$(make_wedge_case busy-active ba 'working: implementing' 'mode=no-mistakes')
+  state="$dir/state"
+  stale_since="$state/.stale-since-fmtest_fm-ba"
+  ewf="$state/.wedge-escalations-fmtest_fm-ba"
+  printf '%s' "$(( $(date +%s) - 99999 ))" > "$stale_since"
+  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,33m1s,"12s ago: log: building the new body","77305",starting'
+  run_in_watcher "$dir" wedge_timer_check fmtest:fm-ba "$stale_since" "busy (no completed turn)" "$ewf" >/dev/null 2>&1
+  unset FM_FAKE_AXI_STATUS
+  if grep -q 'possible wedge' "$state/.wake-queue" 2>/dev/null; then
+    ok "a busy pane past its turn bound escalates even while its pipeline runs"
+  else
+    fail "the busy path must escalate regardless of pipeline activity; no wake was queued"
+  fi
+}
+
+# crew_absorb_class prints `working` for source `run-step` OR source `pane`. An
+# exactly-busy pane is direct evidence of a rendering agent and owes nothing to
+# a no-mistakes run, so it must be honored without any pipeline gating.
+test_pane_sourced_working_is_not_gated_on_the_pipeline() {
+  local dir out
+  dir=$(make_wedge_case pane-working pw \
+    'paused: [key=await-x] waiting' \
+    'mode=no-mistakes')
+  agent_present pw
+  FM_FAKE_TMUX_CURRENT_COMMAND=claude
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: working · source: pane · busy pane'
+  # The pipeline behind it has gone quiet far past the window. That is the
+  # run-step signal, and it must not veto the pane's own busy verdict.
+  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,15h29m,"quiet 51m55s ago: log: base branch advanced, re-arming CI monitor timeout","",starting'
+  out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-pw pw)
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND FM_FAKE_AXI_STATUS
+  if [ "$out" = working ]; then
+    ok "a pane-sourced working verdict is honored without a pipeline read"
+  else
+    fail "pane-sourced working must classify working, got '$out'"
+  fi
+}
+
 test_declared_pause_beats_run_step_done
 test_declared_pause_with_live_agent_stays_none
 test_active_pipeline_blocks_escalation
@@ -312,5 +379,8 @@ test_dead_agent_with_nothing_still_escalates
 test_no_mode_skips_the_pipeline_read
 test_stale_working_run_step_does_not_beat_a_pause
 test_live_agent_with_working_run_stays_working
+test_secondmate_with_declared_pause_is_not_absorbed
+test_busy_pane_escalates_even_with_an_active_pipeline
+test_pane_sourced_working_is_not_gated_on_the_pipeline
 
 exit "$FAILED"
