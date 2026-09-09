@@ -1295,9 +1295,26 @@ signal_reason_is_actionable() {  # <file> ...
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
-  local id=$1 line state src
-  [ -n "$id" ] || { printf 'none'; return; }
+  crew_absorb_class_of_line "$(crew_state_line "$1")"
+}
+
+# The one authoritative current-state line for crew <id>, or empty. The single
+# fm-crew-state.sh invocation every absorb decision is built on: it shells out
+# to a bounded `no-mistakes axi status` and may make a second `axi logs` call,
+# so a caller that needs both the absorb class and the line's own fields reads
+# it ONCE here and passes the line to crew_absorb_class_of_line.
+crew_state_line() {  # <id>
+  local id=$1 line
+  [ -n "$id" ] || return 0
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) printf '%s' "$line" ;; esac
+}
+
+# The working/paused/none decision for an already-read state line. This file
+# stays the single owner of that mapping; fm-watch.sh calls it rather than
+# re-deriving the class from a line it read itself.
+crew_absorb_class_of_line() {  # <state-line>
+  local line=$1 state src
   case "$line" in state:*) ;; *) printf 'none'; return ;; esac
   state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi
@@ -1306,6 +1323,14 @@ crew_absorb_class() {  # <id>
     case "$src" in run-step|pane) printf 'working'; return ;; esac
   fi
   printf 'none'
+}
+
+# The `source:` field of an already-read state line, or empty when absent.
+crew_state_source() {  # <state-line>
+  local line=$1 src
+  case "$line" in *source:*) ;; *) return 0 ;; esac
+  src=${line#*source: }
+  printf '%s' "${src%% *}"
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class

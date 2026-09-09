@@ -347,6 +347,40 @@ fm_pr_metadata_identity_parse() {
   [ -n "$FM_PR_META_URL" ]
 }
 
+# The single canonical PR/MR URL announced in a free-text line, or empty when
+# the line announces none or announces more than one. The one owner of "this
+# line announces a pull request": bin/fm-pr-autoarm.sh arms a watch from it, and
+# bin/fm-watch.sh recognizes a finished-awaiting-merge worker from it. Bare
+# words such as PREPARED or PROVIDER, and a PR mentioned without a URL, are not
+# announcements and yield nothing.
+fm_pr_announced_url() {  # <line>
+  local line=$1 candidate remainder tail char urls='' count=0 url=''
+  remainder=$line
+  while [[ "$remainder" == *https://* ]]; do
+    tail=${remainder#*https://}
+    candidate=https://
+    while [ -n "$tail" ]; do
+      char=${tail:0:1}
+      case "$char" in
+        [A-Za-z0-9._/-])
+          candidate=$candidate$char
+          tail=${tail:1}
+          ;;
+        *) break ;;
+      esac
+    done
+    remainder=$tail
+    fm_pr_url_parse "$candidate" || continue
+    if ! printf '%s\n' "$urls" | grep -Fqx "$FM_PR_URL"; then
+      urls="${urls}${FM_PR_URL}"$'\n'
+      count=$((count + 1))
+      url=$FM_PR_URL
+    fi
+  done
+  [ "$count" -eq 1 ] || return 1
+  printf '%s' "$url"
+}
+
 # Sidecar layout: provider, url, host, path, number, one per line. A sidecar
 # written before the provider tag existed has a URL on its first line and one
 # line fewer, so it fails both the field count and the provider comparison and
