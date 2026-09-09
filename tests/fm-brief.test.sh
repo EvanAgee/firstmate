@@ -675,6 +675,75 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
   pass "fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible"
 }
 
+# The captain's standing rule (2026-09-09): secrets come from the worktree's
+# local env file, never the 1Password CLI. Pin the exact rule sentence in
+# every scaffold that carries a numbered Rules section, and pin the --intent
+# carry-forward sentence in every ship mode's Definition of done, so a
+# paraphrase cannot silently drop the rule.
+# shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
+NO_1PASSWORD_RULE='Never run the 1Password CLI (`op run`, `op read`, `op item`, `op environment`, or any other `op` subcommand) for anything. Secrets come from this worktree'"'"'s `.env.local` or the app'"'"'s equivalent local env file. If a variable you need is missing there, append `blocked [key=missing-env-<NAME>]: <NAME> is missing from .env.local` and stop; never fetch it.'
+# shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
+NO_1PASSWORD_INTENT_CLAUSE='the intent must carry the no-1Password rule verbatim so the pipeline'"'"'s review, test, document, and CI-fix agents inherit it'
+
+test_no_1password_rule_in_ship_and_scout_scaffolds() {
+  local home id brief
+  home="$TMP_ROOT/no-1password-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-no1p-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "$NO_1PASSWORD_RULE" "$brief" \
+      "$mode: ship brief missing the exact no-1Password rule sentence"
+  done
+
+  id="brief-no1p-matt-flow"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow >/dev/null 2>&1 \
+    || fail "matt-flow: ship brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep "$NO_1PASSWORD_RULE" "$brief" \
+    "matt-flow: ship brief missing the exact no-1Password rule sentence"
+
+  id="brief-no1p-herdr-lab"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes --herdr-lab >/dev/null 2>&1 \
+    || fail "herdr-lab: ship brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep "$NO_1PASSWORD_RULE" "$brief" \
+    "herdr-lab: ship brief missing the exact no-1Password rule sentence"
+
+  id="brief-no1p-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 \
+    || fail "scout: brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep "$NO_1PASSWORD_RULE" "$brief" \
+    "scout: brief missing the exact no-1Password rule sentence"
+
+  pass "fm-brief.sh: every scaffold with a Rules section forbids the 1Password CLI"
+}
+
+test_no_1password_intent_carry_forward_in_ship_scaffolds() {
+  local home id brief
+  home="$TMP_ROOT/no-1password-intent-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-no1p-intent-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    if [ "$mode" = no-mistakes ]; then
+      assert_grep "$NO_1PASSWORD_INTENT_CLAUSE" "$brief" \
+        "$mode: no-mistakes DOD missing the --intent no-1Password carry-forward sentence"
+    else
+      assert_no_grep "$NO_1PASSWORD_INTENT_CLAUSE" "$brief" \
+        "$mode: brief has no --intent contract and must not carry the intent clause"
+    fi
+  done
+  pass "fm-brief.sh: no-mistakes DOD requires --intent to carry the no-1Password rule verbatim"
+}
+
 test_secondmate_no_projects_charter() {
   local home brief status
   home="$TMP_ROOT/no-projects-home"
@@ -1048,6 +1117,8 @@ test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
+test_no_1password_rule_in_ship_and_scout_scaffolds
+test_no_1password_intent_carry_forward_in_ship_scaffolds
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
