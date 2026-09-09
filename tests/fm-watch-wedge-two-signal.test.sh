@@ -82,6 +82,11 @@ run_in_watcher() {  # <dir> <fn> <args...>
   local dir=$1
   shift
   (
+    # PATH is deliberately scoped to this subshell: the fakebin must cover the
+    # sourced watcher and every command it calls, and must not leak back to the
+    # caller. That containment is the whole point of this helper, so the two
+    # PATH warnings below are the intended design rather than a mistake.
+    # shellcheck disable=SC2030 # Subshell-local PATH is this helper's isolation.
     PATH="$dir/fakebin:$PATH"
     FM_HOME="$dir"
     FM_STATE_OVERRIDE="$dir/state"
@@ -102,15 +107,6 @@ run_in_watcher() {  # <dir> <fn> <args...>
 WATCH="$ROOT/bin/fm-watch.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
 
-wait_live() {  # <pid> [tenths]
-  local pid=$1 limit=${2:-30} i=0
-  while [ "$i" -lt "$limit" ]; do
-    kill -0 "$pid" 2>/dev/null || return 1
-    sleep 0.1
-    i=$((i + 1))
-  done
-  return 0
-}
 reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
 
 # Arm a genuine PR merge poll for <id> against <url>, the same way
@@ -190,6 +186,7 @@ seed_stale_pane() {  # <dir> <id> <window> <pane-text>
 run_for_seconds() {  # <dir> <window> <seconds> [extra-env-assignments...]
   local dir=$1 window=$2 secs=$3 pid deadline
   shift 3
+  # shellcheck disable=SC2031 # A per-command PATH prefix; nothing here reads the helper subshell's PATH.
   env PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
     FM_STATE_OVERRIDE="$dir/state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
     FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -220,6 +217,7 @@ drain_wakes() {  # <state>
 run_until_marker() {  # <dir> <marker-path>
   local dir=$1 marker=$2 state pid i=0
   state="$dir/state"
+  # shellcheck disable=SC2031 # A per-command PATH prefix; nothing here reads the helper subshell's PATH.
   PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="${FM_WEDGE_WINDOW:-}" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
     FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -240,6 +238,7 @@ run_until_stale_classified() {  # <dir> <window>
   local dir=$1 window=$2 state key pid i=0
   state="$dir/state"
   key=$(printf '%s' "$window" | tr ':/.' '___')
+  # shellcheck disable=SC2031 # A per-command PATH prefix; nothing here reads the helper subshell's PATH.
   PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
     FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -618,7 +617,7 @@ test_unrelated_custom_check_is_not_an_armed_merge_watch() {
 # what enforces that ACROSS those restarts. A wake every restart would be
 # strictly worse than the wedge ladder this change replaced.
 test_awaiting_merge_absorb_stays_throttled_across_restarts() {
-  local dir state window run wakes
+  local dir state window wakes
   dir=$(make_wedge_case merge-throttle mt \
     'done: PR https://github.com/EvanAgee/firstmate/pull/11 checks green' \
     'mode=no-mistakes')
@@ -634,7 +633,7 @@ test_awaiting_merge_absorb_stays_throttled_across_restarts() {
   FM_FAKE_TMUX_CURRENT_COMMAND=zsh
   export FM_FAKE_TMUX_CURRENT_COMMAND
   export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
-  for run in 1 2 3; do
+  for _ in 1 2 3; do
     run_for_seconds "$dir" "$window" 14 FM_PAUSE_RESURFACE_SECS=3600
     drain_wakes "$state"
   done
