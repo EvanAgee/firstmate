@@ -113,12 +113,48 @@ wait_live() {  # <pid> [tenths]
 }
 reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
 
-# Arm a real, registered custom watcher check for <id>. The poll loop runs the
-# PR-check migration on startup, which quarantines any <id>.check.sh it cannot
-# account for, so an unregistered stub would be removed before the stale
-# dispatch ever saw it. bin/fm-check-register.sh is the supported way to bind an
-# intentional custom check to its own bytes, which is exactly what an armed
-# merge watch is.
+# Arm a genuine PR merge poll for <id> against <url>, the same way
+# bin/fm-pr-check.sh arms one: the pr= meta field plus the <id>.pr-poll and
+# <id>.pr-poll-registration sidecars alongside <id>.check.sh. This is what
+# fm_pr_poll_artifacts_valid recognizes, and only this counts as an armed merge
+# watch. Prepared and published offline through the same fm-pr-lib.sh entry
+# points, so no network call is needed.
+arm_pr_poll() {  # <state> <id> <url>
+  local state=$1 id=$2 url=$3 meta host path number fakebin
+  # An armed poll is a LIVE poll: the watcher runs it every check cycle. Give it
+  # a gh that reports the PR still OPEN, which is exactly the state of a worker
+  # awaiting the merge queue, so the poll stays silent and the case measures the
+  # stale dispatch rather than a merge notification.
+  fakebin=${state%/state}/fakebin
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" headRefOid "*) printf '0123456789abcdef0123456789abcdef01234567\n' ;;
+  *" state "*) printf 'OPEN\n' ;;
+esac
+SH
+  chmod +x "$fakebin/gh"
+  meta="$state/$id.meta"
+  host=${url#https://}; host=${host%%/*}
+  path=${url#https://"$host"/}; path=${path%%/pull/*}
+  number=${url##*/}
+  grep -v '^pr=' "$meta" > "$meta.tmp" 2>/dev/null || true
+  printf 'pr=%s\n' "$url" >> "$meta.tmp"
+  mv -f "$meta.tmp" "$meta"
+  chmod 0600 "$meta"
+  (
+    . "$ROOT/bin/fm-pr-lib.sh"
+    fm_pr_poll_prepare "$state" "$id" github "$url" "$host" "$path" "$number" \
+      "$ROOT/bin/fm-pr-poll.sh" || exit 1
+    fm_pr_poll_publish_prepared files-only || exit 1
+  )
+}
+
+# Arm an UNRELATED registered custom watcher check for <id>: a real, registered
+# <id>.check.sh that is not a PR poll at all (a deploy probe, a fixture watcher).
+# bin/fm-check-register.sh is the supported way to bind arbitrary intentional
+# check bytes, and the watcher's own sweep already distinguishes this from a PR
+# poll. A worker holding one of these is NOT awaiting a merge.
 arm_custom_check() {  # <state> <id>
   local state=$1 id=$2
   printf '#!/usr/bin/env bash\nexit 0\n' > "$state/$id.check.sh" || return 1
@@ -145,6 +181,28 @@ seed_stale_pane() {  # <dir> <id> <window> <pane-text>
 # runs on a later one, so wait for the .stale-<key> suppressor the dispatch
 # writes (or for the wake queue) rather than guessing a sleep. The caller
 # inspects the state dir and the captured stdout at <dir>/watch.out.
+# Run the watcher over <dir>'s state until <marker> appears or a wake is queued,
+# then stop it. For cases whose .stale-<key> suppressor is pre-seeded, so the
+# generic "has it been classified yet" wait would return before the poll acts.
+run_until_marker() {  # <dir> <marker-path>
+  local dir=$1 marker=$2 state pid i=0
+  state="$dir/state"
+  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="${FM_WEDGE_WINDOW:-}" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$dir/watch.out" 2>&1 &
+  pid=$!
+  while [ "$i" -lt 300 ]; do
+    if [ -e "$marker" ] || [ -s "$state/.wake-queue" ]; then
+      break
+    fi
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  reap "$pid"
+}
+
 run_until_stale_classified() {  # <dir> <window>
   local dir=$1 window=$2 state key pid i=0
   state="$dir/state"
@@ -256,7 +314,8 @@ test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll() {
   state="$dir/state"
   window=fmtest:fm-md
   key=$(printf '%s' "$window" | tr ':/.' '___')
-  arm_custom_check "$state" md || { fail "could not arm the merge watch fixture"; return; }
+  arm_pr_poll "$state" md https://github.com/EvanAgee/firstmate/pull/7 \
+    || { fail "could not arm the merge watch fixture"; return; }
   seed_stale_pane "$dir" md "$window" 'idle waiting for merge'
   # The window must stay in the tmux inventory for the pane capture the poll
   # needs, so the agent is made dead the other way the classifier allows: its
@@ -385,7 +444,8 @@ test_done_without_a_pr_url_is_not_awaiting_merge() {
               'done: refactored PROVIDER lookup and stopped'; do
     dir=$(make_wedge_case "no-pr-$RANDOM" np "$line" 'mode=no-mistakes')
     state="$dir/state"
-    arm_custom_check "$state" np || { fail "could not arm the check fixture"; return; }
+    arm_pr_poll "$state" np https://github.com/EvanAgee/firstmate/pull/3 \
+      || { fail "could not arm the check fixture"; return; }
     agent_gone
     if run_in_watcher "$dir" finished_awaiting_merge fmtest:fm-np np; then
       fail "a done: line with no PR URL must not be absorbed as awaiting merge: $line"
@@ -398,7 +458,8 @@ test_done_without_a_pr_url_is_not_awaiting_merge() {
     'done: PR https://github.com/EvanAgee/firstmate/pull/12 checks green' \
     'mode=no-mistakes')
   state="$dir/state"
-  arm_custom_check "$state" wp2 || { fail "could not arm the check fixture"; return; }
+  arm_pr_poll "$state" wp2 https://github.com/EvanAgee/firstmate/pull/12 \
+    || { fail "could not arm the check fixture"; return; }
   FM_FAKE_TMUX_CURRENT_COMMAND=zsh
   export FM_FAKE_TMUX_CURRENT_COMMAND
   FM_FAKE_TMUX_WINDOW=fmtest:fm-wp2
@@ -452,6 +513,69 @@ test_unreadable_activity_is_no_answer_not_a_stop() {
     fi
   done
   ok "an unreadable last_activity is the no-answer state, not a hard negative"
+}
+
+# The same finished green-PR worker on the REPEAT-hash sub-path of the terminal
+# branch: a wedge timer is already running for this exact pane hash. The
+# awaiting-merge absorb must win there too, or the worker keeps climbing the
+# wedge ladder one poll later.
+test_green_pr_awaiting_merge_absorbed_on_a_repeat_hash() {
+  local dir state window key
+  dir=$(make_wedge_case merge-repeat mr \
+    'done: PR https://github.com/EvanAgee/firstmate/pull/9 checks green' \
+    'mode=no-mistakes')
+  state="$dir/state"
+  window=fmtest:fm-mr
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  arm_pr_poll "$state" mr https://github.com/EvanAgee/firstmate/pull/9 \
+    || { fail "could not arm the merge watch fixture"; return; }
+  seed_stale_pane "$dir" mr "$window" 'idle awaiting merge again'
+  # This hash was already classified, and a wedge timer is running past the
+  # window: without the absorb, the next poll escalates it.
+  printf '%s' "$(hash_text 'idle awaiting merge again')" > "$state/.stale-$key"
+  printf '%s' "$(( $(date +%s) - 99999 ))" > "$state/.stale-since-$key"
+  FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+  # The .stale-<key> suppressor is already seeded here, so wait on the absorb's
+  # own marker instead: the poll either writes .paused-<key> or queues a wake.
+  FM_WEDGE_WINDOW=$window run_until_marker "$dir" "$state/.paused-$key"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  if grep -q 'possible wedge' "$state/.wake-queue" 2>/dev/null; then
+    fail "a finished green-PR worker wedge-escalated on the repeat-hash path"
+  elif [ -e "$state/.stale-since-$key" ]; then
+    fail "a finished green-PR worker kept its wedge timer on the repeat-hash path"
+  elif [ ! -e "$state/.paused-$key" ]; then
+    fail "a finished green-PR worker was not absorbed on the repeat-hash path"
+  else
+    ok "the awaiting-merge absorb also wins on the repeat-hash path"
+  fi
+}
+
+# state/<id>.check.sh is the GENERIC custom-check path, not a PR-watch marker:
+# bin/fm-check-register.sh registers arbitrary bytes there for any task. A
+# worker holding an unrelated custom check is not awaiting a merge, and parking
+# it on the pause cadence would hide a finished worker who needed the captain.
+test_unrelated_custom_check_is_not_an_armed_merge_watch() {
+  local dir state window
+  dir=$(make_wedge_case custom-check cc \
+    'done: work complete, superseding https://github.com/EvanAgee/firstmate/pull/12 - needs a captain call' \
+    'mode=no-mistakes')
+  state="$dir/state"
+  window=fmtest:fm-cc
+  # A real, registered custom check that is NOT a PR poll.
+  arm_custom_check "$state" cc || { fail "could not arm the custom check fixture"; return; }
+  seed_stale_pane "$dir" cc "$window" 'idle after finishing'
+  FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · finished'
+  run_until_stale_classified "$dir" "$window"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  if grep -qF "stale: $window" "$state/.wake-queue" 2>/dev/null; then
+    ok "an unrelated custom check is not an armed merge watch, so the worker surfaces"
+  else
+    fail "a worker with only a custom check must still surface; queue: $(cat "$state/.wake-queue" 2>/dev/null)"
+  fi
 }
 
 test_declared_pause_beats_run_step_done() {
@@ -556,24 +680,6 @@ test_active_pipeline_resets_the_wedge_timer() {
   fi
 }
 
-test_green_pr_with_armed_watch_is_paused() {
-  local dir out state
-  dir=$(make_wedge_case green-pr gp \
-    'done: PR https://github.com/EvanAgee/firstmate/pull/1 checks green' \
-    'mode=no-mistakes')
-  state="$dir/state"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$state/gp.check.sh"
-  chmod 0700 "$state/gp.check.sh"
-  agent_gone
-  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
-  out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-gp gp)
-  unset FM_FAKE_CREW_STATE
-  if [ "$out" = paused ]; then
-    ok "a gone agent with a green PR and an armed merge watch is paused, not wedged"
-  else
-    fail "green PR + armed watch + gone agent must classify paused, got '$out'"
-  fi
-}
 
 test_dead_agent_with_nothing_still_escalates() {
   local dir out
@@ -689,7 +795,6 @@ test_declared_pause_with_live_agent_stays_none
 test_active_pipeline_blocks_escalation
 test_quiet_pipeline_and_idle_pane_escalates
 test_active_pipeline_resets_the_wedge_timer
-test_green_pr_with_armed_watch_is_paused
 test_dead_agent_with_nothing_still_escalates
 test_no_mode_skips_the_pipeline_read
 test_stale_working_run_step_does_not_beat_a_pause
@@ -705,5 +810,7 @@ test_unattributed_run_is_not_this_tasks_pipeline
 test_done_without_a_pr_url_is_not_awaiting_merge
 test_blank_line_between_rows_does_not_hide_a_running_step
 test_unreadable_activity_is_no_answer_not_a_stop
+test_green_pr_awaiting_merge_absorbed_on_a_repeat_hash
+test_unrelated_custom_check_is_not_an_armed_merge_watch
 
 exit "$FAILED"

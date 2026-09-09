@@ -487,13 +487,20 @@ pipeline_activity_fresh() {  # <task>
 }
 
 # 0 if <task> is a finished worker awaiting its merge rather than a wedge: the
-# agent is gone, its last status line announced a green PR, and a PR watch is
-# armed for it. That worker has nothing left to render, so its idle pane is the
-# expected shape of the work, not a symptom.
+# agent is gone, its last status line announced a green PR, and a PR merge watch
+# is genuinely armed for it. That worker has nothing left to render, so its idle
+# pane is the expected shape of the work, not a symptom.
+#
+# "Armed" means a real PR poll, not merely a file at <task>.check.sh - that is
+# the GENERIC custom-check path, and bin/fm-check-register.sh registers
+# arbitrary bytes there for any task. An unrelated custom check plus a done-line
+# that happens to carry a PR URL would otherwise park a terminal worker who
+# needed the captain. fm_pr_poll_artifacts_valid is the same predicate
+# bin/fm-pr-check.sh and the migration already use for exactly this question.
 finished_awaiting_merge() {  # <window> <task>
   local win=$1 task=$2 last agent_alive
   [ -n "$task" ] || return 1
-  [ -e "$STATE/$task.check.sh" ] || return 1
+  fm_pr_poll_artifacts_valid "$STATE" "$task" "$SCRIPT_DIR/fm-pr-poll.sh" || return 1
   last=$(last_status_line "$STATE/$task.status")
   case "$last" in
     done:*) ;;
@@ -627,13 +634,6 @@ pause_state_class() {  # <window> <task>
   recheck_file="$STATE/.paused-rechecked-$key"
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
-    # A worker with a green PR, an armed merge watch, and a gone agent has
-    # nothing left to render. Its idle pane is the finished shape of the work,
-    # so recheck it on the long pause cadence instead of the wedge ladder.
-    if finished_awaiting_merge "$win" "$task"; then
-      printf 'paused'
-      return
-    fi
     crew_absorb_class "$task"
     return
   fi
