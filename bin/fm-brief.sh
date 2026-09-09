@@ -28,7 +28,9 @@
 #   caller-supplied repo string cannot reliably identify this repo. Briefs made
 #   without it carry a loud declaration so an omitted contract cannot be silent.
 #   --matt-flow applies only to ship briefs whose task explicitly adopts the
-#   Matt flow. It adds one thin flow trigger; the installed skills own every phase.
+#   Matt flow. It adds one thin flow trigger that enters at the installed `tdd`
+#   skill, because the brief is already the spec and the earlier flow phases are
+#   either done or human-only; the installed skills own every phase it names.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -493,21 +495,23 @@ if [ "$MATT_FLOW" -eq 1 ]; then
 IFS= read -r -d '' MATT_FLOW_SECTION <<'EOF' || true
 # Matt-flow
 This brief declares this task a Matt-flow task.
-Enter at the project-installed `to-spec` skill, or `triage` for bug work.
+This brief is the spec, so the `to-spec`, `to-tickets`, `triage`, `implement`, and `grill-with-docs` phases are already done or are human-only and must not be invoked.
+Enter at the installed `tdd` skill: write the failing test first, then make it pass.
+If `tdd` is not installed in this worktree, append `blocked [key=matt-flow-tdd-missing]: tdd skill not installed in this worktree` and stop rather than improvising a flow.
 EOF
 MATT_FLOW_SECTION=${MATT_FLOW_SECTION%$'\n'}
 case "$MODE" in
   no-mistakes)
     IFS= read -r -d '' MATT_FLOW_MODE_SECTION <<'EOF' || true
-Follow the flow's own instructions phase by phase through `tdd`, then stop the flow there.
-The no-mistakes pipeline in the Definition of done owns review, so do not run a separate review skill, review sub-agent, or hand review pass before validation.
-Leave each phase's natural artifact (spec file, tickets folder, and failing-test commit) and append one status line at every phase transition.
+Stop the flow after `tdd` and go straight to the validation in the Definition of done.
+The no-mistakes pipeline in the Definition of done owns review, so do not run `code-review`, any other review skill, a review sub-agent, or a hand review pass before validation.
+Leave the failing-test commit as the phase artifact and append one status line at the phase transition.
 EOF
     ;;
   *)
     IFS= read -r -d '' MATT_FLOW_MODE_SECTION <<'EOF' || true
-Follow the flow's own instructions phase by phase through `code-review`, without skipping phases.
-Leave each phase's natural artifact (spec file, tickets folder, failing-test commit, and review notes) and append one status line at every phase transition.
+Continue from `tdd` to the installed `code-review` skill, which owns review because no pipeline follows.
+Leave the failing-test commit and the review notes as the phase artifacts and append one status line at every phase transition.
 EOF
     ;;
 esac

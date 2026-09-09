@@ -308,21 +308,44 @@ test_matt_flow_is_explicit_and_thin() {
     "Matt-flow brief missing its thin trigger section"
   assert_grep "This brief declares this task a Matt-flow task." "$brief" \
     "Matt-flow brief missing its explicit declaration"
-  assert_grep "Enter at the project-installed \`to-spec\` skill, or \`triage\` for bug work." "$brief" \
-    "Matt-flow brief missing its normal and bug entry points"
-  assert_grep "Follow the flow's own instructions phase by phase through \`tdd\`, then stop the flow there." "$brief" \
+  assert_grep "already done or are human-only and must not be invoked" "$brief" \
+    "Matt-flow brief did not rule out the phases the worker cannot run"
+  assert_grep "Enter at the installed \`tdd\` skill: write the failing test first, then make it pass." "$brief" \
+    "Matt-flow brief missing its tdd entry point"
+  assert_grep "blocked [key=matt-flow-tdd-missing]: tdd skill not installed in this worktree" "$brief" \
+    "Matt-flow brief missing the blocked line for a worktree without tdd"
+  assert_grep "Stop the flow after \`tdd\` and go straight to the validation in the Definition of done." "$brief" \
     "Matt-flow brief did not stop its skill flow after tdd"
-  assert_grep "The no-mistakes pipeline in the Definition of done owns review, so do not run a separate review skill, review sub-agent, or hand review pass before validation." "$brief" \
+  assert_grep "The no-mistakes pipeline in the Definition of done owns review, so do not run \`code-review\`, any other review skill, a review sub-agent, or a hand review pass before validation." "$brief" \
     "Matt-flow brief duplicated review before no-mistakes validation"
-  assert_grep "Leave each phase's natural artifact (spec file, tickets folder, and failing-test commit) and append one status line at every phase transition." "$brief" \
+  assert_grep "Leave the failing-test commit as the phase artifact and append one status line at the phase transition." "$brief" \
     "Matt-flow brief missing its artifact and phase-transition status contract"
-  assert_no_grep "\`code-review\`" "$brief" \
-    "Matt-flow brief still named the superseded review skill"
-  assert_no_grep "\`to-tickets\`" "$brief" \
-    "Matt-flow brief retained the superseded per-skill guidance"
+  assert_no_grep "Enter at the project-installed" "$brief" \
+    "Matt-flow brief still entered at a human-only phase"
+  assert_no_grep "phase by phase" "$brief" \
+    "Matt-flow brief still told the worker to walk phases it cannot invoke"
   assert_no_grep "\`diagnosing-bugs\`" "$brief" \
     "Matt-flow brief retained the superseded bug-skill guidance"
-  pass "fm-brief.sh: Matt-flow is explicit, complete, and thin"
+  pass "fm-brief.sh: Matt-flow enters at a skill the worker can actually run"
+}
+
+# A brief scaffolded without --matt-flow must carry no flow text at all, so the
+# rewrite above cannot leak the flow contract into ordinary ship briefs.
+test_brief_without_matt_flow_has_no_flow_section() {
+  local home id brief
+  home="$TMP_ROOT/no-matt-flow-home"
+  mkdir -p "$home/data"
+  id="brief-no-matt-flow"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "plain ship brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "# Matt-flow" "$brief" \
+    "plain ship brief gained a Matt-flow section"
+  assert_no_grep "matt-flow-tdd-missing" "$brief" \
+    "plain ship brief gained the Matt-flow blocked line"
+  assert_no_grep "\`tdd\`" "$brief" \
+    "plain ship brief gained a tdd entry point"
+  pass "fm-brief.sh: a brief without --matt-flow carries no flow text"
 }
 
 test_matt_flow_without_pipeline_keeps_code_review() {
@@ -337,11 +360,11 @@ test_matt_flow_without_pipeline_keeps_code_review() {
     brief="$home/data/$id/brief.md"
     assert_grep "# Matt-flow" "$brief" \
       "$mode Matt-flow brief missing its thin trigger section"
-    assert_grep "Follow the flow's own instructions phase by phase through \`code-review\`, without skipping phases." "$brief" \
+    assert_grep "Continue from \`tdd\` to the installed \`code-review\` skill, which owns review because no pipeline follows." "$brief" \
       "$mode Matt-flow brief did not retain review before delivery"
-    assert_grep "Leave each phase's natural artifact (spec file, tickets folder, failing-test commit, and review notes) and append one status line at every phase transition." "$brief" \
+    assert_grep "Leave the failing-test commit and the review notes as the phase artifacts and append one status line at every phase transition." "$brief" \
       "$mode Matt-flow brief did not retain its review artifact"
-    assert_no_grep "through \`tdd\`, then stop the flow there" "$brief" \
+    assert_no_grep "Stop the flow after \`tdd\`" "$brief" \
       "$mode Matt-flow brief stopped before its required review"
     assert_no_grep "The no-mistakes pipeline in the Definition of done owns review" "$brief" \
       "$mode Matt-flow brief assigned review to a pipeline it does not run"
@@ -1104,6 +1127,7 @@ test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
+test_brief_without_matt_flow_has_no_flow_section
 test_matt_flow_without_pipeline_keeps_code_review
 test_ship_modes_demand_a_walked_path_before_done
 test_ship_mode_is_required_and_closed_set
