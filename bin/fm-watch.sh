@@ -358,9 +358,12 @@ pipeline_age_secs() {  # <duration>
     num=${rest%%[!0-9]*}
     [ -n "$num" ] || break
     rest=${rest#"$num"}
+    # The unit is exactly one letter. A longer run (1ms, 2mo) is not a duration
+    # axi emits, and silently reading its first letter would answer 60 for a
+    # millisecond and 120 for two months.
     unit=${rest%%[0-9]*}
-    unit=${unit:0:1}
-    rest=${rest#?}
+    [ ${#unit} -eq 1 ] || return 0
+    rest=${rest#"$unit"}
     case "$unit" in
       s) total=$(( total + num )); matched=1 ;;
       m) total=$(( total + num * 60 )); matched=1 ;;
@@ -398,6 +401,27 @@ pipeline_recently_active() {  # <task>
   pipeline_activity_fresh "$task"
 }
 
+# 0 if the run described by captured `axi status` output <status> belongs to
+# worktree <worktree>. `no-mistakes axi status` reports the active-or-most-recent
+# run for the current branch, and falls back to SOME OTHER branch's run purely
+# as informational display when this branch has none of its own - so on a fleet
+# where several crews validate at once, an unrelated crew's live run would
+# otherwise read as this task's live pipeline and suppress a real escalation.
+# bin/fm-crew-state.sh and bin/fm-teardown.sh guard the same command the same
+# way; fm_nm_head_matches_worktree is the one owner of the code-identity rule.
+# The caller treats a failure here as "no answer available", never as evidence
+# this task's pipeline stopped.
+pipeline_run_is_this_task() {  # <worktree> <axi-status-output>
+  local wt=$1 out=$2 run_branch local_branch run_head
+  [ -n "$wt" ] && [ -d "$wt" ] || return 1
+  run_branch=$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")
+  [ -n "$run_branch" ] || return 1
+  local_branch=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null) || return 1
+  [ "$run_branch" = "$local_branch" ] || return 1
+  run_head=$(fm_nm_strip_quotes "$(fm_nm_field "$out" head)")
+  fm_nm_head_matches_worktree "$wt" "$run_head"
+}
+
 # The activity read itself, without the mode= cheap-skip. Callers that have
 # already established a run exists (crew_absorb_class reported `working`) ask
 # this directly: for them the run is known, so skipping on a thin meta record
@@ -409,15 +433,16 @@ pipeline_recently_active() {  # <task>
 pipeline_activity_fresh() {  # <task>
   local task=$1 wt out row activity age secs
   [ -n "$task" ] || return 2
+  wt=$(fm_meta_get "$STATE/$task.meta" worktree)
   if [ -n "${FM_FAKE_AXI_STATUS+x}" ]; then
     out=$FM_FAKE_AXI_STATUS
   else
-    wt=$(fm_meta_get "$STATE/$task.meta" worktree)
     [ -n "$wt" ] && [ -d "$wt" ] || return 2
     command -v no-mistakes >/dev/null 2>&1 || return 2
     out=$(fm_nm_run "$wt" "$PIPELINE_CHECK_TIMEOUT" axi status)
   fi
   [ -n "$out" ] || return 2
+  pipeline_run_is_this_task "$wt" "$out" || return 2
   # No active_steps table at all is "no answer available", not a negative: the
   # output came from a run this probe cannot read. The real negative is the
   # return 1 below, for an answer that HAS the table but no running/fixing row.
@@ -427,7 +452,9 @@ pipeline_activity_fresh() {  # <task>
   # one of those would otherwise read as a live pipeline and reset the wedge
   # timer for a worker whose run has actually stopped. The table's declared row
   # count bounds the scan, and the next `<name>[<n>]{` header ends it, so an
-  # `active_steps[0]` table yields no row at all.
+  # `active_steps[0]` table yields no row at all. Only lines shaped like a data
+  # row spend that budget: a blank line or an interleaved scalar between rows
+  # must not hide a running step further down the table.
   row=$(printf '%s\n' "$out" | awk '
     /^[[:space:]]*active_steps\[[0-9]+\]\{/ {
       n = $0; sub(/^[^[]*\[/, "", n); sub(/\].*$/, "", n)
@@ -435,22 +462,27 @@ pipeline_activity_fresh() {  # <task>
     }
     intable && /^[[:space:]]*[A-Za-z_][A-Za-z_]*\[[0-9]+\]\{/ { intable = 0 }
     intable {
+      if ($0 !~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*,/) next
       if (left <= 0) { intable = 0; next }
       left--
       if ($0 ~ /^[[:space:]]*[a-z_]+,(running|fixing),/) { print; exit }
     }
   ' | head -1) || true
   [ -n "$row" ] || return 1
+  # A running/fixing row IS positive evidence the run exists, so from here on an
+  # unreadable last_activity is a failure to measure freshness (exit 2), never
+  # proof the pipeline halted. Only a genuinely old parsed age is a negative.
+  #
   # last_activity is the quoted 4th column: "<age> ago: <note>", optionally
   # prefixed "quiet " when the step has gone silent.
   activity=${row#*\"}
   activity=${activity%%\"*}
-  [ -n "$activity" ] || return 1
+  [ -n "$activity" ] || return 2
+  case "$activity" in *" ago"*) ;; *) return 2 ;; esac
   age=${activity#quiet }
   age=${age%% ago*}
-  [ "$age" != "$activity" ] || case "$activity" in *" ago"*) ;; *) return 1 ;; esac
   secs=$(pipeline_age_secs "$age")
-  [ -n "$secs" ] || return 1
+  [ -n "$secs" ] || return 2
   [ "$secs" -lt "$PIPELINE_ACTIVE_SECS" ]
 }
 
@@ -464,9 +496,10 @@ finished_awaiting_merge() {  # <window> <task>
   [ -e "$STATE/$task.check.sh" ] || return 1
   last=$(last_status_line "$STATE/$task.status")
   case "$last" in
-    done:*PR*) ;;
+    done:*) ;;
     *) return 1 ;;
   esac
+  fm_pr_announced_url "$last" >/dev/null || return 1
   agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
   [ "$agent_alive" = dead ]
 }

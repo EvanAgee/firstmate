@@ -343,34 +343,12 @@ fm_pr_autoarm_sweep() {
 }
 
 fm_pr_autoarm_announce() {
-  local task=$1 line=$2 meta candidate remainder tail char urls='' count=0 url=''
+  local task=$1 line=$2 meta url
   fm_pr_task_id_valid "$task" || return 0
   meta="$STATE/$task.meta"
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
   [ "$(fm_pr_autoarm_meta_field "$meta" kind)" != secondmate ] || return 0
-  remainder=$line
-  while [[ "$remainder" == *https://* ]]; do
-    tail=${remainder#*https://}
-    candidate=https://
-    while [ -n "$tail" ]; do
-      char=${tail:0:1}
-      case "$char" in
-        [A-Za-z0-9._/-])
-          candidate=$candidate$char
-          tail=${tail:1}
-          ;;
-        *) break ;;
-      esac
-    done
-    remainder=$tail
-    fm_pr_url_parse "$candidate" || continue
-    if ! printf '%s\n' "$urls" | grep -Fqx "$FM_PR_URL"; then
-      urls="${urls}${FM_PR_URL}"$'\n'
-      count=$((count + 1))
-      url=$FM_PR_URL
-    fi
-  done
-  [ "$count" -eq 1 ] || return 0
+  url=$(fm_pr_announced_url "$line") || return 0
   fm_pr_autoarm_arm "$task" "$url"
 }
 

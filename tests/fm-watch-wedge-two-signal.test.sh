@@ -32,6 +32,10 @@ ok() { printf 'ok - %s\n' "$1"; }
 # status log, plus the fake tmux and fake fm-crew-state.sh from wake-helpers.
 # Echoes the case dir. The task's window is "fmtest:fm-<id>", the shape
 # fm_backend_tmux_agent_state parses.
+# The branch every fixture worktree is created on, and the branch an attributed
+# axi status answer must name.
+WEDGE_BRANCH=fm/wedge-fixture
+
 make_wedge_case() {  # <name> <id> <status-line> [meta-extra-lines]
   local name=$1 id=$2 status_line=$3 meta_extra=${4:-} dir
   dir=$(make_case "$name")
@@ -44,9 +48,29 @@ make_wedge_case() {  # <name> <id> <status-line> [meta-extra-lines]
     printf 'worktree=%s/wt\n' "$dir"
     [ -z "$meta_extra" ] || printf '%s\n' "$meta_extra"
   } > "$state/$id.meta"
+  # A real git worktree on a known branch: the pipeline probe attributes an axi
+  # status answer to this task by comparing the run's branch and head against
+  # the worktree's own, exactly as fm-crew-state.sh and fm-teardown.sh do.
   mkdir -p "$dir/wt"
+  git -C "$dir/wt" init -q -b "$WEDGE_BRANCH" >/dev/null 2>&1
+  git -C "$dir/wt" config user.email test@example.invalid
+  git -C "$dir/wt" config user.name 'Wedge Test'
+  : > "$dir/wt/seed"
+  git -C "$dir/wt" add seed >/dev/null 2>&1
+  git -C "$dir/wt" commit -qm seed >/dev/null 2>&1
   printf '%s\n' "$status_line" > "$state/$id.status"
   printf '%s\n' "$dir"
+}
+
+# Wrap <rows> (the active_steps table and any sibling tables) in the run header
+# a real `axi status` answer carries, attributed to <dir>'s worktree so the
+# probe accepts it as this task's own run. Cases that need an UNATTRIBUTED
+# answer build their own header instead.
+axi_status_for() {  # <dir> <rows>
+  local dir=$1 rows=$2 head
+  head=$(git -C "$dir/wt" rev-parse HEAD 2>/dev/null)
+  printf 'run:\n  id: "01RUN"\n  branch: %s\n  status: running\n  head: "%s"\n%s\n' \
+    "$WEDGE_BRANCH" "$head" "$rows"
 }
 
 # Run <fn> <args...> inside a subshell that has sourced the real watcher against
@@ -176,15 +200,16 @@ agent_present() {  # <id>
 test_stale_working_run_step_does_not_beat_a_pause() {
   local dir out
   dir=$(make_wedge_case working-vs-pause wp \
-    'paused: [key=await-merge] PR https://example.invalid/pull/1 green; waiting for the serial merge queue' \
+    'paused: [key=await-merge] PR https://github.com/EvanAgee/firstmate/pull/1 green; waiting for the serial merge queue' \
     'mode=no-mistakes')
   agent_gone
   export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
   # The live shape, captured from the installed binary on 2026-09-09: the ci
   # step is still `running` because the PR is open, but nothing has happened in
   # it for the better part of an hour.
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,15h29m,"quiet 51m55s ago: log: base branch advanced, re-arming CI monitor timeout","",starting'
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,15h29m,"quiet 51m55s ago: log: base branch advanced, re-arming CI monitor timeout","",starting')
+  export FM_FAKE_AXI_STATUS
   out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-wp wp)
   unset FM_FAKE_CREW_STATE FM_FAKE_AXI_STATUS
   if [ "$out" = paused ]; then
@@ -206,8 +231,9 @@ test_live_agent_with_working_run_stays_working() {
   FM_FAKE_TMUX_CURRENT_COMMAND=claude
   export FM_FAKE_TMUX_CURRENT_COMMAND
   export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,33m1s,"12s ago: log: building the new body","77305",starting'
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,33m1s,"12s ago: log: building the new body","77305",starting')
+  export FM_FAKE_AXI_STATUS
   out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-wl wl)
   unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND FM_FAKE_AXI_STATUS
   if [ "$out" = none ] || [ "$out" = working ]; then
@@ -225,7 +251,7 @@ test_live_agent_with_working_run_stays_working() {
 test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll() {
   local dir state window key
   dir=$(make_wedge_case merge-dispatch md \
-    'done: PR https://example.invalid/pull/7 checks green' \
+    'done: PR https://github.com/EvanAgee/firstmate/pull/7 checks green' \
     'mode=no-mistakes')
   state="$dir/state"
   window=fmtest:fm-md
@@ -256,7 +282,7 @@ test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll() {
 test_green_pr_without_an_armed_watch_still_surfaces() {
   local dir state window
   dir=$(make_wedge_case merge-dispatch-none mn \
-    'done: PR https://example.invalid/pull/8 checks green' \
+    'done: PR https://github.com/EvanAgee/firstmate/pull/8 checks green' \
     'mode=no-mistakes')
   state="$dir/state"
   window=fmtest:fm-mn
@@ -305,10 +331,11 @@ test_secondmate_paused_still_writes_the_recheck_marker() {
 test_sibling_table_rows_are_not_active_steps() {
   local dir out
   dir=$(make_wedge_case sibling-table st 'working: implementing' 'mode=no-mistakes')
-  export FM_FAKE_AXI_STATUS='  active_steps[0]{step,status,active_for,last_activity,agent_pid,round}:
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[0]{step,status,active_for,last_activity,agent_pid,round}:
   gates[2]{gate,status,active_for,last_activity}:
     review,running,5m,"3s ago: reviewing the diff"
-    tests,pending,0s,"never"'
+    tests,pending,0s,"never"')
+  export FM_FAKE_AXI_STATUS
   out=$(run_in_watcher "$dir" pipeline_recently_active st && printf active || printf quiet)
   unset FM_FAKE_AXI_STATUS
   if [ "$out" = quiet ]; then
@@ -316,6 +343,115 @@ test_sibling_table_rows_are_not_active_steps() {
   else
     fail "an active_steps[0] table must yield no active step, got '$out'"
   fi
+}
+
+# `no-mistakes axi status` reports the active-or-most-recent run for the current
+# branch, and falls back to some OTHER branch's run when this branch has none.
+# On a fleet validating several crews at once, that unrelated run must not read
+# as this task's live pipeline: it would reset the wedge timer and let a real
+# wedge hide behind a sibling's activity forever.
+test_unattributed_run_is_not_this_tasks_pipeline() {
+  local dir out rc
+  dir=$(make_wedge_case foreign-run fr 'working: implementing' 'mode=no-mistakes')
+  # A perfectly fresh, actively running step - but on somebody else's branch.
+  export FM_FAKE_AXI_STATUS='run:
+  id: "01OTHER"
+  branch: fm/some-other-crew
+  status: running
+  head: "0000000000000000000000000000000000000000"
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,2m,"3s ago: log: building","77305",starting'
+  run_in_watcher "$dir" pipeline_activity_fresh fr
+  rc=$?
+  out=$(run_in_watcher "$dir" pipeline_recently_active fr && printf active || printf quiet)
+  unset FM_FAKE_AXI_STATUS
+  if [ "$rc" -ne 2 ]; then
+    fail "an unattributed run must be the no-answer state (2), got $rc"
+  elif [ "$out" != quiet ]; then
+    fail "an unattributed run must not gate a wedge escalation, got '$out'"
+  else
+    ok "another branch's run is not read as this task's live pipeline"
+  fi
+}
+
+# The awaiting-merge absorb must recognize a real announced PR, not the bare
+# letters PR anywhere in free text. Absorbing an ordinary terminal worker is a
+# worse failure than the false alarm this change fixes: it hides a finished
+# worker that needed the captain behind the long pause cadence.
+test_done_without_a_pr_url_is_not_awaiting_merge() {
+  local dir state line
+  for line in 'done: PR closed without merge' \
+              'done: implemented; no PR yet' \
+              'done: refactored PROVIDER lookup and stopped'; do
+    dir=$(make_wedge_case "no-pr-$RANDOM" np "$line" 'mode=no-mistakes')
+    state="$dir/state"
+    arm_custom_check "$state" np || { fail "could not arm the check fixture"; return; }
+    agent_gone
+    if run_in_watcher "$dir" finished_awaiting_merge fmtest:fm-np np; then
+      fail "a done: line with no PR URL must not be absorbed as awaiting merge: $line"
+      return
+    fi
+  done
+  # Positive control: the same shape WITH a real PR URL must still be absorbed,
+  # so the negatives above cannot be passing for an unrelated reason.
+  dir=$(make_wedge_case with-pr wp2 \
+    'done: PR https://github.com/EvanAgee/firstmate/pull/12 checks green' \
+    'mode=no-mistakes')
+  state="$dir/state"
+  arm_custom_check "$state" wp2 || { fail "could not arm the check fixture"; return; }
+  FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  FM_FAKE_TMUX_WINDOW=fmtest:fm-wp2
+  export FM_FAKE_TMUX_WINDOW
+  if run_in_watcher "$dir" finished_awaiting_merge fmtest:fm-wp2 wp2; then
+    ok "only a real announced PR URL counts as a finished worker awaiting merge"
+  else
+    fail "a done: line with a real PR URL must still be absorbed as awaiting merge"
+  fi
+  unset FM_FAKE_TMUX_CURRENT_COMMAND FM_FAKE_TMUX_WINDOW
+}
+
+# The declared row count bounds the scan, but only real data rows may spend it.
+# A blank line between rows must not exhaust the budget and hide a running step
+# further down - that reports a moving pipeline as quiet, the exact 2026-09-01
+# false alarm this change targets.
+test_blank_line_between_rows_does_not_hide_a_running_step() {
+  local dir out
+  dir=$(make_wedge_case spaced-rows sr 'working: implementing' 'mode=no-mistakes')
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[2]{step,status,active_for,last_activity,agent_pid,round}:
+    lint,done,1m,"1s ago: log: lint clean","77300",starting
+
+    ci,running,2m,"3s ago: log: building","77305",starting')
+  export FM_FAKE_AXI_STATUS
+  out=$(run_in_watcher "$dir" pipeline_recently_active sr && printf active || printf quiet)
+  unset FM_FAKE_AXI_STATUS
+  if [ "$out" = active ]; then
+    ok "a blank line between rows does not hide a running step"
+  else
+    fail "a running row after a blank line must still read active, got '$out'"
+  fi
+}
+
+# A running row IS positive evidence the run exists. If its last_activity cannot
+# be read, that is a failure to measure freshness (the no-answer state), never
+# proof the pipeline halted - otherwise a mid-run worker escalates as a wedge
+# despite a visibly running step.
+test_unreadable_activity_is_no_answer_not_a_stop() {
+  local dir rc activity
+  for activity in '"just now"' '""' '"starting"' '-'; do
+    dir=$(make_wedge_case "odd-activity-$RANDOM" oa 'working: implementing' 'mode=no-mistakes')
+    FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" "  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,2m,$activity,\"77305\",starting")
+    export FM_FAKE_AXI_STATUS
+    run_in_watcher "$dir" pipeline_activity_fresh oa
+    rc=$?
+    unset FM_FAKE_AXI_STATUS
+    if [ "$rc" -ne 2 ]; then
+      fail "a running row with unreadable activity $activity must be no-answer (2), got $rc"
+      return
+    fi
+  done
+  ok "an unreadable last_activity is the no-answer state, not a hard negative"
 }
 
 test_declared_pause_beats_run_step_done() {
@@ -358,8 +494,9 @@ test_declared_pause_with_live_agent_stays_none() {
 test_active_pipeline_blocks_escalation() {
   local dir out now
   dir=$(make_wedge_case pipeline-active pa 'working: implementing' 'mode=no-mistakes')
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,33m1s,"12s ago: log: building the new body","77305",starting'
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,33m1s,"12s ago: log: building the new body","77305",starting')
+  export FM_FAKE_AXI_STATUS
   out=$(run_in_watcher "$dir" pipeline_recently_active pa && printf active || printf quiet)
   unset FM_FAKE_AXI_STATUS
   if [ "$out" = active ]; then
@@ -377,8 +514,9 @@ test_quiet_pipeline_and_idle_pane_escalates() {
   # This is the exact shape a worker stopped on a green PR reports: the run is
   # still `running` (its ci step monitors the open PR), but nothing has happened
   # in it for the better part of an hour.
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,15h29m,"quiet 51m55s ago: log: base branch advanced, re-arming CI monitor timeout","",starting' 
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,15h29m,"quiet 51m55s ago: log: base branch advanced, re-arming CI monitor timeout","",starting')
+  export FM_FAKE_AXI_STATUS 
   out=$(run_in_watcher "$dir" pipeline_recently_active pq && printf active || printf quiet)
   if [ "$out" != quiet ]; then
     fail "a terminal run must not count as a live pipeline, got '$out'"
@@ -406,8 +544,9 @@ test_active_pipeline_resets_the_wedge_timer() {
   stale_since="$state/.stale-since-fmtest_fm-ph"
   ewf="$state/.wedge-escalations-fmtest_fm-ph"
   printf '%s' "$(( $(date +%s) - 99999 ))" > "$stale_since"
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,33m1s,"12s ago: log: building the new body","77305",starting' 
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,33m1s,"12s ago: log: building the new body","77305",starting')
+  export FM_FAKE_AXI_STATUS 
   run_in_watcher "$dir" wedge_timer_check fmtest:fm-ph "$stale_since" "test stale" "$ewf" 1 >/dev/null 2>&1
   unset FM_FAKE_AXI_STATUS
   if grep -q 'possible wedge' "$state/.wake-queue" 2>/dev/null; then
@@ -455,8 +594,9 @@ test_dead_agent_with_nothing_still_escalates() {
 test_no_mode_skips_the_pipeline_read() {
   local dir out with_mode
   dir=$(make_wedge_case no-mode nm 'working: investigating')
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,33m1s,"12s ago: log: building the new body","77305",starting'
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,33m1s,"12s ago: log: building the new body","77305",starting')
+  export FM_FAKE_AXI_STATUS
   # Control: the identical fixture WITH a delivery mode must read active, so a
   # `quiet` verdict below is the mode gate deciding and not a missing function,
   # an unparsed status, or any other silent no-op.
@@ -506,8 +646,9 @@ test_busy_pane_escalates_even_with_an_active_pipeline() {
   stale_since="$state/.stale-since-fmtest_fm-ba"
   ewf="$state/.wedge-escalations-fmtest_fm-ba"
   printf '%s' "$(( $(date +%s) - 99999 ))" > "$stale_since"
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,33m1s,"12s ago: log: building the new body","77305",starting'
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,33m1s,"12s ago: log: building the new body","77305",starting')
+  export FM_FAKE_AXI_STATUS
   run_in_watcher "$dir" wedge_timer_check fmtest:fm-ba "$stale_since" "busy (no completed turn)" "$ewf" >/dev/null 2>&1
   unset FM_FAKE_AXI_STATUS
   if grep -q 'possible wedge' "$state/.wake-queue" 2>/dev/null; then
@@ -531,8 +672,9 @@ test_pane_sourced_working_is_not_gated_on_the_pipeline() {
   export FM_FAKE_CREW_STATE='state: working · source: pane · busy pane'
   # The pipeline behind it has gone quiet far past the window. That is the
   # run-step signal, and it must not veto the pane's own busy verdict.
-  export FM_FAKE_AXI_STATUS='  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    ci,running,15h29m,"quiet 51m55s ago: log: base branch advanced, re-arming CI monitor timeout","",starting'
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    ci,running,15h29m,"quiet 51m55s ago: log: base branch advanced, re-arming CI monitor timeout","",starting')
+  export FM_FAKE_AXI_STATUS
   out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-pw pw)
   unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND FM_FAKE_AXI_STATUS
   if [ "$out" = working ]; then
@@ -559,5 +701,9 @@ test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll
 test_green_pr_without_an_armed_watch_still_surfaces
 test_secondmate_paused_still_writes_the_recheck_marker
 test_sibling_table_rows_are_not_active_steps
+test_unattributed_run_is_not_this_tasks_pipeline
+test_done_without_a_pr_url_is_not_awaiting_merge
+test_blank_line_between_rows_does_not_hide_a_running_step
+test_unreadable_activity_is_no_answer_not_a_stop
 
 exit "$FAILED"
