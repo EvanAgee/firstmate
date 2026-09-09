@@ -48,10 +48,12 @@
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-omp-process-lib.sh"
 
-# fm_tmux_named_window_state: prove a session:window target names an exact live
-# window before any display-message read can let tmux fall back to the client's
-# current window. A missing server and a missing window are both `missing`.
-fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable
+# fm_tmux_named_window_state: prove a canonical session:window-name target
+# resolves inside the exact named session before any display-message read can
+# let tmux fall back to the client's current window. A missing server, session,
+# or window is `missing`. Other valid tmux selectors return `not-named` so the
+# display-message wrapper preserves their native behavior.
+fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-named
   local target=${1:-} session window windows inventory_status
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
@@ -60,7 +62,12 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable
   esac
   session=${target%%:*}
   window=${target#*:}
-  if windows=$(LC_ALL=C tmux list-windows -t "$session" -F '#{window_name}' 2>&1); then
+  case "$window" in
+    *.*|@*|%*|'!'|'^'|'$'|'+'|'-'|'{'*'}') printf 'not-named'; return 0 ;;
+    *[!0-9]*) ;;
+    *) printf 'not-named'; return 0 ;;
+  esac
+  if windows=$(LC_ALL=C tmux list-windows -t "=$session" -F '#{window_name}' 2>&1); then
     inventory_status=0
   else
     inventory_status=$?
@@ -88,7 +95,12 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable
 fm_tmux_display_message() {  # <target> <format>
   local target=$1 format=$2
   case "$target" in
-    *:*) [ "$(fm_tmux_named_window_state "$target")" = present ] || return 1 ;;
+    *:*)
+      case "$(fm_tmux_named_window_state "$target")" in
+        present|not-named) ;;
+        *) return 1 ;;
+      esac
+      ;;
   esac
   tmux display-message -p -t "$target" "$format" 2>/dev/null
 }

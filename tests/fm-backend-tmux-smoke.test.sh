@@ -162,6 +162,28 @@ path=$(fm_backend_tmux_current_path "$SESSION:no-such-window-xyz")
   || fail "a missing named window should return an empty current path, got '$path'"
 pass "real tmux: a missing named window returns an empty current path"
 
+index=$(tmux display-message -p -t "$TARGET" '#{window_index}')
+named_path=$(fm_backend_tmux_current_path "$TARGET")
+index_path=$(fm_backend_tmux_current_path "$SESSION:$index")
+pane_path=$(fm_backend_tmux_current_path "$TARGET.0")
+[ "$index_path" = "$named_path" ] \
+  || fail "a numeric window selector should read '$named_path', got '$index_path'"
+[ "$pane_path" = "$named_path" ] \
+  || fail "a pane-qualified selector should read '$named_path', got '$pane_path'"
+pass "real tmux: numeric window and pane-qualified selectors keep working"
+
+tmux new-session -d -s prefix-other -n fm-prefix -c "$HOME"
+path=$(fm_backend_tmux_current_path "prefix:fm-prefix")
+[ -z "$path" ] \
+  || fail "a missing exact session should not read from its prefix match, got '$path'"
+fm_backend_tmux_create_task prefix fm-prefix "$HOME" >/dev/null \
+  || fail "a missing exact session should be created beside its prefix match"
+tmux has-session -t '=prefix' \
+  || fail "fm_backend_tmux_create_task did not create the exact requested session"
+tmux list-windows -t '=prefix' -F '#{window_name}' | grep -Fqx fm-prefix \
+  || fail "the recreated window did not land in the exact requested session"
+pass "real tmux: session prefix matches cannot redirect reads or task creation"
+
 # --- kill and recovery-grade missing-window classification ------------------
 
 fm_backend_tmux_kill "$TARGET"
