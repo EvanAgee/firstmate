@@ -352,32 +352,10 @@ PIPELINE_ACTIVE_SECS=${FM_PIPELINE_ACTIVE_SECS:-$STALE_ESCALATE_SECS}
 PIPELINE_CHECK_TIMEOUT=${FM_PIPELINE_CHECK_TIMEOUT:-${FM_CHECK_TIMEOUT:-30}}
 
 # Seconds represented by an axi duration such as "12s", "51m55s", "15h29m", or
-# "2d3h". Prints the total, or nothing when the string holds no recognized unit.
-# Verified against real `axi status` output on the installed binary: the
-# active_steps table renders ages in exactly this compact form.
+# "2d3h". ONE owner is bin/fm-nm-run-lib.sh's fm_nm_age_secs, shared with
+# bin/fm-crew-state.sh's stalled-pipeline classification.
 pipeline_age_secs() {  # <duration>
-  local raw=$1 total=0 num unit rest matched=0
-  rest=$raw
-  while [ -n "$rest" ]; do
-    num=${rest%%[!0-9]*}
-    [ -n "$num" ] || break
-    rest=${rest#"$num"}
-    # The unit is exactly one letter. A longer run (1ms, 2mo) is not a duration
-    # axi emits, and silently reading its first letter would answer 60 for a
-    # millisecond and 120 for two months.
-    unit=${rest%%[0-9]*}
-    [ ${#unit} -eq 1 ] || return 0
-    rest=${rest#"$unit"}
-    case "$unit" in
-      s) total=$(( total + num )); matched=1 ;;
-      m) total=$(( total + num * 60 )); matched=1 ;;
-      h) total=$(( total + num * 3600 )); matched=1 ;;
-      d) total=$(( total + num * 86400 )); matched=1 ;;
-      *) break ;;
-    esac
-  done
-  [ "$matched" = 1 ] || return 0
-  printf '%s' "$total"
+  fm_nm_age_secs "$1"
 }
 
 # 0 if <task> has a no-mistakes step whose last activity is inside
@@ -451,27 +429,13 @@ pipeline_activity_fresh() {  # <task>
   # output came from a run this probe cannot read. The real negative is the
   # return 1 below, for an answer that HAS the table but no running/fixing row.
   printf '%s\n' "$out" | grep -q '^[[:space:]]*active_steps\[' || return 2
-  # Scan ONLY the active_steps table's own rows. axi status renders sibling TOON
+  # Scan ONLY the active_steps table's own rows, via the ONE owner shared with
+  # bin/fm-crew-state.sh's stalled-pipeline classification
+  # (fm-nm-run-lib.sh's fm_nm_active_step_row). axi status renders sibling TOON
   # tables (gates[N], findings[N]) from the same output, and a `running` row in
   # one of those would otherwise read as a live pipeline and reset the wedge
-  # timer for a worker whose run has actually stopped. The table's declared row
-  # count bounds the scan, and the next `<name>[<n>]{` header ends it, so an
-  # `active_steps[0]` table yields no row at all. Only lines shaped like a data
-  # row spend that budget: a blank line or an interleaved scalar between rows
-  # must not hide a running step further down the table.
-  row=$(printf '%s\n' "$out" | awk '
-    /^[[:space:]]*active_steps\[[0-9]+\]\{/ {
-      n = $0; sub(/^[^[]*\[/, "", n); sub(/\].*$/, "", n)
-      left = n + 0; intable = 1; next
-    }
-    intable && /^[[:space:]]*[A-Za-z_][A-Za-z_]*\[[0-9]+\]\{/ { intable = 0 }
-    intable {
-      if ($0 !~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*,/) next
-      if (left <= 0) { intable = 0; next }
-      left--
-      if ($0 ~ /^[[:space:]]*[a-z_]+,(running|fixing),/) { print; exit }
-    }
-  ' | head -1) || true
+  # timer for a worker whose run has actually stopped.
+  row=$(fm_nm_active_step_row "$out" "running|fixing") || true
   [ -n "$row" ] || return 1
   # A running/fixing row IS positive evidence the run exists, so from here on an
   # unreadable last_activity is a failure to measure freshness (exit 2), never
@@ -750,12 +714,19 @@ pause_state_class() {  # <window> <task>
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last
+  local win=$1 h=$2 key task last stalled_detail reason
   key=$(printf '%s' "$win" | tr ':/.' '___')
-  fm_wake_append stale "$win" "stale: $win" || exit 1
+  task=$(window_to_task "$win" "$STATE")
+  # A `stalled` run-step (an active pipeline whose agent died mid-turn - a
+  # model usage limit, a killed process, a lost socket) reaches this path same
+  # as any other non-working, non-paused verdict; its own diagnosis is worth
+  # carrying onto the wake line instead of a bare "stale: <endpoint>".
+  stalled_detail=$(crew_state_stalled_detail "$(crew_state_line "$task")")
+  reason="stale: $win"
+  [ -n "$stalled_detail" ] && reason="stale: $win ($stalled_detail)"
+  fm_wake_append stale "$win" "$reason" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key"
-  task=$(window_to_task "$win" "$STATE")
   last=$(last_status_line "$STATE/$task.status")
   if status_is_paused_or_captain_held "$last"; then
     : > "$STATE/.paused-$key"
@@ -764,7 +735,7 @@ surface_nonterminal_stale() {  # <window> <hash>
   else
     rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
   fi
-  wake "stale: $win"
+  wake "$reason"
 }
 
 # Check and heartbeat cadence must survive actionable exits and restarts: the
@@ -1579,16 +1550,25 @@ EOF
             handle_paused_stale "$w" "$task" "$h" \
               "finished worker awaiting merge - PR is green and its merge watch is armed"
           elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$task"; then
+            crew_line=$(crew_state_line "$task")
+            if [ "$(crew_absorb_class_of_line "$crew_line")" = working ]; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
-              fm_wake_append stale "$w" "stale: $w" || exit 1
+              # A `stalled` run-step (an active pipeline whose agent died mid-turn -
+              # a model usage limit, a killed process, a lost socket) is never
+              # absorbed here: it fell through crew_absorb_class_of_line same as any
+              # other non-working verdict, but its own diagnosis is worth carrying
+              # onto the wake line instead of a bare "stale: <endpoint>".
+              stalled_detail=$(crew_state_stalled_detail "$crew_line")
+              reason="stale: $w"
+              [ -n "$stalled_detail" ] && reason="stale: $w ($stalled_detail)"
+              fm_wake_append stale "$w" "$reason" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
               mark_surfaced "$STATE/$task.status"
-              wake "stale: $w"
+              wake "$reason"
             fi
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a

@@ -1333,6 +1333,26 @@ crew_state_source() {  # <state-line>
   printf '%s' "${src%% *}"
 }
 
+# The detail text of an already-read state line ONLY when its state is
+# literally `stalled` (an active run-step whose agent went quiet past
+# FM_PIPELINE_PARKED_MAX, or an awaiting_agent park with no live PID - see
+# bin/fm-crew-state.sh); empty for every other state, including `working`.
+# crew_absorb_class_of_line already classes `stalled` as `none` (it matches no
+# absorb rule), so this never needs to change absorb behavior - it only lets a
+# caller that is about to surface the wake attach the crew's own diagnosis
+# instead of a bare "stale: <endpoint>" line. The wire format is
+# fm-crew-state.sh's fixed "state: X · source: Y · detail" (its one SEP
+# owner); detail is everything after the second " · ".
+crew_state_stalled_detail() {  # <state-line>
+  local line=$1 state rest
+  case "$line" in state:*) ;; *) return 0 ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = stalled ] || return 0
+  case "$line" in *' · '*' · '*) ;; *) return 0 ;; esac
+  rest=${line#*' · '}
+  printf '%s' "${rest#*' · '}"
+}
+
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class
 # reports `working`). This is the "provably working" predicate at the heart of
 # absorb-only-when-provably-working: a no-verb turn-end or stale wake is absorbed

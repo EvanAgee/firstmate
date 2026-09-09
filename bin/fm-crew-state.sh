@@ -16,7 +16,7 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|none> · <detail>
+#   state: <working|parked|stalled|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|none> · <detail>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta.
@@ -34,7 +34,14 @@
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
-#      green, so a green PR is never silently read as still-validating.
+#      green, so a green PR is never silently read as still-validating. A
+#      second exception: a running/fixing step whose active_steps agent has
+#      gone quiet past FM_PIPELINE_PARKED_MAX seconds (default 1200), or an
+#      awaiting_agent gap with no live agent PID, reclassifies working ->
+#      stalled instead - the run status alone cannot tell "actively posting"
+#      from "agent died mid-turn" (a model usage limit, a killed process, a
+#      lost socket). A genuine human approval gate (awaiting_approval,
+#      fix_review, a real gate:) stays parked exactly as before.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -80,6 +87,12 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # history every call.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
+# Seconds an active_steps agent may go quiet, or an awaiting_agent gap may sit
+# with no live agent PID, before a `running`/`fixing` run-step is reclassified
+# `stalled` instead of `working`. Default matches FM_PIPELINE_ACTIVE_SECS's
+# default (bin/fm-watch.sh) so both readers agree on "still moving".
+FM_PIPELINE_PARKED_MAX=${FM_PIPELINE_PARKED_MAX:-1200}
+case "$FM_PIPELINE_PARKED_MAX" in ''|*[!0-9]*) FM_PIPELINE_PARKED_MAX=1200 ;; esac
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
@@ -457,7 +470,7 @@ if [ "$HAVE_RUN" = 1 ]; then
         cancelled)     RUN_STATE=failed; RUN_DETAIL="run cancelled" ;;
         *)             RUN_STATE=unknown; RUN_DETAIL="outcome: $outcome" ;;
       esac
-    elif [ -n "$awaiting" ] || [ "$status" = awaiting_approval ] || [ "$status" = fix_review ] || [ -n "$gate_status" ] || [ "$has_gate" = 1 ]; then
+    elif [ "$status" = awaiting_approval ] || [ "$status" = fix_review ] || [ -n "$gate_status" ] || [ "$has_gate" = 1 ]; then
       if [ "$has_gate" = 1 ]; then
         gate=$(nm_gate_line_name)
       else
@@ -471,6 +484,29 @@ if [ "$HAVE_RUN" = 1 ]; then
       [ -n "$fcount" ] && RUN_DETAIL="$RUN_DETAIL: $fcount finding(s)"
       if printf '%s\n' "$RUN_OUT" | grep -q 'ask-user'; then
         RUN_DETAIL="$RUN_DETAIL (ask-user: authority decision)"
+      fi
+    elif [ -n "$awaiting" ]; then
+      # awaiting_agent: with no human approval gate (no gate:, not
+      # awaiting_approval/fix_review) means no-mistakes is waiting on an agent
+      # turn that never lands - the 2026-09-01 aos incident shape. A live
+      # agent_pid in the row still means the worker is mid-turn; only a dead
+      # one (or none reported) is the stalled tell.
+      awaiting_dur=$(trim "${awaiting#*:}")
+      awaiting_dur=${awaiting_dur#parked }
+      row=$(fm_nm_active_step_row "$RUN_OUT" '.*')
+      step=$status; pid=none
+      if [ -n "$row" ]; then
+        parsed=$(fm_nm_active_step_parse "$row")
+        step=${parsed%%|*}; parsed=${parsed#*|}
+        parsed=${parsed#*|}
+        pid=${parsed%%|*}
+      fi
+      if [ "$pid" = none ]; then
+        RUN_STATE=stalled
+        RUN_DETAIL="pipeline stalled $awaiting_dur at $step, run $(strip_quotes "$(nm_field id)"), agent $pid"
+      else
+        RUN_STATE=working
+        RUN_DETAIL="validating ($status)"
       fi
     else
       case "$status" in
@@ -496,6 +532,24 @@ if [ "$HAVE_RUN" = 1 ]; then
             CI_LOG_STATE=not-ready
             ;;
         esac
+        # A running/fixing step whose active_steps agent has gone quiet past
+        # FM_PIPELINE_PARKED_MAX is a stalled pipeline, not working: the run
+        # status alone (still running/fixing) cannot tell "actively posting"
+        # from "agent died mid-turn" (a model usage limit, a killed process, a
+        # lost socket) - the exact 2026-09-01 aos tell.
+        if [ "$RUN_STATE" = working ] && [ "$status" != ci ]; then
+          row=$(fm_nm_active_step_row "$RUN_OUT" 'running|fixing')
+          if [ -n "$row" ]; then
+            parsed=$(fm_nm_active_step_parse "$row")
+            step=${parsed%%|*}; parsed=${parsed#*|}
+            secs=${parsed%%|*}; parsed=${parsed#*|}
+            pid=${parsed%%|*}; age_dur=${parsed#*|}
+            if [ -n "$secs" ] && [ "$secs" -ge "$FM_PIPELINE_PARKED_MAX" ]; then
+              RUN_STATE=stalled
+              RUN_DETAIL="pipeline stalled $age_dur at $step, run $(strip_quotes "$(nm_field id)"), agent $pid"
+            fi
+          fi
+        fi
       fi
     fi
   fi

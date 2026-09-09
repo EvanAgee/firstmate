@@ -392,6 +392,47 @@ test_green_pr_without_an_armed_watch_still_surfaces() {
   fi
 }
 
+# The stalled tell (bin/fm-crew-state.sh's `state: stalled`) must never be
+# absorbed by pause_state_class, exactly like any other non-working verdict.
+test_stalled_run_step_is_not_absorbed_by_pause_class() {
+  local dir out
+  dir=$(make_wedge_case stalled-pause sp 'working: implementing' 'mode=no-mistakes')
+  agent_gone
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+  out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-sp sp)
+  unset FM_FAKE_CREW_STATE
+  if [ "$out" = none ]; then
+    ok "a stalled run-step is not absorbed by pause_state_class"
+  else
+    fail "a stalled run-step must classify none (surface), got '$out'"
+  fi
+}
+
+# End-to-end: a worker whose status log carries a non-captain-relevant
+# `working:` line (the ordinary shape while a pipeline is live) but whose
+# crew state has gone `stalled` must surface through the real watcher process,
+# with the crew's own diagnosis appended to the wake line - not a bare
+# "stale: <endpoint>". Direct regression for the 2026-09-01 aos incident: four
+# PRs sat 13 hours because their workers hit the Claude usage limit and the
+# watcher's stale path absorbed the still-`running` pipeline as healthy work.
+test_stalled_pipeline_surfaces_with_detail_on_the_wake_line() {
+  local dir state window
+  dir=$(make_wedge_case stalled-surface ss 'working: implementing' 'mode=no-mistakes')
+  state="$dir/state"
+  window=fmtest:fm-ss
+  seed_stale_pane "$dir" ss "$window" 'idle, agent gone'
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+  run_until_stale_classified "$dir" "$window"
+  unset FM_FAKE_CREW_STATE
+  if ! grep -qF "stale: $window" "$state/.wake-queue" 2>/dev/null; then
+    fail "a stalled pipeline must surface; queue: $(cat "$state/.wake-queue" 2>/dev/null)"
+  elif ! grep -qF "pipeline stalled 13h at review, run 01RUN, agent none" "$state/.wake-queue" 2>/dev/null; then
+    fail "the wake line must carry the crew's stalled detail; queue: $(cat "$state/.wake-queue" 2>/dev/null)"
+  else
+    ok "a stalled pipeline surfaces with its detail appended to the wake line"
+  fi
+}
+
 # The secondmate fail-open must not cost the cheap pause-cadence short-circuit.
 # A secondmate whose crew state reports paused still writes the recheck marker,
 # exactly where the pre-change code wrote it, so later polls short-circuit
@@ -899,6 +940,8 @@ test_busy_pane_escalates_even_with_an_active_pipeline
 test_pane_sourced_working_is_not_gated_on_the_pipeline
 test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll
 test_green_pr_without_an_armed_watch_still_surfaces
+test_stalled_run_step_is_not_absorbed_by_pause_class
+test_stalled_pipeline_surfaces_with_detail_on_the_wake_line
 test_secondmate_paused_still_writes_the_recheck_marker
 test_sibling_table_rows_are_not_active_steps
 test_unattributed_run_is_not_this_tasks_pipeline

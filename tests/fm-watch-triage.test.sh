@@ -391,6 +391,29 @@ test_crew_absorb_class_classifier() {
   pass "crew_absorb_class: working/paused/none from one read; crew_is_paused and crew_is_provably_working agree"
 }
 
+# stalled: a run-step whose agent died mid-turn (a model usage limit, a killed
+# process, a lost socket - the 2026-09-01 aos incident) must never read as
+# absorbable working, even though the run is technically active. crew_absorb_class
+# classes it none (surface), never working, and crew_state_stalled_detail exposes
+# the pinned detail string so the watcher's wake line can carry it.
+test_stalled_run_step_never_absorbs() {
+  local dir fakebin
+  dir=$(make_case stalled-absorb); fakebin="$dir/fakebin"
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE
+  FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+  [ "$(crew_absorb_class a)" = none ] || fail "a stalled run-step was classed absorbable"
+  ! crew_is_provably_working a || fail "a stalled run-step was treated as provably working"
+  ! crew_is_paused a || fail "a stalled run-step was classed paused"
+  [ "$(crew_state_stalled_detail "$(crew_state_line a)")" = "pipeline stalled 25m at review, run 01RUN, agent none" ] \
+    || fail "crew_state_stalled_detail did not surface the pinned detail"
+  FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  [ -z "$(crew_state_stalled_detail "$(crew_state_line a)")" ] \
+    || fail "a working run-step's detail leaked through crew_state_stalled_detail"
+  unset FM_FAKE_CREW_STATE
+  pass "a stalled run-step is never absorbed, and its detail is retrievable for the wake line"
+}
+
 # signal_crew_provably_working: a no-verb "signal:" wake is benign ONLY when EVERY
 # task it references is provably working; if any crew has stopped, or no task can be
 # resolved, it surfaces. Files map to ids by stripping .status / .turn-ended.
@@ -2102,6 +2125,7 @@ test_classifier_primitives
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
 test_crew_absorb_class_classifier
+test_stalled_run_step_never_absorbs
 test_signal_crew_provably_working_classifier
 test_secondmate_status_signal_never_absorbed_classifier
 test_provably_working_signal_absorbed
