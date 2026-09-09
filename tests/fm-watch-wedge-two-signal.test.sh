@@ -69,6 +69,78 @@ run_in_watcher() {  # <dir> <fn> <args...>
   )
 }
 
+# --- driving the real watcher process ---------------------------------------
+#
+# The stale DISPATCH (which branch of the poll loop a worker lands in) cannot be
+# reached by calling a classifier directly, so the finished-awaiting-merge cases
+# below run bin/fm-watch.sh itself over a seeded state dir and assert what the
+# poll actually did: the wake queue, the pause markers, and the wedge timer.
+WATCH="$ROOT/bin/fm-watch.sh"
+DRAIN="$ROOT/bin/fm-wake-drain.sh"
+
+wait_live() {  # <pid> [tenths]
+  local pid=$1 limit=${2:-30} i=0
+  while [ "$i" -lt "$limit" ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 0
+}
+reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
+
+# Arm a real, registered custom watcher check for <id>. The poll loop runs the
+# PR-check migration on startup, which quarantines any <id>.check.sh it cannot
+# account for, so an unregistered stub would be removed before the stale
+# dispatch ever saw it. bin/fm-check-register.sh is the supported way to bind an
+# intentional custom check to its own bytes, which is exactly what an armed
+# merge watch is.
+arm_custom_check() {  # <state> <id>
+  local state=$1 id=$2
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$state/$id.check.sh" || return 1
+  chmod 0700 "$state/$id.check.sh" || return 1
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-check-register.sh" "$id" >/dev/null 2>&1
+}
+
+# Seed a case so the watcher's poll reaches the stale path on its first look:
+# a recorded window, a matching pane hash already counted as seen, and a primed
+# .seen-* suppressor so the signal scan does not pre-empt the stale dispatch.
+seed_stale_pane() {  # <dir> <id> <window> <pane-text>
+  local dir=$1 id=$2 window=$3 text=$4 state key
+  state="$dir/state"
+  printf '%s' "$text" > "$dir/pane.txt"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text "$text")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s' "$(bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_signal_sig "$2"' _ "$ROOT" "$state/$id.status")" \
+    > "$state/.seen-${id}_status"
+}
+
+# Run the watcher over <dir>'s state until it has classified the stale pane,
+# then stop it. The first poll only records the pane hash; the stale dispatch
+# runs on a later one, so wait for the .stale-<key> suppressor the dispatch
+# writes (or for the wake queue) rather than guessing a sleep. The caller
+# inspects the state dir and the captured stdout at <dir>/watch.out.
+run_until_stale_classified() {  # <dir> <window>
+  local dir=$1 window=$2 state key pid i=0
+  state="$dir/state"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$dir/watch.out" 2>&1 &
+  pid=$!
+  while [ "$i" -lt 300 ]; do
+    if [ -e "$state/.stale-$key" ] || [ -e "$state/.paused-$key" ] || [ -s "$state/.wake-queue" ]; then
+      break
+    fi
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  reap "$pid"
+}
+
 # An agent the fake tmux reports as gone: its window is absent from the
 # inventory, which fm_backend_tmux_agent_state reads as `missing` -> dead.
 agent_gone() { unset FM_FAKE_TMUX_WINDOW; }
@@ -142,6 +214,107 @@ test_live_agent_with_working_run_stays_working() {
     ok "a live agent with a moving run is never re-routed onto the pause cadence"
   else
     fail "live agent + working run must not classify paused, got '$out'"
+  fi
+}
+
+# Required behavior 3, driven through the real stale DISPATCH rather than the
+# helper alone. A `done: PR <url> checks green` line is captain-relevant, so the
+# poll routes this worker into the terminal branch - the branch that never
+# consults pause_state_class. With the agent gone and the merge watch armed, it
+# must be absorbed on the long pause cadence, not surfaced and not wedge-timed.
+test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll() {
+  local dir state window key
+  dir=$(make_wedge_case merge-dispatch md \
+    'done: PR https://example.invalid/pull/7 checks green' \
+    'mode=no-mistakes')
+  state="$dir/state"
+  window=fmtest:fm-md
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  arm_custom_check "$state" md || { fail "could not arm the merge watch fixture"; return; }
+  seed_stale_pane "$dir" md "$window" 'idle waiting for merge'
+  # The window must stay in the tmux inventory for the pane capture the poll
+  # needs, so the agent is made dead the other way the classifier allows: its
+  # pane's foreground command is a bare shell, never a harness.
+  FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+  run_until_stale_classified "$dir" "$window"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  if [ -s "$state/.wake-queue" ]; then
+    fail "a green-PR worker awaiting merge was surfaced: $(cat "$state/.wake-queue")"
+  elif [ -e "$state/.stale-since-$key" ]; then
+    fail "a green-PR worker awaiting merge started the wedge timer"
+  elif [ ! -e "$state/.paused-$key" ]; then
+    fail "a green-PR worker awaiting merge was not absorbed on the pause cadence"
+  else
+    ok "a green PR with an armed merge watch is absorbed by the real stale dispatch"
+  fi
+}
+
+# The negative that keeps the terminal branch honest: the SAME captain-relevant
+# done: line with no armed merge watch must still surface exactly as before.
+test_green_pr_without_an_armed_watch_still_surfaces() {
+  local dir state window
+  dir=$(make_wedge_case merge-dispatch-none mn \
+    'done: PR https://example.invalid/pull/8 checks green' \
+    'mode=no-mistakes')
+  state="$dir/state"
+  window=fmtest:fm-mn
+  seed_stale_pane "$dir" mn "$window" 'idle with no watch'
+  # Same dead-agent shape as the case above, so the ONLY difference between the
+  # two is the armed merge watch.
+  FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+  run_until_stale_classified "$dir" "$window"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  if grep -qF "stale: $window" "$state/.wake-queue" 2>/dev/null; then
+    ok "a done: PR line with no armed watch still surfaces as it did before"
+  else
+    fail "a done: line without an armed merge watch must still surface; queue: $(cat "$state/.wake-queue" 2>/dev/null)"
+  fi
+}
+
+# The secondmate fail-open must not cost the cheap pause-cadence short-circuit.
+# A secondmate whose crew state reports paused still writes the recheck marker,
+# exactly where the pre-change code wrote it, so later polls short-circuit
+# instead of re-running the expensive crew-state read every time.
+test_secondmate_paused_still_writes_the_recheck_marker() {
+  local dir state out
+  dir=$(make_wedge_case secondmate-marker sk \
+    'paused: [key=await-answer] waiting on captain')
+  state="$dir/state"
+  sed -i.bak 's/^kind=ship$/kind=secondmate/' "$state/sk.meta"
+  rm -f "$state/sk.meta.bak"
+  agent_gone
+  export FM_FAKE_CREW_STATE='state: paused · source: run-step · awaiting an external decision'
+  out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-sk sk)
+  unset FM_FAKE_CREW_STATE
+  if [ "$out" != paused ]; then
+    fail "a secondmate whose crew state is paused must classify paused, got '$out'"
+  elif [ ! -e "$state/.paused-rechecked-fmtest_fm-sk" ]; then
+    fail "a paused secondmate must still arm the pause-cadence recheck marker"
+  else
+    ok "a paused secondmate still writes its recheck marker"
+  fi
+}
+
+# axi status renders sibling TOON tables from the same output. A `running` row
+# in one of those is not an active step, and reading it as one would reset the
+# wedge timer forever for a worker whose pipeline has actually stopped.
+test_sibling_table_rows_are_not_active_steps() {
+  local dir out
+  dir=$(make_wedge_case sibling-table st 'working: implementing' 'mode=no-mistakes')
+  export FM_FAKE_AXI_STATUS='  active_steps[0]{step,status,active_for,last_activity,agent_pid,round}:
+  gates[2]{gate,status,active_for,last_activity}:
+    review,running,5m,"3s ago: reviewing the diff"
+    tests,pending,0s,"never"'
+  out=$(run_in_watcher "$dir" pipeline_recently_active st && printf active || printf quiet)
+  unset FM_FAKE_AXI_STATUS
+  if [ "$out" = quiet ]; then
+    ok "a running row in a sibling table is not read as an active step"
+  else
+    fail "an active_steps[0] table must yield no active step, got '$out'"
   fi
 }
 
@@ -382,5 +555,9 @@ test_live_agent_with_working_run_stays_working
 test_secondmate_with_declared_pause_is_not_absorbed
 test_busy_pane_escalates_even_with_an_active_pipeline
 test_pane_sourced_working_is_not_gated_on_the_pipeline
+test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll
+test_green_pr_without_an_armed_watch_still_surfaces
+test_secondmate_paused_still_writes_the_recheck_marker
+test_sibling_table_rows_are_not_active_steps
 
 exit "$FAILED"

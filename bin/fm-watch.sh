@@ -422,8 +422,24 @@ pipeline_activity_fresh() {  # <task>
   # output came from a run this probe cannot read. The real negative is the
   # return 1 below, for an answer that HAS the table but no running/fixing row.
   printf '%s\n' "$out" | grep -q '^[[:space:]]*active_steps\[' || return 2
-  row=$(printf '%s\n' "$out" | grep -A"${PIPELINE_ROWS_MAX:-20}" '^[[:space:]]*active_steps\[' \
-    | grep -E '^[[:space:]]*[a-z_]+,(running|fixing),' | head -1) || true
+  # Scan ONLY the active_steps table's own rows. axi status renders sibling TOON
+  # tables (gates[N], findings[N]) from the same output, and a `running` row in
+  # one of those would otherwise read as a live pipeline and reset the wedge
+  # timer for a worker whose run has actually stopped. The table's declared row
+  # count bounds the scan, and the next `<name>[<n>]{` header ends it, so an
+  # `active_steps[0]` table yields no row at all.
+  row=$(printf '%s\n' "$out" | awk '
+    /^[[:space:]]*active_steps\[[0-9]+\]\{/ {
+      n = $0; sub(/^[^[]*\[/, "", n); sub(/\].*$/, "", n)
+      left = n + 0; intable = 1; next
+    }
+    intable && /^[[:space:]]*[A-Za-z_][A-Za-z_]*\[[0-9]+\]\{/ { intable = 0 }
+    intable {
+      if (left <= 0) { intable = 0; next }
+      left--
+      if ($0 ~ /^[[:space:]]*[a-z_]+,(running|fixing),/) { print; exit }
+    }
+  ' | head -1) || true
   [ -n "$row" ] || return 1
   # last_activity is the quoted 4th column: "<age> ago: <note>", optionally
   # prefixed "quiet " when the step has gone silent.
@@ -527,8 +543,9 @@ busy_turn_over_age() {  # <task>
 # timer would. A .paused-resurfaced-<key> throttle marker records the last
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
-handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason
+handle_paused_stale() {  # <window> <task> <hash> [pause-detail]
+  local win=$1 task=$2 h=$3 detail=${4:-declared pause}
+  local key statusf mtime age rf rf_age reason
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -540,12 +557,12 @@ handle_paused_stale() {  # <window> <task> <hash>
   rf="$STATE/.paused-resurfaced-$key"
   rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
-    reason="stale: $win (paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)"
+    reason="stale: $win (paused ${age}s, awaiting external - $detail, rechecked on a long cadence not a wedge; confirm the wait still holds)"
     fm_wake_append stale "$win" "$reason" || exit 1
     date +%s > "$rf"
     wake "$reason"
   fi
-  triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win"
+  triage_log "absorbed stale (paused, awaiting external - $detail, age ${age}s): $win"
 }
 
 clear_pause_state() {  # <window>
@@ -599,8 +616,8 @@ pause_state_class() {  # <window> <task>
     printf 'paused'
     return
   fi
-  crew_line=$("$FM_CREW_STATE_BIN" "$task" 2>/dev/null) || true
-  class=$(crew_absorb_class "$task")
+  crew_line=$(crew_state_line "$task")
+  class=$(crew_absorb_class_of_line "$crew_line")
   # A `working` verdict is proof the RUN exists, never proof it is MOVING. A
   # worker firstmate stopped on a green PR keeps a `working` run-step for as
   # long as its ci step monitors the open PR: measured on the live fleet
@@ -619,8 +636,7 @@ pause_state_class() {  # <window> <task>
   # `working` for source `pane`, and an exactly-busy pane is direct evidence of
   # a rendering agent that owes nothing to a no-mistakes run - gating it on
   # pipeline freshness would absorb a live worker on the wrong signal.
-  crew_source=${crew_line#*source: }
-  crew_source=${crew_source%% *}
+  crew_source=$(crew_state_source "$crew_line")
   if [ "$class" = working ]; then
     if [ "$crew_source" != run-step ]; then
       rm -f "$recheck_file"
@@ -639,7 +655,10 @@ pause_state_class() {  # <window> <task>
   # alive here. It must still never be absorbed onto the pause cadence by this
   # rule: fail open and surface, exactly as before the two-signal change.
   if [ "$(window_kind "$win")" = secondmate ]; then
-    rm -f "$recheck_file"
+    case "$class" in
+      paused) date +%s > "$recheck_file" ;;
+      *) rm -f "$recheck_file" ;;
+    esac
     printf '%s' "$class"
     return
   fi
@@ -1416,8 +1435,18 @@ EOF
           # line. On a NEW hash, give an active run/busy pane (the same
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
-          if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+          task=$(window_to_task "$w" "$STATE")
+          if finished_awaiting_merge "$w" "$task"; then
+            # A gone agent, a green PR in the last status line, and an armed
+            # merge watch: the work is finished and the idle pane is its
+            # expected shape, not a wedge. This line is captain-relevant so the
+            # dispatch lands here rather than in pause_state_class, which is why
+            # the check has to run at this branch too. Absorb on the long pause
+            # cadence instead of surfacing or starting the wedge timer.
+            handle_paused_stale "$w" "$task" "$h" \
+              "finished worker awaiting merge - PR is green and its merge watch is armed"
+          elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
+            if crew_is_provably_working "$task"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
@@ -1425,7 +1454,7 @@ EOF
               fm_wake_append stale "$w" "stale: $w" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
-              mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
+              mark_surfaced "$STATE/$task.status"
               wake "stale: $w"
             fi
           elif [ -e "$ssf" ]; then
