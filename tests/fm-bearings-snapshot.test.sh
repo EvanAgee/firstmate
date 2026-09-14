@@ -12,6 +12,7 @@ set -u
 
 BEARINGS="$ROOT/bin/fm-bearings-snapshot.sh"
 TMP_ROOT=$(fm_test_tmproot fm-bearings)
+export FM_FAKE_TMUX_ROOT="$TMP_ROOT"
 # Keep disposable homes outside the snapshot's fixture repo boundary even when
 # TMPDIR is inside an isolated source worktree.
 FM_ROOT_OVERRIDE="$TMP_ROOT/fixture-root"
@@ -34,10 +35,28 @@ SH
   cat > "$fb/tmux" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
-  display-message) case "$*" in *dead-*) exit 1 ;; *) printf '%%1\n' ;; esac ;;
+  list-windows)
+    find "$FM_FAKE_TMUX_ROOT" -name '*.meta' -exec sed -n 's/^window=firstmate://p' {} + |
+      sort -u | while IFS= read -r window; do
+        case "$window" in *dead-*) continue ;; esac
+        printf '@%s %s\n' "$window" "$window"
+      done
+    ;;
+  display-message)
+    target=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in -t) target=$2; shift ;; esac
+      shift
+    done
+    case "$target" in
+      @*) printf '%%%s\n' "${target#@}" ;;
+      %*) printf '%s\n' "$target" ;;
+      *) exit 1 ;;
+    esac
+    ;;
   capture-pane)
     case "$*" in
-      *fm-domain-alpha*) printf 'stale terminal summary: Phase 7 started\n> \n' ;;
+      *'%fm-domain-alpha'*) printf 'stale terminal summary: Phase 7 started\n> \n' ;;
       *) printf 'all quiet\n> \n' ;;
     esac
     ;;

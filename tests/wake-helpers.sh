@@ -63,7 +63,10 @@ make_case() {
 set -u
 if [ "${1:-}" = "list-windows" ]; then
   if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
-    printf '%s\n' "${FM_FAKE_TMUX_WINDOW#*:}"
+    case "$*" in
+      *window_id*) printf '@1 %s\n' "${FM_FAKE_TMUX_WINDOW#*:}" ;;
+      *) printf '%s\n' "$FM_FAKE_TMUX_WINDOW" ;;
+    esac
   fi
   exit 0
 fi
@@ -75,6 +78,7 @@ if [ "${1:-}" = "capture-pane" ]; then
 fi
 if [ "${1:-}" = "display-message" ]; then
   case "$*" in
+    *pane_id*) printf '%%1\n'; exit 0 ;;
     *pane_current_command*) printf '%s\n' "${FM_FAKE_TMUX_CURRENT_COMMAND:-}"; exit 0 ;;
   esac
 fi

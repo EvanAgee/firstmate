@@ -380,6 +380,7 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
+        *pane_id*) printf '%%1\n'; exit 0 ;;
         *pane_current_command*)
           case "$mode" in
             missing) printf '%s\n' node; exit 0 ;;
@@ -394,12 +395,12 @@ case "${1:-}" in
   list-windows)
     case "$mode" in
       missing)
-        printf '%s\n' main
-        [ ! -e "${FM_TMUX_CALL_LOG:?}.created" ] || printf '%s\n' fm-sm1
+        printf '@0 main\n'
+        [ ! -e "${FM_TMUX_CALL_LOG:?}.created" ] || printf '@1 fm-sm1\n'
         exit 0
         ;;
       unreadable) exit 1 ;;
-      *) [ -e "${FM_TMUX_CALL_LOG:?}.killed" ] || printf '%s\n' fm-sm1; exit 0 ;;
+      *) [ -e "${FM_TMUX_CALL_LOG:?}.killed" ] || printf '@1 fm-sm1\n'; exit 0 ;;
     esac
     ;;
   new-window|kill-window)
@@ -409,6 +410,7 @@ case "${1:-}" in
     if [ "${1:-}" = new-window ]; then
       rm -f "${FM_TMUX_CALL_LOG}.killed"
       : > "${FM_TMUX_CALL_LOG}.created"
+      printf '@1\n'
     fi
     exit 0
     ;;

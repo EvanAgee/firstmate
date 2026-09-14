@@ -440,7 +440,7 @@ make_send_case() {  # <name> <harness>
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  display-message) printf 'fakepane\n'; exit 0 ;;
+  display-message) printf '%%1\n'; exit 0 ;;
   has-session) exit 0 ;;
   list-panes|list-windows) printf 'fm-send:0\n'; exit 0 ;;
   send-keys)
@@ -511,7 +511,7 @@ $rec
 EOF
   keylog="$case_dir/keys.log"
   : > "$keylog"
-  out=$(FM_FAKE_KEY_FAIL='-t fm-send:0 C-u' run_send_key "$home" "$fakebin" "$id" Escape "$keylog")
+  out=$(FM_FAKE_KEY_FAIL='-t %1 C-u' run_send_key "$home" "$fakebin" "$id" Escape "$keylog")
   status=$?
   [ "$status" -ne 0 ] || fail "a failed muse composer clear was reported as success"
   assert_contains "$out" "could not be cleared" "the failed clear did not explain the pane state"
