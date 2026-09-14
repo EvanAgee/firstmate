@@ -844,40 +844,181 @@ test_declared_pause_with_live_agent_stays_none() {
   fi
 }
 
-test_stall_after_generic_wedge_is_reported_once() {
-  local dir state win since escalation sequence expected
-  dir=$(make_wedge_case stall-after-wedge sw 'working: validating' 'mode=no-mistakes')
+poll_stalled_case() {
+  local dir=$1 win=$2 state key target pid deadline count recovery_token completed=0
   state="$dir/state"
-  win=fmtest:fm-sw
-  since="$state/.stale-since-fmtest_fm-sw"
-  escalation="$state/.wedge-escalations-fmtest_fm-sw"
-  printf '1\n' > "$since"
-  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
-  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    review,running,15m,"quiet 15m ago: log: last activity","-",fix 1')
-  export FM_FAKE_AXI_STATUS
-  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
-  grep -q 'possible wedge' "$state/.wake-queue" || fail "initial generic wedge did not surface"
-  [ ! -e "$since" ] || fail "generic wedge did not remove its timer"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err"
-  ack_drain_err "$state" "$dir/drain.err" >/dev/null || { fail "could not acknowledge generic wedge"; return; }
-  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
-  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
-  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
-  grep -qF "$expected" "$state/.wake-queue" || fail "missing wedge timer hid the new stalled diagnosis"
+  key=$(printf '%s' "$win" | tr ':/.' '___')
+  target=$(( $(cat "$state/.count-$key" 2>/dev/null || echo 0) + 2 ))
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$dir/watch.out" 2>&1 &
+  pid=$!
+  deadline=$(( $(date +%s) + 60 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if ! kill -0 "$pid" 2>/dev/null; then completed=1; break; fi
+    count=$(cat "$state/.count-$key" 2>/dev/null || echo 0)
+    if [ "$count" -ge "$target" ] && [ ! -s "$state/.wake-queue" ]; then
+      completed=1
+      break
+    fi
+    sleep 0.2
+  done
+  reap "$pid"
+  if [ ! -s "$state/.wake-queue" ] && [ -e "$state/.watcher-down" ]; then
+    IFS= read -r recovery_token < "$state/.watcher-down"
+    run_in_watcher "$dir" fm_recovery_marker_ack "$state/.watcher-down" "${recovery_token##*:}" \
+      || { fail "could not acknowledge fixture watcher restart"; return 1; }
+  fi
+  [ "$completed" = 1 ] || { fail "watcher did not complete the polling sequence"; return 1; }
+}
+
+ack_poll_wake() {
+  local dir=$1
+  FM_STATE_OVERRIDE="$dir/state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err"
+  ack_drain_err "$dir/state" "$dir/drain.err" >/dev/null \
+    || { fail "could not acknowledge watcher wake"; return 1; }
+}
+
+poll_wake_payload() {
+  cut -f5- "$1/state/.wake-queue"
+}
+
+set_poll_pipeline_activity() {
+  local dir=$1 duration=$2
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" "  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,$duration,\"quiet $duration ago: log: last activity\",\"-\",fix 1")
+  if [ "$duration" = 15m ]; then
+    FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  else
+    FM_FAKE_CREW_STATE="state: stalled · source: run-step · pipeline stalled $duration at review, run 01RUN, agent none"
+  fi
+  export FM_FAKE_AXI_STATUS FM_FAKE_CREW_STATE
+}
+
+poll_stall_after_generic_wedge() {
+  local status=$1 dir state win key expected sequence
+  dir=$(make_wedge_case "poll-wedge-$status" ps "$status: earlier validation work" 'mode=no-mistakes')
+  state="$dir/state"
+  win=fmtest:fm-ps
+  key=fmtest_fm-ps
+  seed_stale_pane "$dir" ps "$win" 'unchanged idle validation pane'
+  cp "$state/.hash-$key" "$state/.stale-$key"
+  printf '1\n' > "$state/.stale-since-$key"
+  set_poll_pipeline_activity "$dir" 15m
+  poll_stalled_case "$dir" "$win" || return
+  case "$(poll_wake_payload "$dir")" in
+    "stale: $win (idle "*"possible wedge"*) ;;
+    *) fail "$status did not publish the initial generic wedge"; return ;;
+  esac
+  [ ! -e "$state/.stale-since-$key" ] || fail "$status generic wedge retained its timer"
   sequence=$(cat "$state/.wake-queue.seq")
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err"
-  ack_drain_err "$state" "$dir/drain.err" >/dev/null || { fail "could not acknowledge stalled diagnosis"; return; }
-  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 26m at review, run 01RUN, agent none'
-  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
-  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "aging alone repeated the stalled diagnosis"
-  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
-  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
-  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
-  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
-  [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "a resumed run could not report a subsequent stall"
-  unset FM_FAKE_CREW_STATE FM_FAKE_AXI_STATUS
-  ok "generic wedge escalation does not suppress a new stall or repeat an acknowledged one"
+  ack_poll_wake "$dir" || return
+  set_poll_pipeline_activity "$dir" 25m
+  poll_stalled_case "$dir" "$win" || return
+  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "$status poll lost the detailed stall after generic escalation"
+  [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "$status stall did not publish exactly once"
+  [ "$(cat "$state/.hash-$key")" = "$(cat "$state/.stale-$key")" ] || fail "$status pane hash changed during the transition"
+  unset FM_FAKE_AXI_STATUS FM_FAKE_CREW_STATE
+}
+
+test_poll_reports_stall_after_generic_wedge_removed_timer() {
+  poll_stall_after_generic_wedge working
+  ok "full poll surfaces a stall after generic wedge timer removal"
+}
+
+test_poll_reports_stall_over_old_terminal_status_without_timer() {
+  poll_stall_after_generic_wedge done
+  poll_stall_after_generic_wedge blocked
+  ok "full poll surfaces stalls over old done and blocked statuses without timers"
+}
+
+run_poll_daemon() {
+  local dir=$1
+  shift
+  (
+    export PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state"
+    export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+    export FM_FAKE_TMUX_WINDOW=fmtest:fm-ps FM_FAKE_TMUX_CAPTURE="$dir/pane.txt"
+    export FM_ESCALATE_BATCH_SECS=999999 FM_MAX_DEFER_SECS=999999 FM_STALE_ESCALATE_SECS=240
+    . "$ROOT/bin/fm-supervise-daemon.sh"
+    LOG="$dir/daemon.log"
+    "$@" "$dir/state"
+  )
+}
+
+test_away_poll_reports_stall_after_generic_escalation_removed_marker() {
+  local dir state win key reason expected sequence
+  dir=$(make_wedge_case poll-away-stall ps 'working: validating' 'mode=no-mistakes')
+  state="$dir/state"
+  win=fmtest:fm-ps
+  key=fmtest_fm-ps
+  seed_stale_pane "$dir" ps "$win" 'unchanged idle validation pane'
+  : > "$state/.afk"
+  set_poll_pipeline_activity "$dir" 15m
+  poll_stalled_case "$dir" "$win" || return
+  reason=$(poll_wake_payload "$dir")
+  [ "$reason" = "stale: $win" ] || fail "ordinary away poll changed its wake"
+  run_poll_daemon "$dir" handle_wake "$reason"
+  [ -e "$state/.subsuper-stale-ps" ] || fail "away wake did not start stale tracking"
+  ack_poll_wake "$dir" || return
+  printf '1\n' > "$state/.subsuper-stale-ps"
+  run_poll_daemon "$dir" housekeeping
+  grep -q 'possible wedge' "$state/.subsuper-escalations" || fail "away persistence did not publish a generic wedge"
+  [ ! -e "$state/.subsuper-stale-ps" ] || fail "away generic escalation retained its stale marker"
+  set_poll_pipeline_activity "$dir" 25m
+  poll_stalled_case "$dir" "$win" || return
+  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "away poll hid the stalled transition after marker removal"
+  run_poll_daemon "$dir" handle_wake "$(poll_wake_payload "$dir")"
+  [ "$(tail -n 1 "$state/.subsuper-escalations")" = "$expected" ] || fail "daemon dropped the enriched stalled wake"
+  [ "$(cat "$state/.subsuper-stalled-ps")" = 'review, run 01RUN, agent none' ] || fail "daemon did not record the stalled identity"
+  sequence=$(cat "$state/.wake-queue.seq")
+  ack_poll_wake "$dir" || return
+  set_poll_pipeline_activity "$dir" 26m
+  poll_stalled_case "$dir" "$win" || return
+  run_poll_daemon "$dir" housekeeping
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "away poll repeated the same stall"
+  [ "$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')" = 2 ] || fail "daemon repeated a generic or stalled escalation"
+  unset FM_FAKE_AXI_STATUS FM_FAKE_CREW_STATE
+  ok "away polling reports stalls after generic escalation and buffers them once"
+}
+
+test_acknowledged_stall_identity_does_not_repeat_on_same_episode() {
+  local dir state win key expected sequence
+  dir=$(make_wedge_case poll-stall-identity ps 'working: validating' 'mode=no-mistakes')
+  state="$dir/state"
+  win=fmtest:fm-ps
+  key=fmtest_fm-ps
+  seed_stale_pane "$dir" ps "$win" 'unchanged idle validation pane'
+  set_poll_pipeline_activity "$dir" 25m
+  poll_stalled_case "$dir" "$win" || return
+  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "initial stall lost its diagnosis"
+  [ "$(cat "$state/.stale-since-$key.stalled")" = 'review, run 01RUN, agent none' ] || fail "initial stall did not record its identity"
+  sequence=$(cat "$state/.wake-queue.seq")
+  ack_poll_wake "$dir" || return
+  set_poll_pipeline_activity "$dir" 26m
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "acknowledging the stall rearmed a duplicate"
+  cp "$state/.hash-$key" "$state/.stale-$key"
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · temporarily unreadable'
+  poll_stalled_case "$dir" "$win" || return
+  [ -e "$state/.stale-since-$key.stalled" ] || fail "unknown state cleared the stalled identity"
+  set_poll_pipeline_activity "$dir" 26m
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "unknown state rearmed a duplicate stall"
+  set_poll_pipeline_activity "$dir" 15m
+  poll_stalled_case "$dir" "$win" || return
+  [ ! -e "$state/.stale-since-$key.stalled" ] || fail "known working observation did not clear the identity"
+  set_poll_pipeline_activity "$dir" 25m
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "new stalled episode did not notify"
+  [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "new stalled episode did not publish exactly once"
+  unset FM_FAKE_AXI_STATUS FM_FAKE_CREW_STATE
+  ok "full polls retain acknowledged and unknown identities until known recovery"
 }
 
 test_working_hash_transition_surfaces_stalled_diagnosis() {
@@ -1099,7 +1240,10 @@ fi
 
 test_declared_pause_beats_run_step_done
 test_declared_pause_with_live_agent_stays_none
-test_stall_after_generic_wedge_is_reported_once
+test_poll_reports_stall_after_generic_wedge_removed_timer
+test_poll_reports_stall_over_old_terminal_status_without_timer
+test_away_poll_reports_stall_after_generic_escalation_removed_marker
+test_acknowledged_stall_identity_does_not_repeat_on_same_episode
 test_working_hash_transition_surfaces_stalled_diagnosis
 test_active_pipeline_blocks_escalation
 test_quiet_pipeline_and_idle_pane_escalates

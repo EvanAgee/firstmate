@@ -243,56 +243,34 @@ test_stalled_stale_escalates_with_diagnosis() {
   pass "away stale classification preserves stalled diagnoses over historical status and wake detail"
 }
 
-test_housekeeping_detects_stalls_without_new_wakes() {
-  local dir state win task scenario expected
-  for scenario in paused migration stale legacy-pause; do
-    dir=$(make_supercase "housekeeping-stall-$scenario")
-    state="$dir/state"
-    task=stalled
-    win=sess:fm-stalled
-    make_fake_crew_state "$dir/fakebin" >/dev/null
-    if [ "$scenario" != legacy-pause ]; then
-      fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
-    fi
-    printf 'paused: [key=await-merge] waiting for merge\n' > "$state/$task.status"
-    : > "$state/.afk"
-    (
-      export FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
-      export PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win"
-      export FM_ESCALATE_BATCH_SECS=999999 FM_MAX_DEFER_SECS=999999
-      LOG="$dir/daemon.log"
-      export FM_FAKE_CREW_STATE='state: paused · source: status-log · waiting for merge'
-      case "$scenario" in
-        paused) handle_wake "stale: $win" "$state" ;;
-        migration) : > "$state/.paused-sess_fm-stalled" ;;
-        legacy-pause) pause_marker_record "$win" "$state" ;;
-        stale)
-          printf 'working: validating\n' > "$state/$task.status"
-          export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
-          handle_wake "stale: $win" "$state" ;;
-      esac
-      assert_absent "$state/.subsuper-escalations" "ordinary wait escalated before the stall"
-      export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
-      housekeeping "$state"
-      expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
-      [ "$(cat "$state/.subsuper-escalations" 2>/dev/null)" = "$expected" ] \
-        || fail "$scenario recurring reconciliation missed the stalled transition"
-      assert_absent "$state/.subsuper-paused-$task" "stalled reconciliation recreated a pause marker"
-      assert_absent "$state/.subsuper-stale-$task" "stalled reconciliation retained wedge aging"
-      export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 26m at review, run 01RUN, agent none'
-      housekeeping "$state"
-      handle_wake "stale: $win" "$state"
-      [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] \
-        || fail "$scenario repeated a reported stall as its duration advanced"
-      export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
-      reconcile_stalled_tracking "$win" "$state" || true
-      export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
-      handle_wake "stale: $win" "$state"
-      [ "$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')" = 2 ] \
-        || fail "$scenario failed to report a subsequent stall after work resumed"
-    ) || fail "$scenario housekeeping stall regression failed"
-  done
-  pass "housekeeping detects unchanged-pane stalls during pause, stale, and migration reconciliation"
+test_reported_stall_identity_survives_housekeeping() {
+  local dir state win expected
+  dir=$(make_supercase reported-stall)
+  make_fake_crew_state "$dir/fakebin" >/dev/null
+  state="$dir/state"
+  win=sess:fm-stalled
+  fm_write_meta "$state/stalled.meta" "window=$win" "backend=tmux"
+  printf 'paused: [key=await-merge] waiting for merge\n' > "$state/stalled.status"
+  (
+    export FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+    export PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win"
+    export FM_ESCALATE_BATCH_SECS=999999 FM_MAX_DEFER_SECS=999999
+    LOG="$dir/daemon.log"
+    export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+    expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+    handle_wake "$expected" "$state"
+    export FM_FAKE_CREW_STATE='state: unknown · source: none · temporarily unreadable'
+    housekeeping "$state"
+    [ -e "$state/.subsuper-stalled-stalled" ] || fail "unknown state cleared the reported identity"
+    assert_absent "$state/.subsuper-paused-stalled" "housekeeping recreated pause absorption"
+    export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 26m at review, run 01RUN, agent none'
+    handle_wake "stale: $win" "$state"
+    [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "reported stall repeated"
+    export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+    housekeeping "$state"
+    assert_absent "$state/.subsuper-stalled-stalled" "known resumed state retained the old identity"
+  ) || fail "reported stall housekeeping failed"
+  pass "housekeeping retains unknown stall identity and rearms after known recovery"
 }
 
 # A DECLARED external-wait pause (paused:) is neither a wedge nor a terminal
@@ -1964,7 +1942,7 @@ test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_stale_terminal_escalates
 test_stalled_stale_escalates_with_diagnosis
-test_housekeeping_detects_stalls_without_new_wakes
+test_reported_stall_identity_survives_housekeeping
 test_stale_paused_classifies_pause
 test_handle_wake_paused_records_pause_marker
 test_handle_wake_paused_signal_records_pause_marker

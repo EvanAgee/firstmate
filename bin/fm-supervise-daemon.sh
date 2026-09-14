@@ -508,17 +508,16 @@ escalate_stalled() {
 }
 
 reconcile_stalled_tracking() {
-  local win=$1 state=$2 task crew_line detail marker
+  local win=$1 state=$2 task crew_line marker
   task=$(window_to_task "$win" "$state")
+  marker="$state/.subsuper-stalled-$(_stale_key "$task")"
+  [ -e "$marker" ] || return 1
   crew_line=$(FM_STATE_OVERRIDE="$state" crew_state_line "$task")
-  detail=$(crew_state_stalled_detail "$crew_line")
-  if [ -n "$detail" ]; then
-    escalate_stalled "$win" "$state" "$detail"
+  if [ -n "$(crew_state_stalled_detail "$crew_line")" ]; then
     return 0
   fi
-  marker="$state/.subsuper-stalled-$(_stale_key "$task")"
   case "$crew_line" in
-    ''|state:\ unknown*) ;;
+    ''|state:\ unknown*) return 0 ;;
     *) rm -f "$marker" ;;
   esac
   return 1
@@ -885,7 +884,6 @@ housekeeping() {  # <state>
       # Window gone (task torn down): drop the marker, nothing to escalate.
       rm -f "$marker"; continue
     fi
-    reconcile_stalled_tracking "$win" "$state" && continue
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
     if [ -n "$last" ] && status_is_paused "$last"; then
@@ -917,7 +915,6 @@ housekeeping() {  # <state>
     if [ -z "$win" ]; then
       rm -f "$marker"; continue
     fi
-    reconcile_stalled_tracking "$win" "$state" && continue
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
     if [ -z "$last" ] || ! status_is_paused "$last"; then

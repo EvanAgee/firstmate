@@ -504,6 +504,30 @@ finished_awaiting_merge() {  # <window> <task>
   [ "$agent_alive" = dead ]
 }
 
+observe_stalled_pipeline() {
+  local win=$1 crew_line=$2 since_file=$3 escalation_file=$4
+  local detail identity marker reason
+  marker="${since_file}.stalled"
+  detail=$(crew_state_stalled_detail "$crew_line")
+  if [ -n "$detail" ]; then
+    identity=$(crew_stalled_identity "$detail")
+    if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
+      reason="stale: $win ($detail)"
+      fm_wake_append stale "$win" "$reason" || exit 1
+      printf '%s' "$identity" > "$marker" || exit 1
+      rm -f "$since_file" "$escalation_file"
+      clear_pause_state "$win"
+      wake "$reason"
+    fi
+    return 0
+  fi
+  case "$crew_line" in
+    ''|state:\ unknown*) ;;
+    *) rm -f "$marker" ;;
+  esac
+  return 1
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -514,28 +538,7 @@ finished_awaiting_merge() {  # <window> <task>
 # line that an active run/busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> [check-pipeline]
   local win=$1 since_file=$2 label=$3 escalation_file=$4 check_pipeline=${5:-0}
-  local since age n reason task crew_line stalled_detail stalled_identity stalled_file
-  stalled_file="${since_file}.stalled"
-  if [ "$check_pipeline" = 1 ]; then
-    task=$(window_to_task "$win" "$STATE")
-    crew_line=$(crew_state_line "$task")
-    stalled_detail=$(crew_state_stalled_detail "$crew_line")
-    if [ -n "$stalled_detail" ]; then
-      stalled_identity=$(crew_stalled_identity "$stalled_detail")
-      if [ "$(cat "$stalled_file" 2>/dev/null || true)" != "$stalled_identity" ]; then
-        reason="stale: $win ($stalled_detail)"
-        fm_wake_append stale "$win" "$reason" || exit 1
-        printf '%s' "$stalled_identity" > "$stalled_file"
-        rm -f "$since_file" "$escalation_file"
-        wake "$reason"
-      fi
-      return
-    fi
-    case "$crew_line" in
-      ''|state:\ unknown*) ;;
-      *) rm -f "$stalled_file" ;;
-    esac
-  fi
+  local since age n reason task
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -646,12 +649,16 @@ pause_state_class() {  # <window> <task>
   key=${key//./_}
   last=$(last_status_line "$STATE/$task.status")
   recheck_file="$STATE/.paused-rechecked-$key"
+  if [ "$#" -ge 3 ]; then
+    crew_line=$3
+  else
+    crew_line=$(crew_state_line "$task")
+  fi
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
-    crew_absorb_class "$task"
+    crew_absorb_class_of_line "$crew_line"
     return
   fi
-  crew_line=$(crew_state_line "$task")
   if [ -n "$(crew_state_stalled_detail "$crew_line")" ]; then
     rm -f "$recheck_file"
     printf 'stalled'
@@ -740,16 +747,10 @@ pause_state_class() {  # <window> <task>
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last stalled_detail reason
+  local win=$1 h=$2 key task last reason
   key=$(printf '%s' "$win" | tr ':/.' '___')
   task=$(window_to_task "$win" "$STATE")
-  # A `stalled` run-step (an active pipeline whose agent died mid-turn - a
-  # model usage limit, a killed process, a lost socket) reaches this path same
-  # as any other non-working, non-paused verdict; its own diagnosis is worth
-  # carrying onto the wake line instead of a bare "stale: <endpoint>".
-  stalled_detail=$(crew_state_stalled_detail "$(crew_state_line "$task")")
   reason="stale: $win"
-  [ -n "$stalled_detail" ] && reason="stale: $win ($stalled_detail)"
   fm_wake_append stale "$win" "$reason" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key"
@@ -1514,9 +1515,6 @@ EOF
     fi
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
     persist_pane_tail "$task" "$tail40" || true
-    if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
-      continue
-    fi
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
     hf="$STATE/.hash-$key"
@@ -1536,10 +1534,15 @@ EOF
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
+        crew_line=$(crew_state_line "$task")
+        observe_stalled_pipeline "$w" "$crew_line" "$ssf" "$ewf" && continue
+        if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
+          continue
+        fi
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
         if [ "$kind" = secondmate ]; then
-          case "$(pause_state_class "$w" "$task")" in
+          case "$(pause_state_class "$w" "$task" "$crew_line")" in
             paused) handle_paused_stale "$w" "$task" "$h" ;;
             *)      clear_pause_tracking "$w" ;;
           esac
@@ -1566,9 +1569,7 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           task=$(window_to_task "$w" "$STATE")
-          crew_line=$(crew_state_line "$task")
-          stalled_detail=$(crew_state_stalled_detail "$crew_line")
-          if [ -z "$stalled_detail" ] && finished_awaiting_merge "$w" "$task"; then
+          if finished_awaiting_merge "$w" "$task"; then
             # A gone agent, a green PR in the last status line, and an armed
             # merge watch: the work is finished and the idle pane is its
             # expected shape, not a wedge. This line is captain-relevant so the
@@ -1577,24 +1578,16 @@ EOF
             # cadence instead of surfacing or starting the wedge timer.
             handle_paused_stale "$w" "$task" "$h" \
               "finished worker awaiting merge - PR is green and its merge watch is armed"
-          elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ] \
-            || { [ -n "$stalled_detail" ] && [ -e "$pf" ]; }; then
+          elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             if [ "$(crew_absorb_class_of_line "$crew_line")" = working ]; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
-              # A `stalled` run-step (an active pipeline whose agent died mid-turn -
-              # a model usage limit, a killed process, a lost socket) is never
-              # absorbed here: it fell through crew_absorb_class_of_line same as any
-              # other non-working verdict, but its own diagnosis is worth carrying
-              # onto the wake line instead of a bare "stale: <endpoint>".
               reason="stale: $w"
-              [ -n "$stalled_detail" ] && reason="stale: $w ($stalled_detail)"
               fm_wake_append stale "$w" "$reason" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
-              [ -z "$stalled_detail" ] || clear_pause_state "$w"
               mark_surfaced "$STATE/$task.status"
               wake "$reason"
             fi
@@ -1625,7 +1618,7 @@ EOF
           #     wait out the timer.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             task=$(window_to_task "$w" "$STATE")
-            case "$(pause_state_class "$w" "$task")" in
+            case "$(pause_state_class "$w" "$task" "$crew_line")" in
               working)
                 clear_pause_tracking "$w"
                 printf '%s' "$h" > "$sf"
@@ -1642,8 +1635,7 @@ EOF
           else
             task=$(window_to_task "$w" "$STATE")
             if [ -e "$pf" ] || status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
-              case "$(pause_state_class "$w" "$task")" in
-                stalled) surface_nonterminal_stale "$w" "$h" ;;
+              case "$(pause_state_class "$w" "$task" "$crew_line")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$w"
                          printf '%s' "$h" > "$sf"
@@ -1657,6 +1649,9 @@ EOF
           fi
         fi
       else
+        if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
+          continue
+        fi
         # Pane busy or not yet stably stale: reset pending escalation bookkeeping,
         # unless a genuinely busy pane has gone too long with no completed turn -
         # then route it through the same wedge timer instead of erasing it.
@@ -1672,6 +1667,9 @@ EOF
     else
       printf '%s' "$h" > "$hf"
       echo 0 > "$cf"
+      if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
+        continue
+      fi
       if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
         wedge_timer_check "$w" "$ssf" "busy (no completed turn)" "$ewf"
       else
