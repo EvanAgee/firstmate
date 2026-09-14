@@ -1,0 +1,12 @@
+ok - crew_absorb_class: working/paused/none from one read; crew_is_paused and crew_is_provably_working agree
+ok - a stalled run-step is never absorbed, and its detail is retrievable for the wake line
+ok - a no-verb signal whose crew is provably working is absorbed (no exit, no queue, suppressor advanced, beacon present)
+
+Status event:
+working: compiling step 2
+Persisted signal suppressor:
+26:804765617:1789421224.139425035
+Triage log:
+[2026-09-14T16:27:06-0500] absorbed benign signal: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFFFCXESED6R9329FWSBBA/.test-phase-tmp/fm-watch-triage-tests.093Vcg/provably-working-signal/state/task.status
+
+Queue bytes: 0 (absent)

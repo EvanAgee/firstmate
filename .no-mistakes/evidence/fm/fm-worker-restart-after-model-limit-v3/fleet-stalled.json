@@ -1,0 +1,66 @@
+{
+  "schema": "fm-secondmate-home-summary.v1",
+  "generated": "2026-09-14T21:25:59Z",
+  "home": "/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFFFCXESED6R9329FWSBBA/.test-phase-tmp/fm-fleet-snapshot.x0uzBr/stalled-work",
+  "valid": true,
+  "reason": null,
+  "invalidity": {
+    "kind": null,
+    "ids": []
+  },
+  "state": "captain_decision",
+  "active_children": [
+    {
+      "id": "stalled-task",
+      "kind": "ship",
+      "state": "stalled",
+      "source": "run-step",
+      "doing": "pipeline stalled 13h at review, run 01RUN, agent none · status-log superseded (run stalled)"
+    }
+  ],
+  "decisions_open": [
+    {
+      "id": "stalled-task",
+      "key": "recovery",
+      "verb": "needs-decision",
+      "summary": "choose recovery",
+      "reason": null,
+      "source": "status"
+    },
+    {
+      "id": "stalled-task",
+      "key": "access",
+      "verb": "blocked",
+      "summary": "waiting on access",
+      "reason": null,
+      "source": "status"
+    }
+  ],
+  "holds": [],
+  "queued": [],
+  "landed": [],
+  "endpoints": [
+    {
+      "id": "stalled-task",
+      "state": "stalled",
+      "source": "run-step",
+      "endpoint": {
+        "target": "firstmate:fm-stalled-task",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-14T21:25:59Z",
+        "freshness": "fresh"
+      }
+    }
+  ],
+  "counts": {
+    "active_children": 1,
+    "decisions_open": 2,
+    "holds": 0,
+    "queued": 0,
+    "landed": 0,
+    "endpoints": 1
+  },
+  "omitted": []
+}

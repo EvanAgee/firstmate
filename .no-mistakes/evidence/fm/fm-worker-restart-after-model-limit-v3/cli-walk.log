@@ -1,0 +1,17 @@
+Recent activity, default threshold:
+state: working · source: run-step · validating (running)
+
+Quiet 25 minutes, default threshold:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent 86240
+
+Same quiet agent, FM_PIPELINE_PARKED_MAX=3600:
+state: working · source: run-step · validating (running)
+
+Awaiting an exited PID:
+state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none
+
+Awaiting a live PID:
+state: working · source: run-step · validating (running)
+
+Genuine review gate:
+state: parked · source: run-step · parked at review: 2 finding(s) (ask-user: authority decision)

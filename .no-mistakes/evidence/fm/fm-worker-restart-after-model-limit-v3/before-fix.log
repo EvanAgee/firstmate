@@ -1,0 +1,9 @@
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+not ok - expected exactly 2 detailed episode lines
+not ok - delivery receipt did not retain both delivered episodes
+ok - a generic stale before two detailed episodes buffers each episode once
+WARNING: watcher still down (same stale episode; last beat: 5s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+not ok - expected exactly 2 detailed episode lines
+ok - acknowledgement retry consumes both detailed rows without buffering them again

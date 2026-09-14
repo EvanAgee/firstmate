@@ -1,0 +1,211 @@
+Production watcher polling, fixture axi status and backend, real durable queue ingestion and acknowledgement.
+
+CASE generic-before-episodes: daemon handle_durable_wakes
+axi-status before:
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "25a08759beebf9880c285db7174f319c02dc300b"
+  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1
+crew-observation before:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none
+Durable queue before:
+1789421166	1	stale	fmtest:fm-ps	stale: fmtest:fm-ps
+1789421172	2	stale	fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+1789421176	3	stale	fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+Daemon exit: 0
+.wake-queue after:
+
+.subsuper-escalations after:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-stalled-ps.generation after:
+1
+1|review, run 01RUN, agent none
+0|review, run 01RUN, agent none
+
+.watcher-down after:
+acked:handling:73443.1789421166.gBJ3od
+
+
+CASE episode-ack-replay: daemon handle_durable_wakes
+axi-status before:
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "7d6fb0e8f8a95edc47a4f90aca86d3c856606406"
+  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1
+crew-observation before:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none
+Durable queue before:
+1789421181	1	stale	fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+1789421185	2	stale	fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+Daemon exit: 1
+.wake-queue after:
+1789421181	1	stale	fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+1789421185	2	stale	fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-escalations after:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-stalled-ps.generation after:
+1
+0|review, run 01RUN, agent none
+1|review, run 01RUN, agent none
+
+.watcher-down after:
+acked:handling:5220.1789421181.zJGBAr
+
+
+CASE episode-ack-replay: daemon handle_durable_wakes
+axi-status before:
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "7d6fb0e8f8a95edc47a4f90aca86d3c856606406"
+  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1
+crew-observation before:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none
+Durable queue before:
+1789421181	1	stale	fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+1789421185	2	stale	fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+Daemon exit: 0
+.wake-queue after:
+
+.subsuper-escalations after:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-stalled-ps.generation after:
+1
+0|review, run 01RUN, agent none
+1|review, run 01RUN, agent none
+
+.watcher-down after:
+acked:handling:16391.1789421188.GFOBqB
+
+
+CASE daemon-only-recovery: daemon handle_durable_wakes
+axi-status before:
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "9367e553286c6fa59a66df5756b86b717a50a601"
+  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1
+crew-observation before:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none
+Durable queue before:
+1789421193	1	stale	fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+Daemon exit: 0
+.wake-queue after:
+
+.subsuper-escalations after:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-stalled-ps.generation after:
+0
+0|review, run 01RUN, agent none
+
+.watcher-down after:
+acked:handling:25982.1789421193.wYNttY
+
+
+CASE daemon-only-recovery: daemon housekeeping
+axi-status before:
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "9367e553286c6fa59a66df5756b86b717a50a601"
+  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","30105",fix 1
+crew-observation before:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none
+Durable queue before:
+Daemon exit: 0
+.wake-queue after:
+
+.subsuper-escalations after:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-stalled-ps.generation after:
+0
+0|review, run 01RUN, agent none
+
+.watcher-down after:
+acked:handling:25982.1789421193.wYNttY
+
+
+CASE daemon-only-recovery: daemon handle_durable_wakes
+axi-status before:
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "9367e553286c6fa59a66df5756b86b717a50a601"
+  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1
+crew-observation before:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none
+Durable queue before:
+1789421197	2	stale	fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none	stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+Daemon exit: 0
+.wake-queue after:
+
+.subsuper-escalations after:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-stalled-ps.generation after:
+1
+0|review, run 01RUN, agent none
+1|review, run 01RUN, agent none
+
+.watcher-down after:
+acked:handling:33164.1789421197.65hUhi
+
+
+CASE daemon-only-recovery: daemon housekeeping
+axi-status before:
+run:
+  id: "01RUN"
+  branch: fm/wedge-fixture
+  status: running
+  head: "9367e553286c6fa59a66df5756b86b717a50a601"
+  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1
+crew-observation before:
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none
+Durable queue before:
+Daemon exit: 0
+.wake-queue after:
+
+.subsuper-escalations after:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+
+.subsuper-stalled-ps.generation after:
+1
+0|review, run 01RUN, agent none
+1|review, run 01RUN, agent none
+
+.watcher-down after:
+acked:downtime:40326.1789421203.1m4rxm
+
