@@ -2760,9 +2760,8 @@ case "$BACKEND" in
     # #134 robustness (tmux): fm_backend_tmux_create_task captures a stable window
     # id and pins the window name (automatic-rename/allow-rename off) so a captain's
     # non-default tmux config cannot rename the window away from fm-<id> once
-    # treehouse cd's into the worktree. WT_TARGET carries that stable id for the
-    # rename-critical worktree-detection steps below; the persisted window= handle
-    # stays $T (the name form), which is safe now that rename is disabled.
+    # treehouse cd's into the worktree. WT_TARGET carries that stable window id
+    # into pane resolution below; the persisted window= handle stays $T.
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
     WT_TARGET="$WID"
     ;;
@@ -3118,10 +3117,8 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
-  # Target the stable window id, not the name: if the name is ever lost (e.g. an
-  # automatic-rename slips through), display-message -t <bad-name> falls back to the
-  # active client's window, which would misread firstmate's OWN pane path as the
-  # worktree and tangle a hook into the primary checkout. The window id never lies.
+  # Keep the resolved pane id through worktree discovery so a rename or active-pane
+  # switch cannot redirect a poll to another pane and tangle a hook into its checkout.
   # Compare against PROJ_ABS_REAL (physical), not PROJ_ABS: a symlinked project
   # prefix would otherwise make the pane's OS-level cwd read differ from
   # PROJ_ABS on the very first poll, before the pane has actually moved.

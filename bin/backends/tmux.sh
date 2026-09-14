@@ -36,8 +36,7 @@ fm_backend_tmux_resolve_bare_selector() {  # <name>
     || { echo "error: no window named $name" >&2; return 1; }
 }
 
-# fm_backend_tmux_capture: bounded plain-text pane capture. Mirrors
-# fm-peek.sh's and fm-watch.sh's `tmux capture-pane -p -t "$T" -S -"$N"`.
+# fm_backend_tmux_capture: bounded plain-text pane capture.
 fm_backend_tmux_capture() {  # <target> <lines>
   local pane_id
   pane_id=$(fm_tmux_display_message "$1" '#{pane_id}') || return 1
@@ -113,8 +112,7 @@ fm_backend_tmux_create_task() {  # <session> <window-name> <proj-abs> -> prints 
 }
 
 # fm_backend_tmux_current_path: the live pane's current working directory, or
-# empty on any tmux error. Mirrors fm-spawn.sh's worktree-discovery poll:
-# `tmux display-message -p -t "$T" '#{pane_current_path}'`.
+# empty on any tmux error. Used by fm-spawn.sh's worktree-discovery poll.
 fm_backend_tmux_current_path() {  # <target>
   fm_tmux_display_message "$1" '#{pane_current_path}' || return 0
 }
