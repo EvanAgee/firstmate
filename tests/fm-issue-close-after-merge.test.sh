@@ -340,6 +340,33 @@ test_issue_outside_the_pr_repo_is_refused() {
   pass "an issue outside the PR's own repository is refused"
 }
 
+test_malformed_issue_references_are_refused_before_forge_calls() {
+  local case_dir rc refs i=0
+  for refs in 'acme/widgets#55#66' 'acme/widgets#7,acme/widgets#55#66' \
+    'acme/widgets#55#66,acme/widgets#7' 'acme/widgets#0' \
+    'acme/widgets#7,,acme/widgets#8' 'acme/widgets#7,'; do
+    i=$((i + 1))
+    case_dir=$(make_case "malformed-issue-$i" "$refs")
+    set_issue "$case_dir" 7 open
+    set_issue "$case_dir" 66 open
+
+    set +e
+    run_closer "$case_dir" task-x1 "$URL" > "$case_dir/out" 2> "$case_dir/err"
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "malformed issue list was accepted: $refs"
+    assert_grep 'not a GitHub issue ref list' "$case_dir/err" \
+      "malformed issue list did not report its refusal: $refs"
+    [ -f "$case_dir/gh-axi.log" ] && [ ! -s "$case_dir/gh-axi.log" ] \
+      || fail "malformed issue list reached the forge: $refs"
+    [ -f "$case_dir/gh.log" ] && [ ! -s "$case_dir/gh.log" ] \
+      || fail "malformed issue list read an issue: $refs"
+    [ ! -s "$case_dir/out" ] || fail "malformed issue list printed a receipt: $refs"
+  done
+  pass "malformed issue lists are refused before any forge call"
+}
+
 test_malformed_pr_url_is_refused() {
   local case_dir rc
   case_dir=$(make_case bad-url acme/widgets#7)
@@ -406,6 +433,7 @@ test_forge_close_error_fails
 test_label_removal_failure_still_reports_and_continues
 test_unmerged_pr_is_refused_before_reading_issues
 test_issue_outside_the_pr_repo_is_refused
+test_malformed_issue_references_are_refused_before_forge_calls
 test_malformed_pr_url_is_refused
 test_gitlab_url_without_linked_issues_is_a_silent_no_op
 test_gitlab_url_with_linked_issues_is_refused

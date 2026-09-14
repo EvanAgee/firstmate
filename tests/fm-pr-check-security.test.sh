@@ -114,6 +114,7 @@ printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 # previous log-and-exit behavior.
 case "${1:-} ${2:-}" in
   "pr view")
+    [ "${FM_TEST_GH_AXI_PR_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_AXI_PR_SLEEP"
     printf 'pull_request:\n  number: %s\n  state: %s\n' \
       "$3" "${FM_TEST_GH_AXI_PR_STATE:-open}"
     exit 0
@@ -794,6 +795,7 @@ run_watcher_bounded() {
       FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
       FM_TEST_GH_AXI_LOG="${FM_TEST_GH_AXI_LOG:-/dev/null}" \
       FM_TEST_GH_AXI_PR_STATE="${FM_TEST_GH_AXI_PR_STATE:-open}" \
+      FM_TEST_GH_AXI_PR_SLEEP="${FM_TEST_GH_AXI_PR_SLEEP:-0}" \
       FM_TEST_ISSUE_STATE="${FM_TEST_ISSUE_STATE:-open}" \
       FM_TEST_ISSUE_LABELS="${FM_TEST_ISSUE_LABELS:-agent-in-progress}" \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
@@ -3395,6 +3397,35 @@ test_merged_poll_issue_close_failure_keeps_the_merged_wake() {
   pass "an issue-close failure leaves the merged wake and poll retirement intact"
 }
 
+test_merged_poll_issue_close_timeout_keeps_the_merged_wake() {
+  local dir state rc
+  dir=$(make_case merged-issue-close-timeout)
+  state="$dir/home/state"
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 o/r#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_CHECK_FORCE_FALLBACK=1 FM_TEST_GH_STATE=MERGED FM_TEST_GH_AXI_PR_STATE=merged \
+  FM_TEST_GH_AXI_PR_SLEEP=3 FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "issue-close timeout changed the watcher result: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "an issue-close timeout suppressed the merged notification: $(cat "$dir/watch.out")" ;;
+  esac
+  assert_grep 'pr view 1 -R o/r' "$dir/gh-axi.log" \
+    "the issue closer never reached the hanging forge"
+  assert_no_grep 'issue close' "$dir/gh-axi.log" \
+    "the timed-out closer mutated an issue"
+  assert_grep 'linked issues were not all closed for task-a after https://github.com/o/r/pull/1 merged: the issue close exceeded its 1s bound' \
+    "$state/.watch-triage.log" "the issue-close timeout lost its bound-expiry reason"
+  assert_poll_absent "$state" task-a
+  ack_watcher_cycle "$state" || fail "merged wake acknowledgement failed after an issue-close timeout"
+  pass "an issue-close timeout records its bound and preserves the merged wake and poll retirement"
+}
+
 test_merged_poll_logs_an_already_closed_receipt() {
   local dir state rc
   dir=$(make_case merged-already-closed-issue)
@@ -3981,6 +4012,7 @@ test_gitlab_merge_watch
 test_merged_poll_retires_once
 test_merged_poll_closes_linked_issues
 test_merged_poll_issue_close_failure_keeps_the_merged_wake
+test_merged_poll_issue_close_timeout_keeps_the_merged_wake
 test_merged_poll_logs_an_already_closed_receipt
 test_persistent_secondmate_retirement_is_poll_only
 test_retirement_crash_recovery

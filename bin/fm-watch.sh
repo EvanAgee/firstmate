@@ -909,7 +909,7 @@ run_check_process() {  # <timeout> <command> [args...]
     exec gtimeout "$check_timeout" bash "$c" "$@"
   else
     # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$check_timeout" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
+    exec perl -e 'my $t = shift; my $owned = shift; my $expired = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = sub { if (length $expired) { open my $f, ">", $expired or die $!; print {$f} "124\n"; close $f } $stop->() }; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$check_timeout" "${FM_CHECK_OWNED_GROUP:-0}" "${FM_CHECK_TIMEOUT_FILE:-}" bash "$c" "$@"
   fi
 }
 
@@ -921,13 +921,16 @@ FM_ACTIVE_CHECK_PID=
 FM_ACTIVE_CHECK_PGID=
 FM_ACTIVE_META_LOCK=
 FM_CHECK_OUTPUT=
+FM_CHECK_TIMEOUT_FILE=
 FM_CHECK_RESULT=
 FM_CHECK_STATUS=
 FM_CHECK_SIGNAL_PENDING=
 
 fm_check_output_cleanup() {
   [ -z "$FM_CHECK_OUTPUT" ] || rm -f -- "$FM_CHECK_OUTPUT"
+  [ -z "$FM_CHECK_TIMEOUT_FILE" ] || rm -f -- "$FM_CHECK_TIMEOUT_FILE"
   FM_CHECK_OUTPUT=
+  FM_CHECK_TIMEOUT_FILE=
 }
 
 fm_active_check_stop() {
@@ -970,6 +973,8 @@ run_check_capture() {
   FM_CHECK_STATUS=
   FM_CHECK_OUTPUT=$(mktemp "$STATE/.fm-check-output.XXXXXX") || return 1
   chmod 0600 "$FM_CHECK_OUTPUT" || { fm_check_output_cleanup; return 1; }
+  FM_CHECK_TIMEOUT_FILE=$(mktemp "$STATE/.fm-check-output.timeout.XXXXXX") \
+    || { fm_check_output_cleanup; return 1; }
   FM_CHECK_SIGNAL_PENDING=
   trap 'FM_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
@@ -991,6 +996,9 @@ run_check_capture() {
   [ -z "$FM_CHECK_SIGNAL_PENDING" ] || exit 1
   wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null
   FM_CHECK_STATUS=$?
+  if [ "$FM_CHECK_STATUS" -eq 137 ] && [ -s "$FM_CHECK_TIMEOUT_FILE" ]; then
+    FM_CHECK_STATUS=124
+  fi
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || return 1
   FM_CHECK_RESULT=$(cat "$FM_CHECK_OUTPUT" 2>/dev/null || true)
