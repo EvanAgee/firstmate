@@ -205,6 +205,44 @@ test_stale_terminal_escalates() {
   pass "stale + terminal status escalates immediately"
 }
 
+test_stalled_stale_escalates_with_diagnosis() {
+  local dir state task win case_name last reason crew_line expected
+  for case_name in paused terminal working enriched wedge; do
+    dir=$(make_supercase "stalled-stale-$case_name")
+    make_fake_crew_state "$dir/fakebin" >/dev/null
+    state="$dir/state"
+    task=stalled
+    win=sess:fm-stalled
+    fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+    case "$case_name" in
+      terminal) last='done: earlier checks green' ;;
+      working) last='working: validating' ;;
+      *) last='paused: [key=await-merge] waiting on merge' ;;
+    esac
+    printf '%s\n' "$last" > "$state/$task.status"
+    printf '%s' "$last" > "$state/.subsuper-seen-status-$task"
+    stale_marker_record "$win" "$state"
+    pause_marker_record "$win" "$state"
+    crew_line='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+    expected="stale: $win (pipeline stalled 13h at review, run 01RUN, agent none)"
+    reason="stale: $win"
+    case "$case_name" in
+      enriched)
+        reason=$expected
+        crew_line='state: unknown · source: none · temporarily unreadable' ;;
+      wedge) reason="stale: $win (idle 500s, possible wedge, escalation 1)" ;;
+    esac
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_FAKE_CREW_STATE="$crew_line" \
+      FM_ESCALATE_BATCH_SECS=999999 LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" \
+      handle_wake "$reason" "$state"
+    [ "$(cat "$state/.subsuper-escalations" 2>/dev/null)" = "$expected" ] \
+      || fail "$case_name stalled wake did not retain its diagnosis in the escalation buffer"
+    assert_absent "$state/.subsuper-stale-$task" "stalled wake retained wedge aging"
+    assert_absent "$state/.subsuper-paused-$task" "stalled wake retained pause absorption"
+  done
+  pass "away stale classification preserves stalled diagnoses over historical status and wake detail"
+}
+
 # A DECLARED external-wait pause (paused:) is neither a wedge nor a terminal
 # escalation: classify_stale returns the `pause` action so handle_wake records a
 # pause marker (long re-surface cadence) rather than a wedge stale marker.
@@ -1856,6 +1894,13 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    "$test_name"
+  done
+  exit 0
+fi
+
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
@@ -1866,6 +1911,7 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_stale_terminal_escalates
+test_stalled_stale_escalates_with_diagnosis
 test_stale_paused_classifies_pause
 test_handle_wake_paused_records_pause_marker
 test_handle_wake_paused_signal_records_pause_marker

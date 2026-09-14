@@ -844,6 +844,41 @@ test_declared_pause_with_live_agent_stays_none() {
   fi
 }
 
+test_working_hash_transition_surfaces_stalled_diagnosis() {
+  local dir state window key status_kind status_line seen reason
+  for status_kind in working terminal; do
+    case "$status_kind" in
+      working) status_line='working: validating' ;;
+      terminal) status_line='done: earlier checks green' ;;
+    esac
+    dir=$(make_wedge_case "working-stalled-$status_kind" ws "$status_line" 'mode=no-mistakes')
+    state="$dir/state"
+    window=fmtest:fm-ws
+    key=fmtest_fm-ws
+    seed_stale_pane "$dir" ws "$window" 'idle, unchanged validation pane'
+    cp "$state/.hash-$key" "$state/.stale-$key"
+    if [ "$status_kind" = terminal ]; then
+      printf '1\n' > "$state/.stale-since-$key"
+    else
+      date +%s > "$state/.stale-since-$key"
+    fi
+    seen=$(cat "$state/.seen-ws_status")
+    export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+    FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,13h,"1s ago: log: last activity","-",fix 1')
+    export FM_FAKE_AXI_STATUS
+    run_for_seconds "$dir" "$window" 60
+    reason="stale: $window (pipeline stalled 13h at review, run 01RUN, agent none)"
+    grep -qF "$reason" "$state/.wake-queue" 2>/dev/null \
+      || fail "$status_kind working-to-stalled transition lost its diagnosis on an unchanged hash"
+    [ ! -e "$state/.stale-since-$key" ] || fail "stalled transition retained its working timer"
+    [ ! -e "$state/.wedge-escalations-$key" ] || fail "stalled transition entered ordinary wedge escalation"
+    [ "$(cat "$state/.seen-ws_status")" = "$seen" ] || fail "stalled transition changed the signal suppressor"
+  done
+  unset FM_FAKE_CREW_STATE FM_FAKE_AXI_STATUS
+  ok "an unchanged working hash surfaces its stalled transition before wedge absorption"
+}
+
 test_active_pipeline_blocks_escalation() {
   local dir out now
   dir=$(make_wedge_case pipeline-active pa 'working: implementing' 'mode=no-mistakes')
@@ -1028,6 +1063,7 @@ fi
 
 test_declared_pause_beats_run_step_done
 test_declared_pause_with_live_agent_stays_none
+test_working_hash_transition_surfaces_stalled_diagnosis
 test_active_pipeline_blocks_escalation
 test_quiet_pipeline_and_idle_pane_escalates
 test_active_pipeline_resets_the_wedge_timer

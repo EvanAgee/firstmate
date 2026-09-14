@@ -383,8 +383,13 @@ classify_signal() {  # <reason-after-colon> <state>
 # first sight of a non-terminal stale it returns "self" and the caller records a
 # timestamp marker; persistence is escalated by housekeeping's recheck, not here.
 classify_stale() {  # <window> <state>
-  local win=$1 state=$2 task last seen
+  local win=$1 state=$2 task last seen stalled_detail
   task=$(window_to_task "$win" "$state")
+  stalled_detail=$(crew_state_stalled_detail "$(FM_STATE_OVERRIDE="$state" crew_state_line "$task")")
+  if [ -n "$stalled_detail" ]; then
+    printf 'escalate|stale: %s (%s)' "$win" "$stalled_detail"
+    return
+  fi
   last=$(last_status_line "$state/$task.status")
   if [ -n "$last" ] && status_is_paused "$last"; then
     # A DECLARED external-wait pause (fm-classify-lib.sh): an idle pane is EXPECTED,
@@ -1074,9 +1079,16 @@ handle_wake() {  # <reason> <state>
     stale:*)  kind=stale; arg="${reason#stale: }"; stale_detail="${arg#"$arg"}"
               case "$arg" in *" ("*) stale_detail="${arg#*" ("}"; arg="${arg%% \(*}" ;; esac
               decision=$(classify_stale "$arg" "$state")
-              case "$stale_detail" in
-                idle\ *s,\ possible\ wedge,\ escalation\ *)
-                  decision="escalate|${reason#stale: }" ;;
+              case "$decision" in
+                'escalate|stale: '*) pause_marker_remove "$arg" "$state" ;;
+                *)
+                  case "$stale_detail" in
+                    idle\ *s,\ possible\ wedge,\ escalation\ *)
+                      decision="escalate|${reason#stale: }" ;;
+                    pipeline\ stalled\ *)
+                      decision="escalate|$reason"
+                      pause_marker_remove "$arg" "$state" ;;
+                  esac ;;
               esac ;;
     check:*)  decision=$(classify_check "$reason") ;;
     heartbeat|heartbeat:*) decision=$(classify_heartbeat) ;;

@@ -514,7 +514,20 @@ finished_awaiting_merge() {  # <window> <task>
 # line that an active run/busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> [check-pipeline]
   local win=$1 since_file=$2 label=$3 escalation_file=$4 check_pipeline=${5:-0}
-  local since age n reason task
+  local since age n reason task stalled_detail
+  if [ "$check_pipeline" = 1 ]; then
+    task=$(window_to_task "$win" "$STATE")
+    stalled_detail=$(crew_state_stalled_detail "$(crew_state_line "$task")")
+    if [ -n "$stalled_detail" ]; then
+      if [ -e "$since_file" ]; then
+        reason="stale: $win ($stalled_detail)"
+        fm_wake_append stale "$win" "$reason" || exit 1
+        rm -f "$since_file" "$escalation_file"
+        wake "$reason"
+      fi
+      return
+    fi
+  fi
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
