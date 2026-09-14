@@ -35,8 +35,23 @@ case "${1:-}" in
     printf '@fake\n'
     exit 0
     ;;
-  has-session|new-session|send-keys|kill-window)
+  has-session|new-session|send-keys)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    exit 0
+    ;;
+  kill-window)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    target=
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -t ] || { target=$2; break; }
+      shift
+    done
+    if [ -n "$target" ] && [ -f "$0.windows" ]; then
+      window=${target##*:}
+      window=${window#=}
+      awk -v window="$window" '$0 != window' "$0.windows" > "$0.windows.next"
+      mv "$0.windows.next" "$0.windows"
+    fi
     exit 0
     ;;
   list-windows)

@@ -50,7 +50,7 @@ The shared resolver in [`bin/fm-tmux-lib.sh`](../bin/fm-tmux-lib.sh) proves exac
 Canonical `fm-<id>` names always mean whole windows, including names such as `fm-v1.0`.
 If that window is gone, `session:fm-v1.0` cannot select pane 0 of a live `fm-v1` sibling.
 To select a pane explicitly, use its stable `%<pane-id>` or a numeric window-and-pane selector.
-Noncanonical selectors such as `session:editor.0` select pane 0 of `editor` only when no window is literally named `editor.0`.
+Numeric selectors such as `session:1.0` select pane 0 of window `1` only when no window is literally named `1.0`.
 Native relative window selectors such as `session:+1` and `session:-1` remain supported for explicit operator targets.
 
 Captures and explicit key sends resolve a stable pane ID before acting.

@@ -39,6 +39,40 @@ PANE="$TMP_ROOT/pane.txt"
 ALPHA_ORIGIN=
 BETA_ORIGIN=
 
+test_fake_tmux_create_kill_relaunch_preserves_sibling() {
+  local fakebin log inventory remaining
+  fakebin=$(make_fake_tmux "$TMP_ROOT/fake-window-lifecycle")
+  log="$TMP_ROOT/fake-window-lifecycle/tmux.log"
+  inventory="$fakebin/tmux.windows"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_LOG="$log" bash -s -- "$ROOT" "$TMP_ROOT" <<'SH' \
+    || fail "production tmux create-kill-relaunch sequence failed"
+    set -u
+    root=$1
+    tmp_root=$2
+    # shellcheck source=bin/fm-backend.sh disable=SC1091
+    . "$root/bin/fm-backend.sh"
+    fm_backend_source tmux
+
+    fm_backend_tmux_create_task firstmate fm-design "$tmp_root" >/dev/null
+    fm_backend_tmux_create_task firstmate fm-design.0 "$tmp_root" >/dev/null
+    fm_backend_kill tmux firstmate:fm-design
+    remaining=$(tmux list-windows -t firstmate -F '#{window_name}')
+    if [ "$remaining" != fm-design.0 ]; then
+      printf 'fake kill-window did not preserve only the sibling: %s\n' "$remaining" >&2
+      exit 1
+    fi
+    fm_backend_tmux_create_task firstmate fm-design "$tmp_root" >/dev/null
+SH
+
+  remaining=$(PATH="$fakebin:$PATH" FM_FAKE_TMUX_LOG="$log" tmux list-windows -t firstmate -F '#{window_name}')
+  [ "$remaining" = $'fm-design.0\nfm-design' ] || fail "fake relaunch inventory is wrong: $remaining"
+  assert_grep 'kill-window -t =firstmate:=fm-design' "$log" "production kill did not send the expected exact-name target"
+  [ "$(grep -Fxc 'fm-design' "$inventory")" -eq 1 ] || fail "fake relaunch did not recreate the target exactly once"
+  [ "$(grep -Fxc 'fm-design.0' "$inventory")" -eq 1 ] || fail "fake relaunch disturbed the similarly named sibling"
+  pass "fake tmux: create, kill, and relaunch preserve the sibling inventory"
+}
+
 # --- shared world + seed ----------------------------------------------------
 setup_world() {
   mkdir -p "$HOME_DIR/projects" "$HOME_DIR/data" "$HOME_DIR/state"
@@ -226,6 +260,7 @@ phase_teardown() {
   pass "teardown: removes the home, then clears meta and the registry route"
 }
 
+test_fake_tmux_create_kill_relaunch_preserves_sibling
 setup_world
 phase_seed
 phase_spawn

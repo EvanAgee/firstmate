@@ -666,12 +666,6 @@ run_send_case() {  # <bin-root> <fakebin> <log> <home> -- <send args...>
     "$bin/bin/fm-send.sh" "$@" >/dev/null 2>&1
 }
 
-strip_send_preflight() {  # <log>
-  local preflight
-  preflight=$'tmux\x1fdisplay-message\x1f-p\x1f-t\x1fsess:win\x1f#{pane_id}'
-  awk -v preflight="$preflight" '$0 != preflight { print }' "$1"
-}
-
 # The byte-identical old-vs-new tmux log comparison this test used to run
 # covered the P1 backend extraction, which promised an unchanged command
 # sequence. The composer consolidation (fm-composer-thin-adapter-refactor-r1)
