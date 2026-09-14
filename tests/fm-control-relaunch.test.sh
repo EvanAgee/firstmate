@@ -130,9 +130,9 @@ case "${1:-}" in
         *) shift ;;
       esac
     done
-    [ "$op" != new-session ] || : > "$D/server"
+    [ "$op" != new-session ] || { : > "$D/server"; : > "$D/windows"; }
     [ -f "$D/server" ] || exit 1
-    printf '%s\n' "$name" > "$D/windows"
+    printf '%s\n' "$name" >> "$D/windows"
     printf '%s' "$cwd" > "$D/cwd"
     printf '@fake\n'
     exit 0 ;;

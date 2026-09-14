@@ -1394,7 +1394,7 @@ reap_task_backend_process_group() {  # <label>
     leader=$(fm_tmux_display_message "$T" '#{pane_pid}') || leader=""
   fi
   case "$leader" in ''|*[!0-9]*)
-    echo "warning: lsof is unavailable; cannot resolve the tmux pane process group for $ID" >&2
+    echo "warning: lsof is unavailable; cannot resolve the tmux pane leader for $ID" >&2
     return 0
     ;;
   esac

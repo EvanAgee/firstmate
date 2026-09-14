@@ -29,7 +29,7 @@ case "${1:-}" in
   new-window)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     while [ "$#" -gt 1 ]; do
-      [ "$1" != -n ] || { printf '%s\n' "$2" > "$0.windows"; break; }
+      [ "$1" != -n ] || { printf '%s\n' "$2" >> "$0.windows"; break; }
       shift
     done
     printf '@fake\n'
