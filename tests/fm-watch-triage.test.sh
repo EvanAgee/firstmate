@@ -20,6 +20,8 @@ set -u
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 # shellcheck source=/dev/null
+. "$ROOT/bin/fm-backend.sh"
+# shellcheck source=/dev/null
 . "$ROOT/bin/fm-classify-lib.sh"
 
 WATCH="$ROOT/bin/fm-watch.sh"
@@ -2116,6 +2118,13 @@ test_watcher_refreshes_task_pane_tail() {
     fail "watcher did not refresh the pane tail on the next cycle: $(cat "$out")"
   pass "watcher refreshes the bounded pane snapshot each supervision cycle"
 }
+
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    "$test_name"
+  done
+  exit 0
+fi
 
 test_reap_handles_term_responsive_and_stuck_children
 test_signal_reason_is_actionable_classifier

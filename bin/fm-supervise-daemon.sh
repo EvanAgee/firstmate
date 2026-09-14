@@ -380,8 +380,9 @@ classify_signal() {  # <reason-after-colon> <state>
 }
 
 # classify_stale decides the WAKE itself (one-shot per distinct hash). On a
-# first sight of a non-terminal stale it returns "self" and the caller records a
-# timestamp marker; persistence is escalated by housekeeping's recheck, not here.
+# first sight of a non-terminal stale without a stalled diagnosis, it returns
+# "self" and the caller records a timestamp marker; persistence is escalated by
+# housekeeping's recheck, not here. A stalled diagnosis escalates immediately.
 classify_stale() {  # <window> <state>
   local win=$1 state=$2 task last seen stalled_detail
   task=$(window_to_task "$win" "$state")

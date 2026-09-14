@@ -87,8 +87,8 @@ fm_nm_age_secs() {  # <duration>
 }
 
 # The first active_steps[N]{...} row whose status matches <status-regex> (an
-# extended-regex alternation, e.g. "running|fixing"), as
-# "<step>|<status>|<active_for>|<last_activity>|<agent_pid>". Empty when the
+# extended-regex alternation, e.g. "running|fixing"), retaining its original
+# comma-separated TOON text for fm_nm_active_step_parse. Empty when the
 # table is absent or no row matches. Scoped to ONLY the active_steps table's
 # own declared row count: axi status renders sibling TOON tables (gates[N],
 # findings[N]) from the same output, and a matching row in one of those must

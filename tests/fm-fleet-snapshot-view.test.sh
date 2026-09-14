@@ -870,6 +870,13 @@ SH
   pass "failed task json slurp fails the snapshot"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    "$test_name"
+  done
+  exit 0
+fi
+
 test_stalled_work_and_decisions_remain_visible
 test_empty_fleet_json
 test_fixture_snapshot_json

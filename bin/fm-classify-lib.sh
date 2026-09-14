@@ -1291,8 +1291,7 @@ signal_reason_is_actionable() {  # <file> ...
 # One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
-# NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
-# run it only on no-verb signal and first-sighting stale paths, never every wake.
+# Use crew_absorb_class_of_line when the caller already has a current-state line.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
   crew_absorb_class_of_line "$(crew_state_line "$1")"
@@ -1303,6 +1302,8 @@ crew_absorb_class() {  # <id>
 # to a bounded `no-mistakes axi status` and may make a second `axi logs` call,
 # so a caller that needs both the absorb class and the line's own fields reads
 # it ONCE here and passes the line to crew_absorb_class_of_line.
+# Successful reads also reconcile stalled-episode recovery through
+# crew_reconcile_stall_recovery; this wrapper can write supervision state.
 crew_state_line() {  # <id>
   local id=$1 line
   [ -n "$id" ] || return 0
@@ -1335,16 +1336,8 @@ crew_state_source() {  # <state-line>
   printf '%s' "${src%% *}"
 }
 
-# The detail text of an already-read state line ONLY when its state is
-# literally `stalled` (an active run-step whose agent went quiet past
-# FM_PIPELINE_PARKED_MAX, or an awaiting_agent park with no live PID - see
-# bin/fm-crew-state.sh); empty for every other state, including `working`.
-# crew_absorb_class_of_line already classes `stalled` as `none` (it matches no
-# absorb rule), so this never needs to change absorb behavior - it only lets a
-# caller that is about to surface the wake attach the crew's own diagnosis
-# instead of a bare "stale: <endpoint>" line. The wire format is
-# fm-crew-state.sh's fixed "state: X · source: Y · detail" (its one SEP
-# owner); detail is everything after the second " · ".
+# Extract stalled detail using the output format owned by fm-crew-state.sh's
+# header; return empty for every other state.
 crew_state_stalled_detail() {  # <state-line>
   local line=$1 state rest
   case "$line" in state:*) ;; *) return 0 ;; esac
