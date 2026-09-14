@@ -1124,7 +1124,7 @@ test_daemon_first_multiple_generic_stales_share_one_episode() {
   [ "$(printf '%s\n' "$selected" | cut -f2)" = 3 ] || fail "generic dedup did not retain the newest row"
   shared_episode_ingest "$dir" || return
   [ "$(cat "$state/.stale-since-fmtest_fm-ps.stalled")" = 'review, run 01RUN, agent none' ] || fail "daemon-first detection did not begin a shared episode"
-  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "daemon-first episode did not use generation zero"
+  [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "daemon-first episode did not use generation zero"
   shared_episode_buffer "$dir" 1
   append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
   shared_episode_ingest "$dir" || return
@@ -1143,7 +1143,7 @@ test_daemon_first_recovery_separates_identical_stall() {
   append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
   shared_episode_ingest "$dir" || return
   shared_episode_buffer "$dir" 2
-  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "identical second daemon-first stall was lost"
+  [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "identical second daemon-first stall was lost"
   append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
   shared_episode_ingest "$dir" || return
   shared_episode_buffer "$dir" 2
@@ -1163,7 +1163,7 @@ test_delayed_detailed_delivery_keeps_publication_episode() {
   [ "$(printf '%s\n' "$selected" | wc -l | tr -d ' ')" = 2 ] || fail "dedup discarded a delayed episode"
   shared_episode_ingest "$dir" || return
   shared_episode_buffer "$dir" 2
-  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "delayed delivery consumed the next episode or moved the receipt backward"
+  [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "delayed delivery consumed the next episode or moved the receipt backward"
   sequence=$(cat "$state/.wake-queue.seq")
   poll_stalled_case "$dir" fmtest:fm-ps || return
   [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "delayed second episode repeated"
@@ -1208,7 +1208,7 @@ test_concurrent_watcher_and_daemon_detection_share_episode() {
     wait "$watcher_pid" || fail "$first-first watcher poll failed"
     if [ -s "$state/.wake-queue" ]; then shared_episode_ingest "$dir" || return; fi
     [ "$(cat "$state/.stale-since-fmtest_fm-ps.stalled")" = "$(cat "$state/.subsuper-stalled-ps")" ] || fail "detectors disagreed on active identity"
-    [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "concurrent detectors created distinct generations"
+    [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "concurrent detectors created distinct generations"
     [ ! -s "$state/.wake-queue" ] || fail "concurrent rows were not acknowledged"
     shared_episode_buffer "$dir" 1
   done
@@ -1240,7 +1240,7 @@ test_unknown_observation_preserves_active_episode() {
   shared_episode_recover "$dir" || return
   poll_stalled_case "$dir" fmtest:fm-ps || return
   shared_episode_ingest "$dir" || return
-  [ "$(cat "$receipt.generation")" = 1 ] || fail "known recovery after unknown did not rearm"
+  [ "$(head -n 1 "$receipt.generation")" = 1 ] || fail "known recovery after unknown did not rearm"
   shared_episode_buffer "$dir" 2
   ok "unknown observations preserve episode records and repeated delivery suppression"
 }
@@ -1263,12 +1263,66 @@ test_deduped_stall_rows_are_handled_in_sequence_order() {
   [ "$(printf '%s\n' "$selected" | cut -f2)" = "$(printf '11\n9\n10')" ] || fail "fixture did not exercise newest-per-key presentation order"
   shared_episode_ingest "$dir" || return
   shared_episode_buffer "$dir" 2
-  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "selected rows moved the receipt backward"
+  [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "selected rows moved the receipt backward"
   append_wake "$state" stale "$one" "stale: fmtest:fm-ps ($detail)"
   append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
   shared_episode_ingest "$dir" || return
   shared_episode_buffer "$dir" 2
   ok "selected durable rows are delivered in numeric sequence order"
+}
+
+test_generic_before_detailed_episodes_delivers_each_once() {
+  local dir state keys
+  dir=$(make_shared_episode_case generic-before-episodes)
+  state="$dir/state"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  shared_episode_pending_poll "$dir" || return
+  shared_episode_recover "$dir" watcher || return
+  shared_episode_pending_poll "$dir" || return
+  [ "$(cut -f2 "$state/.wake-queue")" = "$(printf '1\n2\n3')" ] || fail "generic-first fixture has unexpected queue sequences"
+  keys=$(cut -f4 "$state/.wake-queue")
+  [ "$keys" = "$(printf '%s\n%s\n%s' fmtest:fm-ps 'fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none' 'fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none')" ] || fail "generic-first fixture lost its publication episodes"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "older detailed row moved the delivery generation backward"
+  [ "$(sed -n '2,$p' "$state/.subsuper-stalled-ps.generation" | sort)" = "$(printf '%s\n%s' '0|review, run 01RUN, agent none' '1|review, run 01RUN, agent none')" ] || fail "delivery receipt did not retain both delivered episodes"
+  ok "a generic stale before two detailed episodes buffers each episode once"
+}
+
+test_detailed_episodes_do_not_repeat_after_failed_acknowledgement() {
+  local dir state rows receipt
+  dir=$(make_shared_episode_case episode-ack-replay)
+  state="$dir/state"
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  shared_episode_recover "$dir" watcher || return
+  shared_episode_pending_poll "$dir" || return
+  rows=$(cat "$state/.wake-queue")
+  [ "$(cut -f4 "$state/.wake-queue")" = "$(printf '%s\n%s' 'fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none' 'fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none')" ] || fail "replay fixture did not queue both detailed episodes"
+  printf '#!/usr/bin/env bash\nREAL_MV=%q\n' "$(command -v mv)" > "$dir/fakebin/mv"
+  cat >> "$dir/fakebin/mv" <<'SH'
+last=${!#}
+if [ "$last" = "$FM_HOME/state/.wake-queue" ]; then
+  exit 1
+fi
+exec "$REAL_MV" "$@"
+SH
+  chmod +x "$dir/fakebin/mv"
+  if run_poll_daemon "$dir" handle_durable_wakes 'stale: fmtest:fm-ps' > "$dir/failed-ack.out" 2> "$dir/failed-ack.err"; then
+    fail "queue acknowledgement fault was reported as success"
+  fi
+  grep -F 'acknowledged wakes could not be consumed safely' "$dir/failed-ack.err" >/dev/null || fail "fixture did not reach the production acknowledgement failure"
+  [ "$(cat "$state/.wake-queue")" = "$rows" ] || fail "failed acknowledgement consumed durable episode rows"
+  shared_episode_buffer "$dir" 2
+  receipt=$(cat "$state/.subsuper-stalled-ps.generation")
+  rm "$dir/fakebin/mv"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = "$receipt" ] || fail "replay rewrote previously delivered episodes"
+  case "$(cat "$state/.watcher-down")" in
+    acked:handling:*) ;;
+    *) fail "retry did not acknowledge the durable recovery episode" ;;
+  esac
+  ok "acknowledgement retry consumes both detailed rows without buffering them again"
 }
 
 test_daemon_only_recovery_rearms_same_stall_identity() {
@@ -1303,7 +1357,7 @@ SH
   [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "episode one was not buffered once"
   [ "$(cat "$marker")" = "$identity" ] && [ "$(cat "$receipt")" = "$identity" ] || fail "episode one identities differ"
   generation=$(run_in_watcher "$dir" crew_stalled_generation "$marker.generation")
-  [ "$(cat "$receipt.generation")" = "$generation" ] || fail "episode one generations differ"
+  [ "$(head -n 1 "$receipt.generation")" = "$generation" ] || fail "episode one generations differ"
   sequence=$(cat "$state/.wake-queue.seq")
   pane_hash=$(cat "$state/.hash-fmtest_fm-ps")
   poll_count=$(cat "$state/.count-fmtest_fm-ps")
@@ -1320,7 +1374,7 @@ SH
   [ "$(cat "$state/.count-fmtest_fm-ps")" = "$poll_count" ] || fail "watcher polled during daemon-only recovery"
   [ ! -e "$marker" ] && [ ! -e "$marker.hash" ] || fail "daemon recovery left publication suppressed"
   [ "$(cat "$marker.generation")" -eq "$((generation + 1))" ] || fail "daemon recovery did not advance the shared generation once"
-  [ "$(cat "$receipt")" = "$identity" ] && [ "$(cat "$receipt.generation")" = "$generation" ] || fail "recovery changed the prior delivery receipt"
+  [ "$(cat "$receipt")" = "$identity" ] && [ "$(head -n 1 "$receipt.generation")" = "$generation" ] || fail "recovery changed the prior delivery receipt"
   cp "$dir/axi.dead" "$dir/axi-status"
   poll_stalled_case "$dir" "$win" || return
   [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "daemon-only recovery hid the second agent death"
@@ -1329,7 +1383,7 @@ SH
   run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
     || { fail "daemon-only episode two failed durable ingestion"; return; }
   [ ! -s "$state/.wake-queue" ] || fail "episode two was not acknowledged"
-  [ "$(cat "$receipt.generation")" -eq "$((generation + 1))" ] || fail "episode two retained the old delivered generation"
+  [ "$(head -n 1 "$receipt.generation")" -eq "$((generation + 1))" ] || fail "episode two retained the old delivered generation"
   [ "$(cat "$state/.subsuper-escalations")" = "$(printf '%s\n%s' "$expected" "$expected")" ] || fail "daemon did not buffer exactly two episodes"
   sequence=$(cat "$state/.wake-queue.seq")
   poll_stalled_case "$dir" "$win" || return
@@ -1392,7 +1446,7 @@ SH
   [ "$(cat "$dir/recovery-line")" = 'state: working · source: run-step · validating (running)' ] || fail "live awaiting-agent PID did not prove recovery"
   [ "$(cat "$dir/recovery-count")" = 0 ] || fail "recovery was not observed on the changed-hash poll"
   [ "$(cat "$marker.generation")" = 1 ] || fail "changed-hash recovery did not rearm the stalled episode"
-  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "daemon observed recovery before ingestion"
+  [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "daemon observed recovery before ingestion"
   [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "same-identity death after changed-hash recovery was hidden"
   [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "recovery or second death published extra wakes"
   : > "$state/.afk"
@@ -1688,6 +1742,8 @@ test_delayed_detailed_delivery_keeps_publication_episode
 test_concurrent_watcher_and_daemon_detection_share_episode
 test_unknown_observation_preserves_active_episode
 test_deduped_stall_rows_are_handled_in_sequence_order
+test_generic_before_detailed_episodes_delivers_each_once
+test_detailed_episodes_do_not_repeat_after_failed_acknowledgement
 test_daemon_only_recovery_rearms_same_stall_identity
 test_changed_idle_pane_recovery_rearms_stall_before_housekeeping
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode

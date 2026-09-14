@@ -493,8 +493,11 @@ clear_pause_tracking() {  # <window> <state>
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
 }
 
-escalate_stalled() {
+escalate_stalled() (
   local win=$1 state=$2 detail=$3 episode=${4:-} task marker identity generation
+  local delivered_identity delivered_generation receipt_tmp=''
+  local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
+  . "$FM_DAEMON_DIR/fm-wake-lib.sh"
   task=$(window_to_task "$win" "$state")
   marker="$state/.subsuper-stalled-$(_stale_key "$task")"
   if [ -z "$episode" ]; then
@@ -503,16 +506,33 @@ escalate_stalled() {
   fi
   generation=${episode%%|*}
   identity=${episode#*|}
-  if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ] \
-    || [ "$(crew_stalled_generation "$marker.generation")" != "$generation" ]; then
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  trap 'rm -f "$receipt_tmp"; fm_lock_release "$FM_WAKE_QUEUE_LOCK"' EXIT
+  delivered_identity=$(cat "$marker" 2>/dev/null || true)
+  delivered_generation=$(crew_stalled_generation "$marker.generation")
+  if ! { [ "$delivered_identity" = "$identity" ] && [ "$delivered_generation" = "$generation" ]; } \
+    && ! grep -Fxq -- "$episode" "$marker.generation" 2>/dev/null; then
+    receipt_tmp=$(mktemp "$marker.generation.XXXXXX") || return 1
+    {
+      if [ "$generation" -ge "$delivered_generation" ]; then
+        printf '%s\n' "$generation"
+      else
+        printf '%s\n' "$delivered_generation"
+      fi
+      [ ! -f "$marker.generation" ] || sed -n '2,$p' "$marker.generation"
+      [ -z "$delivered_identity" ] || printf '%s|%s\n' "$delivered_generation" "$delivered_identity"
+      printf '%s\n' "$episode"
+    } | awk '!seen[$0]++' > "$receipt_tmp" || return 1
     escalate_add "$state" "stale: $win ($detail)" || return 1
-    printf '%s' "$generation" > "$marker.generation" || return 1
-    printf '%s' "$identity" > "$marker" || return 1
+    mv -f "$receipt_tmp" "$marker.generation" || return 1
+    if [ "$generation" -ge "$delivered_generation" ]; then
+      printf '%s' "$identity" > "$marker" || return 1
+    fi
     mark_escalated_seen stale "$win" "$state"
   fi
   stale_marker_remove "$win" "$state"
   pause_marker_remove "$win" "$state"
-}
+)
 
 reconcile_stalled_tracking() {
   local win=$1 state=$2 task crew_line marker

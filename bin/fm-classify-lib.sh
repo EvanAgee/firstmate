@@ -1421,7 +1421,7 @@ crew_stall_transition() (
 
 crew_stalled_generation() {
   local generation
-  generation=$(cat "$1" 2>/dev/null || true)
+  generation=$(head -n 1 "$1" 2>/dev/null || true)
   case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
   printf '%s' "$generation"
 }
