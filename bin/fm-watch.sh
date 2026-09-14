@@ -959,7 +959,8 @@ fm_active_check_stop() {
 }
 
 # Run one bounded check in its own tracked process group and return its output
-# in FM_CHECK_RESULT and the child's own exit status in FM_CHECK_STATUS. Set
+# in FM_CHECK_RESULT and its exit status in FM_CHECK_STATUS, normalizing a
+# Perl watchdog's status 137 to 124 only when its bound-expiry marker is set. Set
 # FM_CHECK_KEEP_STDERR=1 for a caller that has to read the child's diagnostics;
 # it folds stderr into the same capture, because a caller cannot wrap the
 # redirect around this function without blocking the main shell and defeating
@@ -1381,8 +1382,8 @@ while :; do
           # changes the merged wake this cycle already queued.
           #
           # It runs through run_check_capture, the same tracked bounded call
-          # every network-touching check in this loop uses, because it makes up
-          # to 1 + 2N forge calls with no timeout of their own. Running it any
+          # every network-touching check in this loop uses, because it can make
+          # several forge calls with no timeout of their own. Running it any
           # other way leaves the main shell blocked for the whole bound, so a
           # TERM from an operator or fm-guard is not serviced until it expires
           # and the hung child is never killed. Its diagnostics are kept because

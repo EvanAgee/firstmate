@@ -5,8 +5,11 @@
 # the issue open after the merge; firstmate closes it here instead.
 #
 # The issues come only from the task's own state/<id>.meta issues= field, which
-# bin/fm-spawn.sh records as comma-separated normalized owner/repo#<number>
-# refs. A task with no issues= field is a silent no-op, because most tasks ship
+# bin/fm-spawn.sh records as comma-separated lowercase owner/repo#<number>
+# refs. The entire list is validated before any forge call.
+# Positive zero-padded numbers are accepted and lose
+# their leading zeros in forge calls and receipts.
+# A task with no issues= field is a silent no-op, because most tasks ship
 # without a linked issue.
 #
 # For each linked issue:
