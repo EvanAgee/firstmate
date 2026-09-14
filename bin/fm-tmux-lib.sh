@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# fm-tmux-lib.sh — shared tmux pane primitives for firstmate.
+# fm-tmux-lib.sh - shared tmux pane primitives for firstmate.
 #
-# ONE tmux source for delivery-busy detection, composer capture primitives,
-# and verified submit.
+# Shared target resolution, delivery-busy detection, composer capture primitives,
+# and verified submit for tmux.
 # Both the away-mode daemon and bin/fm-send.sh reach these primitives through
 # backend dispatch, while bin/fm-composer-lib.sh owns the shared verdict.
 #
-# Composer shapes and verdicts are owned by bin/fm-composer-lib.sh.
-# This file owns only tmux's styled capture, cursor and Pi identity primitives,
-# delivery busy read, and submit conversions that consume the shared verdict.
+# Composer shapes and verdicts are owned by bin/fm-composer-lib.sh's
+# fm_composer_classify_screen, reused by every backend adapter.
+# This file owns tmux target resolution, styled capture, cursor and foreground
+# identity primitives, the capability descriptor, delivery busy reads, and submit
+# conversions that consume the shared verdict.
 # Styled captures remain internal; fm-peek and every human-facing capture stay
 # plain.
 #
@@ -32,15 +34,6 @@
 # All functions are `set -u` and `set -e` safe (guarded tmux calls, explicit
 # returns) so they can be sourced into either context.
 #
-# Composer classification is NOT owned here: every shape, glyph, border
-# family, geometry rule, and verdict decision lives in the shared
-# bin/fm-composer-lib.sh (fm_composer_classify_screen), sourced below and
-# reused by every backend adapter so the decision cannot drift. This file
-# keeps only tmux's genuine capture-side primitives - the styled pane
-# capture, the #{cursor_y} cursor read, the pi foreground-process identity
-# probe, and the capability descriptor - plus the busy detection and submit
-# cores that consume the shared verdict.
-
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 # shellcheck source=bin/fm-cursor-lib.sh

@@ -2988,11 +2988,10 @@ if [ "$KIND" = secondmate ]; then
     propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" \
     || echo "warning: secondmate $ID trace-context inheritance failed for $PROJ_ABS" >&2
 fi
-# #134 robustness: only tmux needs a worktree-detection target distinct from $T -
-# its rename-safe stable window id, set as WT_TARGET=$WID in the tmux branch above.
-# Every other backend addresses its pane/surface by the id already in $T, so default
-# WT_TARGET to $T for them (and for any future backend) - the shared treehouse-get +
-# worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
+# tmux resolves the created window id or recorded target to one pane for both
+# worktree discovery and launch input; $T remains the canonical metadata handle.
+# Other backends use the endpoint id already in $T. Default WT_TARGET before
+# resolution so every backend has a worktree-discovery target under set -u.
 : "${WT_TARGET:=$T}"
 LAUNCH_TARGET=$T
 if [ "$BACKEND" = tmux ]; then
