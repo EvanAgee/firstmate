@@ -1307,6 +1307,9 @@ crew_state_line() {  # <id>
   local id=$1 line
   [ -n "$id" ] || return 0
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  if declare -F crew_state_observed >/dev/null; then
+    crew_state_observed "$id" "$line"
+  fi
   case "$line" in state:*) printf '%s' "$line" ;; esac
 }
 

@@ -1033,6 +1033,78 @@ test_away_recovery_rearms_stall_without_housekeeping() {
   ok "watcher recovery rearms the same stalled identity without daemon housekeeping"
 }
 
+test_changed_idle_pane_recovery_rearms_stall_before_housekeeping() {
+  local dir state win expected sequence marker
+  dir=$(make_wedge_case changed-pane-recovery ps 'paused: [key=await-merge] waiting for merge' 'mode=no-mistakes')
+  state="$dir/state"
+  win=fmtest:fm-ps
+  marker="$state/.stale-since-fmtest_fm-ps.stalled"
+  seed_stale_pane "$dir" ps "$win" 'unchanged idle validation pane'
+  axi_status_for "$dir" '  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1' > "$dir/axi.dead"
+  axi_status_for "$dir" '  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","@PID@",fix 1' > "$dir/axi.live"
+  cp "$dir/axi.dead" "$dir/axi-status"
+  cat > "$dir/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+cat "$FM_HOME/axi-status"
+SH
+  chmod +x "$dir/fakebin/no-mistakes"
+  printf '#!/usr/bin/env bash
+REAL_CREW_STATE=%q
+' "$ROOT/bin/fm-crew-state.sh" > "$dir/fakebin/fm-crew-state.sh"
+  cat >> "$dir/fakebin/fm-crew-state.sh" <<'SH'
+if [ -e "$FM_HOME/recover-once" ]; then
+  rm -f "$FM_HOME/recover-once"
+  sleep 60 &
+  live_pid=$!
+  trap 'kill "$live_pid" 2>/dev/null || true; wait "$live_pid" 2>/dev/null || true' EXIT
+  sed "s/@PID@/$live_pid/" "$FM_HOME/axi.live" > "$FM_HOME/axi-status"
+  "$REAL_CREW_STATE" "$@" > "$FM_HOME/recovery-line"
+  cat "$FM_HOME/state/.count-fmtest_fm-ps" > "$FM_HOME/recovery-count"
+  cp "$FM_HOME/axi.dead" "$FM_HOME/axi-status"
+  cat "$FM_HOME/recovery-line"
+else
+  "$REAL_CREW_STATE" "$@"
+fi
+SH
+  : > "$state/.afk"
+  poll_stalled_case "$dir" "$win" || return
+  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "initial awaiting-agent death lost its diagnosis"
+  run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+    || { fail "initial changed-pane episode failed durable ingestion"; return; }
+  [ ! -s "$state/.wake-queue" ] || fail "initial episode was not acknowledged"
+  [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "initial episode was not buffered once"
+  sequence=$(cat "$state/.wake-queue.seq")
+  rm -f "$state/.afk"
+  printf '%s' 'changed idle validation pane during recovery' > "$dir/pane.txt"
+  : > "$dir/recover-once"
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(cat "$dir/recovery-line")" = 'state: working · source: run-step · validating (running)' ] || fail "live awaiting-agent PID did not prove recovery"
+  [ "$(cat "$dir/recovery-count")" = 0 ] || fail "recovery was not observed on the changed-hash poll"
+  [ "$(cat "$marker.generation")" = 1 ] || fail "changed-hash recovery did not rearm the stalled episode"
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "daemon observed recovery before ingestion"
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "same-identity death after changed-hash recovery was hidden"
+  [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "recovery or second death published extra wakes"
+  : > "$state/.afk"
+  run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+    || { fail "second changed-pane episode failed durable ingestion"; return; }
+  [ ! -s "$state/.wake-queue" ] || fail "second episode was not acknowledged"
+  [ "$(cat "$state/.subsuper-escalations")" = "$(printf '%s\n%s' "$expected" "$expected")" ] || fail "daemon did not preserve exactly one notification per episode"
+  sequence=$(cat "$state/.wake-queue.seq")
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "second episode repeated on another poll"
+  append_wake "$state" stale "$win" "$expected"
+  run_poll_daemon "$dir" handle_durable_wakes "$expected" \
+    || { fail "second episode replay failed durable ingestion"; return; }
+  [ ! -s "$state/.wake-queue" ] || fail "second episode replay was not acknowledged"
+  [ "$(cat "$state/.subsuper-escalations")" = "$(printf '%s\n%s' "$expected" "$expected")" ] || fail "daemon duplicated the second episode"
+  ok "changed idle pane recovery rearms a same-identity stall before daemon housekeeping"
+}
+
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode() {
   local dir state win key expected sequence reported_hash
   dir=$(make_wedge_case poll-stall-identity ps 'working: validating' 'mode=no-mistakes')
@@ -1304,6 +1376,7 @@ test_poll_reports_stall_after_generic_wedge_removed_timer
 test_poll_reports_stall_over_old_terminal_status_without_timer
 test_away_poll_reports_stall_after_generic_escalation_removed_marker
 test_away_recovery_rearms_stall_without_housekeeping
+test_changed_idle_pane_recovery_rearms_stall_before_housekeeping
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode
 test_working_hash_transition_surfaces_stalled_diagnosis
 test_active_pipeline_blocks_escalation
