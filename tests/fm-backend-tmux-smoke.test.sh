@@ -30,10 +30,12 @@ command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found"; exit 0; }
 REAL_TMUX=$(command -v tmux)
 SOCKET="fm-backend-smoke-$$"
 SHIM_DIR=
+SPAWN_TMP_OWNED=0
 trap cleanup_all EXIT
 
 cleanup_all() {
   "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+  [ "$SPAWN_TMP_OWNED" -eq 0 ] || rm -rf /tmp/fm-v1.0
   [ -n "${SHIM_DIR:-}" ] && rm -rf "$SHIM_DIR"
 }
 
@@ -395,6 +397,67 @@ cmp -s "$SHIM_DIR/expected-input" "$SHIM_DIR/intended-input" \
 tmux kill-window -t "$submit_window"
 [ "$(tmux display-message -p -t "$submit_sibling_pane" '#{window_name}')" = fm-v1 ] \
   || fail "submit cleanup removed the sibling window"
+
+spawn_home="$SHIM_DIR/spawn-home"
+spawn_project="$SHIM_DIR/spawn-project"
+spawn_worktree="$SHIM_DIR/spawn-worktree"
+mkdir -p "$spawn_home/state" "$spawn_home/config" "$spawn_home/data/v1.0" "$spawn_project"
+printf 'Exercise isolated fresh-spawn delivery.\n' > "$spawn_home/data/v1.0/brief.md"
+git -C "$spawn_project" init -q -b main || fail "could not initialize the spawn project"
+printf 'spawn fixture\n' > "$spawn_project/README.md"
+git -C "$spawn_project" add README.md
+git -C "$spawn_project" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' \
+  commit -qm initial || fail "could not commit the spawn fixture"
+git clone --quiet --bare "$spawn_project" "$SHIM_DIR/spawn-origin.git" \
+  || fail "could not create the fixture origin"
+git -C "$spawn_project" remote add origin "$SHIM_DIR/spawn-origin.git"
+git -C "$spawn_project" worktree add --quiet -b fm/v1.0 "$spawn_worktree" \
+  || fail "could not create the spawn worktree"
+cat > "$SHIM_DIR/treehouse" <<SH
+#!/usr/bin/env bash
+cd '$spawn_worktree' || exit 1
+exec /bin/bash --noprofile --norc
+SH
+chmod +x "$SHIM_DIR/treehouse"
+cat > "$SHIM_DIR/launch-worker" <<'SH'
+{ printf '%s\n' "$TMUX_PANE"; pwd -P; } > "$1"
+SH
+tmux set-environment -t "$SESSION" PATH "$PATH"
+tmux set-option -t "$SESSION" default-command '/bin/bash --noprofile --norc'
+tmux set-option -t "$SESSION" default-shell /bin/bash
+[ "$(tmux display-message -p -t "$submit_sibling_pane" '#{pane_index}')" = 0 ] \
+  || fail "the fresh-spawn sibling must own pane 0"
+mkdir -m 700 /tmp/fm-v1.0 || fail "cannot reserve the fresh-spawn task temp directory"
+SPAWN_TMP_OWNED=1
+if ! FM_HOME="$spawn_home" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$spawn_home/state" \
+  FM_DATA_OVERRIDE="$spawn_home/data" FM_CONFIG_OVERRIDE="$spawn_home/config" \
+  FM_PROJECTS_OVERRIDE="$spawn_home/projects" FM_SPAWN_NO_GUARD=1 FM_GATE_REFUSE_BYPASS=1 \
+  FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE=1 FM_API=0 TMUX="$(tmux display-message -p '#{socket_path}'),0,0" \
+  bash "$ROOT/bin/fm-spawn.sh" v1.0 "$spawn_project" \
+    "bash '$SHIM_DIR/launch-worker' '$SHIM_DIR/fresh-launch'" --mode local-only --yolo off --backend tmux \
+    > "$SHIM_DIR/fresh-spawn-output" 2>&1; then
+  fail "fresh dotted-task spawn failed: $(cat "$SHIM_DIR/fresh-spawn-output")"
+fi
+spawn_window=$(tmux list-windows -t "=$SESSION" -F '#{window_id} #{window_name}' \
+  | awk '$2 == "fm-v1.0" { print $1 }')
+[ -n "$spawn_window" ] || fail "fresh spawn did not create the canonical window"
+spawn_pane=$(tmux display-message -p -t "$spawn_window" '#{pane_id}')
+printf '%s\n' "$spawn_pane" "$(cd "$spawn_worktree" && pwd -P)" > "$SHIM_DIR/expected-launch"
+for ((i=0; i<100; i++)); do
+  cmp -s "$SHIM_DIR/expected-launch" "$SHIM_DIR/fresh-launch" && break
+  sleep 0.1
+done
+cmp -s "$SHIM_DIR/expected-launch" "$SHIM_DIR/fresh-launch" \
+  || fail "fresh launch receipt differs: $(cat "$SHIM_DIR/fresh-launch" 2>/dev/null); pane: $(tmux capture-pane -p -t "$spawn_pane")"
+[ "$(fm_meta_get "$spawn_home/state/v1.0.meta" window)" = "$SESSION:fm-v1.0" ] \
+  || fail "fresh spawn did not retain the canonical window name in metadata"
+[ ! -s "$SHIM_DIR/sibling-input" ] || fail "fresh spawn sent text or Enter to the sibling"
+[ "$(tmux capture-pane -p -t "$submit_sibling_pane" -S 0 -E -)" = "$submit_sibling_screen" ] \
+  || fail "fresh spawn changed the sibling composer"
+tmux kill-window -t "$spawn_window"
+[ "$(tmux display-message -p -t "$submit_sibling_pane" '#{window_name}')" = fm-v1 ] \
+  || fail "fresh-spawn cleanup removed the sibling"
+pass "real tmux: fresh dotted-task launch executes in its own pane and leaves sibling input untouched"
 tmux kill-window -t "$submit_sibling"
 pass "real tmux: typing, Enter retries, and verification share the intended pane; missing tasks refuse input"
 

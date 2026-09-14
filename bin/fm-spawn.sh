@@ -2996,9 +2996,9 @@ fi
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
 LAUNCH_TARGET=$T
-if [ "$RELAUNCH" -eq 1 ] && [ "$BACKEND" = tmux ]; then
+if [ "$BACKEND" = tmux ]; then
   if ! LAUNCH_TARGET=$(fm_tmux_display_message "$WT_TARGET" '#{pane_id}') || [ -z "$LAUNCH_TARGET" ]; then
-    echo "error: task $ID's tmux pane could not be resolved; refusing to relaunch" >&2
+    echo "error: task $ID's tmux pane could not be resolved; refusing to launch" >&2
     exit 1
   fi
   WT_TARGET=$LAUNCH_TARGET
