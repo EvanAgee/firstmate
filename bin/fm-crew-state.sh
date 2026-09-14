@@ -501,6 +501,10 @@ if [ "$HAVE_RUN" = 1 ]; then
         parsed=${parsed#*|}
         pid=${parsed%%|*}
       fi
+      case "$pid" in
+        ''|*[!0-9]*|0) pid=none ;;
+        *) kill -0 "$pid" 2>/dev/null || pid=none ;;
+      esac
       if [ "$pid" = none ]; then
         RUN_STATE=stalled
         RUN_DETAIL="pipeline stalled $awaiting_dur at $step, run $(strip_quotes "$(nm_field id)"), agent $pid"

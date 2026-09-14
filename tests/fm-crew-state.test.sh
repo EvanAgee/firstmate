@@ -502,6 +502,31 @@ test_awaiting_agent_no_pid_is_stalled() {
   pass "awaiting_agent parked with no live PID classifies as stalled"
 }
 
+test_awaiting_agent_pid_liveness() {
+  reset_fakes
+  local d out exited_pid pid expected
+  d=$(new_case awaiting-agent-pid)
+  make_repo_on_branch "$d/wt" fm/awaiting-pid
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/awaiting-pid.meta" "window=fm:fm-awaiting-pid" "worktree=$d/wt" "kind=ship"
+  bash -c 'exit 0' &
+  exited_pid=$!
+  wait "$exited_pid"
+  for pid in "$exited_pid" "$$"; do
+    FM_FAKE_AXI_STATUS="$(run_awaiting_agent_dead fm/awaiting-pid 13h)
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,13h,\"quiet 13h ago: log: last activity\",\"$pid\",fix 1"
+    out=$(run_crew_state "$d" awaiting-pid)
+    if [ "$pid" = "$exited_pid" ]; then
+      expected='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+    else
+      expected='state: working · source: run-step · validating (running)'
+    fi
+    [ "$out" = "$expected" ] || fail "awaiting agent PID $pid: expected '$expected', got '$out'"
+  done
+  pass "awaiting agent trusts a live PID and normalizes an exited PID to none"
+}
+
 # (b) needs-decision log + a resumed (running/fixing) run = SUPERSEDED
 test_stale_needs_decision_superseded() {
   reset_fakes
@@ -1459,6 +1484,7 @@ test_quiet_agent_past_threshold_is_stalled
 test_quiet_agent_inside_threshold_stays_working
 test_parked_threshold_env_override
 test_awaiting_agent_no_pid_is_stalled
+test_awaiting_agent_pid_liveness
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_genuine_parked_not_superseded

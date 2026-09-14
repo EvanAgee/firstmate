@@ -132,6 +132,50 @@ EOF
     "mode=ship"
 }
 
+test_stalled_work_and_decisions_remain_visible() {
+  local home fakebin out head
+  home=$(make_home stalled-work)
+  fakebin=$(make_fakebin "$home")
+  mkdir -p "$home/projects/stalled-task"
+  git -C "$home/projects/stalled-task" init -q -b fm/stalled-task
+  git -C "$home/projects/stalled-task" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m init
+  head=$(git -C "$home/projects/stalled-task" rev-parse HEAD)
+  fm_write_meta "$home/state/stalled-task.meta" \
+    "window=firstmate:fm-stalled-task" "worktree=$home/projects/stalled-task" "kind=ship"
+  printf '## In flight\n- [ ] stalled-task - Stalled task (repo: alpha) (kind: ship)\n' > "$home/data/backlog.md"
+  cat > "$fakebin/no-mistakes" <<SH
+#!/usr/bin/env bash
+cat <<EOF
+run:
+  id: "01RUN"
+  branch: fm/stalled-task
+  status: running
+  head: "$head"
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,13h,"quiet 13h ago: log: last activity","-",fix 1
+EOF
+SH
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == true and .state == "active_child_work"
+    and (.active_children | length) == 1
+    and .active_children[0].id == "stalled-task"
+    and .active_children[0].state == "stalled"
+    and .active_children[0].source == "run-step"
+  ' >/dev/null || fail "stalled task missing from active work: $out"
+  printf 'needs-decision: [key=recovery] choose recovery\nblocked: [key=access] waiting on access\n' > "$home/state/stalled-task.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == true and .state == "captain_decision"
+    and (.active_children | map(.id)) == ["stalled-task"]
+    and (.decisions_open | sort_by(.key) | map({id,key,verb,summary})) == [
+      {id:"stalled-task",key:"access",verb:"blocked",summary:"waiting on access"},
+      {id:"stalled-task",key:"recovery",verb:"needs-decision",summary:"choose recovery"}
+    ]
+  ' >/dev/null || fail "stalled task lost open decisions: $out"
+  pass "stalled work stays active and preserves open decisions"
+}
+
 test_empty_fleet_json() {
   local home out view
   home=$(make_home empty)
@@ -826,6 +870,7 @@ SH
   pass "failed task json slurp fails the snapshot"
 }
 
+test_stalled_work_and_decisions_remain_visible
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_parallel_snapshot_matches_sequential

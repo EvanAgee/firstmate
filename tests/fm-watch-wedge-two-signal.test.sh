@@ -408,6 +408,63 @@ test_stalled_run_step_is_not_absorbed_by_pause_class() {
   fi
 }
 
+test_declared_pause_preserves_stalled_diagnosis() {
+  local dir state out timing presence
+  for timing in fresh expired; do
+    for presence in dead alive; do
+      dir=$(make_wedge_case "stalled-$timing-$presence" sp 'paused: [key=await-merge] waiting for merge' 'mode=no-mistakes')
+      state="$dir/state"
+      : > "$state/.paused-fmtest_fm-sp"
+      if [ "$timing" = fresh ]; then
+        date +%s > "$state/.paused-rechecked-fmtest_fm-sp"
+      else
+        touch -t 200001010000 "$state/.paused-rechecked-fmtest_fm-sp"
+      fi
+      export FM_FAKE_TMUX_CURRENT_COMMAND=claude
+      if [ "$presence" = alive ]; then agent_present sp; else agent_gone; fi
+      export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+      out=$(run_in_watcher "$dir" pause_state_class fmtest:fm-sp sp)
+      [ "$out" = stalled ] || fail "declared pause hid stalled diagnosis with $timing recheck and $presence agent: $out"
+      [ ! -e "$state/.paused-rechecked-fmtest_fm-sp" ] || fail "stalled diagnosis retained pause recheck marker"
+    done
+  done
+  unset FM_FAKE_CREW_STATE
+  agent_gone
+  unset FM_FAKE_TMUX_CURRENT_COMMAND
+  ok "stalled diagnosis overrides declared pause before and after the recheck window"
+}
+
+test_paused_stalled_pipeline_surfaces_on_new_and_same_hash() {
+  local dir state window key timing hash_state reason
+  for timing in fresh expired; do
+    for hash_state in new same; do
+      dir=$(make_wedge_case "stalled-wake-$timing-$hash_state" sp 'paused: [key=await-merge] waiting for merge' 'mode=no-mistakes')
+      state="$dir/state"
+      window=fmtest:fm-sp
+      key=fmtest_fm-sp
+      seed_stale_pane "$dir" sp "$window" 'idle, agent gone'
+      : > "$state/.paused-$key"
+      date +%s > "$state/.paused-resurfaced-$key"
+      if [ "$timing" = fresh ]; then
+        date +%s > "$state/.paused-rechecked-$key"
+      else
+        touch -t 200001010000 "$state/.paused-rechecked-$key"
+      fi
+      if [ "$hash_state" = same ]; then
+        cp "$state/.hash-$key" "$state/.stale-$key"
+      fi
+      agent_gone
+      export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+      run_until_marker "$dir" "$state/.wake-queue"
+      reason="stale: $window (pipeline stalled 13h at review, run 01RUN, agent none)"
+      grep -qF "$reason" "$state/.wake-queue" 2>/dev/null || fail "paused stalled pipeline did not surface on $hash_state hash with $timing recheck"
+      [ ! -e "$state/.stale-since-$key" ] || fail "stalled pipeline started a wedge timer"
+    done
+  done
+  unset FM_FAKE_CREW_STATE
+  ok "paused stalled pipelines surface detailed wakes for new and unchanged hashes"
+}
+
 # End-to-end: a worker whose status log carries a non-captain-relevant
 # `working:` line (the ordinary shape while a pipeline is live) but whose
 # crew state has gone `stalled` must surface through the real watcher process,
@@ -941,6 +998,8 @@ test_pane_sourced_working_is_not_gated_on_the_pipeline
 test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll
 test_green_pr_without_an_armed_watch_still_surfaces
 test_stalled_run_step_is_not_absorbed_by_pause_class
+test_declared_pause_preserves_stalled_diagnosis
+test_paused_stalled_pipeline_surfaces_on_new_and_same_hash
 test_stalled_pipeline_surfaces_with_detail_on_the_wake_line
 test_secondmate_paused_still_writes_the_recheck_marker
 test_sibling_table_rows_are_not_active_steps

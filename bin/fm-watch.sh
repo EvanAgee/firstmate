@@ -630,6 +630,12 @@ pause_state_class() {  # <window> <task>
     crew_absorb_class "$task"
     return
   fi
+  crew_line=$(crew_state_line "$task")
+  if [ -n "$(crew_state_stalled_detail "$crew_line")" ]; then
+    rm -f "$recheck_file"
+    printf 'stalled'
+    return
+  fi
   if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     if [ "$(window_kind "$win")" != secondmate ]; then
       agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
@@ -642,7 +648,6 @@ pause_state_class() {  # <window> <task>
     printf 'paused'
     return
   fi
-  crew_line=$(crew_state_line "$task")
   class=$(crew_absorb_class_of_line "$crew_line")
   # A `working` verdict is proof the RUN exists, never proof it is MOVING. A
   # worker firstmate stopped on a green PR keeps a `working` run-step for as
@@ -1615,6 +1620,7 @@ EOF
             task=$(window_to_task "$w" "$STATE")
             if [ -e "$pf" ] || status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
               case "$(pause_state_class "$w" "$task")" in
+                stalled) surface_nonterminal_stale "$w" "$h" ;;
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$w"
                          printf '%s' "$h" > "$sf"
