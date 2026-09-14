@@ -59,6 +59,10 @@
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
+# A merged PR poll also retires that task's linked issues through
+# bin/fm-issue-close-after-merge.sh, so a PR that GitHub auto-merged without
+# firstmate running fm-pr-merge still closes what it fixed. That close only
+# reports into the triage log and never changes the merged wake.
 # Each successful recorded-window capture also replaces state/<id>.pane-tail
 # atomically with at most 40 lines and 65,536 characters for GET /tasks/<id>.
 # For normal supervision, resume the session-start primary-harness protocol
@@ -905,7 +909,7 @@ run_check_process() {  # <timeout> <command> [args...]
     exec gtimeout "$check_timeout" bash "$c" "$@"
   else
     # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$check_timeout" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
+    exec perl -e 'my $t = shift; my $owned = shift; my $expired = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = sub { if (length $expired) { open my $f, ">", $expired or die $!; print {$f} "124\n"; close $f } $stop->() }; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$check_timeout" "${FM_CHECK_OWNED_GROUP:-0}" "${FM_CHECK_TIMEOUT_FILE:-}" bash "$c" "$@"
   fi
 }
 
@@ -917,12 +921,16 @@ FM_ACTIVE_CHECK_PID=
 FM_ACTIVE_CHECK_PGID=
 FM_ACTIVE_META_LOCK=
 FM_CHECK_OUTPUT=
+FM_CHECK_TIMEOUT_FILE=
 FM_CHECK_RESULT=
+FM_CHECK_STATUS=
 FM_CHECK_SIGNAL_PENDING=
 
 fm_check_output_cleanup() {
   [ -z "$FM_CHECK_OUTPUT" ] || rm -f -- "$FM_CHECK_OUTPUT"
+  [ -z "$FM_CHECK_TIMEOUT_FILE" ] || rm -f -- "$FM_CHECK_TIMEOUT_FILE"
   FM_CHECK_OUTPUT=
+  FM_CHECK_TIMEOUT_FILE=
 }
 
 fm_active_check_stop() {
@@ -950,16 +958,32 @@ fm_active_check_stop() {
   FM_ACTIVE_CHECK_PGID=
 }
 
+# Run one bounded check in its own tracked process group and return its output
+# in FM_CHECK_RESULT and its exit status in FM_CHECK_STATUS, normalizing a
+# Perl watchdog's status 137 to 124 only when its bound-expiry marker is set. Set
+# FM_CHECK_KEEP_STDERR=1 for a caller that has to read the child's diagnostics;
+# it folds stderr into the same capture, because a caller cannot wrap the
+# redirect around this function without blocking the main shell and defeating
+# the signal handling below. The child runs in the background with its pid and
+# group recorded, so a HUP/INT/TERM arriving mid-check is serviced at once and
+# watcher_cleanup's fm_active_check_stop can kill the group on exit.
 run_check_capture() {
   local pgid
   fm_check_output_cleanup
   FM_CHECK_RESULT=
+  FM_CHECK_STATUS=
   FM_CHECK_OUTPUT=$(mktemp "$STATE/.fm-check-output.XXXXXX") || return 1
   chmod 0600 "$FM_CHECK_OUTPUT" || { fm_check_output_cleanup; return 1; }
+  FM_CHECK_TIMEOUT_FILE=$(mktemp "$STATE/.fm-check-output.timeout.XXXXXX") \
+    || { fm_check_output_cleanup; return 1; }
   FM_CHECK_SIGNAL_PENDING=
   trap 'FM_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
-  ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  if [ "${FM_CHECK_KEEP_STDERR:-0}" = 1 ]; then
+    ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>&1 &
+  else
+    ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  fi
   FM_ACTIVE_CHECK_PID=$!
   FM_ACTIVE_CHECK_PGID=$FM_ACTIVE_CHECK_PID
   set +m
@@ -971,7 +995,11 @@ run_check_capture() {
     return 1
   fi
   [ -z "$FM_CHECK_SIGNAL_PENDING" ] || exit 1
-  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
+  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null
+  FM_CHECK_STATUS=$?
+  if [ "$FM_CHECK_STATUS" -eq 137 ] && [ -s "$FM_CHECK_TIMEOUT_FILE" ]; then
+    FM_CHECK_STATUS=124
+  fi
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || return 1
   FM_CHECK_RESULT=$(cat "$FM_CHECK_OUTPUT" 2>/dev/null || true)
@@ -1347,6 +1375,52 @@ while :; do
         reason="check: $c: $out"
         fm_wake_append check "$c" "$reason" || exit 1
         if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+          # A PR that merges without firstmate running fm-pr-merge (GitHub
+          # auto-merge, or a merge from the web UI) still has to retire the
+          # issues the task was dispatched on, because a "Refs #n" body leaves
+          # them open. The close is reported into the triage log and never
+          # changes the merged wake this cycle already queued.
+          #
+          # It runs through run_check_capture, the same tracked bounded call
+          # every network-touching check in this loop uses, because it can make
+          # several forge calls with no timeout of their own. Running it any
+          # other way leaves the main shell blocked for the whole bound, so a
+          # TERM from an operator or fm-guard is not serviced until it expires
+          # and the hung child is never killed. Its diagnostics are kept because
+          # the receipts below are split out of the same capture.
+          issue_close_rc=0
+          if FM_CHECK_KEEP_STDERR=1 run_check_capture \
+            "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url"; then
+            issue_close_out=$FM_CHECK_RESULT
+            issue_close_rc=$FM_CHECK_STATUS
+          else
+            issue_close_out="the issue close could not be started under supervision"
+            issue_close_rc=1
+          fi
+          # Every receipt the closer prints is recorded, success included, so the
+          # triage log is the audit trail for a merge firstmate never ran. The
+          # closer writes receipts on stdout and diagnostics on stderr; both are
+          # captured together above and split back apart by their prefix.
+          while IFS= read -r issue_close_line; do
+            [ -n "$issue_close_line" ] || continue
+            case "$issue_close_line" in
+              'closed: '*|'already-closed: '*)
+                triage_log "$id issue close after $url merged: $issue_close_line"
+                ;;
+            esac
+          done <<EOF
+$issue_close_out
+EOF
+          if [ "$issue_close_rc" -ne 0 ]; then
+            # 124 is the bound's own status and carries no message of its own,
+            # so name the timeout rather than logging an empty reason.
+            if [ "$issue_close_rc" -eq 124 ]; then
+              issue_close_out="the issue close exceeded its ${CHECK_TIMEOUT}s bound"
+            fi
+            # The closer stops on its first failing issue, so this is one line;
+            # flatten anyway so the bounded triage log stays one entry per event.
+            triage_log "linked issues were not all closed for $id after $url merged: $(printf '%s' "$issue_close_out" | tr '\n' ' ')"
+          fi
           if fm_pr_poll_retirement_publish "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" "$out"; then
             fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
               || triage_log "merged PR poll retirement remains recoverable for $id"

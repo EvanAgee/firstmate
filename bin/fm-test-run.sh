@@ -213,6 +213,7 @@ family_for_basename() {
       printf '%s\n' backend-dispatch
       ;;
     fm-pr-autoarm.test.sh|fm-pr-check-security.test.sh|fm-pr-merge.test.sh|fm-pr-review-chase.test.sh|fm-review-diff.test.sh|\
+    fm-issue-close-after-merge.test.sh|\
     fm-teardown.test.sh|fm-x-mode.test.sh)
       printf '%s\n' pr-forge
       ;;
@@ -996,6 +997,10 @@ families_for_changed_path() {
     bin/fm-watch*|bin/fm-wake*|bin/fm-inactive-reconcile.sh|\
     bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)
       printf '%s\n' watcher-wake-lock
+      # The watcher's merged-poll branch also drives the PR forge: it retires
+      # the poll and closes the task's linked issues, and both behaviours are
+      # pinned by cases that live in the pr-forge family.
+      [ "$path" != bin/fm-watch.sh ] || printf '%s\n' pr-forge
       ;;
     bin/fm-afk*)
       printf '%s\n' afk
@@ -1044,6 +1049,7 @@ families_for_changed_path() {
       printf '%s\n' secondmate
       ;;
     bin/fm-pr-*|bin/fm-merge-local.sh|bin/fm-teardown.sh|bin/fm-review-diff.sh|\
+    bin/fm-issue-close-after-merge.sh|\
     bin/fm-x-*|bin/fm-check*)
       printf '%s\n' pr-forge
       ;;

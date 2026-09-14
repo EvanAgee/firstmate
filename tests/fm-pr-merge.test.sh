@@ -36,6 +36,8 @@
 #   (ab) pull request timestamp failures are logged without failing the merge
 #   (ac) auto-merge is rejected before changing pull request state
 #   (ad) a delivery-ledger failure is logged without failing the merge
+#   (ae) a successful merge closes the task's linked issues
+#   (af) a failed issue close is logged without failing the merge
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -88,6 +90,21 @@ if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
   esac
   exit 0
 fi
+case "${1:-} ${2:-}" in
+  "pr view")
+    # bin/fm-issue-close-after-merge.sh reads the merged state before closing
+    # anything. `pr merge` is the only other pr subcommand this suite drives, so
+    # every pr view here belongs to that read.
+    printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+    printf 'pull_request:\n  number: %s\n  state: %s\n' \
+      "$3" "${FM_TEST_ISSUE_PR_STATE:-merged}"
+    exit 0
+    ;;
+  "issue close"|"issue edit")
+    printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+    exit 0
+    ;;
+esac
 if [ "${1:-}" = api ] && [ "${2:-}" = GET ]; then
   if [ "${FM_TEST_PR_LOOKUP_FAIL:-0}" -eq 1 ]; then
     echo 'error: pull request lookup failed' >&2
@@ -116,6 +133,15 @@ case "\${1:-} \${2:-}" in
     case " \$* " in
       *headRefOid*) printf '%s\n' '$head' ; exit 0 ;;
     esac
+    ;;
+  "issue view")
+    # bin/fm-issue-close-after-merge.sh reads each issue's state and labels with
+    # plain gh, which answers with one line of JSON and an uppercase state.
+    printf '%s\n' "\$*" >> "\$FM_TEST_GH_AXI_LOG"
+    [ "\${FM_TEST_ISSUE_VIEW_RC:-0}" -eq 0 ] || exit "\${FM_TEST_ISSUE_VIEW_RC}"
+    printf '{"labels":[],"state":"%s"}\n' \\
+      "\$(printf '%s' "\${FM_TEST_ISSUE_STATE:-closed}" | tr '[:lower:]' '[:upper:]')"
+    exit 0
     ;;
 esac
 exit 0
@@ -206,6 +232,9 @@ run_pr_merge() {
   FM_TEST_PR_MERGED="${FM_TEST_PR_MERGED:-true}" \
   FM_TEST_PR_LOOKUP_FAIL="${FM_TEST_PR_LOOKUP_FAIL:-0}" \
   FM_TEST_PR_FACTS_GARBLED="${FM_TEST_PR_FACTS_GARBLED:-0}" \
+  FM_TEST_ISSUE_PR_STATE="${FM_TEST_ISSUE_PR_STATE:-merged}" \
+  FM_TEST_ISSUE_STATE="${FM_TEST_ISSUE_STATE:-closed}" \
+  FM_TEST_ISSUE_VIEW_RC="${FM_TEST_ISSUE_VIEW_RC:-0}" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -998,6 +1027,50 @@ test_delivery_failure_does_not_block_pr_merge() {
   pass "fm-pr-merge logs a ledger failure without changing merge success"
 }
 
+test_successful_merge_closes_linked_issues() {
+  local case_dir
+  case_dir=$(make_case closes-linked-issues)
+  mkdir -p "$case_dir/wt"
+  printf '%s\n' 'issues=example/repo#77' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" 3131313131313131313131313131313131313131
+  : > "$case_dir/gh-axi.log"
+
+  FM_TEST_ISSUE_STATE=open \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/77 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "closes-linked-issues: successful merge failed"
+
+  grep -qF 'issue close 77 -R example/repo --reason completed --comment Fixed by https://github.com/example/repo/pull/77, merged to main.' \
+    "$case_dir/gh-axi.log" \
+    || fail "closes-linked-issues: the merge did not close the linked issue (log: $(cat "$case_dir/gh-axi.log"))"
+  assert_grep 'closed: example/repo#77 https://github.com/example/repo/pull/77' \
+    "$case_dir/stdout" "closes-linked-issues: the close was not reported after the merge"
+  pass "fm-pr-merge closes the task's linked issues after a successful merge"
+}
+
+test_issue_close_failure_does_not_block_pr_merge() {
+  local case_dir rc
+  case_dir=$(make_case issue-close-failure)
+  mkdir -p "$case_dir/wt"
+  printf '%s\n' 'issues=example/repo#78' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" 3232323232323232323232323232323232323232
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  FM_TEST_ISSUE_VIEW_RC=1 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/78 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "issue-close-failure: a failed issue close must not fail the merge"
+  grep -qxF 'pr merge 78 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "issue-close-failure: gh-axi merge did not succeed"
+  assert_grep 'warning: linked issues were not all closed for task-x1' "$case_dir/stderr" \
+    "issue-close-failure: the issue-close failure was not logged"
+  pass "fm-pr-merge logs an issue-close failure without changing merge success"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -1031,3 +1104,5 @@ test_timestamp_lookup_failure_warns_and_records_partial_timing
 test_timestamp_parse_failure_warns_and_records_partial_timing
 test_auto_merge_is_rejected_before_merge
 test_delivery_failure_does_not_block_pr_merge
+test_successful_merge_closes_linked_issues
+test_issue_close_failure_does_not_block_pr_merge
