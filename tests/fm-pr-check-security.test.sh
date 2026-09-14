@@ -3387,9 +3387,39 @@ test_merged_poll_issue_close_failure_keeps_the_merged_wake() {
   esac
   assert_no_grep 'issue close' "$dir/gh-axi.log" \
     "an issue outside the merged PR's repository was closed"
+  grep -qF 'linked issues were not all closed for task-a after https://github.com/o/r/pull/1 merged' \
+    "$state/.watch-triage.log" \
+    || fail "a failed issue close left no record in the triage log: $(cat "$state/.watch-triage.log" 2>/dev/null)"
   assert_poll_absent "$state" task-a
   ack_watcher_cycle "$state" || fail "merged wake acknowledgement failed after an issue-close failure"
   pass "an issue-close failure leaves the merged wake and poll retirement intact"
+}
+
+test_merged_poll_logs_an_already_closed_receipt() {
+  local dir state rc
+  dir=$(make_case merged-already-closed-issue)
+  state="$dir/home/state"
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 o/r#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_TEST_GH_STATE=MERGED FM_TEST_GH_AXI_PR_STATE=merged FM_TEST_ISSUE_STATE=closed \
+  FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "already-closed issue watcher failed: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "the merged notification was not preserved: $(cat "$dir/watch.out")" ;;
+  esac
+  assert_no_grep 'issue close' "$dir/gh-axi.log" \
+    "an issue that was already closed was closed again"
+  grep -qF 'task-a issue close after https://github.com/o/r/pull/1 merged: already-closed: o/r#55' \
+    "$state/.watch-triage.log" \
+    || fail "an already-closed issue left no receipt in the triage log: $(cat "$state/.watch-triage.log" 2>/dev/null)"
+  ack_watcher_cycle "$state" || fail "already-closed issue acknowledgement failed"
+  pass "a merged poll records an already-closed linked issue without mutating it"
 }
 
 test_persistent_secondmate_retirement_is_poll_only() {
@@ -3951,6 +3981,7 @@ test_gitlab_merge_watch
 test_merged_poll_retires_once
 test_merged_poll_closes_linked_issues
 test_merged_poll_issue_close_failure_keeps_the_merged_wake
+test_merged_poll_logs_an_already_closed_receipt
 test_persistent_secondmate_retirement_is_poll_only
 test_retirement_crash_recovery
 test_external_merge_transition_retires_only_terminal_poll

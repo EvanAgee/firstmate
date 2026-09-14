@@ -922,6 +922,7 @@ FM_ACTIVE_CHECK_PGID=
 FM_ACTIVE_META_LOCK=
 FM_CHECK_OUTPUT=
 FM_CHECK_RESULT=
+FM_CHECK_STATUS=
 FM_CHECK_SIGNAL_PENDING=
 
 fm_check_output_cleanup() {
@@ -954,16 +955,29 @@ fm_active_check_stop() {
   FM_ACTIVE_CHECK_PGID=
 }
 
+# Run one bounded check in its own tracked process group and return its output
+# in FM_CHECK_RESULT and the child's own exit status in FM_CHECK_STATUS. Set
+# FM_CHECK_KEEP_STDERR=1 for a caller that has to read the child's diagnostics;
+# it folds stderr into the same capture, because a caller cannot wrap the
+# redirect around this function without blocking the main shell and defeating
+# the signal handling below. The child runs in the background with its pid and
+# group recorded, so a HUP/INT/TERM arriving mid-check is serviced at once and
+# watcher_cleanup's fm_active_check_stop can kill the group on exit.
 run_check_capture() {
   local pgid
   fm_check_output_cleanup
   FM_CHECK_RESULT=
+  FM_CHECK_STATUS=
   FM_CHECK_OUTPUT=$(mktemp "$STATE/.fm-check-output.XXXXXX") || return 1
   chmod 0600 "$FM_CHECK_OUTPUT" || { fm_check_output_cleanup; return 1; }
   FM_CHECK_SIGNAL_PENDING=
   trap 'FM_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
-  ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  if [ "${FM_CHECK_KEEP_STDERR:-0}" = 1 ]; then
+    ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>&1 &
+  else
+    ( FM_CHECK_OWNED_GROUP=1 run_check_process "$CHECK_TIMEOUT" "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  fi
   FM_ACTIVE_CHECK_PID=$!
   FM_ACTIVE_CHECK_PGID=$FM_ACTIVE_CHECK_PID
   set +m
@@ -975,7 +989,8 @@ run_check_capture() {
     return 1
   fi
   [ -z "$FM_CHECK_SIGNAL_PENDING" ] || exit 1
-  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
+  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null
+  FM_CHECK_STATUS=$?
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || return 1
   FM_CHECK_RESULT=$(cat "$FM_CHECK_OUTPUT" 2>/dev/null || true)
@@ -1357,19 +1372,26 @@ while :; do
           # them open. The close is reported into the triage log and never
           # changes the merged wake this cycle already queued.
           #
-          # It runs through the same bounded subprocess every network-touching
-          # check in this loop uses, because it makes up to 1 + 2N forge calls
-          # with no timeout of their own. Unbounded, one hung call during a
-          # forge outage stalls this whole sweep, the heartbeat below stops
-          # refreshing, and fm-guard.sh reports a watcher that is alive and
-          # blocked as stale.
-          issue_close_out=$( ( run_check_process "$CHECK_TIMEOUT" \
-            "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url" ) 2>&1 )
-          issue_close_rc=$?
+          # It runs through run_check_capture, the same tracked bounded call
+          # every network-touching check in this loop uses, because it makes up
+          # to 1 + 2N forge calls with no timeout of their own. Running it any
+          # other way leaves the main shell blocked for the whole bound, so a
+          # TERM from an operator or fm-guard is not serviced until it expires
+          # and the hung child is never killed. Its diagnostics are kept because
+          # the receipts below are split out of the same capture.
+          issue_close_rc=0
+          if FM_CHECK_KEEP_STDERR=1 run_check_capture \
+            "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url"; then
+            issue_close_out=$FM_CHECK_RESULT
+            issue_close_rc=$FM_CHECK_STATUS
+          else
+            issue_close_out="the issue close could not be started under supervision"
+            issue_close_rc=1
+          fi
           # Every receipt the closer prints is recorded, success included, so the
           # triage log is the audit trail for a merge firstmate never ran. The
           # closer writes receipts on stdout and diagnostics on stderr; both are
-          # captured together here and split back apart by their prefix.
+          # captured together above and split back apart by their prefix.
           while IFS= read -r issue_close_line; do
             [ -n "$issue_close_line" ] || continue
             case "$issue_close_line" in
