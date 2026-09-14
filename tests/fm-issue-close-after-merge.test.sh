@@ -202,6 +202,31 @@ test_every_linked_issue_is_handled() {
   pass "every issue in the task's issues= list is handled"
 }
 
+test_zero_padded_issue_numbers_are_normalized() {
+  local case_dir rc expected
+  case_dir=$(make_case zero-padded 'acme/widgets#8,acme/widgets#007,acme/widgets#0009')
+  set_issue "$case_dir" 8 open
+  set_issue "$case_dir" 7 open agent-in-progress
+  set_issue "$case_dir" 9 closed
+
+  set +e
+  run_closer "$case_dir" task-x1 "$URL" > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "zero-padded: positive issue numbers should be accepted"
+  expected=$(printf 'closed: acme/widgets#8 %s\nclosed: acme/widgets#7 %s\nalready-closed: acme/widgets#9\n' "$URL" "$URL")
+  [ "$(cat "$case_dir/out")" = "$expected" ] \
+    || fail "zero-padded: receipts did not preserve order and normalize issue numbers"
+  assert_grep "issue close 7 -R acme/widgets --reason completed --comment Fixed by $URL, merged to main." \
+    "$case_dir/gh-axi.log" "zero-padded: the normalized issue was not closed"
+  assert_grep 'issue edit 7 -R acme/widgets --remove-label agent-in-progress' \
+    "$case_dir/gh-axi.log" "zero-padded: the normalized issue label was not removed"
+  assert_no_grep 'issue close 9 ' "$case_dir/gh-axi.log" \
+    "zero-padded: an already-closed issue was mutated"
+  pass "positive zero-padded issue numbers are normalized before forge calls and receipts"
+}
+
 test_missing_issues_field_is_a_silent_no_op() {
   local case_dir rc
   case_dir=$(make_case no-issues)
@@ -343,7 +368,7 @@ test_issue_outside_the_pr_repo_is_refused() {
 test_malformed_issue_references_are_refused_before_forge_calls() {
   local case_dir rc refs i=0
   for refs in 'acme/widgets#55#66' 'acme/widgets#7,acme/widgets#55#66' \
-    'acme/widgets#55#66,acme/widgets#7' 'acme/widgets#0' \
+    'acme/widgets#55#66,acme/widgets#7' 'acme/widgets#0' 'acme/widgets#000' \
     'acme/widgets#7,,acme/widgets#8' 'acme/widgets#7,'; do
     i=$((i + 1))
     case_dir=$(make_case "malformed-issue-$i" "$refs")
@@ -426,6 +451,7 @@ test_already_closed_issue_is_reported_and_untouched
 test_open_issue_is_closed_with_comment_and_label_removed
 test_open_issue_without_label_skips_the_label_edit
 test_every_linked_issue_is_handled
+test_zero_padded_issue_numbers_are_normalized
 test_missing_issues_field_is_a_silent_no_op
 test_missing_meta_is_refused
 test_forge_read_error_fails_and_stops

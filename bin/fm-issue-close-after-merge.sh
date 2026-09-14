@@ -102,7 +102,7 @@ fi
 
 # Split the comma-separated refs and hold them until every one is validated, so
 # a task naming a foreign repo is refused before any issue is closed.
-issue_ref_pattern='[a-z0-9-]+/[a-z0-9._-]+#[1-9][0-9]*'
+issue_ref_pattern='[a-z0-9-]+/[a-z0-9._-]+#0*[1-9][0-9]*'
 if ! [[ "$ISSUES" =~ ^${issue_ref_pattern}(,${issue_ref_pattern})*$ ]]; then
   echo "error: task metadata records '$ISSUES', which is not a GitHub issue ref list" >&2
   exit 1
@@ -113,6 +113,9 @@ NUMBERS=()
 for ref in "${REFS[@]}"; do
   slug=${ref%%#*}
   number=${ref##*#}
+  while [ "${number#0}" != "$number" ]; do
+    number=${number#0}
+  done
   if [ "$slug" != "$PR_SLUG_LOWER" ]; then
     echo "error: task metadata links $ref, which is not in the merged PR's repository $PR_SLUG" >&2
     exit 1
