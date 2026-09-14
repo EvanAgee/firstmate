@@ -1,0 +1,163 @@
+=== F) root on prefix A leaves prefix B count intact ===
+# Two prefixes widen side by side. alpha trips first. After root on alpha,
+# beta is one round from its own stop and must still trip on the very next round.
+
+$ fm-review-loop-stop.sh record tF --run rF --head h1 --changed r1 --cluster module:a:1 --cluster module:b:1
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tF --run rF --head h2 --changed r2 --cluster module:a:2 --cluster module:b:2 --targeted module:a:2 --targeted module:b:2
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tF --run rF --head h3 --changed r3 --cluster module:a:3 --cluster module:b:3 --targeted module:a:3 --targeted module:b:3
+continue: review round 3 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tF --run rF --head h4 --changed r4 --cluster module:a:4 --targeted module:a:4
+# Widening review findings
+
+shape: widening
+Run: `rF`
+Prefix: `module:a`
+Threshold: 3 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `h1`: r1 (first findings under this prefix)
+  - new `module:a:1`
+- Round 2 reviewed `h2`: r2
+  - new `module:a:2`
+- Round 3 reviewed `h3`: r3
+  - new `module:a:3`
+- Round 4 reviewed `h4`: r4
+  - new `module:a:4`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.JNm3Kh/state/review-loops/tF-rF-1.md
+[exit 20]
+
+$ fm-review-loop-stop.sh resolve tF --run rF --decision root
+resolved: review-loop stop for rF recorded as root
+[exit 0]
+
+$ fm-review-loop-stop.sh record tF --run rF --head h5 --changed r5 --cluster module:b:4 --targeted module:b:4
+continue: review round 5 recorded; no cluster reached 3 rounds
+[exit 0]
+
+null
+
+=== G) root on prefix "module:a" must leave prefix "module:b" count intact ===
+# threshold 3. module:a trips on round 4 (a is credited rounds 2,3,4).
+# module:b has widened on rounds 2,3,4 too, but a streak stop names only module:a.
+# After root on module:a, module:b must trip on the NEXT round with no reset.
+
+$ fm-review-loop-stop.sh record tG --run rG --head h1 --changed r1 --cluster module:a:1 --cluster module:b:1
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tG --run rG --head h2 --changed r2 --cluster module:a:2 --cluster module:b:2 --targeted module:a:2 --targeted module:b:2
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tG --run rG --head h3 --changed r3 --cluster module:a:3 --cluster module:b:3 --targeted module:a:3 --targeted module:b:3
+continue: review round 3 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tG --run rG --head h4 --changed r4 --cluster module:a:4 --cluster module:b:4 --targeted module:a:4 --targeted module:b:4
+continue: review round 4 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tG --run rG --head h5 --changed r5 --cluster module:a:5 --cluster module:b:5 --targeted module:a:5 --targeted module:b:5
+# Widening review findings
+
+shape: widening
+Run: `rG`
+Prefix: `module:a`
+Threshold: 4 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `h1`: r1 (first findings under this prefix)
+  - new `module:a:1`
+- Round 2 reviewed `h2`: r2
+  - new `module:a:2`
+- Round 3 reviewed `h3`: r3
+  - new `module:a:3`
+- Round 4 reviewed `h4`: r4
+  - new `module:a:4`
+- Round 5 reviewed `h5`: r5
+  - new `module:a:5`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.IjeAic/state/review-loops/tG-rG-1.md
+[exit 20]
+
+$ fm-review-loop-stop.sh resolve tG --run rG --decision root
+resolved: review-loop stop for rG recorded as root
+[exit 0]
+
+$ fm-review-loop-stop.sh record tG --run rG --head h6 --changed r6 --cluster module:b:6 --targeted module:b:6
+# Widening review findings
+
+shape: widening
+Run: `rG`
+Prefix: `module:b`
+Threshold: 4 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `h1`: r1 (first findings under this prefix)
+  - new `module:b:1`
+- Round 2 reviewed `h2`: r2
+  - new `module:b:2`
+- Round 3 reviewed `h3`: r3
+  - new `module:b:3`
+- Round 4 reviewed `h4`: r4
+  - new `module:b:4`
+- Round 5 reviewed `h5`: r5
+  - new `module:b:5`
+- Round 6 reviewed `h6`: r6
+  - new `module:b:6`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.IjeAic/state/review-loops/tG-rG-2.md
+[exit 20]
+
+{"shape":"widening","prefix":"module:b","credited":[1,2,3,4,5],"threshold":4}
+
+=== H) --help names the widening stop (rule 5) ===
+
+11:    [--widening-threshold <rounds>]
+42:A run also stops on the widening shape, where the review keeps returning new
+51:--widening-threshold sets how many consecutive
+52:widening rounds trip it for a new run. Otherwise
+53:FM_REVIEW_LOOP_WIDENING_THRESHOLD sets it, with 3 as the default. The first
+60:A widening stop writes the same report and appends the
+61:same keyed event, with shape: widening, the shared prefix, and each round's new
+73:cluster. A widening stop resolves per prefix instead: both choices move that
+74:prefix past the recorded rounds so it starts a fresh widening count, and every

@@ -1,0 +1,127 @@
+=== A) new clusters under DIFFERENT prefixes must NOT stop ===
+
+$ fm-review-loop-stop.sh record tA --run rA --head h1 --changed one --cluster module:src/alpha:one
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tA --run rA --head h2 --changed two --cluster module:src/beta:two --targeted module:src/beta:two
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tA --run rA --head h3 --changed three --cluster module:src/gamma:three --targeted module:src/gamma:three
+continue: review round 3 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tA --run rA --head h4 --changed four --cluster module:src/delta:four --targeted module:src/delta:four
+continue: review round 4 recorded; no cluster reached 3 rounds
+[exit 0]
+
+=== B) a repeated cluster must NOT count toward widening ===
+
+$ fm-review-loop-stop.sh record tB --run rB --head h1 --changed one --cluster module:src/zeta:one
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tB --run rB --head h2 --changed two --cluster module:src/zeta:one --targeted module:src/zeta:one
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tB --run rB --head h3 --changed three --cluster module:src/zeta:one --targeted module:src/zeta:one
+# Repeated review clusters
+
+Run: `rB`
+Threshold: 3 consecutive review rounds
+
+## What each cluster returned against
+
+### `module:src/zeta:one`
+
+- Round 1 reviewed `h1`: one
+- Round 2 reviewed `h2`: two
+- Round 3 reviewed `h3`: three
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.Zz9nAM/state/review-loops/tB-rB-1.md
+[exit 20]
+
+=== C) env threshold override FM_REVIEW_LOOP_WIDENING_THRESHOLD=2 ===
+
+$ fm-review-loop-stop.sh record tC --run rC --head h1 --changed one --cluster module:src/eta:one
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tC --run rC --head h2 --changed two --cluster module:src/eta:two --targeted module:src/eta:two
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tC --run rC --head h3 --changed three --cluster module:src/eta:three --targeted module:src/eta:three
+# Widening review findings
+
+shape: widening
+Run: `rC`
+Prefix: `module:src/eta`
+Threshold: 2 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `h1`: one (first findings under this prefix)
+  - new `module:src/eta:one`
+- Round 2 reviewed `h2`: two
+  - new `module:src/eta:two`
+- Round 3 reviewed `h3`: three
+  - new `module:src/eta:three`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.wfpUGr/state/review-loops/tC-rC-1.md
+[exit 20]
+
+=== D) rounds that return ONLY already-seen clusters (no streak) must NOT widen ===
+
+$ fm-review-loop-stop.sh record tD --run rD --head h1 --changed one --cluster module:src/theta:one --cluster module:src/theta:two
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tD --run rD --head h2 --changed two --cluster module:src/theta:one --targeted module:src/theta:one
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tD --run rD --head h3 --changed three --cluster module:src/theta:two --targeted module:src/theta:two
+continue: review round 3 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tD --run rD --head h4 --changed four --cluster module:src/theta:one --targeted module:src/theta:one
+continue: review round 4 recorded; no cluster reached 3 rounds
+[exit 0]
+
+=== E) a round with NO targeted closure of the previous round must NOT widen ===
+
+$ fm-review-loop-stop.sh record tE --run rE --head h1 --changed one --cluster module:src/iota:one
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tE --run rE --head h2 --changed two --cluster module:src/iota:one --cluster module:src/iota:two --targeted module:src/iota:two
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tE --run rE --head h3 --changed three --cluster module:src/iota:one --cluster module:src/iota:three --targeted module:src/iota:three
+continue: review round 3 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tE --run rE --head h4 --changed four --cluster module:src/iota:one --cluster module:src/iota:four --targeted module:src/iota:four
+continue: review round 4 recorded; no cluster reached 3 rounds
+[exit 0]
+

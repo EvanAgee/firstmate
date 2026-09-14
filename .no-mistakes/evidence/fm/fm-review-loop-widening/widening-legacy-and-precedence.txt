@@ -1,0 +1,147 @@
+=== I) a run recorded BEFORE this change picks the rule up, no migration ===
+# legacy state on disk, note there is no widening_threshold key:
+{"version":1,"task":"tI","run":"rI","threshold":3,"rounds":[{"round":1,"head":"h1","changed":"r1","clusters":["module:legacy:one"],"targeted":["module:legacy:one"]},{"round":2,"head":"h2","changed":"r2","clusters":["module:legacy:two"],"targeted":["module:legacy:two"]}]}
+
+$ fm-review-loop-stop.sh record tI --run rI --head h3 --changed r3 --cluster module:legacy:three --targeted module:legacy:three
+error: invalid review-loop state: /tmp/fm-widen.VWRMwu/state/review-loops/tI.json
+[exit 1]
+
+
+=== J) a cluster streak wins when both shapes would trip at once ===
+
+$ fm-review-loop-stop.sh record tJ --run rJ --head h1 --changed r1 --cluster module:k:sticky --cluster module:k:one
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tJ --run rJ --head h2 --changed r2 --cluster module:k:sticky --cluster module:k:two --targeted module:k:sticky --targeted module:k:two
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tJ --run rJ --head h3 --changed r3 --cluster module:k:sticky --cluster module:k:three --targeted module:k:sticky --targeted module:k:three
+# Repeated review clusters
+
+Run: `rJ`
+Threshold: 3 consecutive review rounds
+
+## What each cluster returned against
+
+### `module:k:sticky`
+
+- Round 1 reviewed `h1`: r1
+- Round 2 reviewed `h2`: r2
+- Round 3 reviewed `h3`: r3
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.ZnXI0C/state/review-loops/tJ-rJ-1.md
+[exit 20]
+
+streak
+
+=== I, retry) legacy run, state has NO widening_threshold key ===
+$ record tI --run rI --head h4 ...
+# Widening review findings
+
+shape: widening
+Run: `rI`
+Prefix: `module:src/legacy`
+Threshold: 3 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `h1`: Opened the module. (first findings under this prefix)
+  - new `module:src/legacy:one`
+- Round 2 reviewed `h2`: Fixed one.
+  - new `module:src/legacy:two`
+- Round 3 reviewed `h3`: Fixed two.
+  - new `module:src/legacy:three`
+- Round 4 reviewed `h4`: Fixed three.
+  - new `module:src/legacy:four`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.CuN4rr/state/review-loops/tI-rI-1.md
+[exit 20]
+
+--- report written for the legacy run ---
+# Widening review findings
+
+shape: widening
+Run: `rI`
+Prefix: `module:src/legacy`
+Threshold: 3 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `h1`: Opened the module. (first findings under this prefix)
+  - new `module:src/legacy:one`
+- Round 2 reviewed `h2`: Fixed one.
+  - new `module:src/legacy:two`
+- Round 3 reviewed `h3`: Fixed two.
+  - new `module:src/legacy:three`
+- Round 4 reviewed `h4`: Fixed three.
+  - new `module:src/legacy:four`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+=== K) decided behavior: a fresh cluster beside an OLDER repeat still widens ===
+# The user declined the round-8 objection, so this shape SHOULD stop.
+# The report prose must tell the reader a repeat may be present and unlisted.
+
+$ fm-review-loop-stop.sh record tK --run rK --head h1 --changed c1 --cluster m:a:one --widening-threshold 2
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tK --run rK --head h2 --changed c2 --cluster m:a:two --targeted m:a:two
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record tK --run rK --head h3 --changed c3 --cluster m:a:three --cluster m:a:one --targeted m:a:three --targeted m:a:one
+# Widening review findings
+
+shape: widening
+Run: `rK`
+Prefix: `m:a`
+Threshold: 2 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `h1`: c1 (first findings under this prefix)
+  - new `m:a:one`
+- Round 2 reviewed `h2`: c2
+  - new `m:a:two`
+- Round 3 reviewed `h3`: c3
+  - new `m:a:three`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen.e2oLPq/state/review-loops/tK-rK-1.md
+[exit 20]
+
+8:Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.

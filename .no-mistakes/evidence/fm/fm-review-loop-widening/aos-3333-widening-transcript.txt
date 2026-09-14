@@ -1,0 +1,62 @@
+# aos-3333 replay: four review rounds, a NEW rename-semantics defect each time
+# No cluster ever repeats, so the old per-cluster streak rule never trips.
+
+$ fm-review-loop-stop.sh record aos-3333 --run r1 --head head-1 --changed Rename the field across the progress counter. --cluster module:src/rename:progress-count
+continue: review round 1 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record aos-3333 --run r1 --head head-2 --changed Fix the progress count on rename. --cluster module:src/rename:replay --targeted module:src/rename:replay
+continue: review round 2 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record aos-3333 --run r1 --head head-3 --changed Fix replay on rename. --cluster module:src/rename:restored-transcript --targeted module:src/rename:restored-transcript
+continue: review round 3 recorded; no cluster reached 3 rounds
+[exit 0]
+
+$ fm-review-loop-stop.sh record aos-3333 --run r1 --head head-4 --changed Fix the restored transcript on rename. --cluster module:src/rename:capture-refusal --targeted module:src/rename:capture-refusal
+# Widening review findings
+
+shape: widening
+Run: `r1`
+Prefix: `module:src/rename`
+Threshold: 3 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `head-1`: Rename the field across the progress counter. (first findings under this prefix)
+  - new `module:src/rename:progress-count`
+- Round 2 reviewed `head-2`: Fix the progress count on rename.
+  - new `module:src/rename:replay`
+- Round 3 reviewed `head-3`: Fix replay on rename.
+  - new `module:src/rename:restored-transcript`
+- Round 4 reviewed `head-4`: Fix the restored transcript on rename.
+  - new `module:src/rename:capture-refusal`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/tmp/fm-widen-aos3333.kaCXgQ/state/review-loops/aos-3333-r1-1.md
+[exit 20]
+
+
+=== status event appended to state/aos-3333.status ===
+needs-decision [key=review-loop-r1-1]: review clusters 'module:src/rename:capture-refusal', 'module:src/rename:replay', 'module:src/rename:restored-transcript' reached 3 rounds; choose fix at root or bank the remainder; report=/tmp/fm-widen-aos3333.kaCXgQ/state/review-loops/aos-3333-r1-1.md
+
+=== persisted widening state (surfaced) ===
+{"clusters":["module:src/rename:capture-refusal","module:src/rename:replay","module:src/rename:restored-transcript"],"report":"/tmp/fm-widen-aos3333.kaCXgQ/state/review-loops/aos-3333-r1-1.md","shape":"widening","prefix":"module:src/rename","floor":0,"credited":[1,2,3],"threshold":3}
+
+
+=== firstmate picks "root": the stop clears and the loop may continue ===
+$ fm-review-loop-stop.sh resolve aos-3333 --run r1 --decision root
+resolved: review-loop stop for r1 recorded as root
+[exit 0]
+
+$ record aos-3333 --run r1 --head head-5 (a new defect under the same prefix, after root)
+continue: review round 5 recorded; no cluster reached 3 rounds
+[exit 0]
