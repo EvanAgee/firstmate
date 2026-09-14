@@ -18,6 +18,9 @@
 #   (i) a PR that is not merged is refused before any issue is read
 #   (j) an issue in a repo other than the PR's own repository is refused
 #   (k) a malformed PR URL is refused before any forge call
+#   (l) a merged GitLab request on a task with no linked issues is a silent
+#       no-op, so an ordinary GitLab task never makes its caller log a warning
+#   (m) a merged GitLab request on a task that does record issues is refused
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -27,8 +30,13 @@ CLOSER="$ROOT/bin/fm-issue-close-after-merge.sh"
 TMP_ROOT=$(fm_test_tmproot fm-issue-close-after-merge-tests)
 URL=https://github.com/acme/widgets/pull/42
 
-# One sandbox: a state dir with a task meta and a gh-axi mock that answers
-# `issue view` from a per-issue state file and records every invocation.
+# One sandbox: a state dir with a task meta, a gh-axi mock for the PR read and
+# the write calls, and a plain-gh mock that answers the issue read. Both record
+# every invocation.
+#
+# The issue read is mocked on plain gh because that is what the helper uses: it
+# asks for --json state,labels and gets back one line of JSON, with the state
+# uppercase, exactly as the real gh prints it.
 #
 # The mock's issue state lives in <case>/issue-<number>.state (first line the
 # state, second line the comma-separated labels), so a case scripts exactly
@@ -54,22 +62,43 @@ case "${1:-} ${2:-}" in
     printf 'pull_request:\n  number: %s\n  state: %s\n' "$3" "${FM_TEST_PR_STATE:-merged}"
     exit "${FM_TEST_PR_VIEW_RC:-0}"
     ;;
-  "issue view")
-    number=$3
-    file="$FM_TEST_CASE_DIR/issue-$number.state"
-    [ -f "$file" ] || exit 1
-    [ "${FM_TEST_VIEW_RC:-0}" -eq 0 ] || exit "$FM_TEST_VIEW_RC"
-    printf 'issue:\n  number: %s\n  state: %s\n  labels: "%s"\n' \
-      "$number" "$(sed -n 1p "$file")" "$(sed -n 2p "$file")"
-    exit 0
-    ;;
   "issue close") exit "${FM_TEST_CLOSE_RC:-0}" ;;
   "issue edit") exit "${FM_TEST_EDIT_RC:-0}" ;;
 esac
 exit 1
 SH
   chmod +x "$case_dir/fakebin/gh-axi"
+  # Plain gh answers only the issue read, in the real --json shape: one line of
+  # JSON with an uppercase state and a labels array.
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+case "${1:-} ${2:-}" in
+  "issue view")
+    number=$3
+    file="$FM_TEST_CASE_DIR/issue-$number.state"
+    [ -f "$file" ] || exit 1
+    [ "${FM_TEST_VIEW_RC:-0}" -eq 0 ] || exit "$FM_TEST_VIEW_RC"
+    state=$(sed -n 1p "$file" | tr '[:lower:]' '[:upper:]')
+    labels=""
+    raw=$(sed -n 2p "$file")
+    if [ -n "$raw" ]; then
+      IFS=, read -r -a names <<< "$raw"
+      for name in "${names[@]}"; do
+        [ -n "$name" ] || continue
+        [ -z "$labels" ] || labels="$labels,"
+        labels="$labels\"$name\""
+      done
+    fi
+    printf '{"labels":[%s],"state":"%s"}\n' "$labels" "$state"
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/gh"
   : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh.log"
   printf '%s\n' "$case_dir"
 }
 
@@ -82,6 +111,7 @@ run_closer() {  # <case-dir> <args...>
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_TEST_CASE_DIR="$case_dir" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
+  FM_TEST_GH_LOG="$case_dir/gh.log" \
   FM_TEST_PR_STATE="${FM_TEST_PR_STATE:-merged}" \
   FM_TEST_PR_VIEW_RC="${FM_TEST_PR_VIEW_RC:-0}" \
   FM_TEST_VIEW_RC="${FM_TEST_VIEW_RC:-0}" \
@@ -221,7 +251,7 @@ test_forge_read_error_fails_and_stops() {
     "view-error: the failure line did not name the issue"
   assert_no_grep 'issue close' "$case_dir/gh-axi.log" \
     "view-error: an issue was closed after the read failed"
-  assert_no_grep 'issue view 8' "$case_dir/gh-axi.log" \
+  assert_no_grep 'issue view 8' "$case_dir/gh.log" \
     "view-error: the run continued to a later issue after a failure"
   pass "a forge read error reports the issue and stops without touching anything else"
 }
@@ -259,7 +289,7 @@ test_unmerged_pr_is_refused_before_reading_issues() {
   unset FM_TEST_PR_STATE
 
   [ "$rc" -ne 0 ] || fail "not-merged: an unmerged PR should be refused"
-  assert_no_grep 'issue view' "$case_dir/gh-axi.log" \
+  assert_no_grep 'issue view' "$case_dir/gh.log" \
     "not-merged: an issue was read for an unmerged PR"
   assert_no_grep 'issue close' "$case_dir/gh-axi.log" \
     "not-merged: an issue was closed for an unmerged PR"
@@ -300,6 +330,44 @@ test_malformed_pr_url_is_refused() {
   pass "a malformed PR URL is refused before any forge call"
 }
 
+test_gitlab_url_without_linked_issues_is_a_silent_no_op() {
+  local case_dir rc
+  case_dir=$(make_case gitlab-no-issues)
+
+  set +e
+  run_closer "$case_dir" task-x1 'https://gitlab.com/acme/widgets/-/merge_requests/42' \
+    > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" \
+    "gitlab-no-issues: an ordinary GitLab task should exit 0, not make its caller warn"
+  [ ! -s "$case_dir/out" ] || fail "gitlab-no-issues: the no-op printed output"
+  [ ! -s "$case_dir/err" ] || fail "gitlab-no-issues: the no-op reported an error"
+  [ ! -s "$case_dir/gh-axi.log" ] \
+    || fail "gitlab-no-issues: the forge was called for a task with no linked issues"
+  pass "a merged GitLab request without linked issues is a silent no-op"
+}
+
+test_gitlab_url_with_linked_issues_is_refused() {
+  local case_dir rc
+  case_dir=$(make_case gitlab-with-issues acme/widgets#7)
+
+  set +e
+  run_closer "$case_dir" task-x1 'https://gitlab.com/acme/widgets/-/merge_requests/42' \
+    > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] \
+    || fail "gitlab-with-issues: a GitLab request naming GitHub issues should be refused"
+  assert_grep 'not a GitHub pull request' "$case_dir/err" \
+    "gitlab-with-issues: the refusal did not say why it stopped"
+  [ ! -s "$case_dir/gh-axi.log" ] \
+    || fail "gitlab-with-issues: the forge was called despite the refusal"
+  pass "a merged GitLab request that records linked issues is refused"
+}
+
 test_already_closed_issue_is_reported_and_untouched
 test_open_issue_is_closed_with_comment_and_label_removed
 test_open_issue_without_label_skips_the_label_edit
@@ -311,3 +379,5 @@ test_forge_close_error_fails
 test_unmerged_pr_is_refused_before_reading_issues
 test_issue_outside_the_pr_repo_is_refused
 test_malformed_pr_url_is_refused
+test_gitlab_url_without_linked_issues_is_a_silent_no_op
+test_gitlab_url_with_linked_issues_is_refused

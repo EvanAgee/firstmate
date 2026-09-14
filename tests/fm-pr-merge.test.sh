@@ -140,6 +140,15 @@ case "\${1:-} \${2:-}" in
       *headRefOid*) printf '%s\n' '$head' ; exit 0 ;;
     esac
     ;;
+  "issue view")
+    # bin/fm-issue-close-after-merge.sh reads each issue's state and labels with
+    # plain gh, which answers with one line of JSON and an uppercase state.
+    printf '%s\n' "\$*" >> "\$FM_TEST_GH_AXI_LOG"
+    [ "\${FM_TEST_ISSUE_VIEW_RC:-0}" -eq 0 ] || exit "\${FM_TEST_ISSUE_VIEW_RC}"
+    printf '{"labels":[],"state":"%s"}\n' \\
+      "\$(printf '%s' "\${FM_TEST_ISSUE_STATE:-closed}" | tr '[:lower:]' '[:upper:]')"
+    exit 0
+    ;;
 esac
 exit 0
 SH

@@ -15,11 +15,17 @@
 #                     PR URL, remove the agent-in-progress label when the issue
 #                     carries it, and print "closed: <owner/repo>#<n> <url>"
 #
-# Three refusals keep this from ever closing something it was not asked to.
+# Four refusals keep this from ever closing something it was not asked to.
 # The PR must report a merged state, so a failed or still-open merge never
 # retires an issue. Every linked issue must live in the PR's own repository, so
 # a task that names an issue elsewhere is refused rather than partly applied.
-# And an issue absent from the task's own metadata is never reached at all.
+# A task that records linked issues must ship through GitHub, because only its
+# issue tracker is addressed here. And an issue absent from the task's own
+# metadata is never reached at all.
+#
+# The no-issues check runs before the GitHub check, so an ordinary GitLab task,
+# which never records GitHub issues, exits quietly instead of making its caller
+# log a warning about work it was never asked to do.
 #
 # Any forge error prints "issue-close-failed: <owner/repo>#<n> <reason>" on
 # stderr and exits non-zero without touching any later issue, so firstmate sees
@@ -27,7 +33,10 @@
 # reportable, never as a reason to undo a merge that already landed.
 #
 # The gh-axi binary is resolved from FM_GH_BIN at call time, the same override
-# bin/fm-outage-sync.sh uses, so tests can inject a recorder.
+# bin/fm-outage-sync.sh uses, so tests can inject a recorder. Each issue's state
+# and labels are read with plain gh instead, because gh-axi's issue view prints
+# no labels line; that one JSON call answers both whether the issue is open and
+# whether it carries the label to strip.
 # Usage: fm-issue-close-after-merge.sh <task-id> <merged-pr-url>
 set -eu
 
@@ -53,10 +62,7 @@ if [ "$#" -ne 2 ]; then
 fi
 ID=$1
 RAW_URL=$2
-# Only GitHub issues are addressed here. A GitLab merge request parses, but its
-# issue tracker is a different API, so it is refused rather than half-handled.
-if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL" \
-  || [ "$FM_PR_PROVIDER" != github ]; then
+if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL"; then
   echo "error: invalid issue close request" >&2
   exit 2
 fi
@@ -78,8 +84,18 @@ if [ ! -f "$META" ] || [ -L "$META" ]; then
 fi
 
 ISSUES=$(grep '^issues=' "$META" | tail -1 | cut -d= -f2- || true)
-# No linked issue is the ordinary case, not a problem to report.
+# No linked issue is the ordinary case, not a problem to report. This runs
+# before the provider check so an ordinary GitLab task, which never records
+# GitHub issues, exits quietly instead of making its caller log a warning.
 [ -n "$ISSUES" ] || exit 0
+
+# Only GitHub issues are addressed here. A GitLab merge request parses, but its
+# issue tracker is a different API, so a task that does record linked issues is
+# refused rather than half-handled.
+if [ "$FM_PR_PROVIDER" != github ]; then
+  echo "error: $URL is not a GitHub pull request; refusing to close any issue" >&2
+  exit 1
+fi
 
 # Split the comma-separated refs and hold them until every one is validated, so
 # a task naming a foreign repo is refused before any issue is closed.
@@ -124,17 +140,21 @@ esac
 
 for number in "${NUMBERS[@]}"; do
   ref="$PR_SLUG_LOWER#$number"
-  if ! view=$(gh_axi issue view "$number" -R "$PR_SLUG" 2>&1); then
+  # One read answers both questions this loop asks: is the issue still open,
+  # and does it carry the label to strip. The reply is a single JSON line,
+  # {"labels":["a","b"],"state":"OPEN"}, with the state uppercase.
+  if ! view=$(gh issue view "$number" -R "$PR_SLUG" \
+    --json state,labels --jq '{state,labels:[.labels[].name]}' 2>/dev/null); then
     echo "issue-close-failed: $ref could not be read from GitHub" >&2
     exit 1
   fi
-  state=$(printf '%s\n' "$view" | sed -n 's/^  state: //p' | head -1 | tr -d '"')
+  state=$(printf '%s' "$view" | sed -n 's/.*"state":"\([A-Za-z]*\)".*/\1/p')
   case "$state" in
-    closed|CLOSED)
+    CLOSED)
       printf 'already-closed: %s\n' "$ref"
       continue
       ;;
-    open|OPEN) : ;;
+    OPEN) : ;;
     *)
       echo "issue-close-failed: $ref reported an unreadable state (${state:-none})" >&2
       exit 1
@@ -147,11 +167,8 @@ for number in "${NUMBERS[@]}"; do
   fi
   # The label matters only while an agent is working the issue, so remove it
   # exactly when the issue carries it and leave every other label alone.
-  labels=$(printf '%s\n' "$view" | sed -n 's/^  labels: //p' | head -1)
-  labels=${labels%\"}
-  labels=${labels#\"}
-  case ",$labels," in
-    *,agent-in-progress,*)
+  case "$view" in
+    *'"agent-in-progress"'*)
       if ! gh_axi issue edit "$number" -R "$PR_SLUG" \
         --remove-label agent-in-progress >/dev/null 2>&1; then
         echo "issue-close-failed: $ref was closed but its agent-in-progress label could not be removed" >&2

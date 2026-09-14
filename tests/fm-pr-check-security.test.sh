@@ -76,6 +76,15 @@ SH
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+# The issue read asks for --json state,labels, so match it before the broad
+# " state " case below and answer in the real one-line JSON shape.
+if [ "${1:-} ${2:-}" = "issue view" ]; then
+  printf '{"labels":[%s],"state":"%s"}\n' \
+    "$(printf '%s' "${FM_TEST_ISSUE_LABELS-agent-in-progress}" \
+      | awk -v RS=, 'NF{printf "%s\"%s\"", (n++?",":""), $0}')" \
+    "$(printf '%s' "${FM_TEST_ISSUE_STATE:-open}" | tr '[:lower:]' '[:upper:]')"
+  exit 0
+fi
 case " $* " in
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   *" state "*)
@@ -99,18 +108,14 @@ if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
   exit 0
 fi
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
-# bin/fm-issue-close-after-merge.sh reads the merged PR state and each linked
-# issue before closing anything. Answer both so a merged poll can exercise the
-# close; every other call keeps its previous log-and-exit behavior.
+# bin/fm-issue-close-after-merge.sh reads the merged PR state here before
+# closing anything; it reads each issue with plain gh instead. Answer the PR
+# read so a merged poll can exercise the close; every other call keeps its
+# previous log-and-exit behavior.
 case "${1:-} ${2:-}" in
   "pr view")
     printf 'pull_request:\n  number: %s\n  state: %s\n' \
       "$3" "${FM_TEST_GH_AXI_PR_STATE:-open}"
-    exit 0
-    ;;
-  "issue view")
-    printf 'issue:\n  number: %s\n  state: %s\n  labels: "%s"\n' \
-      "$3" "${FM_TEST_ISSUE_STATE:-open}" "${FM_TEST_ISSUE_LABELS:-agent-in-progress}"
     exit 0
     ;;
 esac
