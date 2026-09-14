@@ -2995,6 +2995,14 @@ fi
 # WT_TARGET to $T for them (and for any future backend) - the shared treehouse-get +
 # worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
 : "${WT_TARGET:=$T}"
+LAUNCH_TARGET=$T
+if [ "$RELAUNCH" -eq 1 ] && [ "$BACKEND" = tmux ]; then
+  if ! LAUNCH_TARGET=$(fm_tmux_display_message "$WT_TARGET" '#{pane_id}') || [ -z "$LAUNCH_TARGET" ]; then
+    echo "error: task $ID's tmux pane could not be resolved; refusing to relaunch" >&2
+    exit 1
+  fi
+  WT_TARGET=$LAUNCH_TARGET
+fi
 spawn_send_text_line() {  # <target> <text>
   case "$BACKEND" in
     tmux) fm_backend_tmux_send_text_line "$1" "$2" ;;
@@ -3032,7 +3040,7 @@ spawn_send_key() {  # <target> <key>
 }
 
 kimi_capture() {
-  fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
+  fm_backend_capture "$BACKEND" "$LAUNCH_TARGET" 120 "$W" 2>/dev/null || true
 }
 
 # Kimi launch-readiness and delivery route their composer-emptiness half
@@ -3044,7 +3052,7 @@ kimi_capture() {
 # claude's did. The banner and brief-echo greps below are launch-progress
 # signals, not composer shapes, so they stay here.
 kimi_composer_is_empty() {
-  [ "$(fm_backend_composer_state "$BACKEND" "$T" "$W" 2>/dev/null)" = empty ]
+  [ "$(fm_backend_composer_state "$BACKEND" "$LAUNCH_TARGET" "$W" 2>/dev/null)" = empty ]
 }
 
 kimi_wait_for_ready() {
@@ -3734,21 +3742,21 @@ spawn_record_traceparent() {
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
-spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+spawn_send_text_line "$LAUNCH_TARGET" "export GOTMPDIR=$TASK_TMP/gotmp"
 # Point chrome-devtools-axi at firstmate's pinned MCP launcher and give this
 # task its own session so workers do not share the default bridge or pick up
 # chrome-devtools-mcp@latest. Soft: a missing launcher does not block spawn;
 # bootstrap reports the incompatible tool instead.
 if CHROME_AXI_LAUNCHER=$(fm_chrome_devtools_mcp_launcher_path 2>/dev/null); then
-  spawn_send_text_line "$T" "export CHROME_DEVTOOLS_AXI_MCP_PATH=$(shell_quote "$CHROME_AXI_LAUNCHER")"
-  spawn_send_text_line "$T" "export CHROME_DEVTOOLS_AXI_SESSION=$(shell_quote "$ID")"
+  spawn_send_text_line "$LAUNCH_TARGET" "export CHROME_DEVTOOLS_AXI_MCP_PATH=$(shell_quote "$CHROME_AXI_LAUNCHER")"
+  spawn_send_text_line "$LAUNCH_TARGET" "export CHROME_DEVTOOLS_AXI_SESSION=$(shell_quote "$ID")"
 fi
 unset CHROME_AXI_LAUNCHER
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.
 if [ -n "$SPAWN_TRACEPARENT" ]; then
-  if spawn_send_text_line "$T" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
+  if spawn_send_text_line "$LAUNCH_TARGET" "export TRACEPARENT=$SPAWN_TRACEPARENT"; then
     if ! spawn_record_traceparent; then
       LAUNCH="unset TRACEPARENT; $LAUNCH"
     fi
@@ -3762,13 +3770,13 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
   fi
 fi
 sleep 0.3
-spawn_send_literal "$T" "$LAUNCH"
+spawn_send_literal "$LAUNCH_TARGET" "$LAUNCH"
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   HERDR_PROJECTION_ABORT_CLEANUP=0
   spawn_herdr_presentation_order_lock_release
 fi
-spawn_send_key "$T" Enter
+spawn_send_key "$LAUNCH_TARGET" Enter
 if [ "$HARNESS" = omp ]; then
   OMP_ACK_INTERVAL=${FM_OMP_LAUNCH_ACK_INTERVAL:-0.5}
   OMP_ACKED=0
@@ -3854,7 +3862,7 @@ if [ "$HARNESS" = kimi ]; then
   KIMI_SUBMIT_SLEEP=${FM_KIMI_SUBMIT_SLEEP:-${FM_KIMI_POLL_INTERVAL:-0.5}}
   KIMI_SUBMIT_SETTLE=${FM_KIMI_SUBMIT_SETTLE:-0}
   KIMI_SUBMIT_VERDICT=$(fm_backend_send_text_submit \
-    "$BACKEND" "$T" "$KIMI_POINTER" "$KIMI_SUBMIT_RETRIES" \
+    "$BACKEND" "$LAUNCH_TARGET" "$KIMI_POINTER" "$KIMI_SUBMIT_RETRIES" \
     "$KIMI_SUBMIT_SLEEP" "$KIMI_SUBMIT_SETTLE" "$W") || {
     kimi_spawn_fail "kimi brief pointer could not be submitted"
     exit 1

@@ -165,7 +165,7 @@ pass "real tmux: a missing named window returns an empty current path"
 index=$(tmux display-message -p -t "$TARGET" '#{window_index}')
 named_path=$(fm_backend_tmux_current_path "$TARGET")
 index_path=$(fm_backend_tmux_current_path "$SESSION:$index")
-pane_path=$(fm_backend_tmux_current_path "$TARGET.0")
+pane_path=$(fm_backend_tmux_current_path "$SESSION:$index.0")
 [ "$index_path" = "$named_path" ] \
   || fail "a numeric window selector should read '$named_path', got '$index_path'"
 [ "$pane_path" = "$named_path" ] \
@@ -183,17 +183,16 @@ path=$(fm_backend_tmux_current_path "$SESSION:$DOTTED")
 [ -z "$path" ] \
   || fail "a gone dotted window name should return an empty current path, got '$path'"
 
-tmux new-window -d -t "=$SESSION:" -n "$DOTTED" -c /tmp
+dotted_id=$(tmux new-window -dP -F '#{window_id}' -t "=$SESSION:" -n "$DOTTED" -c /tmp)
 state=$(fm_tmux_named_window_state "$SESSION:$DOTTED")
 [ "$state" = present ] \
   || fail "a live dotted window name should classify as present, got '$state'"
 dotted_name=$(fm_tmux_display_message "$SESSION:$DOTTED" '#{window_name}')
 [ "$dotted_name" = "$DOTTED" ] \
   || fail "a live dotted window name should read its own pane, got '$dotted_name'"
-dotted_pane=$(fm_tmux_display_message "$SESSION:$DOTTED.0" '#{window_name}')
+dotted_pane=$(fm_tmux_display_message "$dotted_id.0" '#{window_name}')
 [ "$dotted_pane" = "$DOTTED" ] \
   || fail "a pane selector on a dotted window name should read it, got '$dotted_pane'"
-dotted_id=$(fm_tmux_display_message "$SESSION:$DOTTED" '#{window_id}')
 tmux kill-window -t "$dotted_id" \
   || fail "could not remove the dotted test window '$dotted_id'"
 if tmux list-windows -t "=$SESSION" -F '#{window_name}' | grep -Fqx -- "$DOTTED"; then
@@ -203,27 +202,25 @@ pass "real tmux: a dotted window name is proven by membership, not treated as a 
 
 # A LIVE window whose name is the dotted name minus its numeric suffix must not
 # make the gone dotted window look like one of that sibling's panes.
-# `fm-sib` having a pane 0 is no proof that `fm-sib.2` is a pane of it, so the
-# pane index itself is looked up.
 SIBLING="fm-sib"
-tmux new-window -d -t "=$SESSION:" -n "$SIBLING" -c /tmp
+sibling_id=$(tmux new-window -dP -F '#{window_id}' -t "=$SESSION:" -n "$SIBLING" -c /tmp)
 sibling_pid=$(fm_tmux_display_message "$SESSION:$SIBLING" '#{pane_pid}')
 case "$sibling_pid" in
   ''|*[!0-9]*) fail "could not read the live sibling window's pane pid" ;;
 esac
-state=$(fm_tmux_named_window_state "$SESSION:$SIBLING.2")
+state=$(fm_tmux_named_window_state "$SESSION:$SIBLING.0")
 [ "$state" = missing ] \
   || fail "a gone dotted window with a live dot-stripped sibling should classify as missing, got '$state'"
-path=$(fm_backend_tmux_current_path "$SESSION:$SIBLING.2")
+path=$(fm_backend_tmux_current_path "$SESSION:$SIBLING.0")
 [ -z "$path" ] \
   || fail "a gone dotted window should not read its live sibling's path, got '$path'"
-if fm_backend_target_exists tmux "$SESSION:$SIBLING.2"; then
+if fm_backend_target_exists tmux "$SESSION:$SIBLING.0"; then
   fail "a gone dotted window should not exist just because its sibling '$SIBLING' does"
 fi
-leader=$(fm_tmux_display_message "$SESSION:$SIBLING.2" '#{pane_pid}') || leader=""
+leader=$(fm_tmux_display_message "$SESSION:$SIBLING.0" '#{pane_pid}') || leader=""
 [ -z "$leader" ] \
   || fail "a gone dotted window resolved pane leader '$leader'; the live sibling's is $sibling_pid, and teardown would signal that process group"
-real_pane=$(fm_tmux_display_message "$SESSION:$SIBLING.0" '#{pane_pid}')
+real_pane=$(fm_tmux_display_message "$sibling_id.0" '#{pane_pid}')
 [ "$real_pane" = "$sibling_pid" ] \
   || fail "a genuine pane selector on '$SIBLING' should read '$sibling_pid', got '$real_pane'"
 pass "real tmux: a gone dotted window is not mistaken for a pane of its live dot-stripped sibling"
