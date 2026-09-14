@@ -44,6 +44,7 @@ For each Review gate with findings, run the helper's `record` command once with:
   Use the implementation commit for the first review and the preceding review-fix commit for later ones.
 - The run ID from the gate output or `no-mistakes axi status`, and the reviewed commit (or `git rev-parse HEAD`) as `--head`.
 
+A stop can come from either shape: one cluster surviving repeated aimed fixes, or one module or invariant returning a fresh defect every round, which the helper detects on its own from the clusters you record.
 When the helper stops the run, it has already written the report and surfaced the decision for firstmate.
 Do not send another no-mistakes response and do not append a status event yourself.
 End the turn so firstmate can choose one of the report's two paths.
@@ -52,6 +53,6 @@ End the turn so firstmate can choose one of the report's two paths.
 
 When firstmate sends an exact decision, run the helper's `resolve` command with that decision before following the supplied no-mistakes response command.
 The helper records the choice; it never chooses the gate action.
-A root fix starts a fresh count for the surfaced clusters while keeping every other cluster's active streak.
+A root fix starts a fresh count for what the stop surfaced, the clusters for a repeat stop or the one prefix for a widening stop, while every other cluster and prefix keeps its active count.
 A bank choice archives the stop so later gates can record new or still-open clusters.
 Follow only the exact gate action firstmate authorized.
