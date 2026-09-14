@@ -172,6 +172,35 @@ pane_path=$(fm_backend_tmux_current_path "$TARGET.0")
   || fail "a pane-qualified selector should read '$named_path', got '$pane_path'"
 pass "real tmux: numeric window and pane-qualified selectors keep working"
 
+# A task id may contain a dot (fm_task_id_path_safe refuses only a leading
+# dot), so a dotted window name must still be proven by exact membership
+# rather than exempted as a pane selector.
+DOTTED="fm-v1.2"
+state=$(fm_tmux_named_window_state "$SESSION:$DOTTED")
+[ "$state" = missing ] \
+  || fail "a gone dotted window name should classify as missing, got '$state'"
+path=$(fm_backend_tmux_current_path "$SESSION:$DOTTED")
+[ -z "$path" ] \
+  || fail "a gone dotted window name should return an empty current path, got '$path'"
+
+tmux new-window -d -t "=$SESSION:" -n "$DOTTED" -c /tmp
+state=$(fm_tmux_named_window_state "$SESSION:$DOTTED")
+[ "$state" = present ] \
+  || fail "a live dotted window name should classify as present, got '$state'"
+dotted_name=$(fm_tmux_display_message "$SESSION:$DOTTED" '#{window_name}')
+[ "$dotted_name" = "$DOTTED" ] \
+  || fail "a live dotted window name should read its own pane, got '$dotted_name'"
+dotted_pane=$(fm_tmux_display_message "$SESSION:$DOTTED.0" '#{window_name}')
+[ "$dotted_pane" = "$DOTTED" ] \
+  || fail "a pane selector on a dotted window name should read it, got '$dotted_pane'"
+dotted_id=$(fm_tmux_display_message "$SESSION:$DOTTED" '#{window_id}')
+tmux kill-window -t "$dotted_id" \
+  || fail "could not remove the dotted test window '$dotted_id'"
+if tmux list-windows -t "=$SESSION" -F '#{window_name}' | grep -Fqx -- "$DOTTED"; then
+  fail "the dotted test window survived kill-window"
+fi
+pass "real tmux: a dotted window name is proven by membership, not treated as a pane selector"
+
 tmux new-session -d -s prefix-other -n fm-prefix -c "$HOME"
 path=$(fm_backend_tmux_current_path "prefix:fm-prefix")
 [ -z "$path" ] \
