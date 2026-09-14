@@ -136,6 +136,60 @@ test_untargeted_same_head_widening_is_rejected_too() {
   pass "review-loop stop: an untargeted same-head widening is rejected too"
 }
 
+test_resolved_untargeted_cluster_cannot_add_targeting_on_retry() {
+  local task=resolved-targeting run=run-resolved-targeting home head rc out before after
+  home=$(make_home resolved-targeting "$task")
+  record_raw "$home" "$task" "$run" head-a "Aimed only at m." \
+    --cluster "defect:m" --cluster "defect:n" --targeted "defect:m" >/dev/null \
+    || fail "first round should continue"
+  for head in head-b head-c; do
+    record "$home" "$task" "$run" "$head" "Aimed at n." "defect:n" >/dev/null \
+      || fail "n should continue before its third targeted round"
+  done
+  set +e
+  record "$home" "$task" "$run" head-d "Aimed at n again." "defect:n" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "three targeted n rounds must stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root resolution should succeed"
+
+  record_raw "$home" "$task" "$run" head-a "Aimed only at m." \
+    --cluster "defect:m" --cluster "defect:n" --targeted "defect:m" >/dev/null \
+    || fail "an identical retry after resolution should remain a no-op"
+  before=$(cat "$home/state/review-loops/$task.json")
+  set +e
+  out=$(record_raw "$home" "$task" "$run" head-a "Aimed at n instead." \
+    --cluster "defect:m" --cluster "defect:n" --targeted "defect:n" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "resolving n must not make it targeted on an untargeted head"
+  assert_contains "$out" "record targeting for defect:n against" \
+    "the retry rejection omitted the newly targeted resolved cluster"
+  after=$(cat "$home/state/review-loops/$task.json")
+  [ "$before" = "$after" ] || fail "a rejected resolved-cluster retry changed state"
+  pass "review-loop stop: a resolved untargeted cluster cannot add targeting on retry"
+}
+
+test_retry_preserves_a_legacy_resolution_without_an_aimed_subset() {
+  local task=legacy-resolved-retry run=run-legacy-resolved-retry home state before after
+  home=$(make_home legacy-resolved-retry "$task")
+  mkdir -p "$home/state/review-loops"
+  state="$home/state/review-loops/$task.json"
+  cat > "$state" <<JSON
+{"version":1,"task":"$task","run":"$run","threshold":3,"generation":2,
+ "rounds":[{"round":1,"head":"legacy-a","changed":"Aimed at n.",
+             "clusters":[],"targeted":[],"resolved":["defect:n"]}],
+ "surfaced":null,"resolution":{"choice":"root"}}
+JSON
+  before=$(cat "$state")
+  record "$home" "$task" "$run" legacy-a "Aimed at n." "defect:n" >/dev/null \
+    || fail "a legacy resolved-head retry should remain a no-op"
+  after=$(cat "$state")
+  [ "$before" = "$after" ] || fail "a legacy resolved-head retry changed state"
+  pass "review-loop stop: legacy resolution retries preserve their prior meaning"
+}
+
 test_retry_after_a_decision_cannot_re_surface_it() {
   local task=post-resolve run=run-post-resolve home rc
   home=$(make_home post-resolve "$task")
@@ -526,6 +580,799 @@ test_multiple_severities_all_recorded() {
   pass "review-loop stop: every returned severity is recorded"
 }
 
+test_widening_under_one_prefix_stops() {
+  local task=widening-loop run=run-widening home rc out report
+  home=$(make_home widening "$task")
+  # The aos-3333 shape: each round closes the previous round's cluster and the
+  # review returns a fresh defect under the same module. No cluster ever repeats,
+  # so the per-cluster streak never advances, but the module keeps failing.
+  record "$home" "$task" "$run" head-a "Renamed the transcript writer." \
+    "module:src/lib/rename:progress-count" >/dev/null \
+    || fail "first widening round should continue"
+  record_raw "$home" "$task" "$run" head-b "Fixed the progress count." \
+    --cluster "module:src/lib/rename:replay" \
+    --targeted "module:src/lib/rename:replay" >/dev/null \
+    || fail "second widening round should continue"
+  record_raw "$home" "$task" "$run" head-c "Fixed the replay path." \
+    --cluster "module:src/lib/rename:restored-transcript" \
+    --targeted "module:src/lib/rename:restored-transcript" >/dev/null \
+    || fail "third widening round should continue"
+
+  set +e
+  out=$(record_raw "$home" "$task" "$run" head-d "Fixed the restored transcript." \
+    --cluster "module:src/lib/rename:capture-refusal" \
+    --targeted "module:src/lib/rename:capture-refusal" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "three widening rounds under one prefix must stop"
+  assert_contains "$out" "widening" "the stop output did not name the widening shape"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the widening stop did not write its report"
+  assert_grep "shape: widening" "$report" "the report omitted the widening shape field"
+  assert_grep "module:src/lib/rename" "$report" "the report omitted the shared prefix"
+  assert_grep "module:src/lib/rename:replay" "$report" \
+    "the report omitted the second round's new cluster"
+  assert_grep "module:src/lib/rename:capture-refusal" "$report" \
+    "the report omitted the tripping round's new cluster"
+  # Round one had no earlier finding for a fix to close, so it is opening context
+  # and must not be presented as one of the widening rounds that tripped the rule.
+  assert_grep "Round 1 reviewed \`head-a\`: Renamed the transcript writer. (first findings under this prefix)" \
+    "$report" "the report presented the opening round as a widening round"
+  assert_no_grep "Round 4 reviewed \`head-d\`: Fixed the restored transcript. (first findings" \
+    "$report" "the report mislabeled a real widening round as opening context"
+  assert_contains "$out" "Fix at root" "the widening report omitted the root-fix choice"
+  assert_contains "$out" "Bank the remainder" \
+    "the widening report omitted the follow-up choice"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 1 ] \
+    || fail "the widening stop did not append exactly one stop event"
+  pass "review-loop stop: widening under one prefix stops the run"
+}
+
+test_widening_across_prefixes_does_not_stop() {
+  local task=spread-widening run=run-spread-widening home
+  home=$(make_home spread-widening "$task")
+  # Each round closes the last and returns something new, but the new defects sit
+  # under different modules. Nothing points at one owning design, so the run
+  # continues.
+  record "$home" "$task" "$run" head-a "Fixed the parser." \
+    "module:src/parser:trailing-comma" >/dev/null \
+    || fail "first spread round should continue"
+  record_raw "$home" "$task" "$run" head-b "Fixed the trailing comma." \
+    --cluster "module:src/export:column-order" \
+    --targeted "module:src/export:column-order" >/dev/null \
+    || fail "second spread round should continue"
+  record_raw "$home" "$task" "$run" head-c "Fixed the column order." \
+    --cluster "module:src/settings:default-merge" \
+    --targeted "module:src/settings:default-merge" >/dev/null \
+    || fail "third spread round should continue"
+  record_raw "$home" "$task" "$run" head-d "Fixed the default merge." \
+    --cluster "module:src/report:rounding" \
+    --targeted "module:src/report:rounding" >/dev/null \
+    || fail "new clusters under different prefixes must not stop"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "new clusters under different prefixes tripped the widening rule"
+  pass "review-loop stop: new clusters under different prefixes do not stop"
+}
+
+test_repeated_cluster_does_not_count_as_widening() {
+  local task=repeat-not-widening run=run-repeat-widening home
+  home=$(make_home repeat-not-widening "$task")
+  # Round two returns a genuinely new cluster, so it widens once. Rounds three
+  # and four return only clusters this run has already seen, so they must not
+  # advance widening even though the run keeps producing findings. A widening
+  # threshold of three is never reached.
+  record "$home" "$task" "$run" head-a "Fixed the import guard." \
+    "module:src/lib/changelog:validation-at-import" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  record_raw "$home" "$task" "$run" head-b "Fixed the validation." \
+    --cluster "module:src/lib/changelog:optional-field-guard" \
+    --targeted "module:src/lib/changelog:optional-field-guard" >/dev/null \
+    || fail "second round should continue"
+  record_raw "$home" "$task" "$run" head-c "Fixed the optional field guard." \
+    --cluster "module:src/lib/changelog:validation-at-import" \
+    --targeted "module:src/lib/changelog:validation-at-import" >/dev/null \
+    || fail "a re-returned cluster should continue"
+  record_raw "$home" "$task" "$run" head-d "Fixed the import guard again." \
+    --cluster "module:src/lib/changelog:optional-field-guard" \
+    --targeted "module:src/lib/changelog:optional-field-guard" >/dev/null \
+    || fail "a second re-returned cluster must not trip widening"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "rounds returning already-seen clusters tripped the widening rule"
+  pass "review-loop stop: an already-seen cluster does not advance widening"
+}
+
+test_untargeted_round_does_not_advance_widening() {
+  local task=untargeted-widening run=run-untargeted-widening home
+  home=$(make_home untargeted-widening "$task")
+  # Each round returns a brand-new cluster under one prefix, but no round closes
+  # the previous round's cluster: the earlier defect keeps coming back alongside
+  # the new one. Without a closure there is no evidence a fix uncovered the next
+  # defect, so widening must not advance.
+  record "$home" "$task" "$run" head-a "Touched the writer." \
+    "module:src/lib/queue:first" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  record_raw "$home" "$task" "$run" head-b "Touched the writer again." \
+    --cluster "module:src/lib/queue:first" --cluster "module:src/lib/queue:second" \
+    --targeted "module:src/lib/queue:second" >/dev/null \
+    || fail "second round should continue"
+  record_raw "$home" "$task" "$run" head-c "Touched the writer a third time." \
+    --cluster "module:src/lib/queue:first" --cluster "module:src/lib/queue:third" \
+    --targeted "module:src/lib/queue:third" >/dev/null \
+    || fail "third round should continue"
+  record_raw "$home" "$task" "$run" head-d "Touched the writer a fourth time." \
+    --cluster "module:src/lib/queue:first" --cluster "module:src/lib/queue:fourth" \
+    --targeted "module:src/lib/queue:fourth" >/dev/null \
+    || fail "rounds that never close the previous clusters must not trip widening"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "rounds without a targeted closure tripped the widening rule"
+  pass "review-loop stop: a round with no targeted closure does not widen"
+}
+
+test_widening_threshold_is_configurable() {
+  local task=widening-threshold run=run-widening-threshold home rc out
+  home=$(make_home widening-threshold "$task")
+  # A widening threshold of two trips one round earlier than the default three.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=2 record "$home" "$task" "$run" head-a \
+    "Fixed the first invariant." "module:src/lib/api:first" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=2 record_raw "$home" "$task" "$run" head-b \
+    "Fixed the first invariant properly." \
+    --cluster "module:src/lib/api:second" \
+    --targeted "module:src/lib/api:second" >/dev/null \
+    || fail "second round should continue at a widening threshold of two"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=2 record_raw "$home" "$task" "$run" head-c \
+    "Fixed the second invariant." \
+    --cluster "module:src/lib/api:third" \
+    --targeted "module:src/lib/api:third" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the configured widening threshold must stop at two"
+  assert_contains "$out" "widening" "the configured stop did not name the widening shape"
+  assert_grep "reached 2" "$home/state/$task.status" \
+    "the stop event omitted the configured widening threshold"
+  pass "review-loop stop: the widening threshold is configurable"
+}
+
+test_root_decision_resets_only_that_prefix() {
+  local task=widening-root run=run-widening-root home rc out report
+  home=$(make_home widening-root "$task")
+  # Build a widening streak of two under alpha and one under beta, then trip
+  # alpha at a widening threshold of three. A root decision must clear alpha's
+  # widening count while beta's partial count survives.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-a \
+    "Opened both modules." "module:src/alpha:one" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-b \
+    "Fixed alpha one." --cluster "module:src/alpha:two" \
+    --targeted "module:src/alpha:two" >/dev/null || fail "second round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-c \
+    "Fixed alpha two; beta appeared." --cluster "module:src/alpha:three" \
+    --cluster "module:src/beta:one" --targeted "module:src/alpha:three" \
+    --targeted "module:src/beta:one" >/dev/null || fail "third round should continue"
+
+  set +e
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-d \
+    "Fixed alpha three and beta one." --cluster "module:src/alpha:four" \
+    --cluster "module:src/beta:two" --targeted "module:src/alpha:four" \
+    --targeted "module:src/beta:two" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "alpha must trip its widening threshold"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root decision should resolve the widening stop"
+
+  # Beta first appeared in round three, so that round cannot widen it: there was
+  # no earlier beta finding for the fix to close. Round four was beta's first
+  # widening round, leaving it at one when the decision landed. Alpha's count was
+  # reset to zero by the decision, so alpha and beta are now one round apart and
+  # each further round widens both. Beta reaches three first and must trip while
+  # alpha, two rounds behind, must not.
+  FM_HOME="$home" FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 "$STOP" record "$task" \
+    --run "$run" --head head-e --changed "Fixed alpha four and beta two." \
+    --cluster "module:src/alpha:five" --cluster "module:src/beta:three" \
+    --targeted "module:src/alpha:five" --targeted "module:src/beta:three" >/dev/null \
+    || fail "beta's second widening round should continue"
+
+  set +e
+  out=$(FM_HOME="$home" FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 "$STOP" record "$task" \
+    --run "$run" --head head-f --changed "Fixed alpha five and beta three." \
+    --cluster "module:src/alpha:six" --cluster "module:src/beta:four" \
+    --targeted "module:src/alpha:six" --targeted "module:src/beta:four" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "beta's widening count must survive alpha's root decision"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "beta's preserved widening count did not write a report"
+  assert_grep "module:src/beta" "$report" \
+    "the second stop reported a prefix other than beta"
+  assert_no_grep "Prefix: \`module:src/alpha\`" "$report" \
+    "alpha re-tripped despite its root decision"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 2 ] \
+    || fail "beta's preserved widening count did not surface its own stop"
+  pass "review-loop stop: a root decision resets only the decided prefix"
+}
+
+test_bank_archives_a_widening_stop() {
+  local task=widening-bank run=run-widening-bank home rc
+  home=$(make_home widening-bank "$task")
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-a \
+    "Opened the module." "module:src/lib/pack:one" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-b \
+    "Fixed one." --cluster "module:src/lib/pack:two" \
+    --targeted "module:src/lib/pack:two" >/dev/null || fail "second round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-c \
+    "Fixed two." --cluster "module:src/lib/pack:three" \
+    --targeted "module:src/lib/pack:three" >/dev/null || fail "third round should continue"
+
+  set +e
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-d \
+    "Fixed three." --cluster "module:src/lib/pack:four" \
+    --targeted "module:src/lib/pack:four" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the widening rounds must stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision bank >/dev/null \
+    || fail "bank should archive the widening stop"
+
+  # Banking archives the stop the same way it does for a streak: the run keeps
+  # recording instead of re-surfacing the decision it already answered.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-e \
+    "Fixed four." --cluster "module:src/lib/pack:five" \
+    --targeted "module:src/lib/pack:five" >/dev/null \
+    || fail "a banked widening stop blocked a later round"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 1 ] \
+    || fail "a banked widening stop surfaced a second decision event"
+  pass "review-loop stop: bank archives a widening stop"
+}
+
+test_defect_keys_widen_under_their_shared_namespace() {
+  local task=widening-defect run=run-widening-defect home rc out report
+  home=$(make_home widening-defect "$task")
+  # A bare defect: key has no module segment, so every defect: cluster shares the
+  # one "defect" namespace. Four rounds of fresh defect keys widen it.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-a \
+    "Fixed the first defect." "defect:progress-count" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-b \
+    "Fixed the progress count." --cluster "defect:replay" \
+    --targeted "defect:replay" >/dev/null || fail "second round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-c \
+    "Fixed the replay." --cluster "defect:restored-transcript" \
+    --targeted "defect:restored-transcript" >/dev/null || fail "third round should continue"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-d \
+    "Fixed the restored transcript." --cluster "defect:capture-refusal" \
+    --targeted "defect:capture-refusal" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "fresh defect keys must widen their shared namespace"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the defect-namespace widening did not write its report"
+  assert_grep "Prefix: \`defect\`" "$report" \
+    "the report did not name the shared defect namespace"
+  pass "review-loop stop: bare defect keys widen under one namespace"
+}
+
+test_a_run_predating_widening_picks_up_the_rule() {
+  local task=legacy-widening run=run-legacy-widening home rc out report state
+  home=$(make_home legacy-widening "$task")
+  mkdir -p "$home/state/review-loops"
+  state="$home/state/review-loops/$task.json"
+  # State written before widening detection existed has no widening_threshold and
+  # no prefix floor. A run already in flight when the helper is upgraded must pick
+  # the rule up from the ambient default rather than needing a schema migration.
+  cat > "$state" <<JSON
+{"version":1,"task":"$task","run":"$run","threshold":9,"generation":1,
+ "rounds":[
+   {"round":1,"head":"h1","changed":"Opened the module.","clusters":["module:src/legacy:one"],"targeted":["module:src/legacy:one"]},
+   {"round":2,"head":"h2","changed":"Fixed one.","clusters":["module:src/legacy:two"],"targeted":["module:src/legacy:two"]},
+   {"round":3,"head":"h3","changed":"Fixed two.","clusters":["module:src/legacy:three"],"targeted":["module:src/legacy:three"]}
+ ],
+ "surfaced":null,"resolution":null}
+JSON
+
+  set +e
+  out=$(record_raw "$home" "$task" "$run" h4 "Fixed three." \
+    --cluster "module:src/legacy:four" --targeted "module:src/legacy:four" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "a run predating widening must still trip the rule"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the upgraded run did not write its report"
+  assert_grep "shape: widening" "$report" "the upgraded run did not stop on widening"
+  # The report and the status event describe the same stop, so both must name the
+  # threshold the detector actually used rather than the missing state field.
+  assert_grep "Threshold: 3 consecutive widening review rounds" "$report" \
+    "the upgraded run's report did not name the resolved widening threshold"
+  assert_no_grep "Threshold: null" "$report" \
+    "the upgraded run's report printed a null widening threshold"
+  assert_grep "reached 3" "$home/state/$task.status" \
+    "the upgraded run's stop event omitted the resolved widening threshold"
+  pass "review-loop stop: a run predating widening picks up the rule"
+}
+
+test_a_report_after_a_root_decision_omits_the_decided_rounds() {
+  local task=widening-report-floor run=run-widening-report-floor home rc out report
+  home=$(make_home widening-report-floor "$task")
+  # Trip the prefix once, answer it at root, then widen the same prefix again.
+  # The second report must describe only the rounds after the decision, because
+  # the earlier rounds were already answered and no longer count toward a stop.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-a \
+    "Opened the module." "module:src/gamma:one" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-b \
+    "Fixed one." --cluster "module:src/gamma:two" \
+    --targeted "module:src/gamma:two" >/dev/null || fail "second round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-c \
+    "Fixed two." --cluster "module:src/gamma:three" \
+    --targeted "module:src/gamma:three" >/dev/null || fail "third round should continue"
+
+  set +e
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-d \
+    "Fixed three." --cluster "module:src/gamma:four" \
+    --targeted "module:src/gamma:four" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the first widening streak must stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root decision should resolve the first widening stop"
+
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-e \
+    "Fixed four." --cluster "module:src/gamma:five" \
+    --targeted "module:src/gamma:five" >/dev/null || fail "fifth round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-f \
+    "Fixed five." --cluster "module:src/gamma:six" \
+    --targeted "module:src/gamma:six" >/dev/null || fail "sixth round should continue"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-g \
+    "Fixed six." --cluster "module:src/gamma:seven" \
+    --targeted "module:src/gamma:seven" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the prefix must widen again after its root decision"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the second widening stop did not write its report"
+  assert_grep "module:src/gamma:seven" "$report" \
+    "the second report omitted the round that tripped the rule"
+  assert_no_grep "module:src/gamma:one" "$report" \
+    "the second report listed a round the root decision already answered"
+  assert_no_grep "module:src/gamma:four" "$report" \
+    "the second report listed a round the root decision already answered"
+  pass "review-loop stop: a report after a root decision omits the decided rounds"
+}
+
+test_a_resolved_cluster_is_not_a_new_widening_frontier() {
+  local task=widening-resolved run=run-widening-resolved home rc out
+  home=$(make_home widening-resolved "$task")
+  # A streak resolution moves the decided cluster off its rounds and onto
+  # .resolved. The run has still seen it, so a later round that returns only
+  # that cluster is not a fresh frontier and must not advance widening.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-a \
+    "Opened the module." --cluster "module:src/delta:same" \
+    --cluster "module:src/delta:one" >/dev/null || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-b \
+    "Fixed one." --cluster "module:src/delta:same" \
+    --cluster "module:src/delta:two" >/dev/null || fail "second round should continue"
+
+  set +e
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-c \
+    "Fixed two." --cluster "module:src/delta:same" \
+    --cluster "module:src/delta:three" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the repeated cluster must trip the streak stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root decision should resolve the streak stop"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-d \
+    "Fixed the shared defect at root." --cluster "module:src/delta:same" 2>&1)
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "a cluster the run already decided must not trip widening"
+  assert_contains "$out" "continue" "the resolved cluster surfaced a widening stop"
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 1 ] \
+    || fail "the resolved cluster surfaced a second decision event"
+  pass "review-loop stop: a resolved cluster is not a new widening frontier"
+}
+
+test_the_report_lists_only_the_credited_widening_rounds() {
+  local task=widening-credited run=run-widening-credited home rc out report
+  home=$(make_home widening-credited "$task")
+  # Round two leaves round one's cluster open, so the detector does not credit
+  # it and the streak restarts. Round two is still fresh under the prefix and
+  # sits directly before the credited window, so it is the opening-context row;
+  # round one is two rounds away and must not be listed.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-a \
+    "Opened the module." "module:src/eps:one" --threshold 9 >/dev/null \
+    || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-b \
+    "Tried to fix one." --cluster "module:src/eps:one" \
+    --cluster "module:src/eps:two" --targeted "module:src/eps:one" \
+    --targeted "module:src/eps:two" >/dev/null || fail "second round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-c \
+    "Fixed one and two." --cluster "module:src/eps:three" \
+    --targeted "module:src/eps:three" >/dev/null || fail "third round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-d \
+    "Fixed three." --cluster "module:src/eps:four" \
+    --targeted "module:src/eps:four" >/dev/null || fail "fourth round should continue"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-e \
+    "Fixed four." --cluster "module:src/eps:five" \
+    --targeted "module:src/eps:five" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "three credited widening rounds must stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the widening stop did not write its report"
+  # The event names exactly the credited rounds' clusters, so the report must
+  # list the same three rounds and no others.
+  assert_grep "reached 3" "$home/state/$task.status" \
+    "the stop event omitted the widening threshold"
+  assert_grep "Round 3 reviewed" "$report" "the report omitted a credited round"
+  assert_grep "Round 4 reviewed" "$report" "the report omitted a credited round"
+  assert_grep "Round 5 reviewed" "$report" "the report omitted the tripping round"
+  # Round 1 already returned a cluster under this prefix, so the opening row is
+  # earlier context, not the prefix's first appearance, and must not claim to be.
+  assert_grep "Round 2 reviewed \`head-b\`: Tried to fix one. (earlier findings under this prefix, not counted)" \
+    "$report" "the report dropped the opening row adjacent to the credited streak"
+  assert_no_grep "Tried to fix one. (first findings under this prefix)" "$report" \
+    "the report claimed first appearance for a round the prefix already preceded"
+  # Round 1 is two rounds from the credited window, so listing it would print a
+  # gapped span under a header that claims every row closed the row above it.
+  assert_no_grep "Round 1 reviewed" "$report" \
+    "the report listed a round separated from the credited streak by a gap"
+  # The adjacent opening row plus the three credited rounds, and nothing else.
+  [ "$(grep -c '^- Round ' "$report")" -eq 4 ] \
+    || fail "the report listed rounds the detector never credited"
+  pass "review-loop stop: the report lists only the credited widening rounds"
+}
+
+test_a_streak_resolution_does_not_delay_a_widening_stop() {
+  local task=widening-after-streak run=run-widening-after-streak home rc out report
+  home=$(make_home widening-after-streak "$task")
+  # Three rounds of one repeated cluster trip the streak stop, and the root
+  # decision moves that cluster off .clusters onto .resolved. Round three still
+  # returned a finding under the prefix, so round four's aimed change closes it
+  # and earns widening credit. The stop must arrive on round six, not seven.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-a \
+    "Opened the module." "module:src/zeta:same" >/dev/null \
+    || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-b \
+    "Tried the shared defect." "module:src/zeta:same" >/dev/null \
+    || fail "second round should continue"
+
+  set +e
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-c \
+    "Tried the shared defect again." "module:src/zeta:same" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the repeated cluster must trip the streak stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root decision should resolve the streak stop"
+
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-d \
+    "Fixed the shared defect at root." "module:src/zeta:four" >/dev/null \
+    || fail "fourth round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-e \
+    "Fixed four." "module:src/zeta:five" >/dev/null \
+    || fail "fifth round should continue"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record "$home" "$task" "$run" head-f \
+    "Fixed five." "module:src/zeta:six" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "a resolved round must not delay the widening stop by a round"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the widening stop did not write its report"
+  assert_grep "shape: widening" "$report" "the stop was not the widening shape"
+  # Rounds one to three already returned a finding under this prefix, so round
+  # four is a credited widening round and never the prefix's first sighting.
+  assert_no_grep "Round 4 reviewed .* (first findings" "$report" \
+    "the report called a credited round the prefix's first sighting"
+  assert_grep "Round 4 reviewed" "$report" "the report omitted the first credited round"
+  assert_grep "Round 6 reviewed" "$report" "the report omitted the tripping round"
+  assert_no_grep "Round 7 reviewed" "$report" "the stop arrived a round late"
+  pass "review-loop stop: a streak resolution does not delay a widening stop"
+}
+
+test_the_report_never_lists_a_gapped_round_span() {
+  local task=widening-gap run=run-widening-gap home rc out report
+  home=$(make_home widening-gap "$task")
+  # Round one returns a module cluster it never aims at, plus a defect cluster.
+  # Rounds two and three aim at the module cluster and trip the streak, which a
+  # root decision answers. Round four then widens the prefix on its own. The
+  # report must describe that one credited round and must not reach back past
+  # the two rounds in between, because the header promises an unbroken chain.
+  FM_REVIEW_LOOP_THRESHOLD=2 FM_REVIEW_LOOP_WIDENING_THRESHOLD=1 \
+    record_raw "$home" "$task" "$run" head-a "Opened two areas." \
+    --cluster "module:src/eta:x" --cluster "defect:z" --targeted "defect:z" \
+    >/dev/null || fail "first round should continue"
+  FM_REVIEW_LOOP_THRESHOLD=2 FM_REVIEW_LOOP_WIDENING_THRESHOLD=1 \
+    record_raw "$home" "$task" "$run" head-b "Aimed at x." \
+    --cluster "module:src/eta:x" --targeted "module:src/eta:x" >/dev/null \
+    || fail "second round should continue"
+
+  set +e
+  FM_REVIEW_LOOP_THRESHOLD=2 FM_REVIEW_LOOP_WIDENING_THRESHOLD=1 \
+    record_raw "$home" "$task" "$run" head-c "Aimed at x again." \
+    --cluster "module:src/eta:x" --targeted "module:src/eta:x" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the repeated cluster must trip the streak stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root decision should resolve the streak stop"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_THRESHOLD=2 FM_REVIEW_LOOP_WIDENING_THRESHOLD=1 \
+    record_raw "$home" "$task" "$run" head-d "Fixed x at root." \
+    --cluster "module:src/eta:n4" --targeted "module:src/eta:n4" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the fresh cluster must trip the widening stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the widening stop did not write its report"
+  # The event names one cluster over one round, so the report must agree.
+  assert_grep "reached 1 rounds" "$home/state/$task.status" \
+    "the stop event did not name one widening round"
+  assert_grep "Round 4 reviewed" "$report" "the report omitted the tripping round"
+  assert_no_grep "Round 1 reviewed" "$report" \
+    "the report reached back across a gap of uncredited rounds"
+  [ "$(grep -c '^- Round ' "$report")" -eq 1 ] \
+    || fail "the report listed more rounds than the status event named"
+  pass "review-loop stop: the report never lists a gapped round span"
+}
+
+test_a_resolve_records_which_resolved_clusters_were_aimed_at() {
+  local task=widening-unaimed run=run-widening-unaimed home rc state
+  home=$(make_home widening-unaimed "$task")
+  # A resolution strips .targeted for every cluster it decides, whether or not
+  # the round ever aimed at that cluster, so aimedness cannot be recovered from
+  # .resolved afterwards. Rule 4 needs it: a round with no targeted closure must
+  # never advance widening. The state file therefore records the aimed subset it
+  # moved, and this asserts that persisted record against rounds that differ
+  # only in whether they aimed at the resolved cluster.
+  FM_REVIEW_LOOP_THRESHOLD=2 record_raw "$home" "$task" "$run" head-a \
+    "Opened two areas." --cluster "module:src/theta:y" --cluster "defect:pad" \
+    --targeted "defect:pad" >/dev/null || fail "first round should continue"
+  FM_REVIEW_LOOP_THRESHOLD=2 record_raw "$home" "$task" "$run" head-b \
+    "Aimed at y." --cluster "module:src/theta:y" \
+    --targeted "module:src/theta:y" >/dev/null || fail "second round should continue"
+
+  set +e
+  FM_REVIEW_LOOP_THRESHOLD=2 record_raw "$home" "$task" "$run" head-c \
+    "Aimed at y again." --cluster "module:src/theta:y" \
+    --targeted "module:src/theta:y" >/dev/null 2>&1
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the repeated cluster must trip the streak stop"
+  FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision root >/dev/null \
+    || fail "root decision should resolve the streak stop"
+
+  # The state file is this helper's own persisted record, not foreign source.
+  state="$home/state/review-loops/$task.json"
+  [ "$(jq -c '.rounds[0].resolved' "$state")" = '["module:src/theta:y"]' ] \
+    || fail "the resolution did not move the decided cluster onto round one"
+  [ "$(jq -c '.rounds[0].resolved_aimed' "$state")" = '[]' ] \
+    || fail "round one never aimed at the resolved cluster but was recorded as aiming"
+  [ "$(jq -c '.rounds[1].resolved_aimed' "$state")" = '["module:src/theta:y"]' ] \
+    || fail "round two aimed at the resolved cluster but was not recorded as aiming"
+  pass "review-loop stop: a resolve records which resolved clusters were aimed at"
+}
+
+test_the_widening_threshold_flag_pins_the_run() {
+  local task=widening-flag run=run-widening-flag home rc out
+  home=$(make_home widening-flag "$task")
+  # The flag mirrors --threshold: it sets the widening threshold for a new run,
+  # it beats the environment variable when both are set, and a later record that
+  # asks for a different value is refused rather than silently re-pinning.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=9 record "$home" "$task" "$run" head-a \
+    "Opened the module." "module:src/iota:one" --widening-threshold 2 >/dev/null \
+    || fail "first round should continue"
+
+  # Round one is the prefix's first sighting and never counts, so two credited
+  # widening rounds land on round three. At the env var's 9 nothing would stop.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=9 record_raw "$home" "$task" "$run" head-b \
+    "Fixed one." --cluster "module:src/iota:two" \
+    --targeted "module:src/iota:two" >/dev/null || fail "second round should continue"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=9 record_raw "$home" "$task" "$run" head-c \
+    "Fixed two." --cluster "module:src/iota:three" \
+    --targeted "module:src/iota:three" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "the flag must beat the env var and stop at two"
+  assert_contains "$out" "widening" "the flag-configured stop did not name the shape"
+  assert_grep "reached 2 rounds" "$home/state/$task.status" \
+    "the stop event did not name the flag's widening threshold"
+
+  # A later conflicting override is refused with the same shape --threshold uses.
+  set +e
+  out=$(record_raw "$home" "$task" "$run" head-d "Fixed three." \
+    --cluster "module:src/iota:four" --targeted "module:src/iota:four" \
+    --widening-threshold 5 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "a conflicting widening threshold must be refused"
+  assert_contains "$out" "already uses review-loop widening threshold 2" \
+    "the refusal did not name the pinned widening threshold"
+  pass "review-loop stop: the widening threshold flag pins the run"
+}
+
+
+test_the_widening_threshold_flag_pins_a_legacy_run() {
+  local task=widening-legacy-pin run=run-widening-legacy-pin home rc out state
+  home=$(make_home widening-legacy-pin "$task")
+  mkdir -p "$home/state/review-loops"
+  state="$home/state/review-loops/$task.json"
+  # State written before the widening threshold field existed. The flag must pin
+  # into it on the next record exactly as --threshold pins, so an in-flight run
+  # cannot drift across two widening thresholds.
+  cat > "$state" <<JSON
+{"version":1,"task":"$task","run":"$run","threshold":9,"generation":1,
+ "rounds":[
+   {"round":1,"head":"h1","changed":"Opened the module.","clusters":["module:src/mu:one"],"targeted":["module:src/mu:one"]}
+ ],
+ "surfaced":null,"resolution":null}
+JSON
+
+  record_raw "$home" "$task" "$run" h2 "Fixed one." \
+    --cluster "module:src/mu:two" --targeted "module:src/mu:two" \
+    --widening-threshold 4 >/dev/null || fail "the flag should record against legacy state"
+  # The state file is this helper's own persisted record.
+  [ "$(jq -r '.widening_threshold' "$state")" = 4 ] \
+    || fail "the flag did not pin the widening threshold onto legacy state"
+
+  set +e
+  out=$(record_raw "$home" "$task" "$run" h3 "Fixed two." \
+    --cluster "module:src/mu:three" --targeted "module:src/mu:three" \
+    --widening-threshold 9 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "a conflicting widening threshold must be refused on legacy state"
+  assert_contains "$out" "already uses review-loop widening threshold 4" \
+    "the refusal did not name the pinned widening threshold"
+  pass "review-loop stop: the widening threshold flag pins a legacy run"
+}
+
+test_a_legacy_run_without_the_flag_keeps_the_ambient_default() {
+  local task=widening-legacy-ambient run=run-widening-legacy-ambient home rc out state
+  home=$(make_home widening-legacy-ambient "$task")
+  mkdir -p "$home/state/review-loops"
+  state="$home/state/review-loops/$task.json"
+  # No flag, so the accepted backward-compatibility rule still holds: a run
+  # recorded before this change picks the threshold up from the ambient value.
+  cat > "$state" <<JSON
+{"version":1,"task":"$task","run":"$run","threshold":9,"generation":1,
+ "rounds":[
+   {"round":1,"head":"h1","changed":"Opened the module.","clusters":["module:src/nu:one"],"targeted":["module:src/nu:one"]},
+   {"round":2,"head":"h2","changed":"Fixed one.","clusters":["module:src/nu:two"],"targeted":["module:src/nu:two"]}
+ ],
+ "surfaced":null,"resolution":null}
+JSON
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=2 record_raw "$home" "$task" "$run" h3 \
+    "Fixed two." --cluster "module:src/nu:three" \
+    --targeted "module:src/nu:three" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "a legacy run must pick the ambient widening threshold up"
+  assert_grep "reached 2 rounds" "$home/state/$task.status" \
+    "the legacy run did not stop at the ambient widening threshold"
+  pass "review-loop stop: a legacy run without the flag keeps the ambient default"
+}
+
+test_the_report_keeps_an_adjacent_opening_row() {
+  local task=widening-adjacent run=run-widening-adjacent home rc out report
+  home=$(make_home widening-adjacent "$task")
+  # Round one returns a module cluster it never aims at, so it is fresh but
+  # uncredited and sits two rounds before the credited window. Round two is also
+  # fresh and sits directly before that window, so round two is the opening row.
+  # An earlier uncredited round must never mask a genuinely adjacent one.
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-a \
+    "Opened two areas." --cluster "module:src/kappa:one" --cluster "defect:z" \
+    --targeted "defect:z" >/dev/null || fail "first round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-b \
+    "Fixed z; one still open." --cluster "module:src/kappa:one" \
+    --cluster "module:src/kappa:two" --targeted "module:src/kappa:one" \
+    --targeted "module:src/kappa:two" >/dev/null || fail "second round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-c \
+    "Fixed one and two." --cluster "module:src/kappa:three" \
+    --targeted "module:src/kappa:three" >/dev/null || fail "third round should continue"
+  FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-d \
+    "Fixed three." --cluster "module:src/kappa:four" \
+    --targeted "module:src/kappa:four" >/dev/null || fail "fourth round should continue"
+
+  set +e
+  out=$(FM_REVIEW_LOOP_WIDENING_THRESHOLD=3 record_raw "$home" "$task" "$run" head-e \
+    "Fixed four." --cluster "module:src/kappa:five" \
+    --targeted "module:src/kappa:five" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "three credited widening rounds must stop"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the widening stop did not write its report"
+  # Round 1 returned module:src/kappa:one under this same prefix, so round 2 is
+  # not the prefix's first appearance and the label must not say it is.
+  assert_grep "Round 2 reviewed \`head-b\`: Fixed z; one still open. (earlier findings under this prefix, not counted)" \
+    "$report" "the report dropped the opening row adjacent to the credited streak"
+  assert_no_grep "Fixed z; one still open. (first findings under this prefix)" "$report" \
+    "the report claimed first appearance for a round the prefix already preceded"
+  assert_no_grep "Round 1 reviewed" "$report" \
+    "the report listed a round separated from the credited streak by a gap"
+  # The adjacent opening row plus the three credited rounds, and nothing else.
+  [ "$(grep -c '^- Round ' "$report")" -eq 4 ] \
+    || fail "the report listed rounds the detector never credited"
+  pass "review-loop stop: the report keeps an adjacent opening row"
+}
+
+test_a_fresh_cluster_beside_an_older_repeat_still_widens() {
+  local task=widening-mixed run=run-widening-mixed home rc out report
+  home=$(make_home widening-mixed "$task")
+  # Rule 1 asks for at least one never-seen cluster, and rule 4 only excludes a
+  # round returning nothing but already-seen ones. So a round that answers with a
+  # new cluster still widens even when it also re-returns a cluster from an
+  # earlier, non-adjacent round: the frontier moved. Only the previous round's
+  # clusters have to be closed.
+  record "$home" "$task" "$run" head-a "Opened the module." \
+    "module:src/rho:one" --widening-threshold 2 >/dev/null \
+    || fail "first round should continue"
+  record_raw "$home" "$task" "$run" head-b "Fixed one." \
+    --cluster "module:src/rho:two" --targeted "module:src/rho:two" >/dev/null \
+    || fail "second round should continue"
+
+  set +e
+  out=$(record_raw "$home" "$task" "$run" head-c "Fixed two; one came back." \
+    --cluster "module:src/rho:three" --cluster "module:src/rho:one" \
+    --targeted "module:src/rho:three" --targeted "module:src/rho:one" 2>&1)
+  rc=$?
+  set -e
+  expect_code 20 "$rc" "a fresh cluster beside an older repeat must still widen"
+  report=$(printf '%s' "$out" | sed -n 's/^stop: report=//p')
+  assert_present "$report" "the widening stop did not write its report"
+  assert_grep "module:src/rho:three" "$report" \
+    "the report omitted the round's new cluster"
+  # Rows list new clusters only, so the re-returned one is deliberately absent.
+  # The header must therefore not claim that no cluster ever repeats.
+  assert_no_grep "no single cluster ever repeats" "$report" \
+    "the report claimed no cluster ever repeats while this run repeated one"
+  pass "review-loop stop: a fresh cluster beside an older repeat still widens"
+}
+
+test_only_old_clusters_and_unclosed_rounds_do_not_widen() {
+  local task=widening-noncredit run=run-widening-noncredit home rc
+  home=$(make_home widening-noncredit "$task")
+  # The two shapes rule 4 excludes, at a widening threshold of two so either one
+  # counting would stop the run. First a round returning only already-seen
+  # clusters, then a round that leaves the previous round's cluster open.
+  record "$home" "$task" "$run" head-a "Opened the module." \
+    "module:src/tau:one" --widening-threshold 2 >/dev/null \
+    || fail "first round should continue"
+  record_raw "$home" "$task" "$run" head-b "Fixed one." \
+    --cluster "module:src/tau:two" --targeted "module:src/tau:two" >/dev/null \
+    || fail "second round should continue"
+  record_raw "$home" "$task" "$run" head-c "Nothing new." \
+    --cluster "module:src/tau:one" --targeted "module:src/tau:one" >/dev/null \
+    || fail "a round returning only already-seen clusters must not widen"
+  record_raw "$home" "$task" "$run" head-d "Tried three; two still open." \
+    --cluster "module:src/tau:two" --cluster "module:src/tau:three" \
+    --targeted "module:src/tau:two" --targeted "module:src/tau:three" >/dev/null \
+    || fail "a round leaving the previous clusters open must not widen"
+
+  [ "$(grep -c '^needs-decision ' "$home/state/$task.status")" -eq 0 ] \
+    || fail "a non-widening round surfaced a widening stop"
+  pass "review-loop stop: only-old and unclosed rounds do not widen"
+}
+
 test_third_round_surfaces_once
 test_distinct_areas_do_not_trip
 test_distinct_defects_in_one_file_do_not_trip
@@ -536,6 +1383,8 @@ test_identical_same_head_retry_is_a_no_op
 test_expanded_same_head_retry_is_rejected
 test_targeting_only_same_head_expansion_is_rejected
 test_untargeted_same_head_widening_is_rejected_too
+test_resolved_untargeted_cluster_cannot_add_targeting_on_retry
+test_retry_preserves_a_legacy_resolution_without_an_aimed_subset
 test_retry_after_a_decision_cannot_re_surface_it
 test_resolving_one_cluster_keeps_a_legacy_rounds_other_streak
 test_threshold_is_configurable
@@ -544,4 +1393,25 @@ test_root_decision_starts_a_fresh_count
 test_simultaneous_clusters_share_one_report
 test_bank_archives_stop_and_accepts_new_clusters
 test_resolution_preserves_other_cluster_streaks
+test_widening_under_one_prefix_stops
+test_widening_across_prefixes_does_not_stop
+test_repeated_cluster_does_not_count_as_widening
+test_untargeted_round_does_not_advance_widening
+test_widening_threshold_is_configurable
+test_root_decision_resets_only_that_prefix
+test_bank_archives_a_widening_stop
+test_defect_keys_widen_under_their_shared_namespace
+test_a_run_predating_widening_picks_up_the_rule
+test_a_report_after_a_root_decision_omits_the_decided_rounds
+test_a_resolved_cluster_is_not_a_new_widening_frontier
+test_the_report_lists_only_the_credited_widening_rounds
+test_a_streak_resolution_does_not_delay_a_widening_stop
+test_the_report_never_lists_a_gapped_round_span
+test_a_resolve_records_which_resolved_clusters_were_aimed_at
+test_the_widening_threshold_flag_pins_the_run
+test_the_widening_threshold_flag_pins_a_legacy_run
+test_a_legacy_run_without_the_flag_keeps_the_ambient_default
+test_the_report_keeps_an_adjacent_opening_row
+test_a_fresh_cluster_beside_an_older_repeat_still_widens
+test_only_old_clusters_and_unclosed_rounds_do_not_widen
 test_dead_lock_owner_is_recovered

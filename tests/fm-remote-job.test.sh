@@ -401,27 +401,40 @@ fi
 mkdir -p "$REMOTE_HOME/state"
 REPLY_LOG_REL=state/parent-replies.status
 PREEMPT_SIDE_EFFECT="$TMP_ROOT/preempt-side-effect"
+POLL_WAIT_SECONDS=30
 FM_REMOTE_JOB_QUEUE_TIMEOUT=60
 FM_REMOTE_JOB_TIMEOUT=40
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" 30 < /dev/null > /dev/null
+  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" "$POLL_WAIT_SECONDS" < /dev/null > /dev/null
 POLL_JOB_ID=$FM_REMOTE_JOB_ID
 POLL_JOB_DIR="$STATE_ROOT/jobs/$POLL_JOB_ID"
+# The poll counts its own POLL_WAIT_SECONDS window from the moment it starts, so
+# the earliest that window can close is POLL_WAIT_SECONDS after this instant,
+# which is taken before the poll is even observed running. That makes
+# POLL_WINDOW_CLOSES a floor on the true close time, never a grant of extra slack.
+POLL_WINDOW_CLOSES=$(( $(date +%s) + POLL_WAIT_SECONDS ))
 for _ in $(seq 1 100); do
   [ "$(fm_remote_job_read_state "$POLL_JOB_DIR" 2>/dev/null || true)" = running ] && break
   sleep 0.05
 done
 [ "$(fm_remote_job_read_state "$POLL_JOB_DIR" 2>/dev/null || true)" = running ] \
   || fail "the long-poll job did not begin running"
-PREEMPT_BEGAN=$(date +%s)
+# Preemption is the claim that the short command does not have to wait out the
+# poll's window. Measure it against that window, not against a fixed wall-clock
+# budget: a fixed budget also charges fixture overhead - staging a record, the
+# worker's next pickup pass, publishing two results - which a loaded CI runner
+# stretches past any constant, so the old 10-second bound failed on load rather
+# than on lost preemption. Finishing before the window could have closed is
+# false exactly when the short command was made to wait for it.
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
   fm-touch-job.sh "$PREEMPT_SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-PREEMPT_ELAPSED=$(( $(date +%s) - PREEMPT_BEGAN ))
+PREEMPT_FINISHED=$(date +%s)
 [ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "the short command behind a long poll did not complete"
 assert_present "$PREEMPT_SIDE_EFFECT" "the short command behind a long poll did not run"
-[ "$PREEMPT_ELAPSED" -le 10 ] || fail "a queued short command waited a full poll window behind the long poll"
+[ "$PREEMPT_FINISHED" -lt "$POLL_WINDOW_CLOSES" ] \
+  || fail "a queued short command waited a full poll window behind the long poll"
 fm_remote_job_wait "$ACCOUNT_HOME" "$POLL_JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 [ "$FM_REMOTE_JOB_EXIT" -eq 75 ] || fail "a preempted long poll did not publish its elapsed-window result"
 [ ! -s "$FM_REMOTE_JOB_STDOUT" ] || fail "a preempted long poll published partial stdout"

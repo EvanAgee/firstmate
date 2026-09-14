@@ -724,6 +724,7 @@ FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in C
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh
 FM_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside fm-teardown.sh
 FM_REVIEW_LOOP_THRESHOLD=3   # consecutive Review rounds before a repeated cluster stops one no-mistakes run
+FM_REVIEW_LOOP_WIDENING_THRESHOLD=3   # consecutive Review rounds returning new clusters under one prefix before that widening shape stops one no-mistakes run
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
 FM_FAKE_AXI_STATUS=      # test override supplying `no-mistakes axi status` output to the watcher's pipeline-activity read, so no daemon has to run
