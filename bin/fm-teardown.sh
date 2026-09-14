@@ -1389,10 +1389,9 @@ reap_task_backend_process_group() {  # <label>
   # group. The identity guards below cannot catch that, because leader_start is
   # sampled from the same wrong pid and so matches itself. An absent window must
   # yield an empty leader and take the non-numeric early return below.
+  leader=""
   if fm_backend_source tmux; then
-    leader=$(fm_tmux_display_message "$T" '#{pane_pid}')
-  else
-    leader=""
+    leader=$(fm_tmux_display_message "$T" '#{pane_pid}') || leader=""
   fi
   case "$leader" in ''|*[!0-9]*)
     echo "warning: lsof is unavailable; cannot resolve the tmux pane process group for $ID" >&2
