@@ -844,6 +844,42 @@ test_declared_pause_with_live_agent_stays_none() {
   fi
 }
 
+test_stall_after_generic_wedge_is_reported_once() {
+  local dir state win since escalation sequence expected
+  dir=$(make_wedge_case stall-after-wedge sw 'working: validating' 'mode=no-mistakes')
+  state="$dir/state"
+  win=fmtest:fm-sw
+  since="$state/.stale-since-fmtest_fm-sw"
+  escalation="$state/.wedge-escalations-fmtest_fm-sw"
+  printf '1\n' > "$since"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  FM_FAKE_AXI_STATUS=$(axi_status_for "$dir" '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,15m,"quiet 15m ago: log: last activity","-",fix 1')
+  export FM_FAKE_AXI_STATUS
+  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
+  grep -q 'possible wedge' "$state/.wake-queue" || fail "initial generic wedge did not surface"
+  [ ! -e "$since" ] || fail "generic wedge did not remove its timer"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err"
+  ack_drain_err "$state" "$dir/drain.err" >/dev/null || { fail "could not acknowledge generic wedge"; return; }
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
+  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+  grep -qF "$expected" "$state/.wake-queue" || fail "missing wedge timer hid the new stalled diagnosis"
+  sequence=$(cat "$state/.wake-queue.seq")
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err"
+  ack_drain_err "$state" "$dir/drain.err" >/dev/null || { fail "could not acknowledge stalled diagnosis"; return; }
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 26m at review, run 01RUN, agent none'
+  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "aging alone repeated the stalled diagnosis"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+  run_in_watcher "$dir" wedge_timer_check "$win" "$since" 'non-terminal stale' "$escalation" 1 >/dev/null
+  [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "a resumed run could not report a subsequent stall"
+  unset FM_FAKE_CREW_STATE FM_FAKE_AXI_STATUS
+  ok "generic wedge escalation does not suppress a new stall or repeat an acknowledged one"
+}
+
 test_working_hash_transition_surfaces_stalled_diagnosis() {
   local dir state window key status_kind status_line seen reason
   for status_kind in working terminal; do
@@ -1063,6 +1099,7 @@ fi
 
 test_declared_pause_beats_run_step_done
 test_declared_pause_with_live_agent_stays_none
+test_stall_after_generic_wedge_is_reported_once
 test_working_hash_transition_surfaces_stalled_diagnosis
 test_active_pipeline_blocks_escalation
 test_quiet_pipeline_and_idle_pane_escalates

@@ -120,11 +120,26 @@ fm_nm_active_step_row() {  # <toon-output> <status-regex>
 # agent_pid is "none" when blank, "-", or absent (a step reported with no
 # attached agent).
 fm_nm_active_step_parse() {  # <row>
-  local row=$1 step rest activity age secs pid
+  local row=$1 step rest activity age secs pid char
   step=$(fm_nm_trim "${row%%,*}")
   rest=${row#*\"}   # up to (not including) last_activity's opening quote
-  activity=${rest%%\"*}
-  rest=${rest#*\"}  # past last_activity's closing quote
+  activity=""
+  while [ -n "$rest" ]; do
+    char=${rest%"${rest#?}"}
+    rest=${rest#?}
+    case "$char" in
+      \\)
+        activity="$activity$char"
+        if [ -n "$rest" ]; then
+          char=${rest%"${rest#?}"}
+          rest=${rest#?}
+          activity="$activity$char"
+        fi
+        ;;
+      \") break ;;
+      *) activity="$activity$char" ;;
+    esac
+  done
   secs=""
   age=""
   case "$activity" in *" ago"*)

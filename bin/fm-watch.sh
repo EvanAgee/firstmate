@@ -514,19 +514,27 @@ finished_awaiting_merge() {  # <window> <task>
 # line that an active run/busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> [check-pipeline]
   local win=$1 since_file=$2 label=$3 escalation_file=$4 check_pipeline=${5:-0}
-  local since age n reason task stalled_detail
+  local since age n reason task crew_line stalled_detail stalled_identity stalled_file
+  stalled_file="${since_file}.stalled"
   if [ "$check_pipeline" = 1 ]; then
     task=$(window_to_task "$win" "$STATE")
-    stalled_detail=$(crew_state_stalled_detail "$(crew_state_line "$task")")
+    crew_line=$(crew_state_line "$task")
+    stalled_detail=$(crew_state_stalled_detail "$crew_line")
     if [ -n "$stalled_detail" ]; then
-      if [ -e "$since_file" ]; then
+      stalled_identity=$(crew_stalled_identity "$stalled_detail")
+      if [ "$(cat "$stalled_file" 2>/dev/null || true)" != "$stalled_identity" ]; then
         reason="stale: $win ($stalled_detail)"
         fm_wake_append stale "$win" "$reason" || exit 1
+        printf '%s' "$stalled_identity" > "$stalled_file"
         rm -f "$since_file" "$escalation_file"
         wake "$reason"
       fi
       return
     fi
+    case "$crew_line" in
+      ''|state:\ unknown*) ;;
+      *) rm -f "$stalled_file" ;;
+    esac
   fi
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in

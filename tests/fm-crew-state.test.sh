@@ -527,6 +527,27 @@ test_awaiting_agent_pid_liveness() {
   pass "awaiting agent trusts a live PID and normalizes an exited PID to none"
 }
 
+test_escaped_activity_keeps_agent_pid() {
+  reset_fakes
+  local d activity out
+  d=$(new_case escaped-activity)
+  make_repo_on_branch "$d/wt" fm/escaped-activity
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/escaped-activity.meta" "window=fm:fm-escaped-activity" "worktree=$d/wt" "kind=ship"
+  for activity in 'quiet 13h ago: log: echo \"ready\"' 'quiet 13h ago: log: echo \"ready\", path \\' 'quiet 13h ago: log: echo \\\"ready\\\"'; do
+    FM_FAKE_AXI_STATUS=$(run_awaiting_agent_dead fm/escaped-activity 13h
+      printf '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:\n    review,running,13h,"%s","%s",fix 1\n' "$activity" "$$")
+    out=$(run_crew_state "$d" escaped-activity)
+    [ "$out" = 'state: working · source: run-step · validating (running)' ] \
+      || fail "escaped activity lost the live agent PID: $out"
+    FM_FAKE_AXI_STATUS=$(printf '%s\n' "$FM_FAKE_AXI_STATUS" | sed '/awaiting_agent:/d')
+    out=$(run_crew_state "$d" escaped-activity)
+    [ "$out" = "state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent $$" ] \
+      || fail "escaped activity lost the quiet duration or agent PID: $out"
+  done
+  pass "escaped activity quotes preserve live PID and quiet duration"
+}
+
 # (b) needs-decision log + a resumed (running/fixing) run = SUPERSEDED
 test_stale_needs_decision_superseded() {
   reset_fakes
@@ -1478,6 +1499,13 @@ test_missing_run_head_falls_back_to_current_state() {
   pass "missing run head falls back instead of matching by branch"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    "$test_name"
+  done
+  exit 0
+fi
+
 test_active_run_is_authoritative
 test_active_agent_stays_working
 test_quiet_agent_past_threshold_is_stalled
@@ -1485,6 +1513,7 @@ test_quiet_agent_inside_threshold_stays_working
 test_parked_threshold_env_override
 test_awaiting_agent_no_pid_is_stalled
 test_awaiting_agent_pid_liveness
+test_escaped_activity_keeps_agent_pid
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_genuine_parked_not_superseded

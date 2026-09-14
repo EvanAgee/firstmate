@@ -1353,6 +1353,11 @@ crew_state_stalled_detail() {  # <state-line>
   printf '%s' "${rest#*' · '}"
 }
 
+crew_stalled_identity() {
+  local detail=${1#* at }
+  printf '%s' "${detail%%' · '*}"
+}
+
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class
 # reports `working`). This is the "provably working" predicate at the heart of
 # absorb-only-when-provably-working: a no-verb turn-end or stale wake is absorbed

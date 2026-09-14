@@ -493,8 +493,40 @@ clear_pause_tracking() {  # <window> <state>
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
 }
 
+escalate_stalled() {
+  local win=$1 state=$2 detail=$3 task marker identity
+  task=$(window_to_task "$win" "$state")
+  marker="$state/.subsuper-stalled-$(_stale_key "$task")"
+  identity=$(crew_stalled_identity "$detail")
+  if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
+    escalate_add "$state" "stale: $win ($detail)" || return 1
+    printf '%s' "$identity" > "$marker" || return 1
+    mark_escalated_seen stale "$win" "$state"
+  fi
+  stale_marker_remove "$win" "$state"
+  pause_marker_remove "$win" "$state"
+}
+
+reconcile_stalled_tracking() {
+  local win=$1 state=$2 task crew_line detail marker
+  task=$(window_to_task "$win" "$state")
+  crew_line=$(FM_STATE_OVERRIDE="$state" crew_state_line "$task")
+  detail=$(crew_state_stalled_detail "$crew_line")
+  if [ -n "$detail" ]; then
+    escalate_stalled "$win" "$state" "$detail"
+    return 0
+  fi
+  marker="$state/.subsuper-stalled-$(_stale_key "$task")"
+  case "$crew_line" in
+    ''|state:\ unknown*) ;;
+    *) rm -f "$marker" ;;
+  esac
+  return 1
+}
+
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
   local win=$1 state=$2 last=$3 task key marker watcher_key
+  reconcile_stalled_tracking "$win" "$state" && return
   task=$(window_to_task "$win" "$state")
   key=$(_stale_key "$task")
   marker="$state/.subsuper-paused-$key"
@@ -517,7 +549,8 @@ migrate_watcher_pause_markers() {  # <state>
     key=$(_stale_key "$task")
     watcher_key=$(_stale_key "$win")
     last=$(last_status_line "$state/$task.status")
-    if status_is_paused "$last" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ]; then
+    if status_is_paused "$last" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ] \
+      || [ -e "$state/.subsuper-stalled-$key" ]; then
       reconcile_pause_tracking "$win" "$state" "$last"
     fi
   done
@@ -852,6 +885,7 @@ housekeeping() {  # <state>
       # Window gone (task torn down): drop the marker, nothing to escalate.
       rm -f "$marker"; continue
     fi
+    reconcile_stalled_tracking "$win" "$state" && continue
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
     if [ -n "$last" ] && status_is_paused "$last"; then
@@ -883,6 +917,7 @@ housekeeping() {  # <state>
     if [ -z "$win" ]; then
       rm -f "$marker"; continue
     fi
+    reconcile_stalled_tracking "$win" "$state" && continue
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
     if [ -z "$last" ] || ! status_is_paused "$last"; then
@@ -1100,7 +1135,13 @@ handle_wake() {  # <reason> <state>
   case "$action" in
     escalate)
       log "escalate: $reason -> $distilled"
-      escalate_add "$state" "$distilled"
+      case "$distilled" in
+        "stale: $arg (pipeline stalled "*)
+          stale_detail=${distilled#*' ('}
+          stale_detail=${stale_detail%')'}
+          escalate_stalled "$arg" "$state" "$stale_detail" ;;
+        *) escalate_add "$state" "$distilled" ;;
+      esac
       # A terminal-stale escalate must not leave a persistence marker behind, or
       # housekeeping re-escalates the same pane as a false wedge later.
       [ "$kind" = "stale" ] && stale_marker_remove "$arg" "$state"
