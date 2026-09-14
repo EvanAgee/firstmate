@@ -783,7 +783,7 @@ case "\${1:-}" in
   list-windows) [ ! -f "\$0.windows" ] || cat "\$0.windows"; exit 0 ;;
   new-window)
     while [ "\$#" -gt 1 ]; do
-      [ "\$1" != -n ] || { printf '%s\n' "\$2" > "\$0.windows"; break; }
+      [ "\$1" != -n ] || { printf '%s\n' "\$2" >> "\$0.windows"; break; }
       shift
     done
     printf '@fake\n'; exit 0 ;;
@@ -859,7 +859,7 @@ case "\${1:-}" in
   list-windows) [ ! -f "\$0.windows" ] || cat "\$0.windows"; exit 0 ;;
   new-window)
     while [ "\$#" -gt 1 ]; do
-      [ "\$1" != -n ] || { printf '%s\n' "\$2" > "\$0.windows"; break; }
+      [ "\$1" != -n ] || { printf '%s\n' "\$2" >> "\$0.windows"; break; }
       shift
     done
     printf '@fake\n'; exit 0 ;;

@@ -14,12 +14,13 @@
 # Case 1 drives the REAL reap_task_backend_process_group by running
 # bin/fm-teardown.sh with lsof removed from its search path, which is the only
 # way that fallback is reached.
-# It proves that a gone window resolves no leader, that the function takes its
-# non-numeric early return and emits the "cannot resolve the tmux pane process
-# group" warning, and that a sacrificial process group started for the task
-# survives teardown untouched.
-# That case fails against the raw read, where the gone window resolves a live
-# neighbour's pid and the kill path runs.
+# The process actually endangered by the defect is the LIVE NEIGHBOUR pane,
+# because the raw read resolves that pane's own pid and the kill then targets
+# that pane's process group.
+# So the case asserts that the neighbour pane process and its process group are
+# both still alive after teardown returns, alongside the leader-resolution
+# warning and the absence of the reap line.
+# All four assertions fail against the raw read and pass after the fix.
 #
 # Cases 2 and 3 exercise only the shared read helper fm_tmux_display_message,
 # not the kill path, and are kept as direct coverage of the live-window and
@@ -34,14 +35,11 @@ TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-gone-window-reap)
 
 command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found"; exit 0; }
-command -v perl >/dev/null 2>&1 || { echo "skip: perl not found"; exit 0; }
 REAL_TMUX=$(command -v tmux)
 SOCKET="fm-teardown-reap-$$"
 SHIM_DIR=
-VICTIM_PID=
 
 cleanup_all() {
-  [ -n "${VICTIM_PID:-}" ] && kill -KILL "$VICTIM_PID" 2>/dev/null
   "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
   [ -n "${SHIM_DIR:-}" ] && rm -rf "$SHIM_DIR"
   fm_test_cleanup
@@ -175,39 +173,29 @@ PATH_NO_LSOF=$(make_path_without_lsof "$CASE")
 PATH="$PATH_NO_LSOF" command -v lsof >/dev/null 2>&1 \
   && fail "gone-window: fixture path unexpectedly exposes lsof"
 
-perl -e 'setpgrp(0, 0); chdir shift or die; exec "sleep", "300"' "$CASE/wt" &
-VICTIM_PID=$!
-disown
-sleep 0.3
-kill -0 "$VICTIM_PID" 2>/dev/null || fail "gone-window: sacrificial process did not start"
-VICTIM_PGID=$(ps -o pgid= -p "$VICTIM_PID" 2>/dev/null | tr -d '[:space:]')
-case "$VICTIM_PGID" in
-  ''|*[!0-9]*) fail "gone-window: could not read the sacrificial process group" ;;
+ALIVE_PGID=$(ps -o pgid= -p "$ALIVE_PID" 2>/dev/null | tr -d '[:space:]')
+case "$ALIVE_PGID" in
+  ''|*[!0-9]*) fail "gone-window: could not read the live neighbour's process group" ;;
 esac
 
 RC=0
 run_teardown "$CASE" "$PATH_NO_LSOF" > "$CASE/stdout" 2> "$CASE/stderr" || RC=$?
 
-grep -Fq 'cannot resolve the tmux pane process group' "$CASE/stderr" \
-  || fail "gone-window: teardown did not take the non-numeric early return (rc=$RC); stderr: $(cat "$CASE/stderr")"
+grep -Fq 'cannot resolve the tmux pane leader' "$CASE/stderr" \
+  || fail "gone-window: teardown did not take the leader-resolution early return (rc=$RC); stderr: $(cat "$CASE/stderr")"
 pass "a gone tmux window resolves no pane leader and takes the early return"
 
 grep -Fq 'reaping leaked worktree process group' "$CASE/stderr" \
   && fail "gone-window: teardown reached the kill path against a gone window"
 pass "teardown never reports reaping a process group for a gone window"
 
-kill -0 "$VICTIM_PID" 2>/dev/null \
-  || fail "gone-window: the sacrificial process $VICTIM_PID was killed; a raw display-message read would resolve the live neighbour $ALIVE_PID and SIGTERM its group"
-kill -0 -- "-$VICTIM_PGID" 2>/dev/null \
-  || fail "gone-window: the sacrificial process group $VICTIM_PGID was killed"
-pass "the sacrificial process group survives teardown untouched"
-
 kill -0 "$ALIVE_PID" 2>/dev/null \
-  || fail "gone-window: the live neighbour pane process $ALIVE_PID died"
-pass "the live neighbour pane process is untouched"
+  || fail "gone-window: the live neighbour pane process $ALIVE_PID was killed; the raw display-message read resolves exactly this pid for the absent window"
+pass "the live neighbour pane process survives teardown untouched"
 
-kill -KILL "$VICTIM_PID" 2>/dev/null || true
-VICTIM_PID=
+kill -0 -- "-$ALIVE_PGID" 2>/dev/null \
+  || fail "gone-window: the live neighbour pane's process group $ALIVE_PGID was killed; that is the group the raw read's kill -TERM would signal"
+pass "the live neighbour pane's process group survives teardown untouched"
 
 # --- 2. The live window still reads its own pane leader ---------------------
 #
