@@ -1369,6 +1369,7 @@ crew_stall_transition() (
   local state=$1 task=$2 win=$3 action=$4 detail=${5:-} pane_hash=${6:-}
   local key marker receipt generation identity result status=0
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
+  # shellcheck source=bin/fm-wake-lib.sh
   . "$_FM_CLASSIFY_LIB_DIR/fm-wake-lib.sh"
   key=$(printf '%s' "$win" | tr ':/.' '___')
   marker="$state/.stale-since-$key.stalled"

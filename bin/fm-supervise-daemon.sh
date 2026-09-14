@@ -240,6 +240,7 @@ AFK_FLAG_NAME=".afk"
 # Resolve the effective state dir. FM_STATE_OVERRIDE wins (testing); otherwise
 # $FM_HOME/state. Kept as a function so the pure
 # classifiers can take an explicit state arg without depending on globals.
+# shellcheck disable=SC2031 # Stall helpers isolate their environment in subshells.
 _state_root() { printf '%s' "${FM_STATE_OVERRIDE:-$FM_HOME/state}"; }
 
 # --- portable stat (same trap as fm-watch.sh: no `stat -f || stat -c`) -------
@@ -497,7 +498,9 @@ clear_pause_tracking() {  # <window> <state>
 escalate_stalled() (
   local win=$1 state=$2 detail=$3 episode=${4:-} task marker identity generation
   local delivered_identity delivered_generation receipt_tmp=''
+  # shellcheck disable=SC2030 # Queue bindings must stay inside this receipt subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
+  # shellcheck source=bin/fm-wake-lib.sh
   . "$FM_DAEMON_DIR/fm-wake-lib.sh"
   task=$(window_to_task "$win" "$state")
   marker="$state/.subsuper-stalled-$(_stale_key "$task")"
@@ -685,6 +688,7 @@ supervisor_omp_identity() {  # [state] -> "<bun>\t<bin>", empty when unprovable
   fi
   [ "${FM_SUPERVISOR_HARNESS:-}" = omp ] || return 0
   marker="$state/.omp-primary-extension-loaded"
+  # shellcheck disable=SC2031 # The marker reader sets these values in this shell.
   if fm_omp_primary_marker_read "$marker" 2>/dev/null; then
     comm=$(ps -o comm= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)
     args=$(ps -o args= -p "$FM_OMP_MARKER_PID" 2>/dev/null || true)

@@ -5,6 +5,8 @@
 # deterministically reach (persistent-Enter-swallow, max-defer wedge alarms,
 # fm-send swallow reporting, composer-pending ANSI parsing). The operator-visible
 # inject flow lives in fm-afk-inject-e2e and fm-wake-daemon-lifecycle-e2e.
+# Fixture subshells deliberately keep their environment changes out of later cases.
+# shellcheck disable=SC2030,SC2031
 set -u
 
 # shellcheck source=tests/wake-helpers.sh

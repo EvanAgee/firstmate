@@ -557,6 +557,7 @@ test_escaped_activity_keeps_agent_pid() {
   make_repo_on_branch "$d/wt" fm/escaped-activity
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/escaped-activity.meta" "window=fm:fm-escaped-activity" "worktree=$d/wt" "kind=ship"
+  # shellcheck disable=SC1003 # These fixtures contain literal JSON backslash escapes.
   for activity in 'quiet 13h ago: log: echo \"ready\"' 'quiet 13h ago: log: echo \"ready\", path \\' 'quiet 13h ago: log: echo \\\"ready\\\"'; do
     FM_FAKE_AXI_STATUS=$(run_awaiting_agent_dead fm/escaped-activity 13h
       printf '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:\n    review,running,13h,"%s","%s",fix 1\n' "$activity" "$$")

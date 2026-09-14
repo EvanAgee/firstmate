@@ -17,6 +17,8 @@
 # these assert real behavior through the production entry points and never
 # inspect implementation source. The broader watcher triage contract lives in
 # fm-watch-triage.test.sh.
+# Fixture subshells deliberately keep their environment changes out of later cases.
+# shellcheck disable=SC2030,SC2031
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -930,7 +932,7 @@ test_poll_reports_stall_after_generic_wedge_removed_timer() {
 }
 
 test_poll_reports_stall_over_old_terminal_status_without_timer() {
-  poll_stall_after_generic_wedge done
+  poll_stall_after_generic_wedge 'done'
   poll_stall_after_generic_wedge blocked
   ok "full poll surfaces stalls over old done and blocked statuses without timers"
 }
@@ -943,7 +945,9 @@ run_poll_daemon() {
     export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
     export FM_FAKE_TMUX_WINDOW=fmtest:fm-ps FM_FAKE_TMUX_CAPTURE="$dir/pane.txt"
     export FM_ESCALATE_BATCH_SECS=999999 FM_MAX_DEFER_SECS=999999 FM_STALE_ESCALATE_SECS=240
+    # shellcheck source=/dev/null
     . "$ROOT/bin/fm-supervise-daemon.sh"
+    # shellcheck disable=SC2034 # Read by the sourced daemon functions.
     LOG="$dir/daemon.log"
     "$@" "$dir/state"
   )
@@ -1187,6 +1191,7 @@ test_concurrent_watcher_and_daemon_detection_share_episode() {
     shared_episode_wait_file "$dir/watcher.read" || { reap "$daemon_pid"; reap "$watcher_pid"; return; }
     (
       export FM_STATE_OVERRIDE="$state"
+      # shellcheck source=/dev/null
       . "$ROOT/bin/fm-wake-lib.sh"
       fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
       : > "$dir/lock-held"

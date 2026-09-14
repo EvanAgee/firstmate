@@ -55,6 +55,8 @@
 #
 # Compatibility: JSON is the primary machine-readable surface.
 # Human views must render this output instead of parsing state files again.
+# Classifier stall helpers change their environment only inside subshells.
+# shellcheck disable=SC2031
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
