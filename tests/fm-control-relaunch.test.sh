@@ -60,14 +60,16 @@ case "${1:-}" in
   send-keys)
     shift
     literal=0
+    target=
     while [ $# -gt 0 ]; do
       case "$1" in
-        -t) shift 2 ;;
+        -t) target=$2; shift 2 ;;
         -l) literal=1; shift ;;
         *) break ;;
       esac
     done
     payload=${1:-}
+    printf '%s\n' "$target" >> "$D/targets"
     if [ "$literal" = 1 ]; then
       printf '%s\n' "$payload" >> "$D/literal"
       case "$payload" in
@@ -98,6 +100,7 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
+        *pane_id*) printf '%%1\n'; exit 0 ;;
         *cursor_y*) printf '1\n'; exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*)
@@ -1404,15 +1407,19 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
 
 test_relaunch_recreates_a_missing_tmux_window() {
   local dir out rc
-  dir=$(new_case missing-window rl37)
-  add_ship_task "$dir" rl37 claude
+  dir=$(new_case missing-window rl37.0)
+  add_ship_task "$dir" rl37.0 claude
   : > "$dir/fake/windows"
-  out=$(run_control "$dir" rl37 relaunch --note "continue after window loss"); rc=$?
+  out=$(run_control "$dir" rl37.0 relaunch --note "continue after window loss"); rc=$?
   expect_code 0 "$rc" "a missing tmux window should be recreated"$'\n'"$out"
-  assert_contains "$out" "relaunched rl37" "the control command should report the relaunch"
-  assert_grep "fm-rl37" "$dir/fake/windows" "the recorded window name should be recreated"
+  assert_contains "$out" "relaunched rl37.0" "the control command should report the relaunch"
+  assert_grep "fm-rl37.0" "$dir/fake/windows" "the recorded window name should be recreated"
   [ "$(cat "$dir/fake/cwd")" = "$dir/wt" ] \
     || fail "the recreated window should start in the recorded worktree"
+  [ "$(sort -u "$dir/fake/targets")" = '%1' ] \
+    || fail "every relaunch send should use the resolved pane ID"
+  [ "$(meta_field "$dir" rl37.0 window)" = 'fmses:fm-rl37.0' ] \
+    || fail "relaunch should retain the canonical window name in metadata"
   pass "fm-control relaunch: a missing tmux window is recreated in the recorded worktree"
 }
 
