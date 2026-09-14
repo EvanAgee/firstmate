@@ -1110,6 +1110,7 @@ parent_evidence_reconciliation_json() {  # <summary-json> <activities-json> <dec
     ([ $activities[] as $e
        | if $e.verb == "working" then
            ([ $summary.active_children[]
+              | select(.state == "working")
               | select(if ($e.key | keyed) then .id == $e.key else true end)
               | {surface:"active_children",id,key:null,verb:"working"}]) as $matches
            | result($e; $matches;

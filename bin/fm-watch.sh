@@ -506,7 +506,7 @@ finished_awaiting_merge() {  # <window> <task>
 
 observe_stalled_pipeline() {
   local win=$1 crew_line=$2 since_file=$3 escalation_file=$4 pane_hash=$5
-  local detail identity marker reason
+  local detail identity marker reason generation
   marker="${since_file}.stalled"
   detail=$(crew_state_stalled_detail "$crew_line")
   if [ -n "$detail" ]; then
@@ -528,7 +528,13 @@ observe_stalled_pipeline() {
         return 0
       fi
       ;;
-    *) rm -f "$marker" "$marker.hash" ;;
+    *)
+      if [ -s "$marker" ]; then
+        generation=$(crew_stalled_generation "$marker.generation")
+        printf '%s' "$((generation + 1))" > "$marker.generation" || exit 1
+      fi
+      rm -f "$marker" "$marker.hash"
+      ;;
   esac
   return 1
 }

@@ -991,6 +991,48 @@ test_away_poll_reports_stall_after_generic_escalation_removed_marker() {
   ok "away polling reports stalls after generic escalation and buffers them once"
 }
 
+test_away_recovery_rearms_stall_without_housekeeping() {
+  local dir state win expected sequence episode expected_buffer
+  dir=$(make_wedge_case away-recovery-episode ps 'working: validating' 'mode=no-mistakes')
+  state="$dir/state"
+  win=fmtest:fm-ps
+  seed_stale_pane "$dir" ps "$win" 'unchanged idle validation pane'
+  : > "$state/.afk"
+  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+  expected_buffer=""
+  for episode in 1 2; do
+    set_poll_pipeline_activity "$dir" 25m
+    poll_stalled_case "$dir" "$win" || return
+    [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "episode $episode lost its stalled wake"
+    run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+      || { fail "episode $episode failed durable ingestion"; return; }
+    if [ "$episode" = 1 ]; then expected_buffer=$expected; else expected_buffer=$(printf '%s\n%s' "$expected" "$expected"); fi
+    [ "$(cat "$state/.subsuper-escalations")" = "$expected_buffer" ] || fail "daemon discarded or duplicated episode $episode"
+    [ ! -s "$state/.wake-queue" ] || fail "daemon did not acknowledge episode $episode"
+    sequence=$(cat "$state/.wake-queue.seq")
+    set_poll_pipeline_activity "$dir" 26m
+    poll_stalled_case "$dir" "$win" || return
+    [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "episode $episode repeated on the watcher"
+    append_wake "$state" stale "$win" "$expected"
+    run_poll_daemon "$dir" handle_durable_wakes "$expected" \
+      || { fail "episode $episode replay failed durable ingestion"; return; }
+    [ "$(cat "$state/.subsuper-escalations")" = "$expected_buffer" ] || fail "daemon repeated episode $episode on replay"
+    [ ! -s "$state/.wake-queue" ] || fail "daemon did not acknowledge episode $episode replay"
+    if [ "$episode" = 1 ]; then
+      set_poll_pipeline_activity "$dir" 15m
+      poll_stalled_case "$dir" "$win" || return
+      [ ! -e "$state/.stale-since-fmtest_fm-ps.stalled" ] || fail "watcher did not observe recovery"
+      [ -e "$state/.subsuper-stalled-ps" ] || fail "fixture unexpectedly cleared daemon identity during recovery"
+      if [ -s "$state/.wake-queue" ]; then
+        run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+          || { fail "recovery poll failed durable ingestion"; return; }
+      fi
+    fi
+  done
+  unset FM_FAKE_AXI_STATUS FM_FAKE_CREW_STATE
+  ok "watcher recovery rearms the same stalled identity without daemon housekeeping"
+}
+
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode() {
   local dir state win key expected sequence reported_hash
   dir=$(make_wedge_case poll-stall-identity ps 'working: validating' 'mode=no-mistakes')
@@ -1261,6 +1303,7 @@ test_declared_pause_with_live_agent_stays_none
 test_poll_reports_stall_after_generic_wedge_removed_timer
 test_poll_reports_stall_over_old_terminal_status_without_timer
 test_away_poll_reports_stall_after_generic_escalation_removed_marker
+test_away_recovery_rearms_stall_without_housekeeping
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode
 test_working_hash_transition_surfaces_stalled_diagnosis
 test_active_pipeline_blocks_escalation

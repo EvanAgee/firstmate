@@ -494,12 +494,15 @@ clear_pause_tracking() {  # <window> <state>
 }
 
 escalate_stalled() {
-  local win=$1 state=$2 detail=$3 task marker identity
+  local win=$1 state=$2 detail=$3 task marker identity generation
   task=$(window_to_task "$win" "$state")
   marker="$state/.subsuper-stalled-$(_stale_key "$task")"
   identity=$(crew_stalled_identity "$detail")
-  if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
+  generation=$(crew_stalled_generation "$state/.stale-since-$(_stale_key "$win").stalled.generation")
+  if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ] \
+    || [ "$(crew_stalled_generation "$marker.generation")" != "$generation" ]; then
     escalate_add "$state" "stale: $win ($detail)" || return 1
+    printf '%s' "$generation" > "$marker.generation" || return 1
     printf '%s' "$identity" > "$marker" || return 1
     mark_escalated_seen stale "$win" "$state"
   fi
@@ -518,7 +521,7 @@ reconcile_stalled_tracking() {
   fi
   case "$crew_line" in
     ''|state:\ unknown*) return 0 ;;
-    *) rm -f "$marker" ;;
+    *) rm -f "$marker" "$marker.generation" ;;
   esac
   return 1
 }
