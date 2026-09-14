@@ -184,6 +184,15 @@ tmux list-windows -t '=prefix' -F '#{window_name}' | grep -Fqx fm-prefix \
   || fail "the recreated window did not land in the exact requested session"
 pass "real tmux: session prefix matches cannot redirect reads or task creation"
 
+# fm_backend_target_exists must not answer for the client's current window
+# when the named window is gone.
+fm_backend_target_exists tmux "$TARGET" \
+  || fail "fm_backend_target_exists should report a live named window as existing"
+if fm_backend_target_exists tmux "$SESSION:no-such-window-xyz"; then
+  fail "fm_backend_target_exists should report a missing named window as gone"
+fi
+pass "real tmux: fm_backend_target_exists reports a missing named window as gone"
+
 # --- kill and recovery-grade missing-window classification ------------------
 
 fm_backend_tmux_kill "$TARGET"
@@ -202,6 +211,11 @@ path=$(fm_backend_tmux_current_path "$TARGET")
 [ -z "$path" ] \
   || fail "a missing tmux server should return an empty current path, got '$path'"
 pass "real tmux: a missing server returns an empty current path"
+
+if fm_backend_target_exists tmux "$TARGET"; then
+  fail "fm_backend_target_exists should report a gone tmux server as gone"
+fi
+pass "real tmux: fm_backend_target_exists reports a missing server as gone"
 
 cleanup_all
 trap - EXIT
