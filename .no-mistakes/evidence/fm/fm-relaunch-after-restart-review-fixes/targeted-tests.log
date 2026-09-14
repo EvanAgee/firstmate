@@ -1,0 +1,180 @@
+FM_TEST_BEGIN 2026-09-14T21:50:07Z tests/fm-backend.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm_backend_name: FM_BACKEND env > config/backend > default tmux
+ok - fm_backend_detect: no markers -> undetected, HERDR_ENV=1 -> herdr, $TMUX -> tmux, CMUX_WORKSPACE_ID -> cmux, nested combinations resolve innermost-first
+ok - fm_backend_detect: falls back to __CFBundleIdentifier=com.cmuxterm.app when CMUX_WORKSPACE_ID is absent (signal bundle-id; foreign bundle ids rejected)
+ok - fm_backend_detect: the cmux fallback signals are macOS-only (inert on a non-Darwin uname)
+ok - fm_backend_detect: an inherited cmux bundle id never outranks $TMUX or HERDR_ENV (tmux/herdr-inside-cmux false positive absorbed)
+ok - fm_backend_detect: ancestry fallback matches the lsappinfo-resolved (bundle-id) cmux app pid in the parent chain
+ok - fm_backend_detect: ancestry fallback matches a bundle-shaped cmux comm path at any install location when lsappinfo cannot resolve a pid
+ok - fm_backend_detect: ancestry fallback stops undetected at launchd (a reparented tmux server never reaches cmux)
+ok - fm_backend_name: a fallback-detected cmux prints a NOTICE naming the fallback signal; the primary-marker notice is unchanged
+ok - fm_backend_name: auto-detect selects herdr or cmux (loud notice) or tmux (silent, including nested tmux-in-herdr/tmux-in-cmux)
+ok - fm_backend_name: an explicit FM_BACKEND or config/backend setting always wins over runtime auto-detection, including an ambient cmux marker
+ok - fm_backend_validate: implemented adapters accepted, unknown and blocked codex-app backends refused loudly
+ok - zsh: fm_backend_source recognizes known backends and rejects unknown ones
+ok - bash: fm_backend_source recognizes known backends and rejects unknown ones
+ok - fm_backend_validate_spawn: all implemented lifecycle backends are spawn-supported
+ok - fm_meta_get / fm_backend_of_meta: read key=value, default backend to tmux
+ok - fm_backend_resolve_selector: session:window literal, exact task id first, legacy fm-<id> label fallback, ad hoc bare name via tmux list-windows
+ok - fm_backend_of_selector: exact task ids, legacy fm-<id> labels, and matching explicit targets inherit metadata backend
+ok - fm-send.sh: explicit tmux targets are verified; text types once and submits with Enter
+ok - fm-peek.sh: plain output is unchanged and capture uses the resolved pane ID
+ok - fm-spawn.sh: a project reached through a symlinked prefix (e.g. macOS /tmp -> /private/tmp) does not trip the isolation guard's false refusal
+ok - fm-teardown.sh: treehouse return remains compatible while tmux cleanup uses exact selectors
+ok - fm-spawn.sh --backend bogus is refused loudly
+ok - fm-spawn.sh --backend codex-app is refused
+ok - fm-spawn.sh honors FM_BACKEND and refuses an unimplemented value loudly
+ok - fm-spawn.sh: an explicit --backend tmux resolves silently and writes no backend= (missing means tmux)
+ok - fm-spawn.sh: explicit --backend tmux wins over an ambient HERDR_ENV=1 auto-detect marker
+ok - fm-spawn.sh: auto-detect resolves nested tmux-in-herdr to tmux and stays silent end to end
+FM_TEST_END 2026-09-14T21:50:46Z tests/fm-backend.test.sh exit=0 duration_ms=39055 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T21:50:46Z tests/fm-control-relaunch.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree
+ok - fm-control relaunch: durable task metadata survives replacement launch publication
+ok - fm-control relaunch: trace and concurrent task metadata publications serialize
+ok - fm-control relaunch: disabling tracing clears metadata and pane context
+ok - fm-control relaunch: the progress note lands in the instructions the replacement reads
+ok - fm-control relaunch: a ship task refuses without the progress note its replacement needs
+ok - fm-control relaunch: switching harness is one ordinary relaunch, and the old wiring goes with the old agent
+ok - fm-control relaunch: a harness switch resets model and effort unless they are named too
+ok - fm-control relaunch: a prefixed recorded harness can switch adapters transactionally
+ok - fm-control relaunch: a prefixed command requires an explicit replacement harness
+ok - fm-control relaunch: a same-harness relaunch keeps the profile axes it was running with
+ok - fm-control relaunch: explicit model and effort win over the recorded ones
+ok - fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics
+ok - fm-control relaunch: a disabled omitted-model rung still refuses the replacement
+ok - fm-control relaunch: the retired incarnation's global turn-end token is revoked
+ok - fm-control relaunch: wiring cleanup failure refuses replacement arming
+ok - fm-control-lib: one owner resolves each harness's turn-end registry entry, and refuses a malformed token
+not ok - a configured secondmate harness should relaunch
+error: secondmate home cannot be inside the firstmate repo: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/fm-control-relaunch.8y85bm/smpin-955/smhome
+error: the replacement agent for sm3 could not be launched on codex
+error: sm3's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/fm-control-relaunch.8y85bm/smpin-955/smhome: expected exit 0, got 1
+FM_TEST_END 2026-09-14T21:51:17Z tests/fm-control-relaunch.test.sh exit=1 duration_ms=30807 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T21:51:17Z tests/fm-backend-tmux-smoke.test.sh family=backend-dispatch expected_gate_skip=none
+@1
+ok - real tmux: fm_backend_tmux_create_task creates a window and refuses a duplicate
+ok - real tmux: fm_backend_tmux_send_text_line sends literal text and submits with Enter
+ok - real tmux: fm_backend_tmux_send_literal + fm_backend_tmux_send_key Enter submit as two separate steps
+ok - real tmux: fm_backend_tmux_capture's -S -N bound trims old history for a small window and reaches it for a large one
+ok - real tmux: fm_backend_tmux_resolve_bare_selector (list-live) finds the created window by name
+ok - real tmux: fm_backend_tmux_resolve_bare_selector fails for a window that does not exist
+ok - real tmux: a missing named window returns an empty current path
+ok - real tmux: numeric window and pane-qualified selectors keep working
+ok - real tmux: a dotted window name is proven by membership, not treated as a pane selector
+ok - real tmux: a gone dotted window is not mistaken for a pane of its live dot-stripped sibling
+ok - real tmux: dotted composer, cursor, styled capture, plain capture, and busy tail belong to one pane
+ok - real tmux: missing canonical captures fail closed while explicit pane selectors keep working
+ok - real tmux: recorded dotted-task Enter, Escape, and Tab reach only the intended pane
+ok - real tmux: recorded missing-task keys fail through the backend send path
+ok - real tmux: fresh dotted-task launch executes in its own pane and leaves sibling input untouched
+ok - real tmux: typing, Enter retries, and verification share the intended pane; missing tasks refuse input
+ok - real tmux: session prefix matches cannot redirect reads or task creation
+ok - real tmux: fm_backend_target_exists reports a missing named window as gone
+ok - real tmux: kill removes the window and the readable session inventory authoritatively classifies it missing
+ok - real tmux: a missing server returns an empty current path
+ok - real tmux: fm_backend_target_exists reports a missing server as gone
+FM_TEST_END 2026-09-14T21:51:37Z tests/fm-backend-tmux-smoke.test.sh exit=0 duration_ms=20232 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T21:51:37Z tests/fm-tmux-submit-busy.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm_tmux_submit_enter_core: busy pane + pending composer returns empty (message queued)
+ok - fm_tmux_submit_enter_core: idle pane + pending composer stays pending (genuine swallow preserved)
+ok - fm_tmux_submit_enter_core: wrapped input retains swallowed-Enter retries
+ok - fm_tmux_submit_enter_core: placeholder-like bare input retains swallowed-Enter retries
+ok - fm_tmux_submit_enter_core: busy pane clears composer on first Enter - returns empty
+ok - fm_tmux_submit_enter_core: idle pane clears composer on first Enter - returns empty as before
+ok - fm_tmux_submit_enter_core: busy conversion is limited to proven pending input
+ok - fm_tmux_submit_core: failed baseline capture disables busy unknown conversion
+ok - fm_tmux_submit_enter_core: pending-unproven retries without busy conversion
+ok - fm_tmux_submit_enter_core: unrecognized states skip busy conversion
+ok - OMP tmux composer subtest skipped: it pins the upstream fm_composer_terminal_width two-row MEASUREMENT design, which the fork did not take. The shared classifier now knows OMP's two-row shape; the live coverage is test_matrix_omp_two_row_input_border in tests/fm-composer-lib.test.sh and test_composer_state_omp_shape_verdicts_are_safe in tests/fm-backend-herdr.test.sh
+ok - OMP idle-to-busy submit subtest skipped: it pins the upstream two-row MEASUREMENT design, which the fork did not take. The shared classifier now knows OMP's shape; the live composer coverage is test_matrix_omp_two_row_input_border in tests/fm-composer-lib.test.sh
+ok - OMP busy-signature subtest skipped: screen-based OMP busy detection is deferred; the fork reads OMP state from the omp-ext marker (set FM_OMP_SCREEN_DETECTION=1 once the screen-scraping OMP busy regex is added)
+ok - fm_pane_is_busy: Claude spinner is scoped, multi-frame, and backward-compatible
+FM_TEST_END 2026-09-14T21:51:45Z tests/fm-tmux-submit-busy.test.sh exit=0 duration_ms=7324 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T21:51:45Z tests/fm-secondmate-lifecycle-e2e.test.sh family=secondmate expected_gate_skip=none
+ok - fake tmux: create, kill, and relaunch preserve the sibling inventory
+error: secondmate home cannot be inside the firstmate repo: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/fm-secondmate-lifecycle.QErbHZ/design-home
+not ok - seed failed
+FM_TEST_END 2026-09-14T21:51:46Z tests/fm-secondmate-lifecycle-e2e.test.sh exit=1 duration_ms=1436 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T21:51:46Z tests/fm-teardown-gone-window-reap.test.sh family=unclassified expected_gate_skip=none
+ok - a gone tmux window resolves no pane leader and takes the early return
+ok - teardown never reports reaping a process group for a gone window
+ok - the live neighbour pane process survives teardown untouched
+ok - the live neighbour pane's process group survives teardown untouched
+ok - a live tmux window still resolves its own pane leader (read helper only)
+ok - a dead tmux server resolves no pane leader (read helper only)
+# fm-teardown-gone-window-reap: all checks passed
+FM_TEST_END 2026-09-14T21:51:53Z tests/fm-teardown-gone-window-reap.test.sh exit=0 duration_ms=6589 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T21:51:53Z tests/fm-watch-triage.test.sh family=watcher-wake-lock expected_gate_skip=none
+ok - test cleanup reaps both TERM-responsive and stuck children within its bound
+ok - signal_reason_is_actionable: benign absorbed, captain verbs and coalesced batches surfaced
+ok - stale_is_terminal: terminal status surfaces, non-terminal and no-status are benign
+ok - scan_captain_relevant_statuses lists only captain-relevant statuses
+ok - classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides
+ok - crew_is_provably_working: only working+run-step/pane is provable; idle/finished/parked/failed/unknown surface
+ok - status_is_paused: only the leading paused verb matches, and paused is not captain-relevant
+ok - crew_absorb_class: working/paused/none from one read; crew_is_paused and crew_is_provably_working agree
+ok - signal_crew_provably_working: benign only when every referenced crew is provably working
+ok - a secondmate's status signal is never absorbed as provably working; crewmates are unaffected
+ok - a no-verb signal whose crew is provably working is absorbed (no exit, no queue, suppressor advanced, beacon present)
+ok - a bare turn-end whose crew is provably working (busy pane) is absorbed
+ok - a bare turn-end whose crew is not provably working is surfaced (the swallowed-finish fix)
+ok - a turn-end marker recreated within the same epoch second is surfaced, not swallowed by .seen-*
+ok - a no-verb working: note whose crew is idle with no running pipeline is surfaced
+ok - a secondmate's status note surfaces even while its own agent is busy
+ok - a self-announced close never wakes its own home, and the next real note still does
+ok - captain-relevant signal is surfaced (queue + exit) and marked surfaced
+ok - a stale pane sitting on a terminal status is surfaced (queue + exit)
+ok - a stale terminal-looking status is overridden and absorbed while a run is actively working, then wedge-escalated
+ok - provably-working non-terminal stale is absorbed on first sight, then wedge-escalated past the threshold
+ok - consecutive wedge escalations on the same pane accumulate and demand deep inspection at the threshold
+ok - a pane becoming active again resets the consecutive wedge-escalation counter
+ok - a busy worker below the turn-age bound remains working with no escalation
+ok - a busy worker with a stable pane hash still escalates once its completed-turn age reaches the bound
+ok - a busy worker whose pane hash changes every poll still escalates once its completed-turn age reaches the bound
+ok - touching a busy worker's completed-turn marker resets the age and prevents an old-age escalation
+ok - repeated busy turn-age escalations reuse the existing escalation counter and demand deep inspection at the threshold
+ok - the production default busy-turn-age bound is 3600s (5min under does not wedge, 66min over does)
+ok - a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)
+ok - a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated
+ok - exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once
+ok - a declared paused secondmate re-surfaces on the bounded normal-mode cadence
+ok - a non-paused secondmate retains normal stale suppression
+ok - a resumed secondmate clears pause and stale tracking before stale exemption
+ok - unchanged stale hashes reclassify when a crew enters or leaves pause
+ok - a declared pause is periodically rechecked against authoritative active-run state
+ok - a paused status overridden by authoritative working preserves its wedge timer and escalates
+ok - matching non-terminal stale suppressors repair missing or corrupt stale-since timers
+ok - triage log capping handles wc byte counts with leading spaces
+ok - a captured process-event result wakes a healthy watcher proactively, with no manual drain
+ok - an unacknowledged process-event result re-drains until handling is acknowledged
+ok - complete process-event queue keys map to distinct seen markers
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 74013.1789423009.dOCzqG
+ok - queue revalidation, proactive output, and marker commit serialize with drain
+/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/bin/fm-push-transition-lib.sh: line 96: echo: write error: Broken pipe
+tests/wake-helpers.sh: line 290: 76216 Killed: 9                  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_PROCEVENT_CLAIM_ROOT="$dir/claims" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out"
+tests/wake-helpers.sh: line 290: 77067 Killed: 9                  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_PROCEVENT_CLAIM_ROOT="$dir/claims" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out"
+ok - surfacing failures replay until post-handling acknowledgement
+ok - marker failure exits through the shared wake owner, releases its lock, and replays later
+ok - a heartbeat with no captain-relevant change is absorbed and backs off the cadence
+ok - a missing .last-anchor presents one attended no-change heartbeat so ANCHOR can print
+ok - a .last-anchor older than FM_ANCHOR_INTERVAL presents one attended no-change heartbeat
+ok - heartbeat backstop fail-safe surfaces a captain-relevant status the per-wake path missed
+ok - the liveness beacon stays fresh while the watcher absorbs benign wakes (fm-guard never false-alarms)
+ok - with .afk present the watcher reverts to one-shot so the daemon owns triage (no double-triage)
+ok - AFK changed paused panes hand off plain stale identities for daemon-owned pause triage
+ok - watcher refreshes the bounded pane snapshot each supervision cycle
+FM_TEST_END 2026-09-14T21:57:39Z tests/fm-watch-triage.test.sh exit=0 duration_ms=346095 gate_skip=false
+FM_TEST_SUMMARY total=7 failed=2 skipped_gate=0 duration_ms=451912
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=3 duration_ms=90094 failed=1
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=7324 failed=0
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=1436 failed=1
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=6589 failed=0
+FM_TEST_SUMMARY_FAMILY family=watcher-wake-lock count=1 duration_ms=346095 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-watch-triage.test.sh duration_ms=346095
+FM_TEST_SLOWEST rank=2 script=tests/fm-backend.test.sh duration_ms=39055
+FM_TEST_SLOWEST rank=3 script=tests/fm-control-relaunch.test.sh duration_ms=30807
+FM_TEST_SLOWEST rank=4 script=tests/fm-backend-tmux-smoke.test.sh duration_ms=20232
+FM_TEST_SLOWEST rank=5 script=tests/fm-tmux-submit-busy.test.sh duration_ms=7324
+FM_TEST_SLOWEST rank=6 script=tests/fm-teardown-gone-window-reap.test.sh duration_ms=6589
+FM_TEST_SLOWEST rank=7 script=tests/fm-secondmate-lifecycle-e2e.test.sh duration_ms=1436

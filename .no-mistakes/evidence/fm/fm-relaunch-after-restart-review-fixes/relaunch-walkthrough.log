@@ -1,0 +1,83 @@
+Task: fm-relaunch-after-restart
+Real tmux; local stand-in for the agent, no model/network calls.
+
+Scenario: missing exact window with live sibling
+before: state=missing current_path=<>
+$ fm-control.sh evidence-5463.0 relaunch --note "recover missing window"
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/home/data/evidence-5463.0/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: evidence-5463.0 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+relaunched evidence-5463.0 harness=claude from=claude model=default effort=default backend=tmux endpoint=evidence:fm-evidence-5463.0 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree
+pane=%1
+cwd=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree
+agent_state=alive
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ export GOTMPDIR=/tmp/fm-evidence-5463.0/gotmp
+bash-3.2$ export CHROME_DEVTOOLS_AXI_MCP_PATH='/Users/evanagee/.no-mistakes/work
+trees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/bin/fm-chrome-devtools-mcp.js'
+bash-3.2$ export CHROME_DEVTOOLS_AXI_SESSION='evidence-5463.0'
+bash-3.2$ unset TRACEPARENT; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_COD
+E_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-
+system-prompt-file '/tmp/fm-evidence-5463.0/worker-skills.eigKNr59' "$('/Users/e
+vanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/bin/fm-op
+erational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktree
+s/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/home/data/eviden
+ce-5463.0/brief.md')"
+replacement running in /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2G
+X2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree on %1
+
+
+
+
+
+
+
+sibling_pid=5737 survived=true
+
+Scenario: missing server
+before: state=missing current_path=<>
+$ fm-control.sh evidence-5463.0 relaunch --note "recover missing server"
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/home/data/evidence-5463.0/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: evidence-5463.0 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+relaunched evidence-5463.0 harness=claude from=claude model=default effort=default backend=tmux endpoint=evidence:fm-evidence-5463.0 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree
+pane=%0
+cwd=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree
+agent_state=alive
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ export GOTMPDIR=/tmp/fm-evidence-5463.0/gotmp
+bash-3.2$ export CHROME_DEVTOOLS_AXI_MCP_PATH='/Users/evanagee/.no-mistakes/work
+trees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/bin/fm-chrome-devtools-mcp.js'
+bash-3.2$ export CHROME_DEVTOOLS_AXI_SESSION='evidence-5463.0'
+bash-3.2$ unset TRACEPARENT; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_COD
+E_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --append-
+system-prompt-file '/tmp/fm-evidence-5463.0/worker-skills.e7fqKfqx' "$('/Users/e
+vanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/bin/fm-op
+erational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktree
+s/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/home/data/eviden
+ce-5463.0/brief.md')"
+replacement running in /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2G
+X2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree on %0
+
+
+
+
+
+
+
+
+Scenario: existing window in wrong directory
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/home/data/evidence-5463.0/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: evidence-5463.0 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: task evidence-5463.0's endpoint is in '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/project', not its recorded worktree '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree'; refusing to relaunch an agent outside the copy holding its work
+error: the replacement agent for evidence-5463.0 could not be launched on claude
+error: evidence-5463.0's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GX2XPZVRC2M9PGWACBTVH1/.test-tmp/walk.PmVI5u/worktree
+exit=1
+metadata_unchanged=true replacement_launched=false
+
+Scenario: relative selectors
+evidence:+1 resolved=%1 native=%1
