@@ -1365,11 +1365,15 @@ crew_reconcile_stall_recovery() {
   crew_stall_transition "$state" "$task" "$win" recover
 }
 
-crew_stall_transition() (
+crew_stall_transition() {
   local state=$1 task=$2 win=$3 action=$4 detail=${5:-} pane_hash=${6:-}
   local key marker receipt generation identity result status=0
+  # shellcheck disable=SC2034 # Consumed by the wake library inside the subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
-  # shellcheck source=bin/fm-wake-lib.sh
+  (
+  # This subshell owns the wake library's globals; callers never consume them.
+  # The wake library is linted separately by fm-lint.sh.
+  # shellcheck source=/dev/null
   . "$_FM_CLASSIFY_LIB_DIR/fm-wake-lib.sh"
   key=$(printf '%s' "$win" | tr ':/.' '___')
   marker="$state/.stale-since-$key.stalled"
@@ -1411,7 +1415,8 @@ crew_stall_transition() (
   [ "$status" -eq 0 ] || return "$status"
   [ -z "$result" ] || printf '%s' "$result"
   return 0
-)
+  )
+}
 
 crew_stalled_generation() {
   local generation
