@@ -83,6 +83,13 @@ SH
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
+  list-windows)
+    # The named-window membership gate (fm_tmux_named_window_state) lists the
+    # session's windows before any display-message read. Answer from the same
+    # FM_FAKE_TMUX_MISSING switch the reads use, so "endpoint gone" stays one
+    # control for the whole suite. FM_FAKE_TMUX_WINDOW names the live window.
+    [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
+    printf '%s\n' "${FM_FAKE_TMUX_WINDOW:-}" ;;
   display-message)
     [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
     printf '%%1\n' ;;
@@ -140,7 +147,13 @@ make_no_timeout_toolbin() {  # <dir> -> echoes toolbin path
 # Run the helper for one case dir. FM_FAKE_* env (run output, busy flag) are read
 # from the caller's environment by the fakes above.
 run_crew_state() {  # <case-dir> <id>
-  PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" "$CREW_STATE" "$2"
+  # The tmux stub's list-windows answer needs the live window name, because the
+  # named-window membership gate proves the window exists before reading it.
+  # Derive it from the task's own recorded target so every case works unchanged.
+  local window
+  window=$(sed -n 's/^window=[^:]*:\([^:]*\).*$/\1/p' "$1/state/$2.meta" 2>/dev/null | tail -1)
+  PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" \
+    FM_FAKE_TMUX_WINDOW="${FM_FAKE_TMUX_WINDOW-$window}" "$CREW_STATE" "$2"
 }
 
 new_case() {  # <name> -> echoes case dir with an empty state/
@@ -1106,7 +1119,7 @@ SH
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-timeout busy --gen "$gen" \
     --source claude-hook --event user-prompt-submit
   start=$SECONDS
-  out=$(FM_FAKE_NM_CALLS="$calls_file" PATH="$d/fakebin:$toolbin" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_NM_TIMEOUT=1 "$CREW_STATE" feat-timeout)
+  out=$(FM_FAKE_NM_CALLS="$calls_file" PATH="$d/fakebin:$toolbin" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_NM_TIMEOUT=1 FM_FAKE_TMUX_WINDOW=fm-feat-timeout "$CREW_STATE" feat-timeout)
   elapsed=$((SECONDS - start))
   assert_contains "$out" "state: working" "timed-out no-mistakes falls back to pane"
   assert_contains "$out" "source: pane" "timed-out no-mistakes -> pane source"
