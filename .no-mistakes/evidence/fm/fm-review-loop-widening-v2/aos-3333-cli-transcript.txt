@@ -1,0 +1,72 @@
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record aos-3333 --run aos-3333-four-rounds --head head-1 --changed 'Renamed the transcript writer.' --cluster module:src/lib/rename:progress-count --targeted module:src/lib/rename:progress-count
+continue: review round 1 recorded; no cluster reached 3 rounds
+
+exit: 0
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record aos-3333 --run aos-3333-four-rounds --head head-2 --changed 'Fixed the progress count.' --cluster module:src/lib/rename:replay --targeted module:src/lib/rename:replay
+continue: review round 2 recorded; no cluster reached 3 rounds
+
+exit: 0
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record aos-3333 --run aos-3333-four-rounds --head head-3 --changed 'Fixed the replay path.' --cluster module:src/lib/rename:restored-transcript --targeted module:src/lib/rename:restored-transcript
+continue: review round 3 recorded; no cluster reached 3 rounds
+
+exit: 0
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record aos-3333 --run aos-3333-four-rounds --head head-4 --changed 'Fixed the restored transcript.' --cluster module:src/lib/rename:capture-refusal --targeted module:src/lib/rename:capture-refusal
+# Widening review findings
+
+shape: widening
+Run: `aos-3333-four-rounds`
+Prefix: `module:src/lib/rename`
+Threshold: 3 consecutive widening review rounds
+
+Each round below closed the previous round's findings under this prefix, and the review answered with at least one defect never seen before under it. Each round lists only those new defects; a round may also have re-returned a cluster from an earlier round, which does not stop the frontier from moving. The module or invariant these defects share is what keeps failing.
+
+## What this prefix returned, round by round
+
+- Round 1 reviewed `head-1`: Renamed the transcript writer. (first findings under this prefix)
+  - new `module:src/lib/rename:progress-count`
+- Round 2 reviewed `head-2`: Fixed the progress count.
+  - new `module:src/lib/rename:replay`
+- Round 3 reviewed `head-3`: Fixed the replay path.
+  - new `module:src/lib/rename:restored-transcript`
+- Round 4 reviewed `head-4`: Fixed the restored transcript.
+  - new `module:src/lib/rename:capture-refusal`
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk/state/review-loops/aos-3333-aos-3333-four-rounds-1.md
+
+exit: 20
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record aos-3333 --run aos-3333-four-rounds --head head-4 --changed 'Fixed the restored transcript.' --cluster module:src/lib/rename:capture-refusal --targeted module:src/lib/rename:capture-refusal
+stop: review clusters already surfaced in /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk/state/review-loops/aos-3333-aos-3333-four-rounds-1.md
+
+exit: 20
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record aos-3333 --run aos-3333-four-rounds --head head-4 --changed 'Fixed the restored transcript.' --cluster module:src/lib/rename:capture-refusal --targeted module:src/lib/rename:capture-refusal
+stop: review clusters already surfaced in /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk/state/review-loops/aos-3333-aos-3333-four-rounds-1.md
+
+exit: 20
+
+Persisted keyed event after identical retry and missing-event repair:
+needs-decision [key=review-loop-aos-3333-four-rounds-1]: review clusters 'module:src/lib/rename:capture-refusal', 'module:src/lib/rename:replay', 'module:src/lib/rename:restored-transcript' reached 3 rounds; choose fix at root or bank the remainder; report=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk/state/review-loops/aos-3333-aos-3333-four-rounds-1.md
+Both paths preserved the event bytes and private report.
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh resolve aos-3333 --run aos-3333-four-rounds --decision root
+resolved: review-loop stop for aos-3333-four-rounds recorded as root
+
+exit: 0
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record aos-3333 --run aos-3333-four-rounds --head head-1 --changed 'Renamed the transcript writer.' --cluster module:src/lib/rename:progress-count --targeted module:src/lib/rename:progress-count
+continue: reviewed head head-1 was already recorded
+
+exit: 0
+
+Root resolution preserved all four rounds; replaying the opening head was a no-op.

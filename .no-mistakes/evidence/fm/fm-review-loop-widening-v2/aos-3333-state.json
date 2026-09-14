@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "task": "aos-3333",
+  "run": "aos-3333-four-rounds",
+  "threshold": 3,
+  "widening_threshold": 3,
+  "generation": 1,
+  "rounds": [
+    {
+      "round": 1,
+      "head": "head-1",
+      "changed": "Renamed the transcript writer.",
+      "clusters": [
+        "module:src/lib/rename:progress-count"
+      ],
+      "targeted": [
+        "module:src/lib/rename:progress-count"
+      ]
+    },
+    {
+      "round": 2,
+      "head": "head-2",
+      "changed": "Fixed the progress count.",
+      "clusters": [
+        "module:src/lib/rename:replay"
+      ],
+      "targeted": [
+        "module:src/lib/rename:replay"
+      ]
+    },
+    {
+      "round": 3,
+      "head": "head-3",
+      "changed": "Fixed the replay path.",
+      "clusters": [
+        "module:src/lib/rename:restored-transcript"
+      ],
+      "targeted": [
+        "module:src/lib/rename:restored-transcript"
+      ]
+    },
+    {
+      "round": 4,
+      "head": "head-4",
+      "changed": "Fixed the restored transcript.",
+      "clusters": [
+        "module:src/lib/rename:capture-refusal"
+      ],
+      "targeted": [
+        "module:src/lib/rename:capture-refusal"
+      ]
+    }
+  ],
+  "widened": {},
+  "surfaced": {
+    "clusters": [
+      "module:src/lib/rename:capture-refusal",
+      "module:src/lib/rename:replay",
+      "module:src/lib/rename:restored-transcript"
+    ],
+    "report": "/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/aos-3333-walk-hdklu8mk/state/review-loops/aos-3333-aos-3333-four-rounds-1.md",
+    "shape": "widening",
+    "prefix": "module:src/lib/rename",
+    "floor": 0,
+    "credited": [
+      1,
+      2,
+      3
+    ],
+    "threshold": 3
+  },
+  "resolution": null
+}

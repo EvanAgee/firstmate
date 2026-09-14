@@ -1,0 +1,42 @@
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/review-precedence-xfv56947 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record precedence --run both-shapes --head head-1 --changed 'Fixed rename finding and retried persistent defect.' --cluster module:src/lib/rename:progress-count --cluster defect:persistent --threshold 4 --widening-threshold 3
+continue: review round 1 recorded; no cluster reached 4 rounds
+
+exit: 0
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/review-precedence-xfv56947 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record precedence --run both-shapes --head head-2 --changed 'Fixed rename finding and retried persistent defect.' --cluster module:src/lib/rename:replay --cluster defect:persistent --threshold 4 --widening-threshold 3
+continue: review round 2 recorded; no cluster reached 4 rounds
+
+exit: 0
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/review-precedence-xfv56947 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record precedence --run both-shapes --head head-3 --changed 'Fixed rename finding and retried persistent defect.' --cluster module:src/lib/rename:restored-transcript --cluster defect:persistent --threshold 4 --widening-threshold 3
+continue: review round 3 recorded; no cluster reached 4 rounds
+
+exit: 0
+
+$ FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/review-precedence-xfv56947 /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/bin/fm-review-loop-stop.sh record precedence --run both-shapes --head head-4 --changed 'Fixed rename finding and retried persistent defect.' --cluster module:src/lib/rename:capture-refusal --cluster defect:persistent --threshold 4 --widening-threshold 3
+# Repeated review clusters
+
+Run: `both-shapes`
+Threshold: 4 consecutive review rounds
+
+## What each cluster returned against
+
+### `defect:persistent`
+
+- Round 1 reviewed `head-1`: Fixed rename finding and retried persistent defect.
+- Round 2 reviewed `head-2`: Fixed rename finding and retried persistent defect.
+- Round 3 reviewed `head-3`: Fixed rename finding and retried persistent defect.
+- Round 4 reviewed `head-4`: Fixed rename finding and retried persistent defect.
+
+## Decision
+
+- Fix at root. Repair the owning design before another review round.
+- Bank the remainder. Keep the current work and route the unresolved findings to a follow-up.
+
+Firstmate chooses under the task's existing authority rules.
+
+stop: report=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFAZNB5VB210EWQMNY9X57/tmp/review-precedence-xfv56947/state/review-loops/precedence-both-shapes-1.md
+
+exit: 20
+
+Both thresholds reached on round four. The public CLI selected the persistent-defect streak report.
