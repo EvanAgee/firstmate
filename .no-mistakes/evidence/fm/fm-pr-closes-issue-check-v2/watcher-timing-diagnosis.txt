@@ -1,0 +1,17 @@
+Initial targeted watcher runs expired at the fixture outer 10-second deadline before a forge call. Observed host load averages: 52.66 59.34 60.28.
+A 90-second outer deadline reached the closer. The test-only one-second check bound expired after close and before label removal. Actual output follows.
+
+gh-axi.log
+pr view 1 -R o/r
+issue close 55 -R o/r --reason completed --comment Fixed by https://github.com/o/r/pull/1, merged to main.
+
+watch.out
+check: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-pr-check-security.e5LxWM/merged-closes-issues/home/state/task-a.check.sh: merged
+
+home/state/.watch-triage.log
+[2026-09-14T12:58:38-0500] linked issues were not all closed for task-a after https://github.com/o/r/pull/1 merged: the issue close exceeded its 1s bound
+
+Retry configuration: outer deadline 90 seconds; ordinary check bound 15 seconds; deliberate fake-forge hang case retains its original one-second bound and three-second forge sleep. Tracked source and tests unchanged.
+
+All four watched-merge cases passed with that configuration. The custom-check shutdown case then exceeded its separate two-second startup-readiness allowance. Retrying only the shutdown cases permits up to 60 seconds for readiness, with the existing prompt-shutdown assertions unchanged.
+Both shutdown checks passed on retry, including installed-timeout and Perl-fallback descendant cleanup. No test watcher process remained, and git status --short was empty.

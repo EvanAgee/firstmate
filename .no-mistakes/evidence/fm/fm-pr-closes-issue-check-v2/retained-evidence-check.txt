@@ -1,0 +1,13 @@
+Required retained task metadata: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA/state/platform-61-invite-only-staff-pools.meta
+Exists in worktree: False
+The real helper was invoked with FM_HOME and FM_STATE_OVERRIDE pointing to this worktree. It exited 1 with task metadata is unavailable before any forge call. See retained-task-walk-attempt.txt. A synthetic task would not demonstrate the required retained-task walk.
+
+Existing malformed-reference evidence supplied in this worktree:
+/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA/.no-mistakes/malformed-issue-probe/forge.log
+(empty)
+/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA/.no-mistakes/malformed-issue-probe/exit-status
+1
+/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA/.no-mistakes/malformed-issue-probe/stdout
+(empty)
+/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA/.no-mistakes/malformed-issue-probe/stderr
+error: task metadata records 'acme/widgets#55#66', which is not a GitHub issue ref list

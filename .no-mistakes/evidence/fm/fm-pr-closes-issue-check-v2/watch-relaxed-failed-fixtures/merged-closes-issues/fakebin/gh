@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+# The issue read asks for --json state,labels, so match it before the broad
+# " state " case below and answer in the real one-line JSON shape.
+if [ "${1:-} ${2:-}" = "issue view" ]; then
+  printf '{"labels":[%s],"state":"%s"}\n' \
+    "$(printf '%s' "${FM_TEST_ISSUE_LABELS-agent-in-progress}" \
+      | awk -v RS=, 'NF{printf "%s\"%s\"", (n++?",":""), $0}')" \
+    "$(printf '%s' "${FM_TEST_ISSUE_STATE:-open}" | tr '[:lower:]' '[:upper:]')"
+  exit 0
+fi
+case " $* " in
+  *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
+  *" state "*)
+    [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
+    [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
+    printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
+    ;;
+esac

@@ -1,0 +1,1 @@
+[2026-09-14T13:00:36-0500] linked issues were not all closed for task-a after https://github.com/o/r/pull/1 merged: error: task metadata links other/repo#55, which is not in the merged PR's repository o/r

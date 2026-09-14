@@ -1,0 +1,63 @@
+Executable CLI integration tests using isolated task metadata and fake forge commands. No live issue mutations.
+
+CASE merged-already-closed-issue
+--- gh-axi.log ---
+pr view 1 -R o/r
+--- gh.log ---
+(empty)
+--- home/state/.wake-queue ---
+(empty)
+--- home/state/.watch-triage.log ---
+[2026-09-14T13:15:12-0500] task-a issue close after https://github.com/o/r/pull/1 merged: already-closed: o/r#55
+--- watch.err ---
+(empty)
+--- watch.out ---
+check: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-pr-check-security.nff3wA/merged-already-closed-issue/home/state/task-a.check.sh: merged
+Remaining task-a poll artifacts: []
+
+CASE merged-closes-issues
+--- gh-axi.log ---
+pr view 1 -R o/r
+issue close 55 -R o/r --reason completed --comment Fixed by https://github.com/o/r/pull/1, merged to main.
+issue edit 55 -R o/r --remove-label agent-in-progress
+--- gh.log ---
+(empty)
+--- home/state/.wake-queue ---
+(empty)
+--- home/state/.watch-triage.log ---
+[2026-09-14T13:12:55-0500] task-a issue close after https://github.com/o/r/pull/1 merged: closed: o/r#55 https://github.com/o/r/pull/1
+--- watch.err ---
+(empty)
+--- watch.out ---
+check: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-pr-check-security.nff3wA/merged-closes-issues/home/state/task-a.check.sh: merged
+Remaining task-a poll artifacts: []
+
+CASE merged-issue-close-failure
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- home/state/.wake-queue ---
+(empty)
+--- home/state/.watch-triage.log ---
+[2026-09-14T13:13:32-0500] linked issues were not all closed for task-a after https://github.com/o/r/pull/1 merged: error: task metadata links other/repo#55, which is not in the merged PR's repository o/r
+--- watch.err ---
+(empty)
+--- watch.out ---
+check: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-pr-check-security.nff3wA/merged-issue-close-failure/home/state/task-a.check.sh: merged
+Remaining task-a poll artifacts: []
+
+CASE merged-issue-close-timeout
+--- gh-axi.log ---
+pr view 1 -R o/r
+--- gh.log ---
+(empty)
+--- home/state/.wake-queue ---
+(empty)
+--- home/state/.watch-triage.log ---
+[2026-09-14T13:14:17-0500] linked issues were not all closed for task-a after https://github.com/o/r/pull/1 merged: the issue close exceeded its 1s bound
+--- watch.err ---
+(empty)
+--- watch.out ---
+check: /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm-pr-check-security.nff3wA/merged-issue-close-timeout/home/state/task-a.check.sh: merged
+Remaining task-a poll artifacts: []

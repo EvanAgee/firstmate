@@ -1,0 +1,9 @@
+Executed test_zero_padded_issue_numbers_are_normalized against the previous helper from b61451b. Only SCRIPT_DIR was relocated to use this worktree libraries.
+Previous helper exit: 1
+not ok - zero-padded: positive issue numbers should be accepted: expected exit 0, got 1
+
+Target e4b9797 receipts from the same behavioral test:
+closed: acme/widgets#8 https://github.com/acme/widgets/pull/42
+closed: acme/widgets#7 https://github.com/acme/widgets/pull/42
+already-closed: acme/widgets#9
+Target helper test passed.

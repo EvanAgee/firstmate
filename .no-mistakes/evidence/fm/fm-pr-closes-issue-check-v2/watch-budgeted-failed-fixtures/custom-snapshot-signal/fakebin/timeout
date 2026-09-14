@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+shift
+"$@" &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null; exit 124' TERM
+wait "$child"

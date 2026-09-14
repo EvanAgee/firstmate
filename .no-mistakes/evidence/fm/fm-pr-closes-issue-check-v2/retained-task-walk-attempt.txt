@@ -1,0 +1,9 @@
+Command: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA/bin/fm-issue-close-after-merge.sh platform-61-invite-only-staff-pools https://github.com/SuperDuperIT/platform/pull/65
+FM_HOME=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA
+FM_STATE_OVERRIDE=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GF8XHV1VDP27TYFRYWYRJA/state
+Exit: 1
+stdout:
+stderr:
+error: task metadata is unavailable
+
+Stopped before forge calls because the retained task metadata is absent.

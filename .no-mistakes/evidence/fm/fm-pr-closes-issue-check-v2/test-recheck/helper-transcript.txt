@@ -1,0 +1,241 @@
+Executable CLI integration tests using isolated task metadata and fake forge commands. No live issue mutations.
+
+CASE already-closed
+--- err ---
+(empty)
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+--- gh.log ---
+issue view 7 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+already-closed: acme/widgets#7
+
+CASE bad-url
+--- err ---
+error: invalid issue close request
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE close-error
+--- err ---
+issue-close-failed: acme/widgets#7 could not be closed on GitHub
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+issue close 7 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+--- gh.log ---
+issue view 7 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+(empty)
+
+CASE edit-error
+--- err ---
+warning: acme/widgets#7 was closed but its agent-in-progress label could not be removed
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+issue close 7 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+issue edit 7 -R acme/widgets --remove-label agent-in-progress
+issue close 8 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+--- gh.log ---
+issue view 7 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+issue view 8 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+closed: acme/widgets#7 https://github.com/acme/widgets/pull/42
+closed: acme/widgets#8 https://github.com/acme/widgets/pull/42
+
+CASE foreign-repo
+--- err ---
+error: task metadata links other/repo#9, which is not in the merged PR's repository acme/widgets
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE gitlab-no-issues
+--- err ---
+(empty)
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE gitlab-with-issues
+--- err ---
+error: https://gitlab.com/acme/widgets/-/merge_requests/42 is not a GitHub pull request; refusing to close any issue
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE malformed-issue-1
+--- err ---
+error: task metadata records 'acme/widgets#55#66', which is not a GitHub issue ref list
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE malformed-issue-2
+--- err ---
+error: task metadata records 'acme/widgets#7,acme/widgets#55#66', which is not a GitHub issue ref list
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE malformed-issue-3
+--- err ---
+error: task metadata records 'acme/widgets#55#66,acme/widgets#7', which is not a GitHub issue ref list
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE malformed-issue-4
+--- err ---
+error: task metadata records 'acme/widgets#0', which is not a GitHub issue ref list
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE malformed-issue-5
+--- err ---
+error: task metadata records 'acme/widgets#000', which is not a GitHub issue ref list
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE malformed-issue-6
+--- err ---
+error: task metadata records 'acme/widgets#7,,acme/widgets#8', which is not a GitHub issue ref list
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE malformed-issue-7
+--- err ---
+error: task metadata records 'acme/widgets#7,', which is not a GitHub issue ref list
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE no-issues
+--- err ---
+(empty)
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE no-meta
+--- err ---
+error: task metadata is unavailable
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE not-merged
+--- err ---
+error: https://github.com/acme/widgets/pull/42 is not merged (state: open); refusing to close any issue
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+--- gh.log ---
+(empty)
+--- out ---
+(empty)
+
+CASE open-closed
+--- err ---
+(empty)
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+issue close 7 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+issue edit 7 -R acme/widgets --remove-label agent-in-progress
+--- gh.log ---
+issue view 7 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+closed: acme/widgets#7 https://github.com/acme/widgets/pull/42
+
+CASE open-no-label
+--- err ---
+(empty)
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+issue close 8 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+--- gh.log ---
+issue view 8 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+closed: acme/widgets#8 https://github.com/acme/widgets/pull/42
+
+CASE several-issues
+--- err ---
+(empty)
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+issue close 8 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+issue edit 8 -R acme/widgets --remove-label agent-in-progress
+--- gh.log ---
+issue view 7 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+issue view 8 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+already-closed: acme/widgets#7
+closed: acme/widgets#8 https://github.com/acme/widgets/pull/42
+
+CASE view-error
+--- err ---
+issue-close-failed: acme/widgets#7 could not be read from GitHub
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+--- gh.log ---
+issue view 7 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+(empty)
+
+CASE zero-padded
+--- err ---
+(empty)
+--- gh-axi.log ---
+pr view 42 -R acme/widgets
+issue close 8 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+issue close 7 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/pull/42, merged to main.
+issue edit 7 -R acme/widgets --remove-label agent-in-progress
+--- gh.log ---
+issue view 8 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+issue view 7 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+issue view 9 -R acme/widgets --json state,labels --jq {state,labels:[.labels[].name]}
+--- out ---
+closed: acme/widgets#8 https://github.com/acme/widgets/pull/42
+closed: acme/widgets#7 https://github.com/acme/widgets/pull/42
+already-closed: acme/widgets#9

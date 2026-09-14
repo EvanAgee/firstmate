@@ -1,0 +1,11 @@
+Retained-task walk finding resolved by the supplied outer-executor report.
+The outer executor verified SuperDuperIT/platform#61 was closed, recreated only issues=superduperit/platform#61 in ignored worktree evidence, and ran the pipeline-head helper against https://github.com/SuperDuperIT/platform/pull/65. No live issue changed, according to that report.
+Carry the following supplied actual receipt into the PR body:
+
+## What I walked
+
+already-closed: superduperit/platform#61
+
+This test phase reproduced the missing-metadata refusal with exit 1 before forge access. The missing-meta and already-closed behavioral tests passed against the current helper. No source fix was needed. This phase did not repeat the live walk or perform PR operations.
+ok - a task with no metadata is refused
+ok - an already-closed issue is reported and left alone

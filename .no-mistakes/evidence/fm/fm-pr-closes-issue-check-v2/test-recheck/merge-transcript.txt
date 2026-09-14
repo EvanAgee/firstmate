@@ -1,0 +1,52 @@
+Executable CLI integration tests using isolated task metadata and fake forge commands. No live issue mutations.
+
+CASE closes-linked-issues
+--- gh-axi.log ---
+pr merge 77 --repo example/repo --squash
+pr view 77 -R example/repo
+issue view 77 -R example/repo --json state,labels --jq {state,labels:[.labels[].name]}
+issue close 77 -R example/repo --reason completed --comment Fixed by https://github.com/example/repo/pull/77, merged to main.
+--- stderr ---
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--- stdout ---
+armed: state/task-x1.check.sh
+closed: example/repo#77 https://github.com/example/repo/pull/77
+
+CASE issue-close-failure
+--- gh-axi.log ---
+pr merge 78 --repo example/repo --squash
+pr view 78 -R example/repo
+issue view 78 -R example/repo --json state,labels --jq {state,labels:[.labels[].name]}
+--- stderr ---
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+issue-close-failed: example/repo#78 could not be read from GitHub
+warning: linked issues were not all closed for task-x1 after merging https://github.com/example/repo/pull/78
+--- stdout ---
+armed: state/task-x1.check.sh
+
+CASE merge-fails
+--- gh-axi.log ---
+pr merge 13 --repo example/repo --squash
+--- stderr ---
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: pr merge failed
+--- stdout ---
+armed: state/task-x1.check.sh

@@ -1,0 +1,5 @@
+FM_PHASE_EVIDENCE=/Users/evanagee/.no-mistakes/evidence/01M2GF8XHV1VDP27TYFRYWYRJA/test-recheck bash /Users/evanagee/.no-mistakes/evidence/01M2GF8XHV1VDP27TYFRYWYRJA/test-recheck/helper-runner.sh
+FM_PHASE_EVIDENCE=/Users/evanagee/.no-mistakes/evidence/01M2GF8XHV1VDP27TYFRYWYRJA/test-recheck bash /Users/evanagee/.no-mistakes/evidence/01M2GF8XHV1VDP27TYFRYWYRJA/test-recheck/merge-runner.sh
+FM_PHASE_EVIDENCE=/Users/evanagee/.no-mistakes/evidence/01M2GF8XHV1VDP27TYFRYWYRJA/test-recheck bash /Users/evanagee/.no-mistakes/evidence/01M2GF8XHV1VDP27TYFRYWYRJA/test-recheck/watch-runner.sh
+
+Watch runner uses the prior phase host-contention workaround recorded in configuration.txt.

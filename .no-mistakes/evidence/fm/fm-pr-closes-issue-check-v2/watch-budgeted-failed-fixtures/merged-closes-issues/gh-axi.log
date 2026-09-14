@@ -1,0 +1,3 @@
+pr view 1 -R o/r
+issue close 55 -R o/r --reason completed --comment Fixed by https://github.com/o/r/pull/1, merged to main.
+issue edit 55 -R o/r --remove-label agent-in-progress

@@ -1,0 +1,38 @@
+Executable CLI integration tests using isolated task metadata and fake forge commands. No live issue mutations.
+
+CASE custom-snapshot-signal
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- home/state/.watch-triage.log ---
+[2026-09-14T13:03:36-0500] inactive-outcome reconciliation unavailable
+--- watch.err ---
+(empty)
+--- watch.out ---
+(empty)
+Remaining task-a poll artifacts: []
+
+CASE returned-custom-descendant-fallback-timeout
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- watch.err ---
+(empty)
+--- watch.out ---
+(empty)
+Remaining task-a poll artifacts: []
+
+CASE returned-custom-descendant-installed-timeout
+--- gh-axi.log ---
+(empty)
+--- gh.log ---
+(empty)
+--- home/state/.watch-triage.log ---
+[2026-09-14T13:03:58-0500] inactive-outcome reconciliation unavailable
+--- watch.err ---
+(empty)
+--- watch.out ---
+(empty)
+Remaining task-a poll artifacts: []

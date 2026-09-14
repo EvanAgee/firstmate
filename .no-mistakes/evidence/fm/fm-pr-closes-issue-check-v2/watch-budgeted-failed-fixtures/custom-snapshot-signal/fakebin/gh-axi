@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# fm-pr-merge.sh reads review threads via GraphQL before `pr merge`. Return a
+# bare integer so that gate can proceed; 0 means every thread is resolved.
+# Non-graphql calls stay logged as before.
+if [ "${1:-}" = api ] && [ "${3:-}" = /graphql ]; then
+  case "$*" in
+    *length*) printf '%s\n' "${FM_TEST_THREADS_UNRESOLVED:-0}" ;;
+    *totalCount*) printf '%s\n' "${FM_TEST_THREADS_TOTAL:-0}" ;;
+    *) exit 1 ;;
+  esac
+  exit 0
+fi
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+# bin/fm-issue-close-after-merge.sh reads the merged PR state here before
+# closing anything; it reads each issue with plain gh instead. Answer the PR
+# read so a merged poll can exercise the close; every other call keeps its
+# previous log-and-exit behavior.
+case "${1:-} ${2:-}" in
+  "pr view")
+    [ "${FM_TEST_GH_AXI_PR_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_AXI_PR_SLEEP"
+    printf 'pull_request:\n  number: %s\n  state: %s\n' \
+      "$3" "${FM_TEST_GH_AXI_PR_STATE:-open}"
+    exit 0
+    ;;
+esac
+exit "${FM_TEST_GH_AXI_RC:-0}"
