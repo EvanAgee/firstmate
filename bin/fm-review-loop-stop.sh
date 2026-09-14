@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-review-loop-stop.sh - stop repeated no-mistakes review clusters.
+# fm-review-loop-stop.sh - stop repeating or widening no-mistakes review clusters.
 #
 # The semantic procedure and cluster definition live in
 # .agents/skills/review-loop-stop/SKILL.md. This script owns the private state,
@@ -41,10 +41,12 @@
 # the threshold for that run and later records refuse a conflicting override.
 #
 # A run also stops on the widening shape, where the review keeps returning new
-# clusters under one module or invariant. A round widens a prefix - the cluster
-# key up to its last ":" - when its aimed change closed every cluster the
-# previous round returned under that prefix and the review answered with at
-# least one cluster never seen before under it. A round that returns only
+# clusters under one module or invariant. A prefix is the cluster key before
+# its last ":". A round widens it when every cluster the previous round returned
+# under that prefix was targeted on that previous round and is absent from the
+# current round, which returns at least one cluster never seen before under it.
+# A prefix's first appearance is opening context and does not count toward the
+# widening threshold. A round that returns only
 # already-seen clusters, or that leaves the previous round's clusters open, ends
 # the count. A round that answers with a new cluster still counts even if it
 # also re-returns one the run saw in some earlier round, because the frontier
@@ -58,9 +60,9 @@
 # that returned findings; its aimed set grows only by the clusters that round
 # actually aimed at, which the decision records, so a resolve never invents a
 # closure.
-# A widening stop writes the same report and appends the
-# same keyed event, with shape: widening, the shared prefix, and each round's new
-# clusters. A cluster streak takes precedence when both would trip at once.
+# The private widening report contains shape: widening, the shared prefix, and
+# each round's new clusters in round order. It uses the same keyed status-event
+# format as a streak stop. A cluster streak takes precedence when both trip.
 #
 # A trip writes state/review-loops/<task-id>-<run-id>-<generation>.md, appends
 # one keyed needs-decision event to state/<task-id>.status, prints the report,
@@ -75,10 +77,14 @@
 # prefix past the recorded rounds so it starts a fresh widening count, and every
 # other prefix keeps its own. Its clusters stay on their rounds, because they are
 # the record of what this run has already seen.
-# Each round remembers which of its clusters were resolved away, so a
-# later replay of a decided head stays an idempotent no-op instead of reviving
-# the stop. The resolved clusters start a fresh count from the next recorded
-# head. This command never chooses a path or drives no-mistakes itself.
+# Each round saves decided clusters in resolved and their previously targeted
+# subset in resolved_aimed. A same-head retry uses that subset to reject added
+# targeting even after resolution; an explicit empty subset grants none.
+# Legacy rounds without resolved_aimed retain their prior replay semantics by
+# treating resolved as previously targeted, including after later resolutions.
+# Identical retries remain no-ops. Resolved clusters start a fresh streak count
+# from the next recorded head but remain seen for widening detection.
+# This command never chooses a path or drives no-mistakes itself.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -142,14 +148,7 @@ status_key() { # <run-id> <generation>
   printf 'review-loop-%s-%s' "$1" "$2"
 }
 
-# Widening detection. A round widens a prefix when its aimed change closed every
-# cluster the previous round returned under that prefix, and the review answered
-# with at least one cluster never seen before in this run under the same prefix.
-# The count is the trailing run of such rounds, so one round that answers with no
-# new cluster or leaves the previous ones open ends the streak. Re-returning a
-# cluster from some earlier round does not end it on its own; the frontier still
-# moved. A prefix is the key up to its last ":", the owning module or the bare
-# "defect" namespace.
+# Widening detection follows the round and prefix contract in the header.
 read -r -d '' WIDENING_JQ <<'JQ' || true
 def prefix_of($cluster):
   ($cluster | rindex(":")) as $i
