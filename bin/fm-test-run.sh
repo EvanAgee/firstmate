@@ -997,6 +997,10 @@ families_for_changed_path() {
     bin/fm-watch*|bin/fm-wake*|bin/fm-inactive-reconcile.sh|\
     bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)
       printf '%s\n' watcher-wake-lock
+      # The watcher's merged-poll branch also drives the PR forge: it retires
+      # the poll and closes the task's linked issues, and both behaviours are
+      # pinned by cases that live in the pr-forge family.
+      [ "$path" != bin/fm-watch.sh ] || printf '%s\n' pr-forge
       ;;
     bin/fm-afk*)
       printf '%s\n' afk

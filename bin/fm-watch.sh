@@ -1356,7 +1356,22 @@ while :; do
           # issues the task was dispatched on, because a "Refs #n" body leaves
           # them open. The close is reported into the triage log and never
           # changes the merged wake this cycle already queued.
-          if ! issue_close_out=$("$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url" 2>&1 >/dev/null); then
+          #
+          # It runs through the same bounded subprocess every network-touching
+          # check in this loop uses, because it makes up to 1 + 2N forge calls
+          # with no timeout of their own. Unbounded, one hung call during a
+          # forge outage stalls this whole sweep, the heartbeat below stops
+          # refreshing, and fm-guard.sh reports a watcher that is alive and
+          # blocked as stale.
+          issue_close_out=$( ( run_check_process "$CHECK_TIMEOUT" \
+            "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url" ) 2>&1 >/dev/null )
+          issue_close_rc=$?
+          if [ "$issue_close_rc" -ne 0 ]; then
+            # 124 is the bound's own status and carries no message of its own,
+            # so name the timeout rather than logging an empty reason.
+            if [ "$issue_close_rc" -eq 124 ]; then
+              issue_close_out="the issue close exceeded its ${CHECK_TIMEOUT}s bound"
+            fi
             # The closer stops on its first failing issue, so this is one line;
             # flatten anyway so the bounded triage log stays one entry per event.
             triage_log "linked issues were not all closed for $id after $url merged: $(printf '%s' "$issue_close_out" | tr '\n' ' ')"

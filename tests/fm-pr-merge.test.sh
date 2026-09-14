@@ -100,12 +100,6 @@ case "${1:-} ${2:-}" in
       "$3" "${FM_TEST_ISSUE_PR_STATE:-merged}"
     exit 0
     ;;
-  "issue view")
-    printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
-    printf 'issue:\n  number: %s\n  state: %s\n  labels: ""\n' \
-      "$3" "${FM_TEST_ISSUE_STATE:-closed}"
-    exit "${FM_TEST_ISSUE_VIEW_RC:-0}"
-    ;;
   "issue close"|"issue edit")
     printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
     exit 0

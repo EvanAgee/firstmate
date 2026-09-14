@@ -15,12 +15,14 @@
 #   (g) a forge read error prints issue-close-failed, exits non-zero, and stops
 #       before touching any later issue
 #   (h) a forge close error prints issue-close-failed and exits non-zero
-#   (i) a PR that is not merged is refused before any issue is read
-#   (j) an issue in a repo other than the PR's own repository is refused
-#   (k) a malformed PR URL is refused before any forge call
-#   (l) a merged GitLab request on a task with no linked issues is a silent
+#   (i) a failed label removal only warns: the close already landed, so its
+#       receipt still prints and every later linked issue is still handled
+#   (j) a PR that is not merged is refused before any issue is read
+#   (k) an issue in a repo other than the PR's own repository is refused
+#   (l) a malformed PR URL is refused before any forge call
+#   (m) a merged GitLab request on a task with no linked issues is a silent
 #       no-op, so an ordinary GitLab task never makes its caller log a warning
-#   (m) a merged GitLab request on a task that does record issues is refused
+#   (n) a merged GitLab request on a task that does record issues is refused
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -276,6 +278,31 @@ test_forge_close_error_fails() {
   pass "a forge close error reports the issue and exits non-zero"
 }
 
+test_label_removal_failure_still_reports_and_continues() {
+  local case_dir rc
+  case_dir=$(make_case edit-error 'acme/widgets#7,acme/widgets#8')
+  set_issue "$case_dir" 7 open agent-in-progress
+  set_issue "$case_dir" 8 open
+  FM_TEST_EDIT_RC=1
+
+  set +e
+  run_closer "$case_dir" task-x1 "$URL" > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+  unset FM_TEST_EDIT_RC
+
+  expect_code 0 "$rc" "edit-error: a stuck label must not fail a close that landed"
+  assert_grep "closed: acme/widgets#7 $URL" "$case_dir/out" \
+    "edit-error: the receipt for an issue that was closed went missing"
+  assert_grep 'warning: acme/widgets#7 was closed but its agent-in-progress label' \
+    "$case_dir/err" "edit-error: the stuck label was not warned about"
+  assert_grep "closed: acme/widgets#8 $URL" "$case_dir/out" \
+    "edit-error: a stuck label on one issue skipped the next linked issue"
+  grep -qF 'issue close 8 -R acme/widgets' "$case_dir/gh-axi.log" \
+    || fail "edit-error: the later linked issue was never closed (log: $(cat "$case_dir/gh-axi.log"))"
+  pass "a failed label removal warns, keeps the receipt, and handles later issues"
+}
+
 test_unmerged_pr_is_refused_before_reading_issues() {
   local case_dir rc
   case_dir=$(make_case not-merged acme/widgets#7)
@@ -376,6 +403,7 @@ test_missing_issues_field_is_a_silent_no_op
 test_missing_meta_is_refused
 test_forge_read_error_fails_and_stops
 test_forge_close_error_fails
+test_label_removal_failure_still_reports_and_continues
 test_unmerged_pr_is_refused_before_reading_issues
 test_issue_outside_the_pr_repo_is_refused
 test_malformed_pr_url_is_refused

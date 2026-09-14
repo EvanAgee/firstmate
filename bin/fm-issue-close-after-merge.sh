@@ -27,10 +27,13 @@
 # which never records GitHub issues, exits quietly instead of making its caller
 # log a warning about work it was never asked to do.
 #
-# Any forge error prints "issue-close-failed: <owner/repo>#<n> <reason>" on
-# stderr and exits non-zero without touching any later issue, so firstmate sees
-# exactly which issue still needs a hand. Callers treat that failure as
-# reportable, never as a reason to undo a merge that already landed.
+# A failed issue read or a failed close prints
+# "issue-close-failed: <owner/repo>#<n> <reason>" on stderr and exits non-zero
+# without touching any later issue, so firstmate sees exactly which issue still
+# needs a hand. A failed label removal only warns, because the close already
+# landed: its receipt still prints and every later issue is still handled, so
+# one cosmetic label never leaves another linked issue open. Callers treat a
+# failure as reportable, never as a reason to undo a merge that already landed.
 #
 # The gh-axi binary is resolved from FM_GH_BIN at call time, the same override
 # bin/fm-outage-sync.sh uses, so tests can inject a recorder. Each issue's state
@@ -166,14 +169,16 @@ for number in "${NUMBERS[@]}"; do
     exit 1
   fi
   # The label matters only while an agent is working the issue, so remove it
-  # exactly when the issue carries it and leave every other label alone.
+  # exactly when the issue carries it and leave every other label alone. A
+  # failed edit only warns: the close already landed, so its receipt still has
+  # to print and every later issue still has to be handled. A leftover label on
+  # a closed issue is cosmetic; a linked issue left open is the bug this script
+  # exists to prevent.
   case "$view" in
     *'"agent-in-progress"'*)
-      if ! gh_axi issue edit "$number" -R "$PR_SLUG" \
-        --remove-label agent-in-progress >/dev/null 2>&1; then
-        echo "issue-close-failed: $ref was closed but its agent-in-progress label could not be removed" >&2
-        exit 1
-      fi
+      gh_axi issue edit "$number" -R "$PR_SLUG" \
+        --remove-label agent-in-progress >/dev/null 2>&1 \
+        || echo "warning: $ref was closed but its agent-in-progress label could not be removed" >&2
       ;;
   esac
   printf 'closed: %s %s\n' "$ref" "$URL"
