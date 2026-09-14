@@ -591,6 +591,7 @@ test_kimi_busy_signature_is_scoped_to_spinner_lines() {
   capture="$TMP_ROOT/busy-pane"
   tmux() {
     case "${1:-}" in
+      display-message) printf '%%1\n' ;;
       capture-pane) cat "$capture" ;;
       *) return 0 ;;
     esac

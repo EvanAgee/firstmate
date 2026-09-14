@@ -40,6 +40,13 @@ case "${1:-}" in
     exit 0
     ;;
   list-windows)
+    case "$*" in
+      *window_id*)
+        [ "${3:-}" = =firstmate ] || exit 0
+        [ ! -f "$0.windows" ] || sed 's/^/@1 /' "$0.windows"
+        exit 0
+        ;;
+    esac
     if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
       printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
     fi
@@ -47,7 +54,9 @@ case "${1:-}" in
     exit 0
     ;;
   display-message)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     case "$*" in
+      *'#{pane_id}'*) printf '%%1\n' ;;
       *'#{cursor_y}'*) printf '0\n' ;;
       *) printf 'firstmate\n' ;;
     esac
