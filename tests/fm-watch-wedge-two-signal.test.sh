@@ -992,7 +992,7 @@ test_away_poll_reports_stall_after_generic_escalation_removed_marker() {
 }
 
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode() {
-  local dir state win key expected sequence
+  local dir state win key expected sequence reported_hash
   dir=$(make_wedge_case poll-stall-identity ps 'working: validating' 'mode=no-mistakes')
   state="$dir/state"
   win=fmtest:fm-ps
@@ -1003,6 +1003,8 @@ test_acknowledged_stall_identity_does_not_repeat_on_same_episode() {
   expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
   [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "initial stall lost its diagnosis"
   [ "$(cat "$state/.stale-since-$key.stalled")" = 'review, run 01RUN, agent none' ] || fail "initial stall did not record its identity"
+  reported_hash=$(cat "$state/.hash-$key")
+  [ "$(cat "$state/.stale-since-$key.stalled.hash")" = "$reported_hash" ] || fail "stall publication did not associate its pane hash"
   sequence=$(cat "$state/.wake-queue.seq")
   ack_poll_wake "$dir" || return
   set_poll_pipeline_activity "$dir" 26m
@@ -1012,18 +1014,29 @@ test_acknowledged_stall_identity_does_not_repeat_on_same_episode() {
   poll_stalled_case "$dir" "$win" || return
   [ "$(cat "$state/.stale-since-$key.stalled")" = 'review, run 01RUN, agent none' ] || fail "unknown state changed the stalled identity"
   [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "unknown state emitted a generic duplicate wake"
+  printf '%s' 'a distinct idle pane after the reported stall' > "$dir/pane.txt"
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(poll_wake_payload "$dir")" = "stale: $win" ] || fail "unknown state hid the changed pane's ordinary stale wake"
+  [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "changed pane did not publish exactly one ordinary wake"
+  [ "$(cat "$state/.stale-since-$key.stalled")" = 'review, run 01RUN, agent none' ] || fail "changed unknown pane cleared the stalled identity"
+  [ "$(cat "$state/.stale-since-$key.stalled.hash")" = "$reported_hash" ] || fail "ordinary classification replaced the reported stall hash"
+  sequence=$(cat "$state/.wake-queue.seq")
+  ack_poll_wake "$dir" || return
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "ordinary stale-hash suppression repeated the changed pane wake"
   set_poll_pipeline_activity "$dir" 26m
   poll_stalled_case "$dir" "$win" || return
   [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "unknown state rearmed a duplicate stall"
   set_poll_pipeline_activity "$dir" 15m
   poll_stalled_case "$dir" "$win" || return
   [ ! -e "$state/.stale-since-$key.stalled" ] || fail "known working observation did not clear the identity"
+  [ ! -e "$state/.stale-since-$key.stalled.hash" ] || fail "known working observation retained the old stall hash"
   set_poll_pipeline_activity "$dir" 25m
   poll_stalled_case "$dir" "$win" || return
   [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "new stalled episode did not notify"
   [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "new stalled episode did not publish exactly once"
   unset FM_FAKE_AXI_STATUS FM_FAKE_CREW_STATE
-  ok "full polls retain acknowledged and unknown identities until known recovery"
+  ok "full polls deduplicate the reported stall hash while surfacing changed unknown panes"
 }
 
 test_working_hash_transition_surfaces_stalled_diagnosis() {

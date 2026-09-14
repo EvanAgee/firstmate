@@ -505,7 +505,7 @@ finished_awaiting_merge() {  # <window> <task>
 }
 
 observe_stalled_pipeline() {
-  local win=$1 crew_line=$2 since_file=$3 escalation_file=$4
+  local win=$1 crew_line=$2 since_file=$3 escalation_file=$4 pane_hash=$5
   local detail identity marker reason
   marker="${since_file}.stalled"
   detail=$(crew_state_stalled_detail "$crew_line")
@@ -514,6 +514,7 @@ observe_stalled_pipeline() {
     if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
       reason="stale: $win ($detail)"
       fm_wake_append stale "$win" "$reason" || exit 1
+      printf '%s' "$pane_hash" > "$marker.hash" || exit 1
       printf '%s' "$identity" > "$marker" || exit 1
       rm -f "$since_file" "$escalation_file"
       clear_pause_state "$win"
@@ -522,8 +523,12 @@ observe_stalled_pipeline() {
     return 0
   fi
   case "$crew_line" in
-    ''|state:\ unknown*) [ -s "$marker" ] && return 0 ;;
-    *) rm -f "$marker" ;;
+    ''|state:\ unknown*)
+      if [ -s "$marker" ] && [ "$(cat "$marker.hash" 2>/dev/null || true)" = "$pane_hash" ]; then
+        return 0
+      fi
+      ;;
+    *) rm -f "$marker" "$marker.hash" ;;
   esac
   return 1
 }
@@ -1535,7 +1540,7 @@ EOF
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
         crew_line=$(crew_state_line "$task")
-        observe_stalled_pipeline "$w" "$crew_line" "$ssf" "$ewf" && continue
+        observe_stalled_pipeline "$w" "$crew_line" "$ssf" "$ewf" "$h" && continue
         if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
           continue
         fi
