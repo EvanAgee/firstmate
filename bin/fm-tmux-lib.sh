@@ -58,13 +58,15 @@
 # a LEADING dot), so `firstmate:fm-v1.2` is a genuine window NAME.
 # The session's real window inventory decides: a dotted component that matches a
 # live window name exactly is a name and is proven like any other.
-# It is treated as a pane selector only when it matches no window name, ends in
-# a pane index, and the part before that final dot is itself a window index or a
-# live window name.
-# So `firstmate:fm-v1.2` on a session without `fm-v1` reports missing, while
+# It is treated as a pane selector only when it matches no window name and the
+# suffix after the final dot is proven to be a real pane index of the window
+# named by the part before that dot, or that part is itself a window index.
+# A live window `fm-v1` is not proof that `fm-v1.2` is one of its panes, so the
+# pane index is looked up rather than assumed.
+# So `firstmate:fm-v1.2` reports missing whether or not `fm-v1` exists, while
 # `sess:fm-a1.0` and `sess:3.0` keep their native pane-selector behavior.
 fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-named
-  local target=${1:-} session window windows inventory_status pane_suffix pane_window
+  local target=${1:-} session window windows inventory_status pane_suffix pane_window pane_window_id panes
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
     *:*) ;;
@@ -108,8 +110,15 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-nam
           case "$pane_window" in
             *[!0-9]*)
               if printf '%s\n' "$windows" | grep -Fqx -- "$pane_window"; then
-                printf 'not-named'
-                return 0
+                pane_window_id=$(LC_ALL=C tmux list-windows -t "=$session" \
+                  -F '#{window_id} #{window_name}' 2>/dev/null \
+                  | awk -v n="$pane_window" '{ id = $1; sub(/^[^ ]* /, ""); if ($0 == n) { print id; exit } }')
+                if [ -n "$pane_window_id" ] \
+                   && panes=$(LC_ALL=C tmux list-panes -t "$pane_window_id" -F '#{pane_index}' 2>/dev/null) \
+                   && printf '%s\n' "$panes" | grep -Fqx -- "$pane_suffix"; then
+                  printf 'not-named'
+                  return 0
+                fi
               fi
               ;;
             *) printf 'not-named'; return 0 ;;
