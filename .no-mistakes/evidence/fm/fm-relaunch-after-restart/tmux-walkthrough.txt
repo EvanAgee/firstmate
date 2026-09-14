@@ -1,0 +1,60 @@
+## What I walked
+
+Private tmux server, public fm-control relaunch, local stand-in worker. No model API or primary session used.
+
+$ current_path walk:fm-walk44854.0  # canonical window absent; sibling pane 0 alive
+current_path=<>
+
+$ fm-control.sh walk44854.0 relaunch --note "continue after window loss"
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/home/data/walk44854.0/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: walk44854.0 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+relaunched walk44854.0 harness=claude from=claude model=default effort=default backend=tmux endpoint=walk:fm-walk44854.0 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt
+worker started pane=%2 cwd=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt
+Sibling remains alive: pane=%1 pid=45159 cwd=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wrong
+Resolved intended window=@2 pane=%2 canonical=fm-walk44854.0
+
+$ tmux capture-pane -p -t %2
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ export GOTMPDIR=/tmp/fm-walk44854.0/gotmp
+bash-3.2$ export CHROME_DEVTOOLS_AXI_MCP_PATH='/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/bin/fm-chrome-
+devtools-mcp.js'
+bash-3.2$ export CHROME_DEVTOOLS_AXI_SESSION='walk44854.0'
+bash-3.2$ unset TRACEPARENT; CLAUDE_CONFIG_DIR='/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7q
+yMDw/home/claude' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions
+--append-system-prompt-file '/tmp/fm-walk44854.0/worker-skills.YGi2BvHO' "$('/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRN
+QCNB4766W0KEP3E/bin/fm-operational-input.sh' encode launch-brief < '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W
+0KEP3E/.tmux-walk.7qyMDw/home/data/walk44854.0/brief.md')"
+LOCAL STAND-IN WORKER STARTED
+Relative selector walk:+1: native=%1 shared=%1
+Relative selector walk:-1: native=%2 shared=%2
+
+$ tmux kill-window -t @2; create same name in wrong directory
+
+$ fm-control.sh walk44854.0 relaunch --note "wrong directory must refuse"
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/home/data/walk44854.0/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: walk44854.0 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: task walk44854.0's endpoint is in '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wrong', not its recorded worktree '/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt'; refusing to relaunch an agent outside the copy holding its work
+error: the replacement agent for walk44854.0 could not be launched on claude
+error: walk44854.0's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt
+exit=1
+No replacement started; sibling remains alive.
+
+$ tmux kill-server
+current_path after server loss=<>
+
+$ fm-control.sh walk44854.0 relaunch --note "continue after server loss"
+warning: /Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/home/data/walk44854.0/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: walk44854.0 ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+relaunched walk44854.0 harness=claude from=claude model=default effort=default backend=tmux endpoint=walk:fm-walk44854.0 worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt
+worker started pane=%2 cwd=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt
+worker started pane=%0 cwd=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt
+
+Persisted task record:
+window=walk:fm-walk44854.0
+worktree=/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2GFF9WRNQCNB4766W0KEP3E/.tmux-walk.7qyMDw/wt
+harness=claude
+Preserved scratch content: scratch content
+
+Walk completed. Private server and scratch fixtures removed on exit.
