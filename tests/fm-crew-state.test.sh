@@ -486,6 +486,29 @@ test_parked_threshold_env_override() {
   pass "FM_PIPELINE_PARKED_MAX overrides the default parked threshold"
 }
 
+test_parked_threshold_supervision_config() {
+  reset_fakes
+  local d out
+  d=$(new_case quiet-agent-config)
+  make_repo_on_branch "$d/wt" fm/feat-quiet-config
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-quiet-config.meta" "window=fm:fm-feat-quiet-config" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet-config 25m 86240)"
+  mkdir -p "$d/config" "$d/override-config"
+  printf 'FM_PIPELINE_PARKED_MAX=3600\n' > "$d/config/supervision.env"
+  printf 'FM_PIPELINE_PARKED_MAX=1200\n' > "$d/override-config/supervision.env"
+  out=$(unset FM_PIPELINE_PARKED_MAX FM_CONFIG_OVERRIDE; FM_HOME="$d" run_crew_state "$d" feat-quiet-config)
+  [ "$out" = 'state: working · source: run-step · validating (running)' ] \
+    || fail "direct crew-state ignored the home's parked threshold: $out"
+  out=$(FM_HOME="$d" FM_PIPELINE_PARKED_MAX=1200 run_crew_state "$d" feat-quiet-config)
+  [ "$out" = 'state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent 86240' ] \
+    || fail "supervision config overrode the explicit environment threshold: $out"
+  out=$(unset FM_PIPELINE_PARKED_MAX; FM_HOME="$d" FM_CONFIG_OVERRIDE="$d/override-config" run_crew_state "$d" feat-quiet-config)
+  [ "$out" = 'state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent 86240' ] \
+    || fail "crew-state ignored the configured supervision directory: $out"
+  pass "crew-state loads the home's supervision threshold and preserves override precedence"
+}
+
 # (a6) awaiting_agent: parked with no live agent PID (no gate, no approval
 # status - distinct from a genuine human approval gate) classifies as stalled.
 test_awaiting_agent_no_pid_is_stalled() {
@@ -1511,6 +1534,7 @@ test_active_agent_stays_working
 test_quiet_agent_past_threshold_is_stalled
 test_quiet_agent_inside_threshold_stays_working
 test_parked_threshold_env_override
+test_parked_threshold_supervision_config
 test_awaiting_agent_no_pid_is_stalled
 test_awaiting_agent_pid_liveness
 test_escaped_activity_keeps_agent_pid

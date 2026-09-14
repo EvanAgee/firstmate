@@ -950,7 +950,7 @@ run_poll_daemon() {
 }
 
 test_away_poll_reports_stall_after_generic_escalation_removed_marker() {
-  local dir state win key reason expected sequence
+  local dir state win key reason expected sequence generic expected_buffer
   dir=$(make_wedge_case poll-away-stall ps 'working: validating' 'mode=no-mistakes')
   state="$dir/state"
   win=fmtest:fm-ps
@@ -961,27 +961,32 @@ test_away_poll_reports_stall_after_generic_escalation_removed_marker() {
   poll_stalled_case "$dir" "$win" || return
   reason=$(poll_wake_payload "$dir")
   [ "$reason" = "stale: $win" ] || fail "ordinary away poll changed its wake"
-  run_poll_daemon "$dir" handle_wake "$reason"
+  run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+    || { fail "daemon could not ingest and acknowledge the ordinary away wake"; return; }
   [ -e "$state/.subsuper-stale-ps" ] || fail "away wake did not start stale tracking"
-  ack_poll_wake "$dir" || return
+  [ ! -s "$state/.wake-queue" ] || fail "daemon did not acknowledge the consumed wake"
   printf '1\n' > "$state/.subsuper-stale-ps"
   run_poll_daemon "$dir" housekeeping
   grep -q 'possible wedge' "$state/.subsuper-escalations" || fail "away persistence did not publish a generic wedge"
   [ ! -e "$state/.subsuper-stale-ps" ] || fail "away generic escalation retained its stale marker"
+  generic=$(cat "$state/.subsuper-escalations")
+  [ "$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')" = 1 ] || fail "generic escalation was not buffered exactly once"
   set_poll_pipeline_activity "$dir" 25m
   poll_stalled_case "$dir" "$win" || return
   expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
   [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "away poll hid the stalled transition after marker removal"
-  run_poll_daemon "$dir" handle_wake "$(poll_wake_payload "$dir")"
-  [ "$(tail -n 1 "$state/.subsuper-escalations")" = "$expected" ] || fail "daemon dropped the enriched stalled wake"
+  run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+    || { fail "daemon could not ingest and acknowledge the stalled wake"; return; }
+  expected_buffer=$(printf '%s\n%s' "$generic" "$expected")
+  [ "$(cat "$state/.subsuper-escalations")" = "$expected_buffer" ] || fail "daemon changed or lost the detailed escalation buffer"
   [ "$(cat "$state/.subsuper-stalled-ps")" = 'review, run 01RUN, agent none' ] || fail "daemon did not record the stalled identity"
   sequence=$(cat "$state/.wake-queue.seq")
-  ack_poll_wake "$dir" || return
+  [ ! -s "$state/.wake-queue" ] || fail "daemon did not acknowledge the consumed wake"
   set_poll_pipeline_activity "$dir" 26m
   poll_stalled_case "$dir" "$win" || return
   run_poll_daemon "$dir" housekeeping
   [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "away poll repeated the same stall"
-  [ "$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')" = 2 ] || fail "daemon repeated a generic or stalled escalation"
+  [ "$(cat "$state/.subsuper-escalations")" = "$expected_buffer" ] || fail "daemon repeated or changed a buffered escalation"
   unset FM_FAKE_AXI_STATUS FM_FAKE_CREW_STATE
   ok "away polling reports stalls after generic escalation and buffers them once"
 }
@@ -1003,10 +1008,10 @@ test_acknowledged_stall_identity_does_not_repeat_on_same_episode() {
   set_poll_pipeline_activity "$dir" 26m
   poll_stalled_case "$dir" "$win" || return
   [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "acknowledging the stall rearmed a duplicate"
-  cp "$state/.hash-$key" "$state/.stale-$key"
   export FM_FAKE_CREW_STATE='state: unknown · source: none · temporarily unreadable'
   poll_stalled_case "$dir" "$win" || return
-  [ -e "$state/.stale-since-$key.stalled" ] || fail "unknown state cleared the stalled identity"
+  [ "$(cat "$state/.stale-since-$key.stalled")" = 'review, run 01RUN, agent none' ] || fail "unknown state changed the stalled identity"
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "unknown state emitted a generic duplicate wake"
   set_poll_pipeline_activity "$dir" 26m
   poll_stalled_case "$dir" "$win" || return
   [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "unknown state rearmed a duplicate stall"

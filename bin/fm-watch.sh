@@ -522,7 +522,7 @@ observe_stalled_pipeline() {
     return 0
   fi
   case "$crew_line" in
-    ''|state:\ unknown*) ;;
+    ''|state:\ unknown*) [ -s "$marker" ] && return 0 ;;
     *) rm -f "$marker" ;;
   esac
   return 1
