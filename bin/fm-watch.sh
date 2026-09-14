@@ -1364,8 +1364,22 @@ while :; do
           # refreshing, and fm-guard.sh reports a watcher that is alive and
           # blocked as stale.
           issue_close_out=$( ( run_check_process "$CHECK_TIMEOUT" \
-            "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url" ) 2>&1 >/dev/null )
+            "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url" ) 2>&1 )
           issue_close_rc=$?
+          # Every receipt the closer prints is recorded, success included, so the
+          # triage log is the audit trail for a merge firstmate never ran. The
+          # closer writes receipts on stdout and diagnostics on stderr; both are
+          # captured together here and split back apart by their prefix.
+          while IFS= read -r issue_close_line; do
+            [ -n "$issue_close_line" ] || continue
+            case "$issue_close_line" in
+              'closed: '*|'already-closed: '*)
+                triage_log "$id issue close after $url merged: $issue_close_line"
+                ;;
+            esac
+          done <<EOF
+$issue_close_out
+EOF
           if [ "$issue_close_rc" -ne 0 ]; then
             # 124 is the bound's own status and carries no message of its own,
             # so name the timeout rather than logging an empty reason.

@@ -3358,6 +3358,9 @@ test_merged_poll_closes_linked_issues() {
     || fail "a merged poll did not close the task's linked issue (log: $(cat "$dir/gh-axi.log"))"
   grep -qF 'issue edit 55 -R o/r --remove-label agent-in-progress' "$dir/gh-axi.log" \
     || fail "a merged poll did not remove the agent-in-progress label"
+  grep -qF 'task-a issue close after https://github.com/o/r/pull/1 merged: closed: o/r#55 https://github.com/o/r/pull/1' \
+    "$state/.watch-triage.log" \
+    || fail "a successful issue close left no receipt in the triage log: $(cat "$state/.watch-triage.log" 2>/dev/null)"
   ack_watcher_cycle "$state" || fail "merged issue-close acknowledgement failed"
   pass "a PR merged outside fm-pr-merge still closes the task's linked issues"
 }
