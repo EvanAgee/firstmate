@@ -296,6 +296,77 @@ kill -0 "$capture_sibling_pid" || fail "the sibling died during capture checks"
 tmux kill-window -t "$capture_sibling"
 pass "real tmux: missing canonical captures fail closed while explicit pane selectors keep working"
 
+cat > "$SHIM_DIR/submit-screen.py" <<'PYUI'
+import os
+import sys
+import tty
+
+marker, text, log_path = sys.argv[1:]
+tty.setraw(sys.stdin.fileno())
+
+def render():
+    sys.stdout.write("\033[2J\033[H" + marker + "\r\n╭" + "─" * 22 + "╮\r\n")
+    sys.stdout.write("│ > " + text.ljust(18) + " │\r\n╰" + "─" * 22 + "╯\033[3;5H")
+    sys.stdout.flush()
+
+with open(log_path, "ab", buffering=0) as received:
+    render()
+    while True:
+        key = os.read(sys.stdin.fileno(), 1)
+        if not key:
+            break
+        received.write(key)
+        if key not in (b"\r", b"\n"):
+            text += key.decode("ascii")
+        render()
+PYUI
+submit_sibling=$(tmux new-window -dP -F '#{window_id}' -t "=$SESSION:" -n fm-v1 \
+  "python3 '$SHIM_DIR/submit-screen.py' sibling-submit sibling-pending '$SHIM_DIR/sibling-input'") \
+  || fail "could not create the submit sibling"
+submit_window=$(tmux new-window -dP -F '#{window_id}' -t "=$SESSION:" -n fm-v1.0 \
+  "python3 '$SHIM_DIR/submit-screen.py' intended-submit '' '$SHIM_DIR/intended-input'") \
+  || fail "could not create the dotted submit window"
+tmux set-window-option -t "$submit_sibling" automatic-rename off
+tmux set-window-option -t "$submit_window" automatic-rename off
+submit_pane=$(tmux display-message -p -t "$submit_window" '#{pane_id}')
+submit_sibling_pane=$(tmux display-message -p -t "$submit_sibling" '#{pane_id}')
+wait_for_capture_text "$submit_pane" intended-submit || fail "the intended submit composer did not render"
+wait_for_capture_text "$submit_sibling_pane" sibling-submit || fail "the sibling submit composer did not render"
+[ "$(fm_tmux_composer_state "$SESSION:fm-v1.0")" = empty ] \
+  || fail "the intended submit composer must start empty"
+[ "$(fm_tmux_composer_state "$SESSION:fm-v1")" = pending ] \
+  || fail "the sibling submit composer must start pending"
+submit_sibling_screen=$(tmux capture-pane -p -t "$submit_sibling_pane" -S 0 -E -)
+verdict=$(fm_tmux_submit_core "$SESSION:fm-v1.0" owned-message 2 1 1)
+[ "$verdict" = pending ] \
+  || fail "a retained message in the intended pane must stay pending, got '$verdict'"
+printf 'owned-message\r\r' > "$SHIM_DIR/expected-input"
+cmp -s "$SHIM_DIR/expected-input" "$SHIM_DIR/intended-input" \
+  || fail "typing and both Enter attempts must reach only the intended pane"
+[ ! -s "$SHIM_DIR/sibling-input" ] || fail "submit sent input to the sibling pane"
+verdict=$(fm_tmux_submit_enter_core "$SESSION:fm-v1.0" 1 1)
+[ "$verdict" = pending ] || fail "Enter-only submission must verify the intended pane"
+printf '\r' >> "$SHIM_DIR/expected-input"
+cmp -s "$SHIM_DIR/expected-input" "$SHIM_DIR/intended-input" \
+  || fail "direct Enter submission must reach the intended pane"
+[ ! -s "$SHIM_DIR/sibling-input" ] || fail "Enter-only submission touched the sibling pane"
+[ "$(tmux capture-pane -p -t "$submit_sibling_pane" -S 0 -E -)" = "$submit_sibling_screen" ] \
+  || fail "submission changed the sibling's composer"
+
+tmux rename-window -t "$submit_window" submitted.0
+[ "$(fm_tmux_submit_core "$SESSION:fm-v1.0" refused 1 0 0)" = send-failed ] \
+  || fail "typing must refuse a missing canonical task window"
+[ "$(fm_tmux_submit_enter_core "$SESSION:fm-v1.0" 1 0)" = send-failed ] \
+  || fail "Enter must refuse a missing canonical task window"
+cmp -s "$SHIM_DIR/expected-input" "$SHIM_DIR/intended-input" \
+  || fail "missing-window submission sent input to the renamed pane"
+[ ! -s "$SHIM_DIR/sibling-input" ] || fail "missing-window submission touched the sibling pane"
+tmux kill-window -t "$submit_window"
+[ "$(tmux display-message -p -t "$submit_sibling_pane" '#{window_name}')" = fm-v1 ] \
+  || fail "submit cleanup removed the sibling window"
+tmux kill-window -t "$submit_sibling"
+pass "real tmux: typing, Enter retries, and verification share the intended pane; missing tasks refuse input"
+
 tmux new-session -d -s prefix-other -n fm-prefix -c "$HOME"
 path=$(fm_backend_tmux_current_path "prefix:fm-prefix")
 [ -z "$path" ] \
