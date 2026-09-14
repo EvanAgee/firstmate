@@ -368,6 +368,42 @@ test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll() {
   fi
 }
 
+test_stalled_validation_overrides_previous_merge_wait() {
+  local dir state window key hash_state reason recovery_token
+  for hash_state in new absorbed; do
+    dir=$(make_wedge_case "stalled-merge-$hash_state" sm \
+      'done: PR https://github.com/EvanAgee/firstmate/pull/7 checks green' \
+      'mode=no-mistakes')
+    state="$dir/state"
+    window=fmtest:fm-sm
+    key=fmtest_fm-sm
+    arm_pr_poll "$state" sm https://github.com/EvanAgee/firstmate/pull/7 \
+      || { fail "could not arm the merge watch fixture"; return; }
+    seed_stale_pane "$dir" sm "$window" 'idle waiting for merge'
+    export FM_FAKE_TMUX_CURRENT_COMMAND=zsh
+    if [ "$hash_state" = absorbed ]; then
+      export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+      run_until_stale_classified "$dir" "$window"
+      [ -e "$state/.paused-$key" ] || fail "ordinary merge wait was not absorbed"
+      [ ! -s "$state/.wake-queue" ] || fail "ordinary merge wait unexpectedly queued a wake"
+      [ "$(cat "$state/.stale-$key" 2>/dev/null)" = "$(cat "$state/.hash-$key")" ] \
+        || fail "ordinary merge wait did not record the pane hash"
+      IFS= read -r recovery_token < "$state/.watcher-down"
+      run_in_watcher "$dir" fm_recovery_marker_ack "$state/.watcher-down" "${recovery_token##*:}" \
+        || { fail "could not acknowledge fixture watcher restart"; return; }
+    fi
+    export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+    run_for_seconds "$dir" "$window" 60
+    reason="stale: $window (pipeline stalled 13h at review, run 01RUN, agent none)"
+    grep -qF "$reason" "$state/.wake-queue" 2>/dev/null \
+      || fail "stalled validation behind $hash_state merge wait did not surface its diagnosis"
+    [ ! -e "$state/.paused-$key" ] || fail "stalled validation retained merge-wait absorption"
+    [ ! -e "$state/.stale-since-$key" ] || fail "stalled validation started a wedge timer"
+  done
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  ok "stalled validation overrides an old green-PR announcement and armed merge watch"
+}
+
 # The negative that keeps the terminal branch honest: the SAME captain-relevant
 # done: line with no armed merge watch must still surface exactly as before.
 test_green_pr_without_an_armed_watch_still_surfaces() {
@@ -983,6 +1019,13 @@ test_pane_sourced_working_is_not_gated_on_the_pipeline() {
   fi
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    "$test_name"
+  done
+  exit "$FAILED"
+fi
+
 test_declared_pause_beats_run_step_done
 test_declared_pause_with_live_agent_stays_none
 test_active_pipeline_blocks_escalation
@@ -996,6 +1039,7 @@ test_secondmate_with_declared_pause_is_not_absorbed
 test_busy_pane_escalates_even_with_an_active_pipeline
 test_pane_sourced_working_is_not_gated_on_the_pipeline
 test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll
+test_stalled_validation_overrides_previous_merge_wait
 test_green_pr_without_an_armed_watch_still_surfaces
 test_stalled_run_step_is_not_absorbed_by_pause_class
 test_declared_pause_preserves_stalled_diagnosis

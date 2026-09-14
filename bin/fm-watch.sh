@@ -1545,7 +1545,9 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           task=$(window_to_task "$w" "$STATE")
-          if finished_awaiting_merge "$w" "$task"; then
+          crew_line=$(crew_state_line "$task")
+          stalled_detail=$(crew_state_stalled_detail "$crew_line")
+          if [ -z "$stalled_detail" ] && finished_awaiting_merge "$w" "$task"; then
             # A gone agent, a green PR in the last status line, and an armed
             # merge watch: the work is finished and the idle pane is its
             # expected shape, not a wedge. This line is captain-relevant so the
@@ -1554,8 +1556,8 @@ EOF
             # cadence instead of surfacing or starting the wedge timer.
             handle_paused_stale "$w" "$task" "$h" \
               "finished worker awaiting merge - PR is green and its merge watch is armed"
-          elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            crew_line=$(crew_state_line "$task")
+          elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ] \
+            || { [ -n "$stalled_detail" ] && [ -e "$pf" ]; }; then
             if [ "$(crew_absorb_class_of_line "$crew_line")" = working ]; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
@@ -1566,12 +1568,12 @@ EOF
               # absorbed here: it fell through crew_absorb_class_of_line same as any
               # other non-working verdict, but its own diagnosis is worth carrying
               # onto the wake line instead of a bare "stale: <endpoint>".
-              stalled_detail=$(crew_state_stalled_detail "$crew_line")
               reason="stale: $w"
               [ -n "$stalled_detail" ] && reason="stale: $w ($stalled_detail)"
               fm_wake_append stale "$w" "$reason" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
+              [ -z "$stalled_detail" ] || clear_pause_state "$w"
               mark_surfaced "$STATE/$task.status"
               wake "$reason"
             fi
