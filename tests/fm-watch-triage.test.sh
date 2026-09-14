@@ -122,7 +122,58 @@ record_pi_busy() {  # <state-dir> <id>
     --source pi-ext --event agent-start
 }
 
-reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
+# TERM can leave a watcher stuck in Bash's EXIT trap. Bound test teardown
+# before forcing that child down so a passed assertion cannot hang the CI job.
+reap() {
+  local pid=$1 i
+  kill -TERM "$pid" 2>/dev/null || true
+  for ((i=0; i<50; i++)); do
+    is_live_non_zombie "$pid" || break
+    sleep 0.1
+  done
+  if is_live_non_zombie "$pid"; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
+test_reap_handles_term_responsive_and_stuck_children() {
+  local dir mode pid i
+  dir=$(make_case reap)
+  for mode in responsive stuck; do
+    python3 - "$dir" "$mode" <<'PYCHILD' &
+import pathlib
+import signal
+import sys
+
+root, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
+
+def terminate(signum, frame):
+    (root / (mode + ".term")).touch()
+    if mode == "responsive":
+        sys.exit(0)
+
+signal.signal(signal.SIGTERM, terminate)
+(root / (mode + ".ready")).touch()
+while True:
+    signal.pause()
+PYCHILD
+    pid=$!
+    for ((i=0; i<50; i++)); do
+      [ -e "$dir/$mode.ready" ] && break
+      sleep 0.1
+    done
+    if [ ! -e "$dir/$mode.ready" ]; then
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      fail "$mode cleanup child did not become ready"
+    fi
+    reap "$pid"
+    [ -e "$dir/$mode.term" ] || fail "cleanup skipped TERM for the $mode child"
+    ! kill -0 "$pid" 2>/dev/null || fail "cleanup left the $mode child alive"
+  done
+  pass "test cleanup reaps both TERM-responsive and stuck children within its bound"
+}
 
 # --- pure classifier predicates (fm-classify-lib.sh) ------------------------
 
@@ -2043,6 +2094,7 @@ test_watcher_refreshes_task_pane_tail() {
   pass "watcher refreshes the bounded pane snapshot each supervision cycle"
 }
 
+test_reap_handles_term_responsive_and_stuck_children
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
