@@ -404,15 +404,15 @@ PREEMPT_SIDE_EFFECT="$TMP_ROOT/preempt-side-effect"
 POLL_WAIT_SECONDS=30
 FM_REMOTE_JOB_QUEUE_TIMEOUT=60
 FM_REMOTE_JOB_TIMEOUT=40
-fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" "$POLL_WAIT_SECONDS" < /dev/null > /dev/null
-POLL_JOB_ID=$FM_REMOTE_JOB_ID
-POLL_JOB_DIR="$STATE_ROOT/jobs/$POLL_JOB_ID"
 # The poll counts its own POLL_WAIT_SECONDS window from the moment it starts, so
 # the earliest that window can close is POLL_WAIT_SECONDS after this instant,
 # which is taken before the poll is even observed running. That makes
 # POLL_WINDOW_CLOSES a floor on the true close time, never a grant of extra slack.
 POLL_WINDOW_CLOSES=$(( $(date +%s) + POLL_WAIT_SECONDS ))
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" "$POLL_WAIT_SECONDS" < /dev/null > /dev/null
+POLL_JOB_ID=$FM_REMOTE_JOB_ID
+POLL_JOB_DIR="$STATE_ROOT/jobs/$POLL_JOB_ID"
 for _ in $(seq 1 100); do
   [ "$(fm_remote_job_read_state "$POLL_JOB_DIR" 2>/dev/null || true)" = running ] && break
   sleep 0.05

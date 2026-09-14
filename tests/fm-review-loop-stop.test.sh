@@ -190,6 +190,57 @@ JSON
   pass "review-loop stop: legacy resolution retries preserve their prior meaning"
 }
 
+test_later_resolution_preserves_legacy_and_explicit_empty_replay_targeting() {
+  local task=later-resolution run=run-later-resolution home state decision head rc out before
+  for decision in root bank; do
+    home=$(make_home "later-resolution-$decision" "$task")
+    mkdir -p "$home/state/review-loops"
+    state="$home/state/review-loops/$task.json"
+    cat > "$state" <<JSON
+{"version":1,"task":"$task","run":"$run","threshold":3,"generation":2,
+ "rounds":[
+   {"round":1,"head":"legacy-a","changed":"Aimed at a.",
+    "clusters":[],"targeted":[],"resolved":["defect:a"]},
+   {"round":2,"head":"explicit-empty","changed":"Did not aim at a.",
+    "clusters":[],"targeted":[],"resolved":["defect:a"],"resolved_aimed":[]}],
+ "surfaced":null,"resolution":{"choice":"root"}}
+JSON
+    before=$(cat "$state")
+    record "$home" "$task" "$run" legacy-a "Aimed at a." "defect:a" >/dev/null \
+      || fail "a legacy retry before a later $decision resolution should succeed"
+    [ "$before" = "$(cat "$state")" ] || fail "the initial legacy retry changed state"
+
+    for head in b1 b2; do
+      record "$home" "$task" "$run" "$head" "Aimed at b." "defect:b" >/dev/null \
+        || fail "b should continue before its third targeted round"
+    done
+    set +e
+    record "$home" "$task" "$run" b3 "Aimed at b." "defect:b" >/dev/null 2>&1
+    rc=$?
+    set -e
+    expect_code 20 "$rc" "three targeted b rounds must stop"
+    FM_HOME="$home" "$STOP" resolve "$task" --run "$run" --decision "$decision" >/dev/null \
+      || fail "the later $decision resolution should succeed"
+
+    before=$(cat "$state")
+    record "$home" "$task" "$run" legacy-a "Aimed at a." "defect:a" >/dev/null \
+      || fail "a later $decision resolution must preserve the legacy retry"
+    [ "$before" = "$(cat "$state")" ] || fail "the later legacy retry changed state"
+    record "$home" "$task" "$run" b1 "Aimed at b." "defect:b" >/dev/null \
+      || fail "the later resolved head must still accept its identical retry"
+    [ "$before" = "$(cat "$state")" ] || fail "the later resolved-head retry changed state"
+    set +e
+    out=$(record "$home" "$task" "$run" explicit-empty "Aimed at a." "defect:a" 2>&1)
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "a later $decision resolution must preserve explicit-empty targeting"
+    assert_contains "$out" "record targeting for defect:a against" \
+      "the rejection omitted the added targeting"
+    [ "$before" = "$(cat "$state")" ] || fail "the rejected retry changed state"
+  done
+  pass "review-loop stop: later resolutions preserve legacy and explicit-empty replay targeting"
+}
+
 test_retry_after_a_decision_cannot_re_surface_it() {
   local task=post-resolve run=run-post-resolve home rc
   home=$(make_home post-resolve "$task")
@@ -1385,6 +1436,7 @@ test_targeting_only_same_head_expansion_is_rejected
 test_untargeted_same_head_widening_is_rejected_too
 test_resolved_untargeted_cluster_cannot_add_targeting_on_retry
 test_retry_preserves_a_legacy_resolution_without_an_aimed_subset
+test_later_resolution_preserves_legacy_and_explicit_empty_replay_targeting
 test_retry_after_a_decision_cannot_re_surface_it
 test_resolving_one_cluster_keeps_a_legacy_rounds_other_streak
 test_threshold_is_configurable

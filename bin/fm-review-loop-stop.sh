@@ -643,9 +643,9 @@ resolve_stop() { # <task-id> <args...>
     | .generation += 1
     | .rounds |= map(
         ((.targeted // .clusters) - ((.targeted // .clusters) - $resolved)) as $aimed
+        | .resolved_aimed = (((.resolved_aimed // .resolved // []) + $aimed) | unique)
         | .resolved = (((.resolved // []) + (.clusters - (.clusters - $resolved)))
                      | unique)
-        | .resolved_aimed = (((.resolved_aimed // []) + $aimed) | unique)
         | .clusters = (.clusters - $resolved)
         | .targeted = ((.targeted // .clusters) - $resolved))
     | .surfaced = null
