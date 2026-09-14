@@ -48,25 +48,9 @@
 # shellcheck source=bin/fm-omp-process-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-omp-process-lib.sh"
 
-# fm_tmux_named_window_state: prove a canonical session:window-name target
-# resolves inside the exact named session before any display-message read can
-# let tmux fall back to the client's current window. A missing server, session,
-# or window is `missing`. Other valid tmux selectors return `not-named` so the
-# display-message wrapper preserves their native behavior.
-# A dot is ambiguous: `session:window.pane` is a real pane selector, but a
-# firstmate task id may itself contain a dot (fm_task_id_path_safe refuses only
-# a LEADING dot), so `firstmate:fm-v1.2` is a genuine window NAME.
-# The session's real window inventory decides: a dotted component that matches a
-# live window name exactly is a name and is proven like any other.
-# It is treated as a pane selector only when it matches no window name and the
-# suffix after the final dot is proven to be a real pane index of the window
-# named by the part before that dot, or that part is itself a window index.
-# A live window `fm-v1` is not proof that `fm-v1.2` is one of its panes, so the
-# pane index is looked up rather than assumed.
-# So `firstmate:fm-v1.2` reports missing whether or not `fm-v1` exists, while
-# `sess:fm-a1.0` and `sess:3.0` keep their native pane-selector behavior.
-fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-named
+fm_tmux_resolve_target() {
   local target=${1:-} session window windows inventory_status pane_suffix pane_window pane_window_id panes
+  local row window_id window_name resolved_window_id= resolved_pane_id
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
     *:*) ;;
@@ -75,12 +59,16 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-nam
   session=${target%%:*}
   window=${target#*:}
   case "$window" in
-    @*|%*|'!'|'^'|'$'|'+'|'-'|'{'*'}') printf 'not-named'; return 0 ;;
+    @*|%*|'!'|'^'|'$'|'+'|'-'|'{'*'}') printf 'not-named\t%s' "$target"; return 0 ;;
     *.*) ;;
     *[!0-9]*) ;;
-    *) printf 'not-named'; return 0 ;;
+    *) printf 'not-named\t%s' "$target"; return 0 ;;
   esac
-  if windows=$(LC_ALL=C tmux list-windows -t "=$session" -F '#{window_name}' 2>&1); then
+  if [[ "$window" =~ ^[+-][0-9]+$ ]]; then
+    printf 'not-named\t%s' "$target"
+    return 0
+  fi
+  if windows=$(LC_ALL=C tmux list-windows -t "=$session" -F '#{window_id} #{window_name}' 2>&1); then
     inventory_status=0
   else
     inventory_status=$?
@@ -96,33 +84,41 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-nam
     esac
     return 0
   fi
-  if printf '%s\n' "$windows" | grep -Fqx -- "$window"; then
-    printf 'present'
+  pane_window=${window%.*}
+  pane_window_id=
+  while IFS= read -r row; do
+    window_id=${row%% *}
+    window_name=${row#* }
+    if [ "$window_name" = "$window" ] && [ -z "$resolved_window_id" ]; then
+      resolved_window_id=$window_id
+    fi
+    if [ "$window_name" = "$pane_window" ] && [ -z "$pane_window_id" ]; then
+      pane_window_id=$window_id
+    fi
+  done <<< "$windows"
+  if [ -n "$resolved_window_id" ]; then
+    printf 'present\t%s' "$resolved_window_id"
     return 0
   fi
   case "$window" in
+    fm-*) printf 'missing'; return 0 ;;
     *.*)
       pane_suffix=${window##*.}
-      pane_window=${window%.*}
       case "$pane_suffix" in
         ''|*[!0-9]*) ;;
         *)
           case "$pane_window" in
-            *[!0-9]*)
-              if printf '%s\n' "$windows" | grep -Fqx -- "$pane_window"; then
-                pane_window_id=$(LC_ALL=C tmux list-windows -t "=$session" \
-                  -F '#{window_id} #{window_name}' 2>/dev/null \
-                  | awk -v n="$pane_window" '{ id = $1; sub(/^[^ ]* /, ""); if ($0 == n) { print id; exit } }')
-                if [ -n "$pane_window_id" ] \
-                   && panes=$(LC_ALL=C tmux list-panes -t "$pane_window_id" -F '#{pane_index}' 2>/dev/null) \
-                   && printf '%s\n' "$panes" | grep -Fqx -- "$pane_suffix"; then
-                  printf 'not-named'
-                  return 0
-                fi
-              fi
-              ;;
-            *) printf 'not-named'; return 0 ;;
+            ''|*[!0-9]*) ;;
+            *) pane_window_id="=$session:$pane_window" ;;
           esac
+          if [ -n "$pane_window_id" ] \
+             && panes=$(LC_ALL=C tmux list-panes -t "$pane_window_id" -F '#{pane_index} #{pane_id}' 2>/dev/null); then
+            resolved_pane_id=$(printf '%s\n' "$panes" | awk -v n="$pane_suffix" '$1 == n { print $2; exit }')
+            if [ -n "$resolved_pane_id" ]; then
+              printf 'not-named\t%s' "$resolved_pane_id"
+              return 0
+            fi
+          fi
           ;;
       esac
       ;;
@@ -130,14 +126,26 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-nam
   printf 'missing'
 }
 
+# fm_tmux_named_window_state: prove a canonical session:window-name target
+# resolves inside the exact named session before any display-message read can
+# let tmux fall back to the client's current window. A missing server, session,
+# or window is `missing`. Other valid tmux selectors return `not-named` so the
+# display-message wrapper preserves their native behavior.
+fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-named
+  local resolved
+  resolved=$(fm_tmux_resolve_target "${1:-}")
+  printf '%s' "${resolved%%$'\t'*}"
+}
+
 # fm_tmux_display_message: read one pane field after proving exact membership
 # for a named session:window target. Stable window and pane ids remain direct.
 fm_tmux_display_message() {  # <target> <format>
-  local target=$1 format=$2
+  local target=$1 format=$2 resolved
   case "$target" in
     *:*)
-      case "$(fm_tmux_named_window_state "$target")" in
-        present|not-named) ;;
+      resolved=$(fm_tmux_resolve_target "$target")
+      case "${resolved%%$'\t'*}" in
+        present|not-named) target=${resolved#*$'\t'} ;;
         *) return 1 ;;
       esac
       ;;
