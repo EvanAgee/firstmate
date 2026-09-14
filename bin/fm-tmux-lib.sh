@@ -396,6 +396,8 @@ fm_pane_is_busy() {  # <target> [harness]
 # transition evidence could mark an undelivered message delivered.
 fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle] [harness] [omp-bun] [omp-bin]
   local target=$1 retries=$2 sleep_s=$3 baseline_idle=${4:-} harness=${5:-} omp_bun=${6:-} omp_bin=${7:-} i=0 j state
+  target=$(fm_tmux_display_message "$target" '#{pane_id}') || { printf 'send-failed'; return 0; }
+  [ -n "$target" ] || { printf 'send-failed'; return 0; }
   while :; do
     tmux send-keys -t "$target" Enter 2>/dev/null || true
     sleep "$sleep_s"
@@ -440,6 +442,8 @@ fm_tmux_submit_enter_core() {  # <target> <retries> <enter-sleep> [baseline-idle
 
 fm_tmux_submit_core() {  # <target> <text> <retries> <enter-sleep> <settle> [harness] [omp-bun] [omp-bin]
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 harness=${6:-} omp_bun=${7:-} omp_bin=${8:-} baseline_idle='' baseline_state
+  target=$(fm_tmux_display_message "$target" '#{pane_id}') || { printf 'send-failed'; return 0; }
+  [ -n "$target" ] || { printf 'send-failed'; return 0; }
   # The turn-started baseline must predate our own typing: a pane already
   # busy before the text lands can turn "busy" for reasons unrelated to our
   # Enter, so only a clean idle-to-busy transition may confirm a submit.
