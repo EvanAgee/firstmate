@@ -176,7 +176,10 @@ fm_tmux_strip_ghost() { fm_composer_strip_ghost; }
 # capture is consumed internally by the classifier and is NEVER surfaced
 # (fm-peek and every human/LLM-facing path stay plain).
 fm_tmux_composer_capture() {  # <target>
-  tmux capture-pane -e -p -t "$1" -S 0 -E - 2>/dev/null
+  local pane_id
+  pane_id=$(fm_tmux_display_message "$1" '#{pane_id}') || return 1
+  [ -n "$pane_id" ] || return 1
+  tmux capture-pane -e -p -t "$pane_id" -S 0 -E - 2>/dev/null
 }
 
 # fm_tmux_composer_cursor_row: the pane's cursor row, zero-based, relative to
@@ -287,6 +290,8 @@ fm_tmux_composer_state() {  # <target> [harness] [omp-bun] [omp-bin] -> empty|pe
   # a harness there (bin/fm-spawn.sh passes a window), so do not wire behavior
   # onto it without first fixing every caller.
   local target=$1 _unused_harness=${2:-} omp_bun=${3:-} omp_bin=${4:-} cy pane verdict identity
+  target=$(fm_tmux_display_message "$target" '#{pane_id}') || { printf 'unknown'; return 0; }
+  [ -n "$target" ] || { printf 'unknown'; return 0; }
   cy=$(fm_tmux_composer_cursor_row "$target") || { printf 'unknown'; return 0; }
   case "$cy" in ''|*[!0-9]*) printf 'unknown'; return 0 ;; esac
   pane=$(fm_tmux_composer_capture "$target") || { printf 'unknown'; return 0; }
@@ -347,6 +352,8 @@ fm_pane_input_pending() {  # <target>
 # (an agent mid-turn). Scans a 40-line tail like fm-watch.sh.
 fm_pane_busy_state() {  # <target> [harness] -> busy|idle|unknown
   local win=$1 harness=${2:-} tail40 visible
+  win=$(fm_tmux_display_message "$win" '#{pane_id}') || { printf 'unknown'; return 0; }
+  [ -n "$win" ] || { printf 'unknown'; return 0; }
   tail40=$(tmux capture-pane -p -t "$win" -S -40 2>/dev/null) \
     || { printf 'unknown'; return 0; }
   visible=$(printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -12)

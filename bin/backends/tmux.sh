@@ -39,7 +39,10 @@ fm_backend_tmux_resolve_bare_selector() {  # <name>
 # fm_backend_tmux_capture: bounded plain-text pane capture. Mirrors
 # fm-peek.sh's and fm-watch.sh's `tmux capture-pane -p -t "$T" -S -"$N"`.
 fm_backend_tmux_capture() {  # <target> <lines>
-  tmux capture-pane -p -t "$1" -S -"$2"
+  local pane_id
+  pane_id=$(fm_tmux_display_message "$1" '#{pane_id}') || return 1
+  [ -n "$pane_id" ] || return 1
+  tmux capture-pane -p -t "$pane_id" -S -"$2"
 }
 
 # fm_backend_tmux_send_key: one named key. Mirrors fm-send.sh's --key path:

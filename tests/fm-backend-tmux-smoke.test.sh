@@ -225,6 +225,77 @@ real_pane=$(fm_tmux_display_message "$sibling_id.0" '#{pane_pid}')
   || fail "a genuine pane selector on '$SIBLING' should read '$sibling_pid', got '$real_pane'"
 pass "real tmux: a gone dotted window is not mistaken for a pane of its live dot-stripped sibling"
 
+cat > "$SHIM_DIR/composer-screen.sh" <<'SH'
+#!/usr/bin/env bash
+printf '\033[2J\033[H\033[31m%s\033[0m\n' "$1"
+printf '╭──────────────────────╮\n│ > %-18s │\n╰──────────────────────╯\n%s\033[3;5H' "$2" "$3"
+exec sleep 120
+SH
+capture_sibling=$(tmux new-window -dP -F '#{window_id}' -t "=$SESSION:" -n fm-v1 \
+  "bash '$SHIM_DIR/composer-screen.sh' sibling-screen '' idle-owner") \
+  || fail "could not create the capture sibling"
+capture_window=$(tmux new-window -dP -F '#{window_id}' -t "=$SESSION:" -n fm-v1.0 \
+  "bash '$SHIM_DIR/composer-screen.sh' intended-screen pending-owner busy-owner") \
+  || fail "could not create the dotted capture window"
+tmux set-window-option -t "$capture_sibling" automatic-rename off
+tmux set-window-option -t "$capture_window" automatic-rename off
+capture_pane=$(tmux display-message -p -t "$capture_window" '#{pane_id}')
+capture_sibling_pane=$(tmux display-message -p -t "$capture_sibling" '#{pane_id}')
+capture_sibling_pid=$(tmux display-message -p -t "$capture_sibling_pane" '#{pane_pid}')
+wait_for_capture_text "$capture_pane" busy-owner || fail "the intended composer did not render"
+wait_for_capture_text "$capture_sibling_pane" idle-owner || fail "the sibling composer did not render"
+[ "$(tmux display-message -p -t "$capture_pane" '#{window_name}')" = fm-v1.0 ] \
+  || fail "the intended capture window lost its canonical name"
+[ "$(fm_tmux_composer_state "$SESSION:fm-v1")" = empty ] \
+  || fail "the sibling control must have an empty composer"
+[ "$(fm_tmux_composer_state "$SESSION:fm-v1.0")" = pending ] \
+  || fail "the intended pending composer must not read as the sibling's empty composer"
+[ "$(fm_tmux_composer_cursor_row "$SESSION:fm-v1.0")" = \
+  "$(tmux display-message -p -t "$capture_pane" '#{cursor_y}')" ] \
+  || fail "the dotted composer cursor must belong to the intended pane"
+expected_styled=$(tmux capture-pane -e -p -t "$capture_pane" -S 0 -E -)
+expected_plain=$(tmux capture-pane -p -t "$capture_pane" -S -20)
+[ "$(fm_tmux_composer_capture "$SESSION:fm-v1.0")" = "$expected_styled" ] \
+  || fail "styled capture must belong to the intended pane"
+[ "$(fm_backend_tmux_capture "$SESSION:fm-v1.0" 20)" = "$expected_plain" ] \
+  || fail "plain capture must belong to the intended pane"
+[ "$(FM_BUSY_REGEX='^busy-owner$' fm_pane_busy_state "$SESSION:fm-v1.0")" = busy ] \
+  || fail "busy capture must read the intended pane's footer"
+[ "$(FM_BUSY_REGEX='^busy-owner$' fm_pane_busy_state "$SESSION:fm-v1")" = idle ] \
+  || fail "busy capture must keep the sibling's idle footer distinct"
+pass "real tmux: dotted composer, cursor, styled capture, plain capture, and busy tail belong to one pane"
+
+tmux rename-window -t "$capture_window" editor.0
+if missing_capture=$(fm_backend_tmux_capture "$SESSION:fm-v1.0" 20); then
+  fail "plain capture must refuse the missing canonical window"
+fi
+[ -z "$missing_capture" ] || fail "a missing canonical window returned plain capture bytes"
+if missing_capture=$(fm_tmux_composer_capture "$SESSION:fm-v1.0"); then
+  fail "styled capture must refuse the missing canonical window"
+fi
+[ -z "$missing_capture" ] || fail "a missing canonical window returned styled capture bytes"
+[ "$(fm_tmux_composer_state "$SESSION:fm-v1.0")" = unknown ] \
+  || fail "the missing canonical composer must remain unknown"
+[ "$(FM_BUSY_REGEX='^busy-owner$' fm_pane_busy_state "$SESSION:fm-v1.0")" = unknown ] \
+  || fail "the missing canonical busy state must remain unknown"
+capture_index=$(tmux display-message -p -t "$capture_pane" '#{window_index}')
+for selector in "$capture_pane" "$capture_window.0" "$SESSION:$capture_index.0" "$SESSION:editor.0.0"; do
+  [ "$(fm_backend_tmux_capture "$selector" 20)" = "$expected_plain" ] \
+    || fail "plain capture failed for explicit pane selector '$selector'"
+  [ "$(fm_tmux_composer_capture "$selector")" = "$expected_styled" ] \
+    || fail "styled capture failed for explicit pane selector '$selector'"
+  [ "$(fm_tmux_composer_state "$selector")" = pending ] \
+    || fail "composer state failed for explicit pane selector '$selector'"
+  [ "$(FM_BUSY_REGEX='^busy-owner$' fm_pane_busy_state "$selector")" = busy ] \
+    || fail "busy state failed for explicit pane selector '$selector'"
+done
+tmux kill-window -t "$capture_window"
+kill -0 "$capture_sibling_pid" || fail "the sibling died during capture checks"
+[ "$(tmux display-message -p -t "$capture_sibling_pane" '#{window_name}')" = fm-v1 ] \
+  || fail "capture cleanup changed the sibling window"
+tmux kill-window -t "$capture_sibling"
+pass "real tmux: missing canonical captures fail closed while explicit pane selectors keep working"
+
 tmux new-session -d -s prefix-other -n fm-prefix -c "$HOME"
 path=$(fm_backend_tmux_current_path "prefix:fm-prefix")
 [ -z "$path" ] \
