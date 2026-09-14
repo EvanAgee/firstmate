@@ -1033,6 +1033,244 @@ test_away_recovery_rearms_stall_without_housekeeping() {
   ok "watcher recovery rearms the same stalled identity without daemon housekeeping"
 }
 
+make_shared_episode_case() {
+  local dir
+  dir=$(make_wedge_case "$1" ps 'working: validating' 'mode=no-mistakes')
+  seed_stale_pane "$dir" ps fmtest:fm-ps 'unchanged idle validation pane'
+  cat > "$dir/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+cat "$FM_HOME/axi-status"
+SH
+  chmod +x "$dir/fakebin/no-mistakes"
+  printf '#!/usr/bin/env bash\nset -o pipefail\nREAL_CREW_STATE=%q\n' "$ROOT/bin/fm-crew-state.sh" > "$dir/fakebin/fm-crew-state.sh"
+  cat >> "$dir/fakebin/fm-crew-state.sh" <<'SH'
+if [ -e "$FM_HOME/barriers" ] && [ -n "${FM_TEST_DETECTOR:-}" ] && [ ! -e "$FM_HOME/$FM_TEST_DETECTOR.read" ]; then
+  : > "$FM_HOME/$FM_TEST_DETECTOR.read"
+  while [ ! -e "$FM_HOME/$FM_TEST_DETECTOR.release" ]; do sleep 0.05; done
+  : > "$FM_HOME/$FM_TEST_DETECTOR.departed"
+fi
+if [ -e "$FM_HOME/unknown" ]; then
+  printf '%s\n' 'state: unknown · source: none · temporarily unreadable'
+else
+  "$REAL_CREW_STATE" "$@" | tee "$FM_HOME/crew-observation"
+fi
+SH
+  shared_episode_status "$dir" -
+  : > "$dir/state/.afk"
+  printf '%s' "$dir"
+}
+
+shared_episode_status() {
+  axi_status_for "$1" "  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,\"quiet 25m ago: log: last activity\",\"$2\",fix 1" > "$1/axi-status"
+}
+
+shared_episode_recover() {
+  local dir=$1 reader=${2:-daemon} pid result
+  sleep 120 &
+  pid=$!
+  shared_episode_status "$dir" "$pid"
+  if [ "$reader" = daemon ]; then
+    run_poll_daemon "$dir" housekeeping
+  else
+    run_in_watcher "$dir" crew_state_line ps > "$dir/recovery-observation"
+  fi
+  result=$?
+  reap "$pid"
+  shared_episode_status "$dir" -
+  [ "$result" = 0 ] || { fail "shared episode recovery read failed"; return 1; }
+  [ "$(cat "$dir/crew-observation")" = 'state: working · source: run-step · validating (running)' ] \
+    || { fail "recovery did not observe a live awaiting-agent PID"; return 1; }
+}
+
+shared_episode_ingest() {
+  run_poll_daemon "$1" handle_durable_wakes 'stale: fmtest:fm-ps' \
+    || { fail "shared episode durable ingestion failed"; return 1; }
+  [ ! -s "$1/state/.wake-queue" ] || { fail "shared episode rows were not acknowledged"; return 1; }
+}
+
+shared_episode_buffer() {
+  local dir=$1 count=$2 expected='' i
+  for ((i=0; i<count; i++)); do
+    [ -z "$expected" ] || expected="$expected"$'\n'
+    expected="${expected}stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)"
+  done
+  [ "$(cat "$dir/state/.subsuper-escalations" 2>/dev/null)" = "$expected" ] \
+    || fail "expected exactly $count detailed episode lines"
+}
+
+shared_episode_pending_poll() {
+  FM_STATE_OVERRIDE="$1/state" "$DRAIN" > "$1/pending-drain.out" 2> "$1/pending-drain.err" || return 1
+  FM_WATCH_HANDLING_SUCCESSOR=1 poll_stalled_case "$1" fmtest:fm-ps
+}
+
+shared_episode_wait_file() {
+  local deadline=$(( $(date +%s) + 90 ))
+  while [ ! -e "$1" ]; do
+    [ "$(date +%s)" -lt "$deadline" ] || { fail "timed out waiting for $1"; return 1; }
+    sleep 0.05
+  done
+}
+
+test_daemon_first_multiple_generic_stales_share_one_episode() {
+  local dir state selected
+  dir=$(make_shared_episode_case daemon-first-generics)
+  state="$dir/state"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps (agent gone)'
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps (idle 300s, possible wedge, escalation 1/3)'
+  selected=$(run_in_watcher "$dir" fm_wake_print_deduped "$state/.wake-queue")
+  [ "$(printf '%s\n' "$selected" | cut -f2)" = 3 ] || fail "generic dedup did not retain the newest row"
+  shared_episode_ingest "$dir" || return
+  [ "$(cat "$state/.stale-since-fmtest_fm-ps.stalled")" = 'review, run 01RUN, agent none' ] || fail "daemon-first detection did not begin a shared episode"
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "daemon-first episode did not use generation zero"
+  shared_episode_buffer "$dir" 1
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 1
+  ok "generic stale rows in and across drains join one daemon-first episode"
+}
+
+test_daemon_first_recovery_separates_identical_stall() {
+  local dir state
+  dir=$(make_shared_episode_case daemon-first-recovery)
+  state="$dir/state"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  shared_episode_ingest "$dir" || return
+  shared_episode_recover "$dir" || return
+  [ "$(cat "$state/.stale-since-fmtest_fm-ps.stalled.generation")" = 1 ] || fail "daemon-first recovery did not advance generation"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "identical second daemon-first stall was lost"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  ok "daemon-first recovery separates identical stalled episodes"
+}
+
+test_delayed_detailed_delivery_keeps_publication_episode() {
+  local dir state keys selected sequence
+  dir=$(make_shared_episode_case delayed-episodes)
+  state="$dir/state"
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  shared_episode_recover "$dir" watcher || return
+  shared_episode_pending_poll "$dir" || return
+  keys=$(cut -f4 "$state/.wake-queue")
+  [ "$keys" = "$(printf '%s\n%s' 'fmtest:fm-ps|pipeline-stall|0|review, run 01RUN, agent none' 'fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none')" ] || fail "detailed wakes did not retain distinct publication episodes"
+  selected=$(run_in_watcher "$dir" fm_wake_print_deduped "$state/.wake-queue")
+  [ "$(printf '%s\n' "$selected" | wc -l | tr -d ' ')" = 2 ] || fail "dedup discarded a delayed episode"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "delayed delivery consumed the next episode or moved the receipt backward"
+  sequence=$(cat "$state/.wake-queue.seq")
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "delayed second episode repeated"
+  shared_episode_buffer "$dir" 2
+  ok "delayed detailed wakes retain both publication episodes through recovery"
+}
+
+test_concurrent_watcher_and_daemon_detection_share_episode() {
+  local first second dir state daemon_pid watcher_pid lock_pid result
+  for first in watcher daemon; do
+    if [ "$first" = watcher ]; then second=daemon; else second=watcher; fi
+    dir=$(make_shared_episode_case "concurrent-$first")
+    state="$dir/state"
+    : > "$dir/barriers"
+    append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+    FM_TEST_DETECTOR=daemon run_poll_daemon "$dir" handle_durable_wakes 'stale: fmtest:fm-ps' > "$dir/daemon-run.out" 2>&1 &
+    daemon_pid=$!
+    shared_episode_wait_file "$dir/daemon.read" || { reap "$daemon_pid"; return; }
+    FM_TEST_DETECTOR=watcher FM_WATCH_HANDLING_SUCCESSOR=1 poll_stalled_case "$dir" fmtest:fm-ps > "$dir/poll-run.out" 2>&1 &
+    watcher_pid=$!
+    shared_episode_wait_file "$dir/watcher.read" || { reap "$daemon_pid"; reap "$watcher_pid"; return; }
+    (
+      export FM_STATE_OVERRIDE="$state"
+      . "$ROOT/bin/fm-wake-lib.sh"
+      fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+      : > "$dir/lock-held"
+      shared_episode_wait_file "$dir/lock-release"
+      result=$?
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+      exit "$result"
+    ) &
+    lock_pid=$!
+    shared_episode_wait_file "$dir/lock-held" || { reap "$daemon_pid"; reap "$watcher_pid"; reap "$lock_pid"; return; }
+    : > "$dir/$first.release"
+    shared_episode_wait_file "$dir/$first.departed" || return
+    [ ! -e "$state/.stale-since-fmtest_fm-ps.stalled" ] || fail "detector bypassed the held queue lock"
+    : > "$dir/lock-release"
+    wait "$lock_pid" || fail "queue barrier failed"
+    shared_episode_wait_file "$state/.stale-since-fmtest_fm-ps.stalled" || return
+    : > "$dir/$second.release"
+    wait "$daemon_pid" || fail "$first-first daemon ingestion failed"
+    wait "$watcher_pid" || fail "$first-first watcher poll failed"
+    if [ -s "$state/.wake-queue" ]; then shared_episode_ingest "$dir" || return; fi
+    [ "$(cat "$state/.stale-since-fmtest_fm-ps.stalled")" = "$(cat "$state/.subsuper-stalled-ps")" ] || fail "detectors disagreed on active identity"
+    [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 0 ] || fail "concurrent detectors created distinct generations"
+    [ ! -s "$state/.wake-queue" ] || fail "concurrent rows were not acknowledged"
+    shared_episode_buffer "$dir" 1
+  done
+  ok "both serialized concurrent detector orderings share one episode"
+}
+
+test_unknown_observation_preserves_active_episode() {
+  local dir state marker receipt before after key payload
+  dir=$(make_shared_episode_case unknown-episode)
+  state="$dir/state"
+  marker="$state/.stale-since-fmtest_fm-ps.stalled"
+  receipt="$state/.subsuper-stalled-ps"
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  key=$(cut -f4 "$state/.wake-queue")
+  payload=$(poll_wake_payload "$dir")
+  shared_episode_ingest "$dir" || return
+  before=$(cat "$marker" "$marker.hash" "$receipt" "$receipt.generation")
+  : > "$dir/unknown"
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  run_poll_daemon "$dir" housekeeping
+  after=$(cat "$marker" "$marker.hash" "$receipt" "$receipt.generation")
+  [ "$before" = "$after" ] || fail "unknown reads changed episode records"
+  [ "$(run_in_watcher "$dir" crew_stalled_generation "$marker.generation")" = 0 ] || fail "unknown reads advanced the generation"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  append_wake "$state" stale "$key" "$payload"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 1
+  rm -f "$dir/unknown"
+  shared_episode_recover "$dir" || return
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  shared_episode_ingest "$dir" || return
+  [ "$(cat "$receipt.generation")" = 1 ] || fail "known recovery after unknown did not rearm"
+  shared_episode_buffer "$dir" 2
+  ok "unknown observations preserve episode records and repeated delivery suppression"
+}
+
+test_deduped_stall_rows_are_handled_in_sequence_order() {
+  local dir state detail episode zero one i selected
+  dir=$(make_shared_episode_case episode-sequence-order)
+  state="$dir/state"
+  detail='pipeline stalled 25m at review, run 01RUN, agent none'
+  episode=$(run_in_watcher "$dir" crew_stall_transition "$state" ps fmtest:fm-ps begin "$detail")
+  zero="fmtest:fm-ps|pipeline-stall|${episode#*|}"
+  shared_episode_recover "$dir" watcher || return
+  episode=$(run_in_watcher "$dir" crew_stall_transition "$state" ps fmtest:fm-ps begin "$detail")
+  one="fmtest:fm-ps|pipeline-stall|${episode#*|}"
+  for ((i=0; i<8; i++)); do append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'; done
+  append_wake "$state" stale "$zero" "stale: fmtest:fm-ps ($detail)"
+  append_wake "$state" stale "$one" "stale: fmtest:fm-ps ($detail)"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps (agent gone)'
+  selected=$(run_in_watcher "$dir" fm_wake_print_deduped "$state/.wake-queue")
+  [ "$(printf '%s\n' "$selected" | cut -f2)" = "$(printf '11\n9\n10')" ] || fail "fixture did not exercise newest-per-key presentation order"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "selected rows moved the receipt backward"
+  append_wake "$state" stale "$one" "stale: fmtest:fm-ps ($detail)"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  ok "selected durable rows are delivered in numeric sequence order"
+}
+
 test_daemon_only_recovery_rearms_same_stall_identity() {
   local dir state win marker receipt expected identity sequence generation pane_hash poll_count live_pid result
   dir=$(make_wedge_case daemon-only-recovery ps 'working: validating' 'mode=no-mistakes')
@@ -1444,6 +1682,12 @@ test_poll_reports_stall_after_generic_wedge_removed_timer
 test_poll_reports_stall_over_old_terminal_status_without_timer
 test_away_poll_reports_stall_after_generic_escalation_removed_marker
 test_away_recovery_rearms_stall_without_housekeeping
+test_daemon_first_multiple_generic_stales_share_one_episode
+test_daemon_first_recovery_separates_identical_stall
+test_delayed_detailed_delivery_keeps_publication_episode
+test_concurrent_watcher_and_daemon_detection_share_episode
+test_unknown_observation_preserves_active_episode
+test_deduped_stall_rows_are_handled_in_sequence_order
 test_daemon_only_recovery_rearms_same_stall_identity
 test_changed_idle_pane_recovery_rearms_stall_before_housekeeping
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode

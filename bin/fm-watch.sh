@@ -506,16 +506,14 @@ finished_awaiting_merge() {  # <window> <task>
 
 observe_stalled_pipeline() {
   local win=$1 crew_line=$2 since_file=$3 escalation_file=$4 pane_hash=$5
-  local detail identity marker reason
+  local detail marker reason episode task
   marker="${since_file}.stalled"
   detail=$(crew_state_stalled_detail "$crew_line")
   if [ -n "$detail" ]; then
-    identity=$(crew_stalled_identity "$detail")
-    if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
+    task=$(window_to_task "$win" "$STATE")
+    episode=$(crew_stall_transition "$STATE" "$task" "$win" begin "$detail" "$pane_hash") || exit 1
+    if [[ "$episode" == published\|* ]]; then
       reason="stale: $win ($detail)"
-      fm_wake_append stale "$win" "$reason" || exit 1
-      printf '%s' "$pane_hash" > "$marker.hash" || exit 1
-      printf '%s' "$identity" > "$marker" || exit 1
       rm -f "$since_file" "$escalation_file"
       clear_pause_state "$win"
       wake "$reason"

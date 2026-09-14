@@ -494,11 +494,15 @@ clear_pause_tracking() {  # <window> <state>
 }
 
 escalate_stalled() {
-  local win=$1 state=$2 detail=$3 task marker identity generation
+  local win=$1 state=$2 detail=$3 episode=${4:-} task marker identity generation
   task=$(window_to_task "$win" "$state")
   marker="$state/.subsuper-stalled-$(_stale_key "$task")"
-  identity=$(crew_stalled_identity "$detail")
-  generation=$(crew_stalled_generation "$state/.stale-since-$(_stale_key "$win").stalled.generation")
+  if [ -z "$episode" ]; then
+    episode=$(crew_stall_transition "$state" "$task" "$win" begin "$detail") || return 1
+    episode=${episode#*|}
+  fi
+  generation=${episode%%|*}
+  identity=${episode#*|}
   if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ] \
     || [ "$(crew_stalled_generation "$marker.generation")" != "$generation" ]; then
     escalate_add "$state" "stale: $win ($detail)" || return 1
@@ -1101,7 +1105,7 @@ is_wake_reason() {  # <reason>
 # --- dispatch one wake reason to self-handle or escalate --------------------
 # Side effects: logging, marker records, escalation buffer appends.
 handle_wake() {  # <reason> <state>
-  local reason=$1 state=$2 decision action distilled task last stale_detail
+  local reason=$1 state=$2 queue_key=${3:-} decision action distilled task last stale_detail episode="" generation
   local kind="" arg=""
   if should_force_self "$reason"; then
     log "wake force-self (FM_INJECT_SKIP): $reason"
@@ -1123,6 +1127,16 @@ handle_wake() {  # <reason> <state>
                       decision="escalate|$reason"
                       pause_marker_remove "$arg" "$state" ;;
                   esac ;;
+              esac
+              case "$queue_key" in
+                "$arg|pipeline-stall|"*)
+                  episode=${queue_key#"$arg|pipeline-stall|"}
+                  generation=${episode%%|*}
+                  case "$generation" in ''|*[!0-9]*) return 1 ;; esac
+                  [ "${episode#*|}" = "$(crew_stalled_identity "${stale_detail%')'}")" ] || return 1
+                  case "$stale_detail" in pipeline\ stalled\ *) ;; *) return 1 ;; esac
+                  decision="escalate|$reason"
+                  ;;
               esac ;;
     check:*)  decision=$(classify_check "$reason") ;;
     heartbeat|heartbeat:*) decision=$(classify_heartbeat) ;;
@@ -1138,8 +1152,8 @@ handle_wake() {  # <reason> <state>
         "stale: $arg (pipeline stalled "*)
           stale_detail=${distilled#*' ('}
           stale_detail=${stale_detail%')'}
-          escalate_stalled "$arg" "$state" "$stale_detail" ;;
-        *) escalate_add "$state" "$distilled" ;;
+          escalate_stalled "$arg" "$state" "$stale_detail" "$episode" || return 1 ;;
+        *) escalate_add "$state" "$distilled" || return 1 ;;
       esac
       # A terminal-stale escalate must not leave a persistence marker behind, or
       # housekeeping re-escalates the same pane as a false wedge later.
@@ -1190,6 +1204,7 @@ handle_wake() {  # <reason> <state>
       log "self-handle: $reason -> $distilled"
       ;;
   esac
+  return 0
 }
 
 handle_durable_wakes() {  # <watcher-reason> <state>
@@ -1208,9 +1223,9 @@ handle_durable_wakes() {  # <watcher-reason> <state>
     case "$epoch" in ''|*[!0-9]*) continue ;; esac
     case "$sequence" in ''|*[!0-9]*) continue ;; esac
     case "$kind" in signal|stale|check|heartbeat) ;; *) continue ;; esac
-    handle_wake "$payload" "$state"
+    handle_wake "$payload" "$state" "$key" || { rm -f "$out" "$err"; return 1; }
     handled=$((handled + 1))
-  done < "$out"
+  done < <(sort -t "$tab" -k2,2n "$out")
   [ "$handled" -gt 0 ] || handle_wake "$fallback_reason" "$state"
 
   ack_through=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err" | tail -1)

@@ -1361,7 +1361,7 @@ crew_stalled_identity() {
 }
 
 crew_reconcile_stall_recovery() {
-  local state=$1 task=$2 crew_line=$3 win key marker generation
+  local state=$1 task=$2 crew_line=$3 win
   case "$crew_line" in
     ''|state:\ unknown*|state:\ stalled*) return 0 ;;
     state:*) ;;
@@ -1369,14 +1369,55 @@ crew_reconcile_stall_recovery() {
   esac
   win=$(fm_backend_target_of_meta "$state/$task.meta")
   [ -n "$win" ] || return 0
+  crew_stall_transition "$state" "$task" "$win" recover
+}
+
+crew_stall_transition() (
+  local state=$1 task=$2 win=$3 action=$4 detail=${5:-} pane_hash=${6:-}
+  local key marker receipt generation identity result status=0
+  local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
+  . "$_FM_CLASSIFY_LIB_DIR/fm-wake-lib.sh"
   key=$(printf '%s' "$win" | tr ':/.' '___')
   marker="$state/.stale-since-$key.stalled"
-  if [ -s "$marker" ]; then
-    generation=$(crew_stalled_generation "$marker.generation")
-    printf '%s' "$((generation + 1))" > "$marker.generation" || return 1
-  fi
-  rm -f "$marker" "$marker.hash"
-}
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  receipt="$state/.subsuper-stalled-$key"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  generation=$(crew_stalled_generation "$marker.generation")
+  case "$action" in
+    begin)
+      identity=$(crew_stalled_identity "$detail")
+      result="joined|$generation|$identity"
+      if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
+        if [ -n "$pane_hash" ]; then
+          fm_wake_append_locked stale "$win|pipeline-stall|$generation|$identity" "stale: $win ($detail)" || status=$?
+          if [ "$status" -eq 0 ]; then
+            printf '%s' "$pane_hash" > "$marker.hash" || status=$?
+          fi
+          result="published|$generation|$identity"
+        else
+          rm -f "$marker.hash" || status=$?
+        fi
+        if [ "$status" -eq 0 ]; then
+          printf '%s' "$identity" > "$marker" || status=$?
+        fi
+      fi
+      ;;
+    recover)
+      if [ -s "$marker" ] || { [ -s "$receipt" ] && [ "$(crew_stalled_generation "$receipt.generation")" = "$generation" ]; }; then
+        printf '%s' "$((generation + 1))" > "$marker.generation" || status=$?
+      fi
+      if [ "$status" -eq 0 ]; then
+        rm -f "$marker" "$marker.hash" || status=$?
+      fi
+      result=""
+      ;;
+    *) status=2 ;;
+  esac
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  [ "$status" -eq 0 ] || return "$status"
+  [ -z "$result" ] || printf '%s' "$result"
+  return 0
+)
 
 crew_stalled_generation() {
   local generation
