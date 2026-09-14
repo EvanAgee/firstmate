@@ -1033,6 +1033,74 @@ test_away_recovery_rearms_stall_without_housekeeping() {
   ok "watcher recovery rearms the same stalled identity without daemon housekeeping"
 }
 
+test_daemon_only_recovery_rearms_same_stall_identity() {
+  local dir state win marker receipt expected identity sequence generation pane_hash poll_count live_pid result
+  dir=$(make_wedge_case daemon-only-recovery ps 'working: validating' 'mode=no-mistakes')
+  state="$dir/state"
+  win=fmtest:fm-ps
+  marker="$state/.stale-since-fmtest_fm-ps.stalled"
+  receipt="$state/.subsuper-stalled-ps"
+  seed_stale_pane "$dir" ps "$win" 'unchanged idle validation pane'
+  axi_status_for "$dir" '  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,"quiet 25m ago: log: last activity","-",fix 1' > "$dir/axi.dead"
+  cp "$dir/axi.dead" "$dir/axi-status"
+  cat > "$dir/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+cat "$FM_HOME/axi-status"
+SH
+  chmod +x "$dir/fakebin/no-mistakes"
+  printf '#!/usr/bin/env bash\nset -o pipefail\nREAL_CREW_STATE=%q\n' "$ROOT/bin/fm-crew-state.sh" > "$dir/fakebin/fm-crew-state.sh"
+  cat >> "$dir/fakebin/fm-crew-state.sh" <<'SH'
+"$REAL_CREW_STATE" "$@" | tee "$FM_HOME/crew-observation"
+SH
+  : > "$state/.afk"
+  poll_stalled_case "$dir" "$win" || return
+  expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+  identity='review, run 01RUN, agent none'
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "daemon-only fixture lost the initial diagnosis"
+  run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+    || { fail "daemon-only episode one failed durable ingestion"; return; }
+  [ ! -s "$state/.wake-queue" ] || fail "episode one was not acknowledged"
+  [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "episode one was not buffered once"
+  [ "$(cat "$marker")" = "$identity" ] && [ "$(cat "$receipt")" = "$identity" ] || fail "episode one identities differ"
+  generation=$(run_in_watcher "$dir" crew_stalled_generation "$marker.generation")
+  [ "$(cat "$receipt.generation")" = "$generation" ] || fail "episode one generations differ"
+  sequence=$(cat "$state/.wake-queue.seq")
+  pane_hash=$(cat "$state/.hash-fmtest_fm-ps")
+  poll_count=$(cat "$state/.count-fmtest_fm-ps")
+  sleep 60 &
+  live_pid=$!
+  axi_status_for "$dir" "  awaiting_agent: parked 25m
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,25m,\"quiet 25m ago: log: last activity\",\"$live_pid\",fix 1" > "$dir/axi-status"
+  run_poll_daemon "$dir" housekeeping
+  result=$?
+  reap "$live_pid"
+  [ "$result" = 0 ] || { fail "daemon recovery housekeeping failed"; return; }
+  [ "$(cat "$dir/crew-observation")" = 'state: working · source: run-step · validating (running)' ] || fail "daemon did not observe the live awaiting-agent PID"
+  [ "$(cat "$state/.count-fmtest_fm-ps")" = "$poll_count" ] || fail "watcher polled during daemon-only recovery"
+  [ ! -e "$marker" ] && [ ! -e "$marker.hash" ] || fail "daemon recovery left publication suppressed"
+  [ "$(cat "$marker.generation")" -eq "$((generation + 1))" ] || fail "daemon recovery did not advance the shared generation once"
+  [ "$(cat "$receipt")" = "$identity" ] && [ "$(cat "$receipt.generation")" = "$generation" ] || fail "recovery changed the prior delivery receipt"
+  cp "$dir/axi.dead" "$dir/axi-status"
+  poll_stalled_case "$dir" "$win" || return
+  [ "$(poll_wake_payload "$dir")" = "$expected" ] || fail "daemon-only recovery hid the second agent death"
+  [ "$(cat "$state/.wake-queue.seq")" -eq "$((sequence + 1))" ] || fail "second episode did not publish exactly once"
+  [ "$(cat "$state/.hash-fmtest_fm-ps")" = "$pane_hash" ] && [ "$(cat "$marker")" = "$identity" ] || fail "second episode changed the pane or stall identity"
+  run_poll_daemon "$dir" handle_durable_wakes "$(cat "$dir/watch.out")" \
+    || { fail "daemon-only episode two failed durable ingestion"; return; }
+  [ ! -s "$state/.wake-queue" ] || fail "episode two was not acknowledged"
+  [ "$(cat "$receipt.generation")" -eq "$((generation + 1))" ] || fail "episode two retained the old delivered generation"
+  [ "$(cat "$state/.subsuper-escalations")" = "$(printf '%s\n%s' "$expected" "$expected")" ] || fail "daemon did not buffer exactly two episodes"
+  sequence=$(cat "$state/.wake-queue.seq")
+  poll_stalled_case "$dir" "$win" || return
+  run_poll_daemon "$dir" housekeeping
+  [ ! -s "$state/.wake-queue" ] && [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || fail "unchanged episode repeated its wake"
+  [ "$(cat "$state/.subsuper-escalations")" = "$(printf '%s\n%s' "$expected" "$expected")" ] || fail "unchanged episode produced a third buffered line"
+  ok "daemon-only recovery rearms the same stall through polling and durable acknowledgement"
+}
+
 test_changed_idle_pane_recovery_rearms_stall_before_housekeeping() {
   local dir state win expected sequence marker
   dir=$(make_wedge_case changed-pane-recovery ps 'paused: [key=await-merge] waiting for merge' 'mode=no-mistakes')
@@ -1376,6 +1444,7 @@ test_poll_reports_stall_after_generic_wedge_removed_timer
 test_poll_reports_stall_over_old_terminal_status_without_timer
 test_away_poll_reports_stall_after_generic_escalation_removed_marker
 test_away_recovery_rearms_stall_without_housekeeping
+test_daemon_only_recovery_rearms_same_stall_identity
 test_changed_idle_pane_recovery_rearms_stall_before_housekeeping
 test_acknowledged_stall_identity_does_not_repeat_on_same_episode
 test_working_hash_transition_surfaces_stalled_diagnosis

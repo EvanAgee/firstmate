@@ -521,7 +521,6 @@ reconcile_stalled_tracking() {
   fi
   case "$crew_line" in
     ''|state:\ unknown*) return 0 ;;
-    *) rm -f "$marker" "$marker.generation" ;;
   esac
   return 1
 }

@@ -504,24 +504,6 @@ finished_awaiting_merge() {  # <window> <task>
   [ "$agent_alive" = dead ]
 }
 
-crew_state_observed() {
-  local task=$1 crew_line=$2 win key marker generation
-  case "$crew_line" in
-    ''|state:\ unknown*|state:\ stalled*) return 0 ;;
-    state:*) ;;
-    *) return 0 ;;
-  esac
-  win=$(fm_backend_target_of_meta "$STATE/$task.meta")
-  [ -n "$win" ] || return 0
-  key=$(printf '%s' "$win" | tr ':/.' '___')
-  marker="$STATE/.stale-since-$key.stalled"
-  if [ -s "$marker" ]; then
-    generation=$(crew_stalled_generation "$marker.generation")
-    printf '%s' "$((generation + 1))" > "$marker.generation" || exit 1
-  fi
-  rm -f "$marker" "$marker.hash"
-}
-
 observe_stalled_pipeline() {
   local win=$1 crew_line=$2 since_file=$3 escalation_file=$4 pane_hash=$5
   local detail identity marker reason

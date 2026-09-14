@@ -1306,9 +1306,8 @@ crew_absorb_class() {  # <id>
 crew_state_line() {  # <id>
   local id=$1 line
   [ -n "$id" ] || return 0
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  if declare -F crew_state_observed >/dev/null; then
-    crew_state_observed "$id" "$line"
+  if line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null); then
+    crew_reconcile_stall_recovery "${FM_STATE_OVERRIDE:-${STATE:-${FM_HOME:-$_FM_CLASSIFY_LIB_DIR/..}/state}}" "$id" "$line" || return 1
   fi
   case "$line" in state:*) printf '%s' "$line" ;; esac
 }
@@ -1359,6 +1358,24 @@ crew_state_stalled_detail() {  # <state-line>
 crew_stalled_identity() {
   local detail=${1#* at }
   printf '%s' "${detail%%' · '*}"
+}
+
+crew_reconcile_stall_recovery() {
+  local state=$1 task=$2 crew_line=$3 win key marker generation
+  case "$crew_line" in
+    ''|state:\ unknown*|state:\ stalled*) return 0 ;;
+    state:*) ;;
+    *) return 0 ;;
+  esac
+  win=$(fm_backend_target_of_meta "$state/$task.meta")
+  [ -n "$win" ] || return 0
+  key=$(printf '%s' "$win" | tr ':/.' '___')
+  marker="$state/.stale-since-$key.stalled"
+  if [ -s "$marker" ]; then
+    generation=$(crew_stalled_generation "$marker.generation")
+    printf '%s' "$((generation + 1))" > "$marker.generation" || return 1
+  fi
+  rm -f "$marker" "$marker.hash"
 }
 
 crew_stalled_generation() {
