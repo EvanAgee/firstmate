@@ -50,7 +50,7 @@
 
 fm_tmux_resolve_target() {
   local target=${1:-} session window windows inventory_status pane_suffix pane_window pane_window_id panes
-  local row window_id window_name resolved_window_id= resolved_pane_id
+  local row window_id window_name resolved_window_id='' resolved_pane_id
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
     *:*) ;;
