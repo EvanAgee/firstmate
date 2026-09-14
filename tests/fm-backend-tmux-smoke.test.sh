@@ -353,7 +353,38 @@ cmp -s "$SHIM_DIR/expected-input" "$SHIM_DIR/intended-input" \
 [ "$(tmux capture-pane -p -t "$submit_sibling_pane" -S 0 -E -)" = "$submit_sibling_screen" ] \
   || fail "submission changed the sibling's composer"
 
+key_home="$SHIM_DIR/key-home"
+mkdir -p "$key_home/state"
+printf 'window=%s\nbackend=tmux\nharness=claude\n' "$SESSION:fm-v1.0" > "$key_home/state/v1.0.meta"
+send_recorded_key() {
+  FM_HOME="$key_home" FM_STATE_OVERRIDE="$key_home/state" FM_CONFIG_OVERRIDE="$key_home/config" \
+    FM_GATE_REFUSE_BYPASS=1 FM_GUARD_READ_ONLY=1 \
+    bash "$ROOT/bin/fm-send.sh" v1.0 --key "$1" > "$SHIM_DIR/key-send-output" 2>&1
+}
+for key in Enter Escape Tab; do
+  send_recorded_key "$key" || fail "fm-send --key $key refused the live dotted task"
+done
+printf '\r\033\t' >> "$SHIM_DIR/expected-input"
+for ((i=0; i<100; i++)); do
+  cmp -s "$SHIM_DIR/expected-input" "$SHIM_DIR/intended-input" && break
+  sleep 0.1
+done
+cmp -s "$SHIM_DIR/expected-input" "$SHIM_DIR/intended-input" \
+  || fail "fm-send explicit keys did not reach the intended pane"
+[ ! -s "$SHIM_DIR/sibling-input" ] || fail "fm-send explicit keys reached the sibling pane"
+pass "real tmux: recorded dotted-task Enter, Escape, and Tab reach only the intended pane"
+
 tmux rename-window -t "$submit_window" submitted.0
+for key in Enter Escape Tab; do
+  if send_recorded_key "$key"; then
+    fail "fm-send --key $key accepted a missing canonical task window"
+  fi
+  case "$(cat "$SHIM_DIR/key-send-output")" in
+    *"tmux send failed"*) : ;;
+    *) fail "fm-send --key $key failed before exercising the backend send" ;;
+  esac
+done
+pass "real tmux: recorded missing-task keys fail through the backend send path"
 [ "$(fm_tmux_submit_core "$SESSION:fm-v1.0" refused 1 0 0)" = send-failed ] \
   || fail "typing must refuse a missing canonical task window"
 [ "$(fm_tmux_submit_enter_core "$SESSION:fm-v1.0" 1 0)" = send-failed ] \

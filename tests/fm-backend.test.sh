@@ -691,7 +691,8 @@ test_send_tmux_contract() {
   expect_code 0 "$rc" "fm-send --key should succeed against a live fake pane"
   assert_contains "$(cat "$log")" $'\x1f''display-message'$'\x1f''-p'$'\x1f''-t'$'\x1f''@1'$'\x1f''#{pane_id}' \
     "fm-send --key did not verify the explicit tmux target before sending"
-  assert_contains "$(cat "$log")" $'\x1f''Escape' "fm-send --key did not send the named key"
+  assert_contains "$(cat "$log")" $'\x1f''send-keys'$'\x1f''-t'$'\x1f''%1'$'\x1f''Escape' \
+    "fm-send --key did not send the named key through the resolved pane"
   assert_not_contains "$(cat "$log")" $'\x1f''-l'$'\x1f' "fm-send --key must not type literal text"
 
   # Case 2: plain text - typed literally exactly once, submitted with Enter,
