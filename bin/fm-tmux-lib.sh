@@ -53,8 +53,18 @@
 # let tmux fall back to the client's current window. A missing server, session,
 # or window is `missing`. Other valid tmux selectors return `not-named` so the
 # display-message wrapper preserves their native behavior.
+# A dot is ambiguous: `session:window.pane` is a real pane selector, but a
+# firstmate task id may itself contain a dot (fm_task_id_path_safe refuses only
+# a LEADING dot), so `firstmate:fm-v1.2` is a genuine window NAME.
+# The session's real window inventory decides: a dotted component that matches a
+# live window name exactly is a name and is proven like any other.
+# It is treated as a pane selector only when it matches no window name, ends in
+# a pane index, and the part before that final dot is itself a window index or a
+# live window name.
+# So `firstmate:fm-v1.2` on a session without `fm-v1` reports missing, while
+# `sess:fm-a1.0` and `sess:3.0` keep their native pane-selector behavior.
 fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-named
-  local target=${1:-} session window windows inventory_status
+  local target=${1:-} session window windows inventory_status pane_suffix pane_window
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
     *:*) ;;
@@ -63,7 +73,8 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-nam
   session=${target%%:*}
   window=${target#*:}
   case "$window" in
-    *.*|@*|%*|'!'|'^'|'$'|'+'|'-'|'{'*'}') printf 'not-named'; return 0 ;;
+    @*|%*|'!'|'^'|'$'|'+'|'-'|'{'*'}') printf 'not-named'; return 0 ;;
+    *.*) ;;
     *[!0-9]*) ;;
     *) printf 'not-named'; return 0 ;;
   esac
@@ -85,9 +96,29 @@ fm_tmux_named_window_state() {  # <target> -> present|missing|unreadable|not-nam
   fi
   if printf '%s\n' "$windows" | grep -Fqx -- "$window"; then
     printf 'present'
-  else
-    printf 'missing'
+    return 0
   fi
+  case "$window" in
+    *.*)
+      pane_suffix=${window##*.}
+      pane_window=${window%.*}
+      case "$pane_suffix" in
+        ''|*[!0-9]*) ;;
+        *)
+          case "$pane_window" in
+            *[!0-9]*)
+              if printf '%s\n' "$windows" | grep -Fqx -- "$pane_window"; then
+                printf 'not-named'
+                return 0
+              fi
+              ;;
+            *) printf 'not-named'; return 0 ;;
+          esac
+          ;;
+      esac
+      ;;
+  esac
+  printf 'missing'
 }
 
 # fm_tmux_display_message: read one pane field after proving exact membership
