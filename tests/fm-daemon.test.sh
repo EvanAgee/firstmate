@@ -1979,6 +1979,57 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+test_default_watcher_dispatch_propagates_failures() {
+  local dir mode output status expected
+  dir=$(make_supercase default-watcher-dispatch)
+  cat > "$dir/drain" <<'SH'
+#!/usr/bin/env bash
+[ "$FM_TEST_DEFAULT_MODE" != drain ]
+SH
+  chmod +x "$dir/drain"
+  cat > "$dir/test-env.sh" <<'SH'
+install_default_dispatch_fixtures() {
+  declare -F test_pane_sourced_working_is_not_gated_on_the_pipeline >/dev/null || return 0
+  trap - DEBUG
+  local name
+  while IFS= read -r name; do
+    case "$name" in test_*) eval "$name() { :; }" ;; esac
+  done < <(compgen -A function)
+  DRAIN="$FM_TEST_DEFAULT_DIR/drain"
+  poll_stalled_case() { printf 'poll completed\n'; }
+  test_delayed_detailed_delivery_keeps_publication_episode() {
+    shared_episode_pending_poll "$FM_TEST_DEFAULT_DIR" || return
+    printf 'replay assertions reached\n'
+  }
+  test_awaiting_merge_absorb_resurfaces_once_the_window_elapses() { printf 'last test reached\n'; }
+  case "$FM_TEST_DEFAULT_MODE" in
+    status) test_declared_pause_beats_run_step_done() { return 23; } ;;
+    assertion) test_declared_pause_beats_run_step_done() { fail 'injected assertion'; } ;;
+  esac
+}
+trap install_default_dispatch_fixtures DEBUG
+SH
+  for mode in status drain assertion success; do
+    output=$(FM_TEST_DEFAULT_DIR="$dir" FM_TEST_DEFAULT_MODE="$mode" BASH_ENV="$dir/test-env.sh" \
+      bash "$ROOT/tests/fm-watch-wedge-two-signal.test.sh" 2>&1)
+    status=$?
+    case "$mode" in status) expected=23 ;; success) expected=0 ;; *) expected=1 ;; esac
+    [ "$status" -eq "$expected" ] || fail "default watcher runner lost $mode result: expected $expected, got $status: $output"
+    case "$mode" in
+      status|drain)
+        assert_not_contains "$output" 'replay assertions reached' "default runner continued after $mode failure"
+        assert_not_contains "$output" 'last test reached' "default runner reached later tests after $mode failure"
+        ;;
+      success)
+        assert_contains "$output" 'poll completed' 'successful pending drain did not poll'
+        assert_contains "$output" 'replay assertions reached' 'successful helper skipped replay assertions'
+        assert_contains "$output" 'last test reached' 'successful default run skipped its last test'
+        ;;
+    esac
+  done
+  pass "default watcher dispatch preserves test, helper, and assertion failures"
+}
+
 test_focused_dispatchers_validate_selectors_and_status() {
   local dir suite selector status output
   dir=$(make_supercase focused-dispatch)
@@ -2018,6 +2069,7 @@ if [ "$#" -gt 0 ]; then
   exit 0
 fi
 
+test_default_watcher_dispatch_propagates_failures
 test_focused_dispatchers_validate_selectors_and_status
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
