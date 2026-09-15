@@ -206,9 +206,10 @@ Load `harness-adapters` before every spawn or recovery and before trust handling
 The verified harnesses are `claude`, `codex`, `opencode`, `omp`, `pi`, `pi-signed`, `grok`, `kimi`, and `cursor`, plus `muse` for crewmates and scouts only; never dispatch on an unverified adapter.
 If static `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, report it and fall back only to a verified adapter rather than launching it.
 
-`docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/fm-harness.sh` owns static resolution, and `bin/fm-spawn.sh` owns launch flags and fail-closed validation.
+`docs/configuration.md` owns dispatch-profile and runtime-backend schemas, `bin/fm-harness.sh` owns static resolution, `docs/provider-availability-routing.md` owns automatic provider-availability admission, and `bin/fm-spawn.sh` owns launch flags and fail-closed validation.
 When dispatch profiles exist, name the task's class at every crewmate or scout intake and pass it to `fm-spawn` with `--class`.
-Routing precedence is an explicit captain per-task override recorded by `fm-spawn`, else the class pin, else round-robin by `fm-dispatch-resolve.sh`, else the configured default.
+Routing precedence is an explicit captain per-task override recorded by `fm-spawn`, else the class pin, else round-robin by `fm-dispatch-resolve.sh` over whichever pool members provider-availability admission did not automatically exclude, else the configured default.
+`fm-control.sh relaunch` runs the same automatic admission around an authorized relaunch's resolved profile before stopping the live agent, unless an explicit `--harness` is passed.
 Each rule's `use` array is a pool: every member holds that category's quality floor and is good enough for the work, so new tasks spread evenly across the pool rather than piling onto whichever member comes first.
 Load `quota-array-dispatch` before naming a crewmate or scout class at intake.
 The generic effort fallback and its precedence are owned by `harness-adapters`: explicit captain and standing configured effort win; otherwise use low for well-understood explicit work, xhigh for ambiguous investigation or design, intermediate levels proportionally, and never max without explicit captain preference.

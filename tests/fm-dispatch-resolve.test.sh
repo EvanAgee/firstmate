@@ -162,12 +162,65 @@ EOF
   pass "an override checks disabled members only in its resolved pool"
 }
 
+# A model-specific window can be exhausted while the account-wide bound is
+# fine (quota-axi: "A model-specific window is an additional bound"). The
+# fake quota-axi below reports claude/fable's model:fable scope at 0%
+# effective remaining while all_models stays healthy, so the fable rung must
+# be excluded from the pool while the account-wide route (fm-route.sh)
+# would still admit claude.
+test_model_specific_exhaustion_excludes_only_that_model() {
+  local home out fakebin
+  home=$(make_home model-specific-limit)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"claude","model":"opus","effort":"high"}]}]}
+EOF
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"--provider claude"*)
+    cat <<'JSON'
+{
+  "generatedAt": "2026-09-15T00:00:00.000Z",
+  "schemaVersion": 3,
+  "providers": [
+    {
+      "provider": "claude",
+      "label": "Claude",
+      "source": "oauth",
+      "windows": [],
+      "quotaSemantics": {
+        "status": "known",
+        "effectiveAvailability": [
+          {"scope": "all_models", "status": "known", "effectivePercentRemaining": 64},
+          {"scope": "model:fable", "status": "known", "effectivePercentRemaining": 0}
+        ]
+      },
+      "state": {"status": "fresh", "stale": false, "refreshedAt": "2026-09-15T00:00:00.000Z", "sourcesTried": ["oauth"]}
+    }
+  ]
+}
+JSON
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+  out=$(PATH="$fakebin:$PATH" FM_DISPATCH_QUOTA_AXI_BIN=quota-axi \
+    $RESOLVER --class designer --home "$home") || fail "designer class did not resolve around the exhausted model"
+  [ "$out" = "harness=claude model=opus effort=high reason=round-robin" ] \
+    || fail "model-specific exhaustion did not steer the resolver away from fable, got '$out'"
+  pass "a model-specific exhausted window excludes only that model, not the whole account/route"
+}
+
 test_pinned_class
 test_unpinned_class_uses_fewest_live_workers
 test_switched_off_pin_refuses_without_fallback
 test_pin_accepts_an_enabled_duplicate_tuple
 test_unknown_class_uses_default_pin
 test_unknown_class_round_robins_default
+test_model_specific_exhaustion_excludes_only_that_model
 test_round_robin_breaks_ties_by_list_order
 test_pool_without_enabled_member_refuses
 test_unsupported_runtime_refuses_before_output

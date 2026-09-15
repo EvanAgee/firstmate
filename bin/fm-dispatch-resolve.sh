@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Resolve one crewmate or scout dispatch class from config/crew-dispatch.json.
-# Usage: fm-dispatch-resolve.sh --class <class> [--home <FM_HOME>] [--override-harness <harness>] [--override-model <model>] [--override-effort <effort>]
+# Usage: fm-dispatch-resolve.sh --class <class> [--home <FM_HOME>] [--override-harness <harness>] [--override-model <model>] [--override-effort <effort>] [--exclude-routes <r1,r2,...>]
 # Prints exactly one successful result:
 #   harness=<h> model=<m> effort=<e> reason=<pin|round-robin|default-pin|default>
 # A class absent from rules uses the default pool.
@@ -8,6 +8,12 @@
 # Unpinned pools select the enabled member with the fewest matching live
 # state/*.meta workers in this home, excluding kind=secondmate, with list order
 # breaking ties.
+# --exclude-routes treats every pool member whose provider-availability route
+# (bin/fm-route.sh group-for) is in the given comma-separated list as though
+# it were disabled=false for this call only, without touching
+# config/crew-dispatch.json; bin/fm-route.sh remains the sole owner of
+# eligibility evidence (see quota-array-dispatch skill and this file's own
+# routing-precedence cross-reference).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +26,7 @@ OVERRIDE_EFFORT=
 OVERRIDE_HARNESS_SET=0
 OVERRIDE_MODEL_SET=0
 OVERRIDE_EFFORT_SET=0
+EXCLUDE_ROUTES=
 want_value=
 
 for arg in "$@"; do
@@ -33,6 +40,7 @@ for arg in "$@"; do
       override-harness) OVERRIDE_HARNESS=$arg; OVERRIDE_HARNESS_SET=1 ;;
       override-model) OVERRIDE_MODEL=$arg; OVERRIDE_MODEL_SET=1 ;;
       override-effort) OVERRIDE_EFFORT=$arg; OVERRIDE_EFFORT_SET=1 ;;
+      exclude-routes) EXCLUDE_ROUTES=$arg ;;
     esac
     want_value=
     continue
@@ -48,6 +56,8 @@ for arg in "$@"; do
     --override-model=*) OVERRIDE_MODEL=${arg#--override-model=}; OVERRIDE_MODEL_SET=1 ;;
     --override-effort) want_value=override-effort ;;
     --override-effort=*) OVERRIDE_EFFORT=${arg#--override-effort=}; OVERRIDE_EFFORT_SET=1 ;;
+    --exclude-routes) want_value=exclude-routes ;;
+    --exclude-routes=*) EXCLUDE_ROUTES=${arg#--exclude-routes=} ;;
     -h|--help)
       sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -118,7 +128,7 @@ else
   ROUND_REASON=default
 fi
 
-profiles_tsv() {
+profiles_tsv_raw() {
   # shellcheck disable=SC2016
   config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" '
     def profiles($value):
@@ -135,6 +145,63 @@ profiles_tsv() {
     | [(.harness // ""), (.model // "default"), (.effort // "default"), (if .enabled? == false then "false" else "true" end)]
     | @tsv
   '
+}
+
+# --exclude-routes marks a matching row's enabled column false for this call
+# only; bin/fm-route.sh group-for is the single owner of the harness/model ->
+# route mapping (never duplicated here).
+route_excluded() {
+  local harness=$1 model=$2 route
+  [ -n "$EXCLUDE_ROUTES" ] || return 1
+  route=$("$SCRIPT_DIR/fm-route.sh" group-for --harness "$harness" --model "$model" 2>/dev/null) || return 1
+  case ",$EXCLUDE_ROUTES," in
+    *",$route,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The in-service profile pick still excludes one model whose OWN window is
+# exhausted even while its account-wide bound (fm-route.sh's route-level
+# admission) is fine: quota-axi reports a model-specific window as an
+# ADDITIONAL bound beyond the account-wide one (its own docs: "A model-
+# specific window is an additional bound, so that model's effective
+# remaining percentage is the minimum across the named windows"), so the two
+# checks are deliberately separate and both required. Only claude and codex
+# carry named model-scoped windows today; other harnesses have no model
+# scope to check and are never excluded here.
+: "${FM_DISPATCH_QUOTA_AXI_BIN:=quota-axi}"
+model_exhausted() {
+  local harness=$1 model=$2 provider scope pct json
+  case "$harness" in
+    claude) provider=claude ;;
+    codex) provider=codex ;;
+    *) return 1 ;;
+  esac
+  case "$model" in
+    default|'') return 1 ;;
+  esac
+  scope="model:$model"
+  json=$("$FM_DISPATCH_QUOTA_AXI_BIN" --provider "$provider" --json 2>/dev/null) || return 1
+  pct=$(printf '%s' "$json" | jq -r --arg p "$provider" --arg scope "$scope" '
+    (.providers[]? | select(.provider == $p) | .quotaSemantics.effectiveAvailability[]?
+      | select(.scope == $scope) | .effectivePercentRemaining) // empty
+  ' 2>/dev/null) || pct=
+  [ -n "$pct" ] || return 1
+  awk -v p="$pct" 'BEGIN{exit !(p<=0)}' 2>/dev/null
+}
+
+profiles_tsv() {
+  local harness model effort enabled
+  while IFS=$'\t' read -r harness model effort enabled; do
+    [ -n "$harness" ] || continue
+    if [ "$enabled" != false ] && route_excluded "$harness" "$model"; then
+      enabled=false
+    fi
+    if [ "$enabled" != false ] && model_exhausted "$harness" "$model"; then
+      enabled=false
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$harness" "$model" "$effort" "$enabled"
+  done < <(profiles_tsv_raw)
 }
 
 # shellcheck disable=SC2016
