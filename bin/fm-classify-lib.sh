@@ -13,13 +13,12 @@
 # daemon keeps its escalation-digest seen-markers; the watcher keeps its .seen-*
 # signatures).
 #
-# There are two documented exceptions. The absorb classification
-# (crew_absorb_class and its working/paused wrappers) is NOT a pure status-file
-# read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
-# to decide whether a crew that just stopped its turn or went stale is working,
-# deliberately paused, or neither. Callers run it ONLY on no-verb signal handling
-# and first sighting of a stale hash, never on every wake, so the per-wake triage
-# stays cheap. status_open_decisions_incremental (see "incremental (cursor-backed)
+# The absorb classification reuses bin/fm-crew-state.sh, which may make a bounded
+# no-mistakes call. Its current-state wrapper also acquires the existing wake
+# queue lock to compare and advance stalled generation and marker state after a
+# known recovery; empty, unknown, and stalled observations preserve that state.
+# Callers run this path only where an authoritative current-state answer is
+# required. status_open_decisions_incremental (see "incremental (cursor-backed)
 # open-decisions fold" below) also writes: it persists a per-status-file byte
 # cursor and folded open-set as a side effect, so a per-drain fleet-wide scan
 # stays bounded by new appends instead of re-reading each task's whole lifetime
@@ -1303,7 +1302,7 @@ crew_absorb_class() {  # <id>
 # so a caller that needs both the absorb class and the line's own fields reads
 # it ONCE here and passes the line to crew_absorb_class_of_line.
 # Successful reads also reconcile stalled-episode recovery through
-# crew_reconcile_stall_recovery; this wrapper can write supervision state.
+# crew_reconcile_stall_recovery under the existing wake queue lock.
 crew_state_line() {  # <id>
   local _crew_id=$1 _crew_line='' _crew_generation=0 _crew_state _crew_win
   [ "$#" -lt 2 ] || printf -v "$2" '%s' ''

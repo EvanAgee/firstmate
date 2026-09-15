@@ -499,7 +499,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       # one (or none reported) is the stalled tell.
       awaiting_dur=$(trim "${awaiting#*:}")
       awaiting_dur=${awaiting_dur#parked }
-      row=$(fm_nm_active_step_row "$RUN_OUT" '.*')
+      row=$(fm_nm_active_step_row "$RUN_OUT" 'running|fixing')
       step=$status; pid=none
       if [ -n "$row" ]; then
         parsed=$(fm_nm_active_step_parse "$row")

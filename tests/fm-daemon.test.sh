@@ -247,7 +247,7 @@ test_stalled_stale_escalates_with_diagnosis() {
 
 test_retired_endpoint_cannot_deliver_to_unrelated_task() {
   local backend dir state old_win=default:w1:p2 live_win=default:w9:p9
-  local detail='pipeline stalled 25m at review, run 01RUN, agent none' expected file
+  local detail='pipeline stalled 25m at review, run 01RUN, agent none' expected file preserved
   for backend in herdr orca; do
     dir=$(make_supercase "retired-endpoint-$backend")
     make_fake_crew_state "$dir/fakebin" >/dev/null
@@ -278,14 +278,36 @@ test_retired_endpoint_cannot_deliver_to_unrelated_task() {
         cp "$file" "$dir/receipts-before/${file##*/}"
       done
       cp "$state/p2.meta" "$dir/p2-meta-before"
+      printf 'working: validating\n' > "$state/p2.status"
+      printf 'review, run 01RUN, agent none' > "$state/.stale-since-default_w9_p9.stalled"
+      printf 'pane-hash' > "$state/.stale-since-default_w9_p9.stalled.hash"
+      printf '100' > "$state/.subsuper-paused-p2"
+      printf '101' > "$state/.subsuper-stale-p2"
+      printf 'working: validating' > "$state/.subsuper-seen-status-p2"
+      mkdir "$dir/unrelated-state-before"
+      for preserved in \
+        p2.status \
+        .stale-since-default_w9_p9.stalled \
+        .stale-since-default_w9_p9.stalled.hash \
+        .subsuper-paused-p2 \
+        .subsuper-stale-p2 \
+        .subsuper-seen-status-p2; do
+        cp "$state/$preserved" "$dir/unrelated-state-before/$preserved"
+      done
       append_wake "$state" stale "$old_win|pipeline-stall|3|review, run 01RUN, agent none" "stale: $old_win ($detail)"
       [ -s "$state/.wake-queue" ] || fail "retirement fixture did not queue the later episode"
       rm "$state/foo.meta"
       [ "$(window_to_task "$old_win" "$state")" = p2 ] || fail "fixture did not reach the unrelated candidate"
+      export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
       handle_durable_wakes "stale: $old_win" "$state" || fail "retired endpoint collision failed durable acknowledgement"
       [ ! -s "$state/.wake-queue" ] || fail "retired endpoint row was not acknowledged"
       [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "retired endpoint alerted against the unrelated owner"
       cmp -s "$state/p2.meta" "$dir/p2-meta-before" || fail "retired endpoint modified unrelated metadata"
+      for preserved in "$dir/unrelated-state-before"/* "$dir/unrelated-state-before"/.*; do
+        case "${preserved##*/}" in .|..) continue ;; esac
+        cmp -s "$preserved" "$state/${preserved##*/}" \
+          || fail "retired endpoint modified unrelated state ${preserved##*/}"
+      done
       for file in "$dir/receipts-before"/.subsuper-stalled-*; do
         cmp -s "$file" "$state/${file##*/}" || fail "retired endpoint modified receipt ${file##*/}"
       done

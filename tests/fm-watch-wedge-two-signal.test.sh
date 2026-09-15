@@ -1730,6 +1730,59 @@ SH
   ok "acknowledgement retry consumes both detailed rows without buffering them again"
 }
 
+test_stalled_alert_receipt_faults_replay_each_episode_once() {
+  local dir state rows receipt visible tagged plain
+  dir=$(make_shared_episode_case episode-receipt-faults)
+  state="$dir/state"
+  visible='stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)'
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  rows=$(cat "$state/.wake-queue")
+  printf '#!/usr/bin/env bash\nREAL_MKTEMP=%q\n' "$(command -v mktemp)" > "$dir/fakebin/mktemp"
+  cat >> "$dir/fakebin/mktemp" <<'SH'
+case "${!#}" in
+  *.subsuper-stalled-ps.generation.XXXXXX) exit 1 ;;
+esac
+exec "$REAL_MKTEMP" "$@"
+SH
+  chmod +x "$dir/fakebin/mktemp"
+  if run_poll_daemon "$dir" handle_durable_wakes 'stale: fmtest:fm-ps' > "$dir/before-buffer.out" 2>&1; then
+    fail "receipt preparation fault before buffering was reported as success"
+  fi
+  [ "$(cat "$state/.wake-queue")" = "$rows" ] || fail "pre-buffer fault acknowledged the durable episode"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "pre-buffer fault appended an unreceipted alert"
+  rm "$dir/fakebin/mktemp"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 1
+  receipt=$(cat "$state/.subsuper-stalled-ps.generation")
+
+  shared_episode_recover "$dir" watcher || return
+  shared_episode_pending_poll "$dir" || return
+  rows=$(cat "$state/.wake-queue")
+  printf '#!/usr/bin/env bash\nREAL_MV=%q\n' "$(command -v mv)" > "$dir/fakebin/mv"
+  cat >> "$dir/fakebin/mv" <<'SH'
+last=${!#}
+if [ "$last" = "$FM_HOME/state/.subsuper-stalled-ps.generation" ]; then
+  exit 1
+fi
+exec "$REAL_MV" "$@"
+SH
+  chmod +x "$dir/fakebin/mv"
+  if run_poll_daemon "$dir" handle_durable_wakes 'stale: fmtest:fm-ps' > "$dir/after-buffer.out" 2>&1; then
+    fail "receipt commit fault after buffering was reported as success"
+  fi
+  [ "$(cat "$state/.wake-queue")" = "$rows" ] || fail "post-buffer fault acknowledged the durable episode"
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = "$receipt" ] || fail "failed receipt commit changed the prior receipt"
+  tagged=$(awk -F '\t' '$1 == "@pipeline-stall" { count++ } END { print count + 0 }' "$state/.subsuper-escalations")
+  plain=$(grep -Fxc "$visible" "$state/.subsuper-escalations" || true)
+  [ "$tagged" -eq 1 ] && [ "$plain" -eq 1 ] || fail "post-buffer fault lost the episode binding or duplicated visible output"
+  rm "$dir/fakebin/mv"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  [ "$(sed -n '2,$p' "$state/.subsuper-stalled-ps.generation" | wc -l | tr -d ' ')" -eq 2 ] \
+    || fail "receipt replay did not retain both distinct episode identities"
+  ok "buffer and receipt faults replay two identical-detail episodes exactly once"
+}
+
 test_daemon_only_recovery_rearms_same_stall_identity() {
   local dir state win marker receipt expected identity sequence generation pane_hash poll_count live_pid result
   dir=$(make_wedge_case daemon-only-recovery ps 'working: validating' 'mode=no-mistakes')
@@ -2152,6 +2205,7 @@ if [ "$#" -eq 0 ]; then
     test_selected_wake_sort_failure_retains_unhandled_episodes \
     test_poll_rejects_early_exit_with_existing_episode_evidence \
     test_detailed_episodes_do_not_repeat_after_failed_acknowledgement \
+    test_stalled_alert_receipt_faults_replay_each_episode_once \
     test_daemon_only_recovery_rearms_same_stall_identity \
     test_changed_idle_pane_recovery_rearms_stall_before_housekeeping \
     test_acknowledged_stall_identity_does_not_repeat_on_same_episode \

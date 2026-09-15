@@ -453,7 +453,8 @@ classify_unknown() {  # <reason>
 
 # --- stale marker + escalation buffer (stateful, but via explicit state dir) -
 # Marker:   state/.subsuper-stale-<key>   contains the epoch first seen idle.
-# Buffer:   state/.subsuper-escalations    one distilled line per escalation.
+# Buffer:   state/.subsuper-escalations    one distilled line per escalation;
+#           an uncommitted stalled episode temporarily carries its binding.
 # Seen:     state/.subsuper-seen-status-<task>  last status line the scan
 #           escalated, so the catch-all does not re-fire the same terminal.
 
@@ -502,7 +503,7 @@ clear_pause_tracking() {  # <window> <state>
 
 escalate_stalled() (
   local win=$1 state=$2 detail=$3 episode=${4:-} task marker identity generation
-  local delivered_identity delivered_generation observed_generation=${5:-} receipt_tmp='' meta_lock
+  local delivered_identity delivered_generation observed_generation=${5:-} receipt_tmp='' meta_lock crew_line
   # shellcheck disable=SC2030 # Queue bindings must stay inside this receipt subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
   # shellcheck source=bin/fm-wake-lib.sh
@@ -512,8 +513,11 @@ escalate_stalled() (
   meta_lock=$(fm_meta_lock_path "$state/$task.meta") || return 1
   fm_lock_acquire_wait "$meta_lock" || return 1
   trap 'fm_lock_release "$meta_lock"' EXIT
-  [ -f "$state/$task.meta" ] || return 0
-  [ "$(fm_backend_target_of_meta "$state/$task.meta")" = "$win" ] || return 0
+  [ -f "$state/$task.meta" ] || return 20
+  [ "$(fm_backend_target_of_meta "$state/$task.meta")" = "$win" ] || return 20
+  if [ -n "$episode" ]; then
+    FM_STATE_OVERRIDE="$state" crew_state_line "$task" crew_line observed_generation || return 1
+  fi
   if [ -z "$episode" ]; then
     episode=$(crew_stall_transition "$state" "$task" "$win" begin "$detail" "" "$observed_generation") || return 1
     [ "$episode" != superseded ] || return 0
@@ -538,12 +542,16 @@ escalate_stalled() (
       [ -z "$delivered_identity" ] || printf '%s|%s\n' "$delivered_generation" "$delivered_identity"
       printf '%s\n' "$episode"
     } | awk '!seen[$0]++' > "$receipt_tmp" || return 1
-    escalate_add "$state" "stale: $win ($detail)" || return 1
+    escalate_add_bound "$state" "$episode" "stale: $win ($detail)" || return 1
     mv -f "$receipt_tmp" "$marker.generation" || return 1
+  fi
+  if escalation_bound_pending "$state" "$episode"; then
+    delivered_generation=$(crew_stalled_generation "$marker.generation")
     if [ "$generation" -ge "$delivered_generation" ]; then
       printf '%s' "$identity" > "$marker" || return 1
     fi
     mark_escalated_seen stale "$win" "$state"
+    escalate_commit_bound "$state" "$episode" || return 1
   fi
   stale_marker_remove "$win" "$state"
   pause_marker_remove "$win" "$state"
@@ -784,6 +792,38 @@ escalate_add() {  # <state> <distilled-item>
   printf '%s\n' "$item" >> "$buf"
 }
 
+escalation_bound_pending() {  # <state> <episode>
+  local state=$1 episode=$2
+  awk -F '\t' -v episode="$episode" '
+    $1 == "@pipeline-stall" && $2 == episode { found=1 }
+    END { exit(found ? 0 : 1) }
+  ' "$state/.subsuper-escalations" 2>/dev/null
+}
+
+escalate_add_bound() {  # <state> <episode> <distilled-item>
+  local state=$1 episode=$2 item=$3 buf
+  buf="$state/.subsuper-escalations"
+  escalation_bound_pending "$state" "$episode" && return 0
+  [ -s "$buf" ] || _now > "${buf}.since"
+  printf '@pipeline-stall\t%s\t%s\n' "$episode" "$item" >> "$buf"
+}
+
+escalate_commit_bound() {  # <state> <episode>
+  local state=$1 episode=$2 buf tmp
+  buf="$state/.subsuper-escalations"
+  tmp=$(mktemp "$buf.XXXXXX") || return 1
+  if ! awk -v episode="$episode" '
+    BEGIN { prefix="@pipeline-stall\t" episode "\t" }
+    index($0, prefix) == 1 { $0=substr($0, length(prefix) + 1); found=1 }
+    { print }
+    END { if (!found) exit 1 }
+  ' "$buf" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$buf"
+}
+
 # Flush the escalation buffer as ONE batched, single-line digest to the
 # supervisor pane. Returns 0 on successful inject (or empty buffer), non-zero on
 # inject failure (buffer preserved for retry / catch-up).
@@ -791,6 +831,7 @@ escalate_flush() {  # <state>
   local state=$1 buf item n msg
   buf="$state/.subsuper-escalations"
   [ -s "$buf" ] || return 0
+  awk -F '\t' '$1 == "@pipeline-stall" { exit 1 }' "$buf" || return 1
   n=$(wc -l < "$buf" 2>/dev/null || echo 0)
   # Join buffered items with the literal " | " separator into one digest line.
   msg=$(awk 'NR>1{printf " | "} {printf "%s",$0} END{print ""}' "$buf" 2>/dev/null)
@@ -1142,7 +1183,7 @@ is_wake_reason() {  # <reason>
 # Side effects: logging, marker records, escalation buffer appends.
 handle_wake() {  # <reason> <state>
   local reason=$1 state=$2 queue_key=${3:-} decision action distilled task last stale_detail episode="" generation
-  local kind="" arg="" crew_line="" observed_generation=""
+  local kind="" arg="" crew_line="" observed_generation="" stalled_rc
   if should_force_self "$reason"; then
     log "wake force-self (FM_INJECT_SKIP): $reason"
     return
@@ -1152,6 +1193,25 @@ handle_wake() {  # <reason> <state>
               decision=$(classify_signal "$arg" "$state") ;;
     stale:*)  kind=stale; arg="${reason#stale: }"; stale_detail="${arg#"$arg"}"
               case "$arg" in *" ("*) stale_detail="${arg#*" ("}"; arg="${arg%% \(*}" ;; esac
+              case "$queue_key" in
+                "$arg|pipeline-stall|"*)
+                  episode=${queue_key#"$arg|pipeline-stall|"}
+                  generation=${episode%%|*}
+                  case "$generation" in ''|*[!0-9]*) return 1 ;; esac
+                  case "$stale_detail" in pipeline\ stalled\ *) ;; *) return 1 ;; esac
+                  stale_detail=${stale_detail%')'}
+                  [ "${episode#*|}" = "$(crew_stalled_identity "$stale_detail")" ] || return 1
+                  log "escalate: $reason -> $reason"
+                  if escalate_stalled "$arg" "$state" "$stale_detail" "$episode" ""; then
+                    [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ] && { escalate_flush "$state" || true; }
+                    return 0
+                  else
+                    stalled_rc=$?
+                    [ "$stalled_rc" -eq 20 ] && return 0
+                    return "$stalled_rc"
+                  fi
+                  ;;
+              esac
               task=$(window_to_task "$arg" "$state")
               FM_STATE_OVERRIDE="$state" crew_state_line "$task" crew_line observed_generation || return 1
               decision=$(classify_stale "$arg" "$state" "$crew_line")
@@ -1166,16 +1226,7 @@ handle_wake() {  # <reason> <state>
                       pause_marker_remove "$arg" "$state" ;;
                   esac ;;
               esac
-              case "$queue_key" in
-                "$arg|pipeline-stall|"*)
-                  episode=${queue_key#"$arg|pipeline-stall|"}
-                  generation=${episode%%|*}
-                  case "$generation" in ''|*[!0-9]*) return 1 ;; esac
-                  [ "${episode#*|}" = "$(crew_stalled_identity "${stale_detail%')'}")" ] || return 1
-                  case "$stale_detail" in pipeline\ stalled\ *) ;; *) return 1 ;; esac
-                  decision="escalate|$reason"
-                  ;;
-              esac ;;
+              ;;
     check:*)  decision=$(classify_check "$reason") ;;
     heartbeat|heartbeat:*) decision=$(classify_heartbeat) ;;
     *)        decision=$(classify_unknown "$reason") ;;

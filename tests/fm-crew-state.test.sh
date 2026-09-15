@@ -577,6 +577,23 @@ test_awaiting_agent_pid_liveness() {
   pass "awaiting agent trusts a live PID and normalizes an exited PID to none"
 }
 
+test_awaiting_agent_selects_current_active_step() {
+  reset_fakes
+  local d out
+  d=$(new_case awaiting-agent-current-step)
+  make_repo_on_branch "$d/wt" fm/awaiting-current-step
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/awaiting-current-step.meta" "window=fm:fm-awaiting-current-step" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_awaiting_agent_dead fm/awaiting-current-step 13h)
+  active_steps[2]{step,status,active_for,last_activity,agent_pid,round}:
+    lint,completed,2m,\"quiet 2m ago: log: completed\",\"-\",initial
+    review,running,12s,\"quiet 12s ago: log: validating\",\"$$\",fix 1"
+  out=$(run_crew_state "$d" awaiting-current-step)
+  [ "$out" = 'state: working · source: run-step · validating (running)' ] \
+    || fail "awaiting agent selected a completed row instead of the live step: $out"
+  pass "awaiting agent selects the current running step before checking PID liveness"
+}
+
 test_escaped_activity_keeps_agent_pid() {
   reset_fakes
   local d activity out
@@ -1572,6 +1589,7 @@ test_parked_threshold_env_override
 test_parked_threshold_supervision_config
 test_awaiting_agent_no_pid_is_stalled
 test_awaiting_agent_pid_liveness
+test_awaiting_agent_selects_current_active_step
 test_escaped_activity_keeps_agent_pid
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
