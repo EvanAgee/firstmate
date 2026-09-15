@@ -1264,29 +1264,97 @@ test_unknown_observation_preserves_active_episode() {
 }
 
 test_deduped_stall_rows_are_handled_in_sequence_order() {
-  local dir state detail episode zero one i selected
+  local dir state detail next_detail episode zero one i selected expected
   dir=$(make_shared_episode_case episode-sequence-order)
   state="$dir/state"
   detail='pipeline stalled 25m at review, run 01RUN, agent none'
-  episode=$(run_in_watcher "$dir" crew_stall_transition "$state" ps fmtest:fm-ps begin "$detail")
+  next_detail='pipeline stalled 26m at review, run 01RUN, agent none'
+  episode=$(run_in_watcher "$dir" crew_stall_transition "$state" ps fmtest:fm-ps begin "$detail" "" 0)
   zero="fmtest:fm-ps|pipeline-stall|${episode#*|}"
   shared_episode_recover "$dir" watcher || return
-  episode=$(run_in_watcher "$dir" crew_stall_transition "$state" ps fmtest:fm-ps begin "$detail")
+  episode=$(run_in_watcher "$dir" crew_stall_transition "$state" ps fmtest:fm-ps begin "$next_detail" "" 1)
   one="fmtest:fm-ps|pipeline-stall|${episode#*|}"
   for ((i=0; i<8; i++)); do append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'; done
   append_wake "$state" stale "$zero" "stale: fmtest:fm-ps ($detail)"
-  append_wake "$state" stale "$one" "stale: fmtest:fm-ps ($detail)"
+  append_wake "$state" stale "$one" "stale: fmtest:fm-ps ($next_detail)"
   append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps (agent gone)'
   selected=$(run_in_watcher "$dir" fm_wake_print_deduped "$state/.wake-queue")
   [ "$(printf '%s\n' "$selected" | cut -f2)" = "$(printf '11\n9\n10')" ] || fail "fixture did not exercise newest-per-key presentation order"
   shared_episode_ingest "$dir" || return
-  shared_episode_buffer "$dir" 2
+  expected=$(printf '%s\n%s' "stale: fmtest:fm-ps ($detail)" "stale: fmtest:fm-ps ($next_detail)")
+  [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "selected episodes were not buffered in numeric queue order"
   [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "selected rows moved the receipt backward"
-  append_wake "$state" stale "$one" "stale: fmtest:fm-ps ($detail)"
+  append_wake "$state" stale "$one" "stale: fmtest:fm-ps ($next_detail)"
   append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
   shared_episode_ingest "$dir" || return
-  shared_episode_buffer "$dir" 2
+  [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "acknowledged episode replay changed the delivered order"
   ok "selected durable rows are delivered in numeric sequence order"
+}
+
+test_stalled_observation_cannot_cross_daemon_recovery() {
+  local dir state marker receipt watcher_pid live_pid result sequence
+  dir=$(make_shared_episode_case observed-stall-recovery)
+  state="$dir/state"
+  marker="$state/.stale-since-fmtest_fm-ps.stalled"
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  shared_episode_ingest "$dir" || return
+  receipt=$(cat "$state/.subsuper-stalled-ps.generation")
+  printf '#!/usr/bin/env bash\nREAL_CREW_STATE=%q\n' "$ROOT/bin/fm-crew-state.sh" > "$dir/fakebin/fm-crew-state.sh"
+  cat >> "$dir/fakebin/fm-crew-state.sh" <<'SH'
+line=$("$REAL_CREW_STATE" "$@") || exit $?
+printf '%s\n' "$line" > "$FM_HOME/crew-observation"
+if [ "${FM_TEST_DETECTOR:-}" = watcher ] && [ ! -e "$FM_HOME/watcher.departed" ]; then
+  printf '%s\n' "$line" > "$FM_HOME/watcher.read"
+  while [ ! -e "$FM_HOME/watcher.release" ]; do sleep 0.05; done
+  : > "$FM_HOME/watcher.departed"
+fi
+printf '%s\n' "$line"
+SH
+  FM_TEST_DETECTOR=watcher poll_stalled_case "$dir" fmtest:fm-ps > "$dir/poll-run.out" 2>&1 &
+  watcher_pid=$!
+  shared_episode_wait_file "$dir/watcher.read" || { reap "$watcher_pid"; return; }
+  [ "$(cat "$dir/watcher.read")" = 'state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none' ] || fail "barrier did not follow a real stalled observation"
+  sleep 120 &
+  live_pid=$!
+  shared_episode_status "$dir" "$live_pid"
+  run_poll_daemon "$dir" housekeeping
+  result=$?
+  if [ "$result" -ne 0 ]; then
+    reap "$watcher_pid"
+    reap "$live_pid"
+    fail "daemon recovery failed while the stale observer waited"
+    return
+  fi
+  [ "$(cat "$dir/crew-observation")" = 'state: working · source: run-step · validating (running)' ] || fail "daemon did not observe the live agent"
+  [ "$(cat "$marker.generation")" = 1 ] && [ ! -e "$marker" ] || fail "daemon did not advance recovery before stale publication"
+  : > "$dir/watcher.release"
+  wait "$watcher_pid"
+  result=$?
+  if [ "$result" -ne 0 ]; then
+    reap "$live_pid"
+    fail "stale observer did not finish its full polling sequence"
+    return
+  fi
+  kill -0 "$live_pid" 2>/dev/null || fail "agent died before stale-observer assertions"
+  [ ! -e "$marker" ] && [ "$(cat "$marker.generation")" = 1 ] || fail "stale observation began an episode after recovery"
+  awk -F '\t' '$4 ~ /\|pipeline-stall\|/ { exit 1 }' "$state/.wake-queue" || fail "stale observation published a healthy-state stall"
+  append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+  shared_episode_ingest "$dir"
+  result=$?
+  reap "$live_pid"
+  [ "$result" -eq 0 ] || return 1
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = "$receipt" ] || fail "stale observation added a delivery receipt"
+  shared_episode_buffer "$dir" 1
+  shared_episode_status "$dir" -
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  [ "$(cut -f4 "$state/.wake-queue")" = 'fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none' ] || fail "fresh death did not retain its recovered generation"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  sequence=$(cat "$state/.wake-queue.seq")
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] && [ ! -s "$state/.wake-queue" ] || fail "fresh episode repeated after acknowledgement"
+  shared_episode_buffer "$dir" 2
+  ok "a stale watcher observation cannot cross daemon recovery, and fresh death still delivers once"
 }
 
 test_generic_before_detailed_episodes_delivers_each_once() {
@@ -1831,6 +1899,7 @@ test_delayed_detailed_delivery_keeps_publication_episode
 test_concurrent_watcher_and_daemon_detection_share_episode
 test_unknown_observation_preserves_active_episode
 test_deduped_stall_rows_are_handled_in_sequence_order
+test_stalled_observation_cannot_cross_daemon_recovery
 test_generic_before_detailed_episodes_delivers_each_once
 test_selected_wake_sort_failure_retains_unhandled_episodes
 test_poll_rejects_early_exit_with_existing_episode_evidence

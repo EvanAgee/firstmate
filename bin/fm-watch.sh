@@ -505,13 +505,13 @@ finished_awaiting_merge() {  # <window> <task>
 }
 
 observe_stalled_pipeline() {
-  local win=$1 crew_line=$2 since_file=$3 escalation_file=$4 pane_hash=$5
+  local win=$1 crew_line=$2 since_file=$3 escalation_file=$4 pane_hash=$5 observed_generation=$6
   local detail marker reason episode task
   marker="${since_file}.stalled"
   detail=$(crew_state_stalled_detail "$crew_line")
   if [ -n "$detail" ]; then
     task=$(window_to_task "$win" "$STATE")
-    episode=$(crew_stall_transition "$STATE" "$task" "$win" begin "$detail" "$pane_hash") || exit 1
+    episode=$(crew_stall_transition "$STATE" "$task" "$win" begin "$detail" "$pane_hash" "$observed_generation") || exit 1
     if [[ "$episode" == published\|* ]]; then
       reason="stale: $win ($detail)"
       rm -f "$since_file" "$escalation_file"
@@ -1536,8 +1536,9 @@ EOF
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
-        crew_line=$(crew_state_line "$task")
-        observe_stalled_pipeline "$w" "$crew_line" "$ssf" "$ewf" "$h" && continue
+        crew_generation=''
+        crew_state_line "$task" crew_line crew_generation || exit 1
+        observe_stalled_pipeline "$w" "$crew_line" "$ssf" "$ewf" "$h" "$crew_generation" && continue
         if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
           continue
         fi

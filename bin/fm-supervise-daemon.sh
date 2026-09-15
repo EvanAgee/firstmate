@@ -385,9 +385,14 @@ classify_signal() {  # <reason-after-colon> <state>
 # "self" and the caller records a timestamp marker; persistence is escalated by
 # housekeeping's recheck, not here. A stalled diagnosis escalates immediately.
 classify_stale() {  # <window> <state>
-  local win=$1 state=$2 task last seen stalled_detail
+  local win=$1 state=$2 task last seen stalled_detail crew_line
   task=$(window_to_task "$win" "$state")
-  stalled_detail=$(crew_state_stalled_detail "$(FM_STATE_OVERRIDE="$state" crew_state_line "$task")")
+  if [ "$#" -ge 3 ]; then
+    crew_line=$3
+  else
+    crew_line=$(FM_STATE_OVERRIDE="$state" crew_state_line "$task")
+  fi
+  stalled_detail=$(crew_state_stalled_detail "$crew_line")
   if [ -n "$stalled_detail" ]; then
     printf 'escalate|stale: %s (%s)' "$win" "$stalled_detail"
     return
@@ -497,7 +502,7 @@ clear_pause_tracking() {  # <window> <state>
 
 escalate_stalled() (
   local win=$1 state=$2 detail=$3 episode=${4:-} task marker identity generation
-  local delivered_identity delivered_generation receipt_tmp=''
+  local delivered_identity delivered_generation observed_generation=${5:-} receipt_tmp=''
   # shellcheck disable=SC2030 # Queue bindings must stay inside this receipt subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
   # shellcheck source=bin/fm-wake-lib.sh
@@ -505,7 +510,8 @@ escalate_stalled() (
   task=$(window_to_task "$win" "$state")
   marker="$state/.subsuper-stalled-$(_stale_key "$task")"
   if [ -z "$episode" ]; then
-    episode=$(crew_stall_transition "$state" "$task" "$win" begin "$detail") || return 1
+    episode=$(crew_stall_transition "$state" "$task" "$win" begin "$detail" "" "$observed_generation") || return 1
+    [ "$episode" != superseded ] || return 0
     episode=${episode#*|}
   fi
   generation=${episode%%|*}
@@ -1131,7 +1137,7 @@ is_wake_reason() {  # <reason>
 # Side effects: logging, marker records, escalation buffer appends.
 handle_wake() {  # <reason> <state>
   local reason=$1 state=$2 queue_key=${3:-} decision action distilled task last stale_detail episode="" generation
-  local kind="" arg=""
+  local kind="" arg="" crew_line="" observed_generation=""
   if should_force_self "$reason"; then
     log "wake force-self (FM_INJECT_SKIP): $reason"
     return
@@ -1141,7 +1147,9 @@ handle_wake() {  # <reason> <state>
               decision=$(classify_signal "$arg" "$state") ;;
     stale:*)  kind=stale; arg="${reason#stale: }"; stale_detail="${arg#"$arg"}"
               case "$arg" in *" ("*) stale_detail="${arg#*" ("}"; arg="${arg%% \(*}" ;; esac
-              decision=$(classify_stale "$arg" "$state")
+              task=$(window_to_task "$arg" "$state")
+              FM_STATE_OVERRIDE="$state" crew_state_line "$task" crew_line observed_generation || return 1
+              decision=$(classify_stale "$arg" "$state" "$crew_line")
               case "$decision" in
                 'escalate|stale: '*) pause_marker_remove "$arg" "$state" ;;
                 *)
@@ -1177,7 +1185,7 @@ handle_wake() {  # <reason> <state>
         "stale: $arg (pipeline stalled "*)
           stale_detail=${distilled#*' ('}
           stale_detail=${stale_detail%')'}
-          escalate_stalled "$arg" "$state" "$stale_detail" "$episode" || return 1 ;;
+          escalate_stalled "$arg" "$state" "$stale_detail" "$episode" "$observed_generation" || return 1 ;;
         *) escalate_add "$state" "$distilled" || return 1 ;;
       esac
       # A terminal-stale escalate must not leave a persistence marker behind, or

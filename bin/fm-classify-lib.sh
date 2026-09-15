@@ -1305,12 +1305,25 @@ crew_absorb_class() {  # <id>
 # Successful reads also reconcile stalled-episode recovery through
 # crew_reconcile_stall_recovery; this wrapper can write supervision state.
 crew_state_line() {  # <id>
-  local id=$1 line
-  [ -n "$id" ] || return 0
-  if line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null); then
-    crew_reconcile_stall_recovery "${FM_STATE_OVERRIDE:-${STATE:-${FM_HOME:-$_FM_CLASSIFY_LIB_DIR/..}/state}}" "$id" "$line" || return 1
+  local _crew_id=$1 _crew_line='' _crew_generation=0 _crew_state _crew_win
+  [ "$#" -lt 2 ] || printf -v "$2" '%s' ''
+  [ "$#" -lt 3 ] || printf -v "$3" '%s' ''
+  [ -n "$_crew_id" ] || return 0
+  _crew_state=${FM_STATE_OVERRIDE:-${STATE:-${FM_HOME:-$_FM_CLASSIFY_LIB_DIR/..}/state}}
+  _crew_win=$(fm_backend_target_of_meta "$_crew_state/$_crew_id.meta")
+  if [ -n "$_crew_win" ]; then
+    _crew_generation=$(crew_stall_transition "$_crew_state" "$_crew_id" "$_crew_win" observe) || return 1
   fi
-  case "$line" in state:*) printf '%s' "$line" ;; esac
+  if _crew_line=$("$FM_CREW_STATE_BIN" "$_crew_id" 2>/dev/null); then
+    crew_reconcile_stall_recovery "$_crew_state" "$_crew_id" "$_crew_line" "$_crew_generation" || return 1
+  fi
+  case "$_crew_line" in state:*) ;; *) _crew_line='' ;; esac
+  if [ "$#" -ge 2 ]; then
+    printf -v "$2" '%s' "$_crew_line"
+    [ "$#" -lt 3 ] || printf -v "$3" '%s' "$_crew_generation"
+  else
+    printf '%s' "$_crew_line"
+  fi
 }
 
 # The working/paused/none decision for an already-read state line. This file
@@ -1354,7 +1367,7 @@ crew_stalled_identity() {
 }
 
 crew_reconcile_stall_recovery() {
-  local state=$1 task=$2 crew_line=$3 win
+  local state=$1 task=$2 crew_line=$3 observed_generation=$4 win
   case "$crew_line" in
     ''|state:\ unknown*|state:\ stalled*) return 0 ;;
     state:*) ;;
@@ -1362,12 +1375,12 @@ crew_reconcile_stall_recovery() {
   esac
   win=$(fm_backend_target_of_meta "$state/$task.meta")
   [ -n "$win" ] || return 0
-  crew_stall_transition "$state" "$task" "$win" recover
+  crew_stall_transition "$state" "$task" "$win" recover "" "" "$observed_generation"
 }
 
 crew_stall_transition() {
   local state=$1 task=$2 win=$3 action=$4 detail=${5:-} pane_hash=${6:-}
-  local key marker receipt generation identity result status=0
+  local key marker receipt generation identity result observed_generation=${7:-} status=0
   # shellcheck disable=SC2034 # Consumed by the wake library inside the subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
   (
@@ -1381,7 +1394,18 @@ crew_stall_transition() {
   receipt="$state/.subsuper-stalled-$key"
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
   generation=$(crew_stalled_generation "$marker.generation")
+  if [ "$action" != observe ]; then
+    case "$observed_generation" in
+      ''|*[!0-9]*) fm_lock_release "$FM_WAKE_QUEUE_LOCK"; return 2 ;;
+    esac
+    if [ "$observed_generation" != "$generation" ]; then
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+      [ "$action" != begin ] || printf 'superseded'
+      return 0
+    fi
+  fi
   case "$action" in
+    observe) result=$generation ;;
     begin)
       identity=$(crew_stalled_identity "$detail")
       result="joined|$generation|$identity"
