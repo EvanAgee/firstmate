@@ -499,7 +499,7 @@ test_paused_stalled_pipeline_surfaces_on_new_and_same_hash() {
       fi
       agent_gone
       export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
-      run_until_marker "$dir" "$state/.wake-queue"
+      FM_WEDGE_WINDOW=$window run_until_marker "$dir" "$state/.wake-queue"
       reason="stale: $window (pipeline stalled 13h at review, run 01RUN, agent none)"
       grep -qF "$reason" "$state/.wake-queue" 2>/dev/null || fail "paused stalled pipeline did not surface on $hash_state hash with $timing recheck"
       [ ! -e "$state/.stale-since-$key" ] || fail "stalled pipeline started a wedge timer"
