@@ -45,8 +45,10 @@
 #     failure reasons. Parent status and bounded terminal evidence are historical,
 #     untrusted supplements only and never override readable structured-home facts.
 #     Each structured-home record carries active_children, decisions_open, holds,
-#     queued, landed, endpoints, counts, and omitted. Actionable captain holds
-#     appear in decisions_open; blocked or deferred captain holds remain queued.
+#     queued, landed, endpoints, counts, and omitted. active_children includes
+#     working and stalled non-program children. A held stalled child remains active
+#     and is not also queued. Actionable captain holds appear in decisions_open;
+#     blocked or deferred captain holds remain queued.
 #   secondmate_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes with an unknown current classification are partial, not
@@ -55,6 +57,8 @@
 #
 # Compatibility: JSON is the primary machine-readable surface.
 # Human views must render this output instead of parsing state files again.
+# Classifier stall helpers change their environment only inside subshells.
+# shellcheck disable=SC2031
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -475,7 +479,7 @@ emit_one_task_json() {  # <meta>
     open_decisions_tsv=$(status_open_decisions "$status_log")
     if [ "$kind" != secondmate ] && \
        { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
-           && [ "$current_state" != parked ] && [ "$current_state" != blocked ]; } \
+           && [ "$current_state" != parked ] && [ "$current_state" != blocked ] && [ "$current_state" != stalled ]; } \
          || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
       open_decisions_tsv=""
     fi
@@ -701,8 +705,11 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
              (.state == "queued" or
               (.state == "in_flight" and .current_role == "held"
                and (.id as $id
-                    | any($tasks[]; .id == $id and .current_state.state == "working") | not)))) ]) as $queued_all
-    | ([ $queued_all[]
+                    | any($tasks[]; .id == $id and .current_state.state == "working") | not)))) ]) as $held_and_queued
+    | ([ $held_and_queued[]
+         | select(.state == "queued" or
+             (.id as $id | any($tasks[]; .id == $id and .current_state.state == "stalled") | not)) ]) as $queued_all
+    | ([ $held_and_queued[]
          | select(.captain_actionable == true)
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
             reason:(.hold_reason | trunc(160)),source:"backlog"} ]) as $captain_holds_all
@@ -746,13 +753,13 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     | ([ $owned_in_flight[] as $work
          | select($work.current_role != "program")
          | $tasks[]
-         | select(.id == $work.id and .current_state.state == "working")
+         | select(.id == $work.id and (.current_state.state == "working" or .current_state.state == "stalled"))
          | {id,kind,state:.current_state.state,source:.current_state.source,
             doing:((.current_state.detail // "") | trunc(120))} ]) as $active_all
     | ($captain_holds_all
        + ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
             | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ])) as $decisions_all
-    | ([ $queued_all[]
+    | ([ $held_and_queued[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
          | {id:(.id | trunc(120)),title:(.title | trunc(90)),
             blocked_by:((.unresolved_blocker_ids | join(",")) | if . == "" then null else trunc(120) end),
@@ -1110,6 +1117,7 @@ parent_evidence_reconciliation_json() {  # <summary-json> <activities-json> <dec
     ([ $activities[] as $e
        | if $e.verb == "working" then
            ([ $summary.active_children[]
+              | select(.state == "working")
               | select(if ($e.key | keyed) then .id == $e.key else true end)
               | {surface:"active_children",id,key:null,verb:"working"}]) as $matches
            | result($e; $matches;

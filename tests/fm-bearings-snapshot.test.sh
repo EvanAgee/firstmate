@@ -714,6 +714,74 @@ EOF
   pass "parent evidence reconciliation distinguishes matching holds, blocks, and decisions"
 }
 
+test_stalled_child_does_not_corroborate_parent_working_claim() {
+  local home mate fakebin head canonical duration child_state verdict
+  home=$(make_home stalled-parent-evidence)
+  mate="$TMP_ROOT/stalled-parent-child-home"
+  make_valid_secondmate_home mate "$mate"
+  append_secondmate_registry "$home" mate "$mate"
+  fm_write_secondmate_meta "$home/state/mate.meta" "$mate" "firstmate:fm-mate" sample
+  printf 'working: [key=foo] validating\n' > "$home/state/mate.status"
+  mkdir -p "$mate/projects/foo"
+  git -C "$mate/projects/foo" init -q -b fm/foo
+  git -C "$mate/projects/foo" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m init
+  head=$(git -C "$mate/projects/foo" rev-parse HEAD)
+  fm_write_meta "$mate/state/foo.meta" "window=firstmate:fm-foo" "worktree=$mate/projects/foo" "kind=ship" "mode=no-mistakes"
+  printf '## In flight\n- [ ] foo - Validate foo (repo: sample) (kind: ship)\n' > "$mate/data/backlog.md"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/no-mistakes" <<SH
+#!/usr/bin/env bash
+cat <<EOF
+run:
+  id: "01RUN"
+  branch: fm/foo
+  status: running
+  head: "$head"
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,13h,"quiet \${FM_TEST_ACTIVITY} ago: log: last activity","-",fix 1
+EOF
+SH
+  for duration in 13h 10s; do
+    case "$duration" in
+      13h) child_state=stalled; verdict=contradicts ;;
+      10s) child_state=working; verdict=corroborates ;;
+    esac
+    canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_TEST_ACTIVITY="$duration" \
+      "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+    printf '%s' "$canonical" | jq -e --arg state "$child_state" --arg verdict "$verdict" '
+      .secondmate_current.records[] | select(.id == "mate")
+      | .active_children == [{id:"foo",kind:"ship",state:$state,source:"run-step",
+          doing:(if $state == "stalled" then "pipeline stalled 13h at review, run 01RUN, agent none" else "validating (running)" end)}]
+        and (.parent_event.reconciliation.activities
+          | any(.key == "foo" and .verb == "working" and .verdict == $verdict
+            and (if $state == "stalled" then .matched == null else .matched.id == "foo" end)))
+        and .contradiction == ($state == "stalled")
+    ' >/dev/null || fail "$child_state child incorrectly reconciled the parent working claim: $canonical"
+  done
+  printf '## In flight\n- [ ] foo - Validate foo (repo: sample) (kind: ship) (hold: choose recovery) (hold-kind: captain)\n' > "$mate/data/backlog.md"
+  printf 'blocked: [key=foo] waiting on recovery\n' > "$home/state/mate.status"
+  canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_TEST_ACTIVITY=13h \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    .secondmate_current.records[] | select(.id == "mate")
+    | .counts.active_children == 1 and .counts.queued == 0
+      and (.holds | map({id,reason,source})) == [{id:"foo",reason:"choose recovery",source:"backlog"}]
+      and (.parent_event.reconciliation.decisions
+        | any(.key == "foo" and .verb == "blocked" and .verdict == "corroborates"
+          and .matched == {surface:"holds",id:"foo",key:null,verb:"blocked"}))
+      and .contradiction == false
+  ' >/dev/null || fail "held stalled child lost evidence for the parent blocked claim: $canonical"
+  canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_TEST_ACTIVITY=10s \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    .secondmate_current.records[] | select(.id == "mate")
+    | .counts.active_children == 1 and .active_children[0].state == "working"
+      and .counts.queued == 0 and .counts.holds == 0 and .holds == []
+      and .contradiction == true
+  ' >/dev/null || fail "held working child changed queue or hold behavior: $canonical"
+  pass "stalled children retain hold evidence and only working children corroborate working claims"
+}
+
 test_nonprogressing_child_states_are_explicit() {
   local home mate fakebin canonical
   home=$(make_home child-state-classification)
@@ -1913,6 +1981,19 @@ EOF
   pass "main and secondmate captain actionability use the same blocker readiness"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
+  done
+  exit 0
+fi
+
 test_domain_alpha_stale_parent_event_does_not_become_current_work
 test_gnu_stat_uses_file_formats_without_bsd_fallback_pollution
 test_parent_activity_evidence_is_bounded_and_disclosed
@@ -1923,6 +2004,7 @@ test_oversized_secondmate_summary_stays_strict_unknown
 test_secondmate_and_child_bounds_are_disclosed
 test_parent_decision_is_untrusted_contradiction_only
 test_parent_evidence_reconciles_by_verb_and_key
+test_stalled_child_does_not_corroborate_parent_working_claim
 test_nonprogressing_child_states_are_explicit
 test_registry_unavailability_and_bounds_are_explicit
 test_current_landed_baseline_is_repeatable_and_prior_report_independent

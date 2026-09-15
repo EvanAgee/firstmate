@@ -20,6 +20,8 @@ set -u
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 # shellcheck source=/dev/null
+. "$ROOT/bin/fm-backend.sh"
+# shellcheck source=/dev/null
 . "$ROOT/bin/fm-classify-lib.sh"
 
 WATCH="$ROOT/bin/fm-watch.sh"
@@ -389,6 +391,29 @@ test_crew_absorb_class_classifier() {
   [ "$(crew_absorb_class "")" = none ] || fail "empty id not classed none"
   unset FM_FAKE_CREW_STATE
   pass "crew_absorb_class: working/paused/none from one read; crew_is_paused and crew_is_provably_working agree"
+}
+
+# stalled: a run-step whose agent died mid-turn (a model usage limit, a killed
+# process, a lost socket - the 2026-09-01 aos incident) must never read as
+# absorbable working, even though the run is technically active. crew_absorb_class
+# classes it none (surface), never working, and crew_state_stalled_detail exposes
+# the pinned detail string so the watcher's wake line can carry it.
+test_stalled_run_step_never_absorbs() {
+  local dir fakebin
+  dir=$(make_case stalled-absorb); fakebin="$dir/fakebin"
+  export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
+  export FM_FAKE_CREW_STATE
+  FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+  [ "$(crew_absorb_class a)" = none ] || fail "a stalled run-step was classed absorbable"
+  ! crew_is_provably_working a || fail "a stalled run-step was treated as provably working"
+  ! crew_is_paused a || fail "a stalled run-step was classed paused"
+  [ "$(crew_state_stalled_detail "$(crew_state_line a)")" = "pipeline stalled 25m at review, run 01RUN, agent none" ] \
+    || fail "crew_state_stalled_detail did not surface the pinned detail"
+  FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  [ -z "$(crew_state_stalled_detail "$(crew_state_line a)")" ] \
+    || fail "a working run-step's detail leaked through crew_state_stalled_detail"
+  unset FM_FAKE_CREW_STATE
+  pass "a stalled run-step is never absorbed, and its detail is retrievable for the wake line"
 }
 
 # signal_crew_provably_working: a no-verb "signal:" wake is benign ONLY when EVERY
@@ -1226,6 +1251,7 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
   if ! wait_live "$pid" 30; then
     reap "$pid"; fail "watcher exited on the priming round (should absorb): $(cat "$out")"
   fi
+  wait_numeric_file "$state/.stale-since-$key" 300 || fail "priming round did not start a wedge timer"
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional wedge priming stop"
 
@@ -1350,7 +1376,7 @@ test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   if ! wait_live "$pid" 30; then
     reap "$pid"; fail "a stable-hash busy pane past the turn-age bound escalated before the wedge threshold: $(cat "$out")"
   fi
-  [ -s "$state/.stale-since-$key" ] || fail "a stable-hash busy pane past the turn-age bound did not start a wedge timer"
+  wait_numeric_file "$state/.stale-since-$key" 300 || fail "a stable-hash busy pane past the turn-age bound did not start a wedge timer"
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional stable-hash phase-A stop"
 
@@ -2094,6 +2120,19 @@ test_watcher_refreshes_task_pane_tail() {
   pass "watcher refreshes the bounded pane snapshot each supervision cycle"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
+  done
+  exit 0
+fi
+
 test_reap_handles_term_responsive_and_stuck_children
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
@@ -2102,6 +2141,7 @@ test_classifier_primitives
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
 test_crew_absorb_class_classifier
+test_stalled_run_step_never_absorbs
 test_signal_crew_provably_working_classifier
 test_secondmate_status_signal_never_absorbed_classifier
 test_provably_working_signal_absorbed

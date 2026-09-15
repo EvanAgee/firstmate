@@ -4,8 +4,8 @@
 # Classifies supervision wakes in bash. In normal mode it absorbs benign wakes
 # and keeps blocking; it queues and exits only for actionable wakes.
 # The no-verb signal and stale path is absorb-only-when-provably-working: a wake
-# is absorbed only when the crew shows POSITIVE evidence it is still working (an
-# actively-running no-mistakes step, or a backend busy signal), and surfaced
+# is absorbed only when the crew shows POSITIVE evidence it is still working (a
+# non-stalled active no-mistakes step, or a backend busy signal), and surfaced
 # otherwise, so a crew that finishes (or stops and waits) without a current
 # working signal is never silently swallowed. A declared external-wait pause is
 # the separate idle absorb case and re-surfaces only on its long bounded cadence,
@@ -41,6 +41,9 @@
 #                          count, and demand-deep-inspection marker, for human
 #                          inspection only - never an automatic interrupt,
 #                          signal, or restart of the worker or its tool process.
+#   stale: <window> (pipeline stalled <duration> at <step>, run <id>, agent <pid-or-none>)
+#                          a diagnosed stalled run surfaces immediately without
+#                          waiting for the generic stale or wedge timers
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
@@ -170,10 +173,10 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
 # and ABSORBS the benign majority - it advances the suppression marker, logs to a
 # debug log, and keeps blocking WITHOUT enqueuing or exiting. The no-verb signal
 # / stale path is absorb-only-when-provably-working: such a wake is absorbed ONLY
-# while the crew shows positive evidence it is still working (an actively-running
+# while the crew shows positive evidence it is still working (a non-stalled active
 # no-mistakes step, or a busy pane, via crew_is_provably_working over
-# fm-crew-state.sh); a crew that stopped its turn with no running pipeline and no
-# busy pane is SURFACED, so a finish reported only through interactive pane menus
+# fm-crew-state.sh); a crew that stopped its turn with no current working evidence
+# is SURFACED, so a finish reported only through interactive pane menus
 # (no done: status) is never swallowed. An ACTIONABLE wake (a captain-relevant
 # signal, a no-verb signal whose crew is not provably working, any check, a stale
 # pane whose crew is not provably working, a provably-working stale past the
@@ -181,7 +184,8 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
 # is what wakes the LLM through the background-task completion. The same classifier
 # (fm-classify-lib.sh) backs the away-mode daemon; while state/.afk exists the
 # daemon owns triage, so this watcher reverts to one-shot (enqueue + exit on every
-# wake) and never double-triages - and never runs the costly provably-working read.
+# wake) and never double-triages. Stable-idle stalled detection still runs before
+# that handoff.
 STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
 # so a hung foreground call can remain hidden even while its rendered busy
@@ -352,32 +356,10 @@ PIPELINE_ACTIVE_SECS=${FM_PIPELINE_ACTIVE_SECS:-$STALE_ESCALATE_SECS}
 PIPELINE_CHECK_TIMEOUT=${FM_PIPELINE_CHECK_TIMEOUT:-${FM_CHECK_TIMEOUT:-30}}
 
 # Seconds represented by an axi duration such as "12s", "51m55s", "15h29m", or
-# "2d3h". Prints the total, or nothing when the string holds no recognized unit.
-# Verified against real `axi status` output on the installed binary: the
-# active_steps table renders ages in exactly this compact form.
+# "2d3h". ONE owner is bin/fm-nm-run-lib.sh's fm_nm_age_secs, shared with
+# bin/fm-crew-state.sh's stalled-pipeline classification.
 pipeline_age_secs() {  # <duration>
-  local raw=$1 total=0 num unit rest matched=0
-  rest=$raw
-  while [ -n "$rest" ]; do
-    num=${rest%%[!0-9]*}
-    [ -n "$num" ] || break
-    rest=${rest#"$num"}
-    # The unit is exactly one letter. A longer run (1ms, 2mo) is not a duration
-    # axi emits, and silently reading its first letter would answer 60 for a
-    # millisecond and 120 for two months.
-    unit=${rest%%[0-9]*}
-    [ ${#unit} -eq 1 ] || return 0
-    rest=${rest#"$unit"}
-    case "$unit" in
-      s) total=$(( total + num )); matched=1 ;;
-      m) total=$(( total + num * 60 )); matched=1 ;;
-      h) total=$(( total + num * 3600 )); matched=1 ;;
-      d) total=$(( total + num * 86400 )); matched=1 ;;
-      *) break ;;
-    esac
-  done
-  [ "$matched" = 1 ] || return 0
-  printf '%s' "$total"
+  fm_nm_age_secs "$1"
 }
 
 # 0 if <task> has a no-mistakes step whose last activity is inside
@@ -451,27 +433,13 @@ pipeline_activity_fresh() {  # <task>
   # output came from a run this probe cannot read. The real negative is the
   # return 1 below, for an answer that HAS the table but no running/fixing row.
   printf '%s\n' "$out" | grep -q '^[[:space:]]*active_steps\[' || return 2
-  # Scan ONLY the active_steps table's own rows. axi status renders sibling TOON
+  # Scan ONLY the active_steps table's own rows, via the ONE owner shared with
+  # bin/fm-crew-state.sh's stalled-pipeline classification
+  # (fm-nm-run-lib.sh's fm_nm_active_step_row). axi status renders sibling TOON
   # tables (gates[N], findings[N]) from the same output, and a `running` row in
   # one of those would otherwise read as a live pipeline and reset the wedge
-  # timer for a worker whose run has actually stopped. The table's declared row
-  # count bounds the scan, and the next `<name>[<n>]{` header ends it, so an
-  # `active_steps[0]` table yields no row at all. Only lines shaped like a data
-  # row spend that budget: a blank line or an interleaved scalar between rows
-  # must not hide a running step further down the table.
-  row=$(printf '%s\n' "$out" | awk '
-    /^[[:space:]]*active_steps\[[0-9]+\]\{/ {
-      n = $0; sub(/^[^[]*\[/, "", n); sub(/\].*$/, "", n)
-      left = n + 0; intable = 1; next
-    }
-    intable && /^[[:space:]]*[A-Za-z_][A-Za-z_]*\[[0-9]+\]\{/ { intable = 0 }
-    intable {
-      if ($0 !~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*,/) next
-      if (left <= 0) { intable = 0; next }
-      left--
-      if ($0 ~ /^[[:space:]]*[a-z_]+,(running|fixing),/) { print; exit }
-    }
-  ' | head -1) || true
+  # timer for a worker whose run has actually stopped.
+  row=$(fm_nm_active_step_row "$out" "running|fixing") || true
   [ -n "$row" ] || return 1
   # A running/fixing row IS positive evidence the run exists, so from here on an
   # unreadable last_activity is a failure to measure freshness (exit 2), never
@@ -540,14 +508,40 @@ finished_awaiting_merge() {  # <window> <task>
   [ "$agent_alive" = dead ]
 }
 
+observe_stalled_pipeline() {
+  local win=$1 crew_line=$2 since_file=$3 escalation_file=$4 pane_hash=$5 observed_generation=$6
+  local detail marker reason episode task
+  marker="${since_file}.stalled"
+  detail=$(crew_state_stalled_detail "$crew_line")
+  if [ -n "$detail" ]; then
+    task=$(window_to_task "$win" "$STATE")
+    episode=$(crew_stall_transition "$STATE" "$task" "$win" begin "$detail" "$pane_hash" "$observed_generation") || exit 1
+    if [[ "$episode" == published\|* ]]; then
+      reason="stale: $win ($detail)"
+      rm -f "$since_file" "$escalation_file"
+      clear_pause_state "$win"
+      wake "$reason"
+    fi
+    return 0
+  fi
+  case "$crew_line" in
+    ''|state:\ unknown*)
+      if [ -s "$marker" ] && [ "$(cat "$marker.hash" 2>/dev/null || true)" = "$pane_hash" ]; then
+        return 0
+      fi
+      ;;
+  esac
+  return 1
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew
-# state (the costly check already ran once, at classification time). Shared by
+# escalates once STALE_ESCALATE_SECS have elapsed. This helper does not read crew
+# state; the outer stable-idle path already checked for a stalled run. Shared by
 # both places a hash can be absorbed this way: the plain non-terminal path,
 # and the stale_is_terminal-overridden path (a captain-relevant status-log
-# line that an active run/busy pane outranked).
+# line that a non-stalled active run or busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> [check-pipeline]
   local win=$1 since_file=$2 label=$3 escalation_file=$4 check_pipeline=${5:-0}
   local since age n reason task
@@ -661,9 +655,19 @@ pause_state_class() {  # <window> <task>
   key=${key//./_}
   last=$(last_status_line "$STATE/$task.status")
   recheck_file="$STATE/.paused-rechecked-$key"
+  if [ "$#" -ge 3 ]; then
+    crew_line=$3
+  else
+    crew_line=$(crew_state_line "$task")
+  fi
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
-    crew_absorb_class "$task"
+    crew_absorb_class_of_line "$crew_line"
+    return
+  fi
+  if [ -n "$(crew_state_stalled_detail "$crew_line")" ]; then
+    rm -f "$recheck_file"
+    printf 'stalled'
     return
   fi
   if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
@@ -678,7 +682,6 @@ pause_state_class() {  # <window> <task>
     printf 'paused'
     return
   fi
-  crew_line=$(crew_state_line "$task")
   class=$(crew_absorb_class_of_line "$crew_line")
   # A `working` verdict is proof the RUN exists, never proof it is MOVING. A
   # worker firstmate stopped on a green PR keeps a `working` run-step for as
@@ -750,12 +753,13 @@ pause_state_class() {  # <window> <task>
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last
+  local win=$1 h=$2 key task last reason
   key=$(printf '%s' "$win" | tr ':/.' '___')
-  fm_wake_append stale "$win" "stale: $win" || exit 1
+  task=$(window_to_task "$win" "$STATE")
+  reason="stale: $win"
+  fm_wake_append stale "$win" "$reason" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key"
-  task=$(window_to_task "$win" "$STATE")
   last=$(last_status_line "$STATE/$task.status")
   if status_is_paused_or_captain_held "$last"; then
     : > "$STATE/.paused-$key"
@@ -764,7 +768,7 @@ surface_nonterminal_stale() {  # <window> <hash>
   else
     rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
   fi
-  wake "stale: $win"
+  wake "$reason"
 }
 
 # Check and heartbeat cadence must survive actionable exits and restarts: the
@@ -1464,8 +1468,8 @@ EOF
     #   - the away-mode daemon owns triage (afk) and wants every wake;
     #   - any status file carries a captain-relevant verb;
     #   - or it is a no-verb wake (a bare turn-end, a working: note) whose crew is
-    #     NOT provably working - the crew stopped its turn with no actively-running
-    #     pipeline and no busy pane, so it may be done (even via an interactive menu
+    #     NOT provably working - the crew stopped its turn with no current working
+    #     evidence, so it may be done (even via an interactive menu
     #     that wrote no done: status), waiting on a decision, or wedged. Absorbing
     #     such a turn-end is exactly the swallowed-finish this change guards against.
     # Actionable -> enqueue, advance .seen-* markers, exit. Benign (a no-verb wake
@@ -1517,9 +1521,6 @@ EOF
     fi
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
     persist_pane_tail "$task" "$tail40" || true
-    if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
-      continue
-    fi
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
     hf="$STATE/.hash-$key"
@@ -1539,10 +1540,16 @@ EOF
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
+        crew_generation=''
+        crew_state_line "$task" crew_line crew_generation || exit 1
+        observe_stalled_pipeline "$w" "$crew_line" "$ssf" "$ewf" "$h" "$crew_generation" && continue
+        if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
+          continue
+        fi
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
         if [ "$kind" = secondmate ]; then
-          case "$(pause_state_class "$w" "$task")" in
+          case "$(pause_state_class "$w" "$task" "$crew_line")" in
             paused) handle_paused_stale "$w" "$task" "$h" ;;
             *)      clear_pause_tracking "$w" ;;
           esac
@@ -1564,8 +1571,8 @@ EOF
           # run-step awareness - keeps reporting it as still-current on every
           # poll. Root cause of the 2026-07 herdr false-surface incidents: a
           # validating crew was surfaced as stale every few minutes despite an
-          # actively-running pipeline, purely because of this stale leftover
-          # line. On a NEW hash, give an active run/busy pane (the same
+          # non-stalled active pipeline, purely because of this stale leftover
+          # line. On a NEW hash, give a non-stalled run or busy pane (the same
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           task=$(window_to_task "$w" "$STATE")
@@ -1579,16 +1586,17 @@ EOF
             handle_paused_stale "$w" "$task" "$h" \
               "finished worker awaiting merge - PR is green and its merge watch is armed"
           elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$task"; then
+            if [ "$(crew_absorb_class_of_line "$crew_line")" = working ]; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
-              fm_wake_append stale "$w" "stale: $w" || exit 1
+              reason="stale: $w"
+              fm_wake_append stale "$w" "$reason" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
               mark_surfaced "$STATE/$task.status"
-              wake "stale: $w"
+              wake "$reason"
             fi
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a
@@ -1602,22 +1610,22 @@ EOF
           # unmodified terminal-status behavior).
         else
           # Non-terminal stale: a crew gone quiet without a captain-relevant status.
-          # Decided once per distinct stale hash (the costly state reads run only
-          # on first sight, never every poll) via pause_state_class, which returns:
-          #   - working: an actively-running pipeline legitimately sits on a static
+          # pause_state_class reuses the current-state line already read at the
+          # stable-idle boundary for stalled diagnosis. It returns:
+          #   - working: a non-stalled active pipeline legitimately sits on a static
           #     pane (e.g. waiting on CI), so absorb and start the wedge timer so a
           #     genuinely frozen run still escalates past STALE_ESCALATE_SECS;
           #   - paused: the crew declared an external wait, or a declared pause or
           #     captain hold is paired with a confidently dead agent, so absorb on
           #     the long PAUSE_RESURFACE_SECS cadence instead of wedge-escalating;
-          #   - none: no running pipeline, no exact busy verdict, no declared pause.
+          #   - none: no current working evidence and no declared pause.
           #     Surface immediately so firstmate inspects the inconclusive state
           #     (it may be done via an interactive menu that wrote no done: status,
           #     waiting on a decision, or wedged) instead of leaving the finish to
           #     wait out the timer.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             task=$(window_to_task "$w" "$STATE")
-            case "$(pause_state_class "$w" "$task")" in
+            case "$(pause_state_class "$w" "$task" "$crew_line")" in
               working)
                 clear_pause_tracking "$w"
                 printf '%s' "$h" > "$sf"
@@ -1634,7 +1642,7 @@ EOF
           else
             task=$(window_to_task "$w" "$STATE")
             if [ -e "$pf" ] || status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
-              case "$(pause_state_class "$w" "$task")" in
+              case "$(pause_state_class "$w" "$task" "$crew_line")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$w"
                          printf '%s' "$h" > "$sf"
@@ -1648,6 +1656,9 @@ EOF
           fi
         fi
       else
+        if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
+          continue
+        fi
         # Pane busy or not yet stably stale: reset pending escalation bookkeeping,
         # unless a genuinely busy pane has gone too long with no completed turn -
         # then route it through the same wedge timer instead of erasing it.
@@ -1663,6 +1674,9 @@ EOF
     else
       printf '%s' "$h" > "$hf"
       echo 0 > "$cf"
+      if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
+        continue
+      fi
       if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
         wedge_timer_check "$w" "$ssf" "busy (no completed turn)" "$ewf"
       else

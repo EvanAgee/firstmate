@@ -13,13 +13,12 @@
 # daemon keeps its escalation-digest seen-markers; the watcher keeps its .seen-*
 # signatures).
 #
-# There are two documented exceptions. The absorb classification
-# (crew_absorb_class and its working/paused wrappers) is NOT a pure status-file
-# read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
-# to decide whether a crew that just stopped its turn or went stale is working,
-# deliberately paused, or neither. Callers run it ONLY on no-verb signal handling
-# and first sighting of a stale hash, never on every wake, so the per-wake triage
-# stays cheap. status_open_decisions_incremental (see "incremental (cursor-backed)
+# The absorb classification reuses bin/fm-crew-state.sh, which may make a bounded
+# no-mistakes call. Its current-state wrapper also acquires the existing wake
+# queue lock to compare and advance stalled generation and marker state after a
+# known recovery; empty, unknown, and stalled observations preserve that state.
+# Callers run this path only where an authoritative current-state answer is
+# required. status_open_decisions_incremental (see "incremental (cursor-backed)
 # open-decisions fold" below) also writes: it persists a per-status-file byte
 # cursor and folded open-set as a side effect, so a per-drain fleet-wide scan
 # stays bounded by new appends instead of re-reading each task's whole lifetime
@@ -1281,18 +1280,17 @@ signal_reason_is_actionable() {  # <file> ...
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/fm-crew-state.sh's one authoritative current-state line
 # ("state: <s> · source: <src> · <detail>"). Prints exactly one token:
-#   working - an actively-running no-mistakes step (running/fixing/ci) or a busy
-#             pane; the crew is legitimately mid-work on a static-looking pane
-#             (e.g. waiting on CI);
+#   working - a non-stalled active no-mistakes step (running/fixing/ci) or a
+#             busy pane; the crew is legitimately mid-work on a static-looking
+#             pane (e.g. waiting on CI);
 #   paused  - the crew's authoritative current state is a declared external-wait
 #             pause (paused:), which is EXPECTED to idle;
-#   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
-#             torn-down/unknown crew, or an unreadable verdict).
+#   none    - neither, so the wake must surface (a stopped/finished/parked/stalled/
+#             failed/torn-down/unknown crew, or an unreadable verdict).
 # One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
-# NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
-# run it only on no-verb signal and first-sighting stale paths, never every wake.
+# Use crew_absorb_class_of_line when the caller already has a current-state line.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
   crew_absorb_class_of_line "$(crew_state_line "$1")"
@@ -1303,11 +1301,28 @@ crew_absorb_class() {  # <id>
 # to a bounded `no-mistakes axi status` and may make a second `axi logs` call,
 # so a caller that needs both the absorb class and the line's own fields reads
 # it ONCE here and passes the line to crew_absorb_class_of_line.
+# Successful reads also reconcile stalled-episode recovery through
+# crew_reconcile_stall_recovery under the existing wake queue lock.
 crew_state_line() {  # <id>
-  local id=$1 line
-  [ -n "$id" ] || return 0
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) printf '%s' "$line" ;; esac
+  local _crew_id=$1 _crew_line='' _crew_generation=0 _crew_state _crew_win
+  [ "$#" -lt 2 ] || printf -v "$2" '%s' ''
+  [ "$#" -lt 3 ] || printf -v "$3" '%s' ''
+  [ -n "$_crew_id" ] || return 0
+  _crew_state=${FM_STATE_OVERRIDE:-${STATE:-${FM_HOME:-$_FM_CLASSIFY_LIB_DIR/..}/state}}
+  _crew_win=$(fm_backend_target_of_meta "$_crew_state/$_crew_id.meta")
+  if [ -n "$_crew_win" ]; then
+    _crew_generation=$(crew_stall_transition "$_crew_state" "$_crew_id" "$_crew_win" observe) || return 1
+  fi
+  if _crew_line=$("$FM_CREW_STATE_BIN" "$_crew_id" 2>/dev/null); then
+    crew_reconcile_stall_recovery "$_crew_state" "$_crew_id" "$_crew_line" "$_crew_generation" || return 1
+  fi
+  case "$_crew_line" in state:*) ;; *) _crew_line='' ;; esac
+  if [ "$#" -ge 2 ]; then
+    printf -v "$2" '%s' "$_crew_line"
+    [ "$#" -lt 3 ] || printf -v "$3" '%s' "$_crew_generation"
+  else
+    printf '%s' "$_crew_line"
+  fi
 }
 
 # The working/paused/none decision for an already-read state line. This file
@@ -1331,6 +1346,116 @@ crew_state_source() {  # <state-line>
   case "$line" in *source:*) ;; *) return 0 ;; esac
   src=${line#*source: }
   printf '%s' "${src%% *}"
+}
+
+# Extract stalled detail using the output format owned by fm-crew-state.sh's
+# header; return empty for every other state.
+crew_state_stalled_detail() {  # <state-line>
+  local line=$1 state rest
+  case "$line" in state:*) ;; *) return 0 ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = stalled ] || return 0
+  case "$line" in *' · '*' · '*) ;; *) return 0 ;; esac
+  rest=${line#*' · '}
+  printf '%s' "${rest#*' · '}"
+}
+
+crew_stalled_identity() {
+  local detail=${1#* at }
+  printf '%s' "${detail%%' · '*}"
+}
+
+crew_reconcile_stall_recovery() {
+  local state=$1 task=$2 crew_line=$3 observed_generation=$4 win
+  case "$crew_line" in
+    ''|state:\ unknown*|state:\ stalled*) return 0 ;;
+    state:*) ;;
+    *) return 0 ;;
+  esac
+  win=$(fm_backend_target_of_meta "$state/$task.meta")
+  [ -n "$win" ] || return 0
+  crew_stall_transition "$state" "$task" "$win" recover "" "" "$observed_generation"
+}
+
+crew_stall_transition() {
+  local state=$1 win=$3 action=$4 detail=${5:-} pane_hash=${6:-}
+  local key marker generation identity result observed_generation=${7:-} status=0
+  # shellcheck disable=SC2034 # Consumed by the wake library inside the subshell.
+  local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
+  (
+  # This subshell owns the wake library's globals; callers never consume them.
+  # The wake library is linted separately by fm-lint.sh.
+  # shellcheck source=/dev/null
+  . "$_FM_CLASSIFY_LIB_DIR/fm-wake-lib.sh"
+  key=$(printf '%s' "$win" | tr ':/.' '___')
+  marker="$state/.stale-since-$key.stalled"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  generation=$(crew_stalled_generation "$marker.generation")
+  if [ "$action" != observe ]; then
+    case "$observed_generation" in
+      ''|*[!0-9]*) fm_lock_release "$FM_WAKE_QUEUE_LOCK"; return 2 ;;
+    esac
+    if [ "$observed_generation" != "$generation" ]; then
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+      [ "$action" != begin ] || printf 'superseded'
+      return 0
+    fi
+  fi
+  case "$action" in
+    observe) result=$generation ;;
+    begin)
+      identity=$(crew_stalled_identity "$detail")
+      result="joined|$generation|$identity"
+      if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
+        if [ -n "$pane_hash" ] && fm_wake_queued_keys_locked stale | grep -Fxq -- "$win|pipeline-stall|$generation|$identity"; then
+          printf '%s' "$pane_hash" > "$marker.hash" || status=$?
+          if [ "$status" -eq 0 ]; then
+            printf '%s' "$identity" > "$marker" || status=$?
+          fi
+          result="published|$generation|$identity"
+        else
+          generation=$((generation + 1))
+          if ! printf '%s' "$generation" > "$marker.generation"; then
+            fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+            return 1
+          fi
+          result="joined|$generation|$identity"
+          if [ -n "$pane_hash" ]; then
+            fm_wake_append_locked stale "$win|pipeline-stall|$generation|$identity" "stale: $win ($detail)" || status=$?
+            if [ "$status" -eq 0 ]; then
+              printf '%s' "$pane_hash" > "$marker.hash" || status=$?
+            fi
+            result="published|$generation|$identity"
+          else
+            rm -f "$marker.hash" || status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            printf '%s' "$identity" > "$marker" || status=$?
+          fi
+        fi
+      fi
+      ;;
+    recover)
+      printf '%s' "$((generation + 1))" > "$marker.generation" || status=$?
+      if [ "$status" -eq 0 ]; then
+        rm -f "$marker" "$marker.hash" || status=$?
+      fi
+      result=""
+      ;;
+    *) status=2 ;;
+  esac
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  [ "$status" -eq 0 ] || return "$status"
+  [ -z "$result" ] || printf '%s' "$result"
+  return 0
+  )
+}
+
+crew_stalled_generation() {
+  local generation
+  generation=$(head -n 1 "$1" 2>/dev/null || true)
+  case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
+  printf '%s' "$generation"
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class

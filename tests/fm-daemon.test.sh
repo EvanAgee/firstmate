@@ -5,6 +5,8 @@
 # deterministically reach (persistent-Enter-swallow, max-defer wedge alarms,
 # fm-send swallow reporting, composer-pending ANSI parsing). The operator-visible
 # inject flow lives in fm-afk-inject-e2e and fm-wake-daemon-lifecycle-e2e.
+# Fixture subshells deliberately keep their environment changes out of later cases.
+# shellcheck disable=SC2030,SC2031
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -203,6 +205,156 @@ test_stale_terminal_escalates() {
   out=$(FM_STATE_OVERRIDE="$state" classify_stale "default:w1:p2" "$state")
   case "$out" in escalate\|*) ;; *) fail "terminal herdr stale did not escalate through metadata: $out" ;; esac
   pass "stale + terminal status escalates immediately"
+}
+
+test_stalled_stale_escalates_with_diagnosis() {
+  local dir state task win case_name last reason crew_line expected
+  for case_name in paused terminal working enriched wedge; do
+    dir=$(make_supercase "stalled-stale-$case_name")
+    make_fake_crew_state "$dir/fakebin" >/dev/null
+    state="$dir/state"
+    task=stalled
+    win=sess:fm-stalled
+    fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+    case "$case_name" in
+      terminal) last='done: earlier checks green' ;;
+      working) last='working: validating' ;;
+      *) last='paused: [key=await-merge] waiting on merge' ;;
+    esac
+    printf '%s\n' "$last" > "$state/$task.status"
+    printf '%s' "$last" > "$state/.subsuper-seen-status-$task"
+    stale_marker_record "$win" "$state"
+    pause_marker_record "$win" "$state"
+    crew_line='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+    expected="stale: $win (pipeline stalled 13h at review, run 01RUN, agent none)"
+    reason="stale: $win"
+    case "$case_name" in
+      enriched)
+        reason=$expected
+        crew_line='state: unknown · source: none · temporarily unreadable' ;;
+      wedge) reason="stale: $win (idle 500s, possible wedge, escalation 1)" ;;
+    esac
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_FAKE_CREW_STATE="$crew_line" \
+      FM_ESCALATE_BATCH_SECS=999999 LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" \
+      handle_wake "$reason" "$state"
+    [ "$(cat "$state/.subsuper-escalations" 2>/dev/null)" = "$expected" ] \
+      || fail "$case_name stalled wake did not retain its diagnosis in the escalation buffer"
+    assert_absent "$state/.subsuper-stale-$task" "stalled wake retained wedge aging"
+    assert_absent "$state/.subsuper-paused-$task" "stalled wake retained pause absorption"
+  done
+  pass "away stale classification preserves stalled diagnoses over historical status and wake detail"
+}
+
+test_retired_endpoint_cannot_deliver_to_unrelated_task() {
+  local backend dir state old_win=default:w1:p2 live_win=default:w9:p9
+  local generic_win=default:w4:p4 detail='pipeline stalled 25m at review, run 01RUN, agent none' expected file preserved
+  for backend in herdr orca; do
+    dir=$(make_supercase "retired-endpoint-$backend")
+    make_fake_crew_state "$dir/fakebin" >/dev/null
+    state="$dir/state"
+    fm_write_meta "$state/foo.meta" "window=$old_win" 'backend=herdr'
+    if [ "$backend" = orca ]; then
+      fm_write_meta "$state/p2.meta" "window=$old_win" "terminal=$live_win" 'backend=orca'
+    else
+      fm_write_meta "$state/p2.meta" "window=$live_win" 'backend=herdr'
+    fi
+    fm_write_meta "$state/generic.meta" "window=$generic_win" 'backend=herdr'
+    (
+      export FM_STATE_OVERRIDE="$state" FM_HOME="$dir" PATH="$dir/fakebin:$PATH"
+      export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+      export FM_FAKE_CREW_STATE='state: unknown · source: none · temporarily unreadable'
+      export FM_ESCALATE_BATCH_SECS=999999 FM_MAX_DEFER_SECS=999999
+      LOG="$dir/daemon.log"
+      append_wake "$state" stale "$old_win|pipeline-stall|1|review, run 01RUN, agent none" "stale: $old_win ($detail)"
+      handle_durable_wakes "stale: $old_win" "$state" || fail "matching original owner failed durable delivery"
+      [ ! -s "$state/.wake-queue" ] || fail "original owner row was not acknowledged"
+      append_wake "$state" stale "$live_win|pipeline-stall|1|review, run 01RUN, agent none" "stale: $live_win ($detail)"
+      handle_durable_wakes "stale: $live_win" "$state" || fail "matching $backend owner failed durable delivery"
+      [ ! -s "$state/.wake-queue" ] || fail "matching $backend owner row was not acknowledged"
+      export FM_FAKE_CREW_STATE="state: stalled · source: run-step · $detail"
+      append_wake "$state" stale "$generic_win" "stale: $generic_win"
+      handle_durable_wakes "stale: $generic_win" "$state" || fail "matching generic owner failed durable delivery"
+      [ ! -s "$state/.wake-queue" ] || fail "matching generic owner row was not acknowledged"
+      expected=$(printf '%s\n%s\n%s' "stale: $old_win ($detail)" "stale: $live_win ($detail)" "stale: $generic_win ($detail)")
+      [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "matching endpoint owners did not each deliver once"
+      [ -s "$state/.subsuper-stalled-foo.generation" ] && [ -s "$state/.subsuper-stalled-p2.generation" ] \
+        && [ -s "$state/.subsuper-stalled-generic.generation" ] || fail "matching owners did not retain their receipts"
+      mkdir "$dir/receipts-before"
+      for file in "$state"/.subsuper-stalled-*; do
+        cp "$file" "$dir/receipts-before/${file##*/}"
+      done
+      cp "$state/p2.meta" "$dir/p2-meta-before"
+      printf 'working: validating\n' > "$state/p2.status"
+      printf 'review, run 01RUN, agent none' > "$state/.stale-since-default_w9_p9.stalled"
+      printf 'pane-hash' > "$state/.stale-since-default_w9_p9.stalled.hash"
+      printf '100' > "$state/.subsuper-paused-p2"
+      printf '101' > "$state/.subsuper-stale-p2"
+      printf 'working: validating' > "$state/.subsuper-seen-status-p2"
+      mkdir "$dir/unrelated-state-before"
+      for preserved in \
+        p2.status \
+        .stale-since-default_w9_p9.stalled \
+        .stale-since-default_w9_p9.stalled.hash \
+        .subsuper-paused-p2 \
+        .subsuper-stale-p2 \
+        .subsuper-seen-status-p2; do
+        cp "$state/$preserved" "$dir/unrelated-state-before/$preserved"
+      done
+      append_wake "$state" stale "$old_win" "stale: $old_win"
+      append_wake "$state" stale "$old_win|pipeline-stall|3|review, run 01RUN, agent none" "stale: $old_win ($detail)"
+      [ -s "$state/.wake-queue" ] || fail "retirement fixture did not queue the later episode"
+      rm "$state/foo.meta"
+      [ "$(window_to_task "$old_win" "$state")" = p2 ] || fail "fixture did not reach the unrelated candidate"
+      export FM_FAKE_CREW_STATE="state: stalled · source: run-step · $detail"
+      handle_durable_wakes "stale: $old_win" "$state" || fail "retired endpoint collision failed durable acknowledgement"
+      [ ! -s "$state/.wake-queue" ] || fail "retired generic and detailed rows were not acknowledged"
+      [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "retired endpoint alerted against the unrelated owner"
+      cmp -s "$state/p2.meta" "$dir/p2-meta-before" || fail "retired endpoint modified unrelated metadata"
+      for preserved in "$dir/unrelated-state-before"/* "$dir/unrelated-state-before"/.*; do
+        case "${preserved##*/}" in .|..) continue ;; esac
+        cmp -s "$preserved" "$state/${preserved##*/}" \
+          || fail "retired endpoint modified unrelated state ${preserved##*/}"
+      done
+      for file in "$dir/receipts-before"/.subsuper-stalled-*; do
+        cmp -s "$file" "$state/${file##*/}" || fail "retired endpoint modified receipt ${file##*/}"
+      done
+      for file in "$state"/.subsuper-stalled-*; do
+        [ -f "$dir/receipts-before/${file##*/}" ] || fail "retired endpoint created receipt ${file##*/}"
+      done
+    ) || fail "retired endpoint $backend collision regression failed"
+    pass "retired endpoint collision preserves $backend metadata and all receipts"
+  done
+}
+
+test_reported_stall_identity_survives_housekeeping() {
+  local dir state win expected
+  dir=$(make_supercase reported-stall)
+  make_fake_crew_state "$dir/fakebin" >/dev/null
+  state="$dir/state"
+  win=sess:fm-stalled
+  fm_write_meta "$state/stalled.meta" "window=$win" "backend=tmux"
+  printf 'paused: [key=await-merge] waiting for merge\n' > "$state/stalled.status"
+  (
+    export FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+    export PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win"
+    export FM_ESCALATE_BATCH_SECS=999999 FM_MAX_DEFER_SECS=999999
+    LOG="$dir/daemon.log"
+    export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+    expected="stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)"
+    handle_wake "$expected" "$state"
+    export FM_FAKE_CREW_STATE='state: unknown · source: none · temporarily unreadable'
+    housekeeping "$state"
+    [ -e "$state/.subsuper-stalled-stalled" ] || fail "unknown state cleared the reported identity"
+    assert_absent "$state/.subsuper-paused-stalled" "housekeeping recreated pause absorption"
+    export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 26m at review, run 01RUN, agent none'
+    handle_wake "stale: $win" "$state"
+    [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "reported stall repeated"
+    export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+    housekeeping "$state"
+    [ "$(cat "$state/.subsuper-stalled-stalled")" = 'review, run 01RUN, agent none' ] || fail "known recovery discarded the daemon delivery receipt"
+    [ "$(head -n 1 "$state/.subsuper-stalled-stalled.generation")" = 1 ] || fail "known recovery changed the delivered generation"
+  ) || fail "reported stall housekeeping failed"
+  pass "housekeeping retains unknown stall identity and rearms after known recovery"
 }
 
 # A DECLARED external-wait pause (paused:) is neither a wedge nor a terminal
@@ -1856,6 +2008,98 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+test_default_watcher_dispatch_propagates_failures() {
+  local dir mode output status expected
+  dir=$(make_supercase default-watcher-dispatch)
+  cat > "$dir/drain" <<'SH'
+#!/usr/bin/env bash
+[ "$FM_TEST_DEFAULT_MODE" != drain ]
+SH
+  chmod +x "$dir/drain"
+  cat > "$dir/test-env.sh" <<'SH'
+install_default_dispatch_fixtures() {
+  declare -F test_pane_sourced_working_is_not_gated_on_the_pipeline >/dev/null || return 0
+  trap - DEBUG
+  local name
+  while IFS= read -r name; do
+    case "$name" in test_*) eval "$name() { :; }" ;; esac
+  done < <(compgen -A function)
+  DRAIN="$FM_TEST_DEFAULT_DIR/drain"
+  poll_stalled_case() { printf 'poll completed\n'; }
+  test_delayed_detailed_delivery_keeps_publication_episode() {
+    shared_episode_pending_poll "$FM_TEST_DEFAULT_DIR" || return
+    printf 'replay assertions reached\n'
+  }
+  test_awaiting_merge_absorb_resurfaces_once_the_window_elapses() { printf 'last test reached\n'; }
+  case "$FM_TEST_DEFAULT_MODE" in
+    status) test_declared_pause_beats_run_step_done() { return 23; } ;;
+    assertion) test_declared_pause_beats_run_step_done() { fail 'injected assertion'; } ;;
+  esac
+}
+trap install_default_dispatch_fixtures DEBUG
+SH
+  for mode in status drain assertion success; do
+    output=$(FM_TEST_DEFAULT_DIR="$dir" FM_TEST_DEFAULT_MODE="$mode" BASH_ENV="$dir/test-env.sh" \
+      bash "$ROOT/tests/fm-watch-wedge-two-signal.test.sh" 2>&1)
+    status=$?
+    case "$mode" in status) expected=23 ;; success) expected=0 ;; *) expected=1 ;; esac
+    [ "$status" -eq "$expected" ] || fail "default watcher runner lost $mode result: expected $expected, got $status: $output"
+    case "$mode" in
+      status|drain)
+        assert_not_contains "$output" 'replay assertions reached' "default runner continued after $mode failure"
+        assert_not_contains "$output" 'last test reached' "default runner reached later tests after $mode failure"
+        ;;
+      success)
+        assert_contains "$output" 'poll completed' 'successful pending drain did not poll'
+        assert_contains "$output" 'replay assertions reached' 'successful helper skipped replay assertions'
+        assert_contains "$output" 'last test reached' 'successful default run skipped its last test'
+        ;;
+    esac
+  done
+  pass "default watcher dispatch preserves test, helper, and assertion failures"
+}
+
+test_focused_dispatchers_validate_selectors_and_status() {
+  local dir suite selector status output
+  dir=$(make_supercase focused-dispatch)
+  cat > "$dir/test-env.sh" <<'SH'
+test_dispatch_success() { printf 'selected test passed\n'; }
+test_dispatch_failure() { return 23; }
+SH
+  for suite in fm-bearings-snapshot fm-crew-state fm-daemon fm-fleet-snapshot-view fm-watch-triage fm-watch-wedge-two-signal; do
+    for selector in test_missing_selector printf; do
+      output=$(env -u FM_TEST_DAEMON_SOURCED BASH_ENV="$dir/test-env.sh" bash "$ROOT/tests/$suite.test.sh" "$selector" 2>&1)
+      status=$?
+      [ "$status" -eq 2 ] || fail "$suite accepted unknown selector $selector: $status"
+      assert_contains "$output" "unknown test: $selector" "$suite did not identify the invalid selector"
+    done
+    output=$(env -u FM_TEST_DAEMON_SOURCED BASH_ENV="$dir/test-env.sh" bash "$ROOT/tests/$suite.test.sh" test_dispatch_failure test_dispatch_success 2>&1)
+    status=$?
+    [ "$status" -eq 23 ] || fail "$suite lost the selected test failure: $status"
+    assert_not_contains "$output" 'selected test passed' "$suite continued after the selected test failed"
+    output=$(env -u FM_TEST_DAEMON_SOURCED BASH_ENV="$dir/test-env.sh" bash "$ROOT/tests/$suite.test.sh" test_dispatch_success 2>&1)
+    status=$?
+    [ "$status" -eq 0 ] || fail "$suite rejected a successful selected test: $status"
+    assert_contains "$output" 'selected test passed' "$suite did not execute the selected test"
+  done
+  pass "all focused dispatchers reject unknown selectors and preserve test status"
+}
+
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
+  done
+  exit 0
+fi
+
+test_default_watcher_dispatch_propagates_failures
+test_focused_dispatchers_validate_selectors_and_status
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
@@ -1866,6 +2110,9 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_stale_terminal_escalates
+test_stalled_stale_escalates_with_diagnosis
+test_retired_endpoint_cannot_deliver_to_unrelated_task
+test_reported_stall_identity_survives_housekeeping
 test_stale_paused_classifies_pause
 test_handle_wake_paused_records_pause_marker
 test_handle_wake_paused_signal_records_pause_marker

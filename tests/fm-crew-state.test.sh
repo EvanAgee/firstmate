@@ -216,6 +216,60 @@ run:
 EOF
 }
 
+# A running step whose agent is actively posting activity, per the shape
+# verified live against the installed no-mistakes binary against a real fleet
+# lane on 2026-09-09 (aos worktree, review step mid-fix):
+#   review,fixing,22m8s,"11s ago: log: ...","86240",fix 4
+run_active_agent() {  # <branch> [duration-ago]
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,22m8s,"${2:-11s} ago: log: still working","86240",fix 1
+EOF
+}
+
+# A running step whose agent has gone quiet past the parked threshold: the run
+# status itself never changes (no-mistakes keeps `status: running`), but the
+# active_steps row's last_activity is stale - the exact tell from the
+# 2026-09-01 aos incident (workers hit the Claude usage limit mid-step and
+# nothing woke firstmate).
+run_quiet_agent() {  # <branch> <quiet-duration> [pid]
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,fixing,${2},"quiet ${2} ago: log: last thing it said","${3:-86240}",fix 4
+EOF
+}
+
+# awaiting_agent parked with no live agent PID: no-mistakes is waiting on an
+# agent turn that never lands (no gate, no human approval needed - the run
+# status stays running/fixing). Distinct from a genuine approval gate
+# (run_parked below), which carries status: awaiting_approval plus gate:.
+run_awaiting_agent_dead() {  # <branch> <duration>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  awaiting_agent: parked ${2}
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+EOF
+}
+
 run_top_level_ci() {  # <branch>
   cat <<EOF
 run:
@@ -369,6 +423,197 @@ test_active_run_is_authoritative() {
   assert_contains "$out" "source: run-step" "active run -> run-step source"
   assert_contains "$out" "validating (running)" "active run reports the step"
   pass "active run-step is authoritative"
+}
+
+# (a2) an active_steps row with a live, recently-active agent stays working
+test_active_agent_stays_working() {
+  reset_fakes
+  local d; d=$(new_case active-agent)
+  make_repo_on_branch "$d/wt" fm/feat-agent
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-agent.meta" "window=fm:fm-feat-agent" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_active_agent fm/feat-agent 11s)"
+  local out; out=$(run_crew_state "$d" feat-agent)
+  assert_contains "$out" "state: working" "recently-active agent -> working"
+  assert_not_contains "$out" "stalled" "recently-active agent not flagged stalled"
+  pass "an active_steps row with a live agent stays working"
+}
+
+# (a3) an active_steps row whose agent has gone quiet past FM_PIPELINE_PARKED_MAX
+# classifies as stalled, with the exact pinned detail shape, and the default
+# threshold (1200s) applies when the env knob is unset.
+test_quiet_agent_past_threshold_is_stalled() {
+  reset_fakes
+  local d; d=$(new_case quiet-agent)
+  make_repo_on_branch "$d/wt" fm/feat-quiet
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-quiet.meta" "window=fm:fm-feat-quiet" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet 25m "$$")"
+  local out; out=$(run_crew_state "$d" feat-quiet)
+  assert_contains "$out" "state: stalled" "quiet agent past default threshold -> stalled"
+  assert_contains "$out" "source: run-step" "stalled -> run-step source"
+  assert_contains "$out" "pipeline stalled 25m at review, run 01RUN, agent $$" \
+    "stalled detail carries the pinned shape: duration, step, run id, agent pid"
+  pass "a quiet agent past the parked threshold classifies as stalled"
+}
+
+test_quiet_agent_pid_liveness() {
+  reset_fakes
+  local d out exited_pid pid age expected
+  d=$(new_case quiet-pid)
+  make_repo_on_branch "$d/wt" fm/quiet-pid
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/quiet-pid.meta" "window=fm:fm-quiet-pid" "worktree=$d/wt" "kind=ship"
+  bash -c 'exit 0' &
+  exited_pid=$!
+  wait "$exited_pid"
+  for pid in "$exited_pid" "$$"; do
+    for age in 19m59s 20m 25m; do
+      FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/quiet-pid "$age" "$pid")"
+      out=$(run_crew_state "$d" quiet-pid)
+      if [ "$age" = 19m59s ]; then
+        expected='state: working · source: run-step · validating (running)'
+      elif [ "$pid" = "$exited_pid" ]; then
+        expected="state: stalled · source: run-step · pipeline stalled $age at review, run 01RUN, agent none"
+      else
+        expected="state: stalled · source: run-step · pipeline stalled $age at review, run 01RUN, agent $pid"
+      fi
+      [ "$out" = "$expected" ] || fail "quiet PID $pid at $age: expected '$expected', got '$out'"
+    done
+  done
+  pass "quiet steps normalize exited PIDs and preserve live PIDs and threshold behavior"
+}
+
+# (a4) an active_steps row quiet, but still inside FM_PIPELINE_PARKED_MAX, stays working
+test_quiet_agent_inside_threshold_stays_working() {
+  reset_fakes
+  local d; d=$(new_case quiet-agent-fresh)
+  make_repo_on_branch "$d/wt" fm/feat-quiet-fresh
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-quiet-fresh.meta" "window=fm:fm-feat-quiet-fresh" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet-fresh 5m 86240)"
+  local out; out=$(run_crew_state "$d" feat-quiet-fresh)
+  assert_contains "$out" "state: working" "quiet agent inside threshold -> working"
+  assert_not_contains "$out" "stalled" "quiet agent inside threshold not flagged stalled"
+  pass "a quiet agent inside the parked threshold stays working"
+}
+
+# (a5) FM_PIPELINE_PARKED_MAX override: a duration that would stall the default
+# threshold stays working under a longer configured max.
+test_parked_threshold_env_override() {
+  reset_fakes
+  local d; d=$(new_case quiet-agent-override)
+  make_repo_on_branch "$d/wt" fm/feat-quiet-ovr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-quiet-ovr.meta" "window=fm:fm-feat-quiet-ovr" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet-ovr 25m 86240)"
+  local out; out=$(FM_PIPELINE_PARKED_MAX=3600 run_crew_state "$d" feat-quiet-ovr)
+  assert_contains "$out" "state: working" "raised FM_PIPELINE_PARKED_MAX keeps a 25m quiet agent working"
+  assert_not_contains "$out" "stalled" "raised threshold not flagged stalled"
+  pass "FM_PIPELINE_PARKED_MAX overrides the default parked threshold"
+}
+
+test_parked_threshold_supervision_config() {
+  reset_fakes
+  local d out
+  d=$(new_case quiet-agent-config)
+  make_repo_on_branch "$d/wt" fm/feat-quiet-config
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-quiet-config.meta" "window=fm:fm-feat-quiet-config" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet-config 25m "$$")"
+  mkdir -p "$d/config" "$d/override-config"
+  printf 'FM_PIPELINE_PARKED_MAX=3600\n' > "$d/config/supervision.env"
+  printf 'FM_PIPELINE_PARKED_MAX=1200\n' > "$d/override-config/supervision.env"
+  out=$(unset FM_PIPELINE_PARKED_MAX FM_CONFIG_OVERRIDE; FM_HOME="$d" run_crew_state "$d" feat-quiet-config)
+  [ "$out" = 'state: working · source: run-step · validating (running)' ] \
+    || fail "direct crew-state ignored the home's parked threshold: $out"
+  out=$(FM_HOME="$d" FM_PIPELINE_PARKED_MAX=1200 run_crew_state "$d" feat-quiet-config)
+  [ "$out" = "state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent $$" ] \
+    || fail "supervision config overrode the explicit environment threshold: $out"
+  out=$(unset FM_PIPELINE_PARKED_MAX; FM_HOME="$d" FM_CONFIG_OVERRIDE="$d/override-config" run_crew_state "$d" feat-quiet-config)
+  [ "$out" = "state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent $$" ] \
+    || fail "crew-state ignored the configured supervision directory: $out"
+  pass "crew-state loads the home's supervision threshold and preserves override precedence"
+}
+
+# (a6) awaiting_agent: parked with no live agent PID (no gate, no approval
+# status - distinct from a genuine human approval gate) classifies as stalled.
+test_awaiting_agent_no_pid_is_stalled() {
+  reset_fakes
+  local d; d=$(new_case awaiting-agent-dead)
+  make_repo_on_branch "$d/wt" fm/feat-dead
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dead.meta" "window=fm:fm-feat-dead" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_awaiting_agent_dead fm/feat-dead 13h)"
+  local out; out=$(run_crew_state "$d" feat-dead)
+  assert_contains "$out" "state: stalled" "awaiting_agent parked with no PID -> stalled"
+  assert_contains "$out" "pipeline stalled 13h at" "stalled detail names the duration"
+  assert_contains "$out" "agent none" "no live PID reports agent none"
+  pass "awaiting_agent parked with no live PID classifies as stalled"
+}
+
+test_awaiting_agent_pid_liveness() {
+  reset_fakes
+  local d out exited_pid pid expected
+  d=$(new_case awaiting-agent-pid)
+  make_repo_on_branch "$d/wt" fm/awaiting-pid
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/awaiting-pid.meta" "window=fm:fm-awaiting-pid" "worktree=$d/wt" "kind=ship"
+  bash -c 'exit 0' &
+  exited_pid=$!
+  wait "$exited_pid"
+  for pid in "$exited_pid" "$$"; do
+    FM_FAKE_AXI_STATUS="$(run_awaiting_agent_dead fm/awaiting-pid 13h)
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,13h,\"quiet 13h ago: log: last activity\",\"$pid\",fix 1"
+    out=$(run_crew_state "$d" awaiting-pid)
+    if [ "$pid" = "$exited_pid" ]; then
+      expected='state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent none'
+    else
+      expected='state: working · source: run-step · validating (running)'
+    fi
+    [ "$out" = "$expected" ] || fail "awaiting agent PID $pid: expected '$expected', got '$out'"
+  done
+  pass "awaiting agent trusts a live PID and normalizes an exited PID to none"
+}
+
+test_awaiting_agent_selects_current_active_step() {
+  reset_fakes
+  local d out
+  d=$(new_case awaiting-agent-current-step)
+  make_repo_on_branch "$d/wt" fm/awaiting-current-step
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/awaiting-current-step.meta" "window=fm:fm-awaiting-current-step" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_awaiting_agent_dead fm/awaiting-current-step 13h)
+  active_steps[2]{step,status,active_for,last_activity,agent_pid,round}:
+    lint,completed,2m,\"quiet 2m ago: log: completed\",\"-\",initial
+    review,running,12s,\"quiet 12s ago: log: validating\",\"$$\",fix 1"
+  out=$(run_crew_state "$d" awaiting-current-step)
+  [ "$out" = 'state: working · source: run-step · validating (running)' ] \
+    || fail "awaiting agent selected a completed row instead of the live step: $out"
+  pass "awaiting agent selects the current running step before checking PID liveness"
+}
+
+test_escaped_activity_keeps_agent_pid() {
+  reset_fakes
+  local d activity out
+  d=$(new_case escaped-activity)
+  make_repo_on_branch "$d/wt" fm/escaped-activity
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/escaped-activity.meta" "window=fm:fm-escaped-activity" "worktree=$d/wt" "kind=ship"
+  # shellcheck disable=SC1003 # These fixtures contain literal JSON backslash escapes.
+  for activity in 'quiet 13h ago: log: echo \"ready\"' 'quiet 13h ago: log: echo \"ready\", path \\' 'quiet 13h ago: log: echo \\\"ready\\\"'; do
+    FM_FAKE_AXI_STATUS=$(run_awaiting_agent_dead fm/escaped-activity 13h
+      printf '  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:\n    review,running,13h,"%s","%s",fix 1\n' "$activity" "$$")
+    out=$(run_crew_state "$d" escaped-activity)
+    [ "$out" = 'state: working · source: run-step · validating (running)' ] \
+      || fail "escaped activity lost the live agent PID: $out"
+    FM_FAKE_AXI_STATUS=$(printf '%s\n' "$FM_FAKE_AXI_STATUS" | sed '/awaiting_agent:/d')
+    out=$(run_crew_state "$d" escaped-activity)
+    [ "$out" = "state: stalled · source: run-step · pipeline stalled 13h at review, run 01RUN, agent $$" ] \
+      || fail "escaped activity lost the quiet duration or agent PID: $out"
+  done
+  pass "escaped activity quotes preserve live PID and quiet duration"
 }
 
 # (b) needs-decision log + a resumed (running/fixing) run = SUPERSEDED
@@ -1322,7 +1567,30 @@ test_missing_run_head_falls_back_to_current_state() {
   pass "missing run head falls back instead of matching by branch"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
+  done
+  exit 0
+fi
+
 test_active_run_is_authoritative
+test_active_agent_stays_working
+test_quiet_agent_past_threshold_is_stalled
+test_quiet_agent_pid_liveness
+test_quiet_agent_inside_threshold_stays_working
+test_parked_threshold_env_override
+test_parked_threshold_supervision_config
+test_awaiting_agent_no_pid_is_stalled
+test_awaiting_agent_pid_liveness
+test_awaiting_agent_selects_current_active_step
+test_escaped_activity_keeps_agent_pid
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_genuine_parked_not_superseded
