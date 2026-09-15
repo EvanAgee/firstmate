@@ -125,6 +125,7 @@ enable_unpinned_dispatch_profile() {
 }
 
 read_case_record() {
+  # shellcheck disable=SC2034 # CASE_DIR is part of the record shape; not every test needs it.
   IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG <<EOF
 $1
 EOF
