@@ -633,6 +633,58 @@ SH
   pass "refresh runs standalone against fake bounded provider readers, independent of any LLM turn"
 }
 
+# A failure status anywhere in omp's reports is proven unavailability. The
+# probe must not depend on where that entry sits in the array: the same
+# evidence has to produce the same verdict whichever limit carries it.
+DEEPSEEK_ONLY_POOL='{"rules":[{"class":"builder","use":[{"harness":"omp","model":"vercel-ai-gateway/deepseek/deepseek-v4.1-flash","effort":"xhigh"}]}]}'
+
+deepseek_state_for_payload() {  # <home-name> <omp-json>
+  local home fakebin
+  home=$(make_home "$1" "$DEEPSEEK_ONLY_POOL")
+  fakebin=$(fm_fakebin "$home")
+  printf '#!/usr/bin/env bash\nprintf %%s %s\n' "$(printf '%q' "$2")" > "$fakebin/omp"
+  chmod +x "$fakebin/omp"
+  PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null \
+    || fail "refresh failed for $1"
+  jq -r '.routes["pi-deepseek"].state' "$home/state/route.json"
+}
+
+test_any_failed_limit_marks_deepseek_outage_regardless_of_position() {
+  local first_bad later_bad state
+
+  first_bad='{"generatedAt":1789485834620,"reports":[{"limits":[
+    {"status":"error","amount":{"remainingFraction":0.9,"remaining":90,"unit":"usd"}},
+    {"status":"ok","amount":{"remainingFraction":0.5,"remaining":50,"unit":"usd"}}]}]}'
+  later_bad='{"generatedAt":1789485834620,"reports":[{"limits":[
+    {"status":"ok","amount":{"remainingFraction":0.5,"remaining":50,"unit":"usd"}},
+    {"status":"error","amount":{"remainingFraction":0.9,"remaining":90,"unit":"usd"}}]}]}'
+
+  state=$(deepseek_state_for_payload deepseek-first-bad "$first_bad")
+  [ "$state" = outage ] || fail "an error limit at index 0 must read outage, got $state"
+
+  state=$(deepseek_state_for_payload deepseek-later-bad "$later_bad")
+  [ "$state" = outage ] \
+    || fail "an error limit after a healthy one must still read outage, got $state"
+
+  # A later report's failure counts too, not only a later limit in the first.
+  state=$(deepseek_state_for_payload deepseek-later-report \
+    '{"generatedAt":1789485834620,"reports":[
+      {"limits":[{"status":"ok","amount":{"remainingFraction":0.5,"remaining":50,"unit":"usd"}}]},
+      {"limits":[{"status":"failed","amount":{"remainingFraction":0.9,"remaining":90,"unit":"usd"}}]}]}')
+  [ "$state" = outage ] \
+    || fail "a failed limit in a later report must read outage, got $state"
+
+  # All-healthy must still be eligible, so the check cannot pass by always
+  # reporting outage.
+  state=$(deepseek_state_for_payload deepseek-all-ok \
+    '{"generatedAt":1789485834620,"reports":[{"limits":[
+      {"status":"ok","amount":{"remainingFraction":0.5,"remaining":50,"unit":"usd"}},
+      {"status":"ok","amount":{"remainingFraction":0.9,"remaining":90,"unit":"usd"}}]}]}')
+  [ "$state" = eligible ] || fail "an all-healthy report must stay eligible, got $state"
+
+  pass "any failed limit in omp's reports marks pi-deepseek outage, whatever its position"
+}
+
 # ---------------------------------------------------------------------------
 # Real concurrent acquisition processes (not simulated sequential calls)
 # ---------------------------------------------------------------------------
@@ -679,6 +731,7 @@ test_owner_with_mismatched_generation_is_abandoned
 test_pinned_researcher_route_preserved
 test_unapproved_route_id_refused
 test_refresh_runs_standalone_with_fake_bounded_readers
+test_any_failed_limit_marks_deepseek_outage_regardless_of_position
 test_real_concurrent_processes_split_evenly_no_lost_updates
 
 echo "# all fm-route tests passed"

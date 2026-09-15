@@ -332,7 +332,10 @@ fm_route_probe_pi_deepseek() {
     printf 'unknown\tomp usage vercel-ai-gateway reported no usage reports yet (authorized trial allowance unproven)\t%s\n' "$ts"
     return 0
   fi
-  status=$(printf '%s' "$json" | jq -r '[.reports[]?.limits[]?.status // empty] | first // empty' 2>/dev/null) || status=
+  status=$(printf '%s' "$json" | jq -r '
+    [.reports[]?.limits[]?.status // empty]
+    | map(select(. == "error" or . == "failed")) | first // empty
+  ' 2>/dev/null) || status=
   case "$status" in
     error|failed)
       printf 'outage\tomp usage vercel-ai-gateway reported limit status %s\t%s\n' "$status" "$ts"
