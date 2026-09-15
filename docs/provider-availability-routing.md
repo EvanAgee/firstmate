@@ -32,7 +32,7 @@ Every other subcommand (`refresh`, `status`, `routes`, `group-for`, `disable`, `
 ```sh
 echo '{
   "assignment_id": "aos-4213",
-  "owner": {"identity": "aos-4213", "generation": "s1789485000.4213.9021"},
+  "owner": {"identity": "aos-4213", "generation": "r1789485000.4213.9021"},
   "routes": ["codex", "claude", "pi-grok", "pi-deepseek"]
 }' | fm-route.sh acquire
 ```
@@ -45,7 +45,8 @@ Request fields (all required):
   A different `owner.identity` reusing an existing `assignment_id` is refused with a JSON error object.
 - `owner.identity`: the identity that owns this assignment.
 - `owner.generation`: a freshness token the caller supplies; stored on the record and read back by `finish`/inspection, but not itself part of the idempotency key.
-  When the caller is `fm-spawn.sh` this is its own `spawn_gen`-shaped token (`s<epoch>.<pid>.<random>`), which `acquire`'s abandoned-owner reconciliation (below) compares directly against `state/<owner>.meta`'s `spawn_gen=`; any other shape is treated as an opaque freshness marker only, with no meta counterpart to reconcile against.
+  For every Firstmate caller today this is an opaque freshness marker only, never compared against anything. `fm-spawn.sh` mints a separate `r<epoch>.<pid>.<random>` token for its route acquire rather than reusing its own `spawn_gen`, because `SPAWN_GEN` is not assigned until much later in that script; `fm-control.sh`'s relaunch mints an `r`-shaped token too.
+  The generation-mismatch half of abandoned-owner reconciliation (below) is therefore reachable only for a caller that deliberately passes a `spawn_gen`-shaped `s<epoch>.<pid>.<random>` token, the only value directly comparable to a `state/<owner>.meta` `spawn_gen=` line. Any other shape, including the `r`-shaped tokens Firstmate's own callers send, is reconciled by meta existence alone.
 - `routes`: array of the caller's own approved candidate route ids for this launch (a subset of `fm-route.sh routes`'s output, and for a class-based caller exactly `fm-route.sh routes --class <class>`'s output). `acquire` never invents a route id outside this list and never picks a profile within the chosen route; an id not in the canonical catalog is refused with a JSON error object before anything is written.
 
 Response, exactly one of four `result` values: `selected`, `deferred`, `already-closed`, `error`.
@@ -82,6 +83,7 @@ A genuine tie rotates through a monotonic `tieCursor` stored on `state/route.jso
 #### Abandoned-owner reconciliation
 
 Before counting a candidate route's `pending`/`running` assignments, `acquire` drops any assignment whose owner is abandoned: no live `state/<owner>.meta` in the canonical home at all, or a live meta whose `spawn_gen=` no longer matches that assignment's stored `owner.generation` (the owner was torn down or relaunched under a new attempt).
+The second condition only applies when that stored `owner.generation` is itself `spawn_gen`-shaped (`s<epoch>.<pid>.<random>`); see `owner.generation` above. Firstmate's own callers send `r`-shaped markers, so today only the meta-existence condition fires for them.
 Elapsed time alone never triggers this; only actual process/task/run ownership evidence does.
 
 ### `finish`

@@ -336,6 +336,32 @@ test_class_scoped_routes_narrow_to_that_class_pool() {
   pass "routes --class narrows candidates to that class's own approved pool"
 }
 
+# A resolver that cannot answer at all must say why. An empty list with a
+# zero exit is a legitimate "no candidates"; a failure has to reach the
+# operator with the resolver's own reason attached, not vanish into an empty
+# stream that looks identical to success.
+DUPLICATE_CLASS_POOL='{"rules":[
+  {"class":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]},
+  {"class":"builder","use":[{"harness":"claude","model":"opus","effort":"high"}]}
+],"default":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}'
+
+test_failed_candidate_lookup_reports_the_resolver_reason() {
+  local home out status
+  home=$(make_home candidate-lookup-failure "$DUPLICATE_CLASS_POOL")
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class builder 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "a config the resolver rejects must not exit 0"
+  case "$out" in
+    *"could not determine candidate routes for class builder"*) ;;
+    *) fail "the failure was not reported at all, got: [$out]" ;;
+  esac
+  case "$out" in
+    *"dispatch class must be unique"*) ;;
+    *) fail "the resolver's own reason never reached the operator, got: [$out]" ;;
+  esac
+  pass "a failing candidate lookup reports the resolver's own reason, never an empty stream"
+}
+
 # A pinned pool always resolves to its pin's exact tuple, so offering any
 # other route can only make the rotation break the pin. Candidates must be
 # exactly the pinned route, every single call, no matter how far the tie
@@ -559,6 +585,7 @@ test_zero_prepaid_grok_credits_alone_is_unknown_not_exhausted
 test_idempotent_acquire_and_finish
 test_closed_assignment_never_reauthorizes
 test_class_scoped_routes_narrow_to_that_class_pool
+test_failed_candidate_lookup_reports_the_resolver_reason
 test_pinned_class_offers_only_its_pinned_route
 test_disabled_only_route_is_never_offered_as_a_candidate
 test_different_owner_reusing_assignment_id_refused

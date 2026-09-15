@@ -441,6 +441,8 @@ test_class_spawn_refuses_when_candidate_lookup_fails() {
   expect_code 1 "$status" "spawn should refuse when candidate routes cannot be determined"
   assert_contains "$out" "could not determine candidate routes for class 'builder'" \
     "spawn did not report the candidate lookup failure"
+  assert_contains "$out" "dispatch class must be unique" \
+    "the resolver's own reason never reached the operator's refusal message"
   assert_absent "$HOME_DIR/state/$id.meta" "refused spawn should not have written meta"
   pass "a failed candidate lookup refuses the spawn instead of silently skipping admission"
 }
