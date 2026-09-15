@@ -37,7 +37,7 @@ echo '{
 }' | fm-route.sh acquire
 ```
 
-Request fields (all required):
+Request fields (all required). `assignment_id`, `owner.identity`, and `owner.generation` must each be a non-empty JSON string, and `routes` must be a non-empty JSON array of non-empty strings; any other type is refused with a JSON error object before anything is written, never reported as a route being unavailable.
 
 - `assignment_id`: a caller-chosen stable id (a task id, in Firstmate's own callers).
   A repeat call with the same `assignment_id` and the same `owner.identity`, while the record is `pending`/`running`/`closed`, returns that existing record unchanged (idempotent); `closed` never authorizes another launch, it only echoes what already happened.

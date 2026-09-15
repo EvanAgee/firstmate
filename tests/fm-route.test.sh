@@ -659,6 +659,51 @@ test_unapproved_route_id_refused() {
 }
 
 # ---------------------------------------------------------------------------
+# Malformed request shapes are refused at the boundary, never mislabelled as
+# proven provider unavailability, and never written to the store.
+# ---------------------------------------------------------------------------
+test_malformed_request_shapes_are_refused_before_any_write() {
+  local home before after out desc req
+  home=$(make_home malformed-request "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{
+    "codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},
+    "claude":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+  before=$(cat "$home/state/route.json")
+
+  while IFS=$'\t' read -r desc req; do
+    [ -n "$desc" ] || continue
+    out=$(printf '%s' "$req" | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" acquire) || true
+    [ "$(result_field "$out" result)" = error ] \
+      || fail "acquire must refuse $desc with result=error, never deferred or selected: $out"
+    [ -n "$(result_field "$out" error)" ] \
+      || fail "acquire's refusal of $desc must carry an explanatory error message: $out"
+    after=$(cat "$home/state/route.json")
+    [ "$after" = "$before" ] \
+      || fail "acquire must not write the store when refusing $desc"
+  done <<EOF
+routes as a JSON string	{"assignment_id":"m1","owner":{"identity":"o1","generation":"g1"},"routes":"codex"}
+routes as a JSON object	{"assignment_id":"m2","owner":{"identity":"o1","generation":"g1"},"routes":{"a":"codex"}}
+routes holding a non-string id	{"assignment_id":"m3","owner":{"identity":"o1","generation":"g1"},"routes":[7]}
+routes as a number	{"assignment_id":"m4","owner":{"identity":"o1","generation":"g1"},"routes":3}
+an object assignment_id	{"assignment_id":{"a":1},"owner":{"identity":"o1","generation":"g1"},"routes":["codex"]}
+an array owner.identity	{"assignment_id":"m5","owner":{"identity":["o1"],"generation":"g1"},"routes":["codex"]}
+an object owner.generation	{"assignment_id":"m6","owner":{"identity":"o1","generation":{"g":1}},"routes":["codex"]}
+EOF
+
+  out=$(printf '%s' '{"assignment_id":{"a":1},"outcome":"success"}' \
+    | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" finish) || true
+  [ "$(result_field "$out" result)" = error ] \
+    || fail "finish must refuse a non-string assignment_id with result=error, never report it closed: $out"
+  [ "$(cat "$home/state/route.json")" = "$before" ] \
+    || fail "finish must not write the store when refusing a malformed assignment_id"
+
+  out=$(acquire "$home" ok1 o1 g1 '["codex","claude"]')
+  [ "$(result_field "$out" result)" = selected ] \
+    || fail "a well-formed acquire must still succeed after malformed requests were refused: $out"
+  pass "malformed acquire/finish request shapes are refused with result=error and leave the store untouched"
+}
+
+# ---------------------------------------------------------------------------
 # Scheduler refresh runs with no LLM turn: refresh is a plain, bounded,
 # non-interactive subcommand callable from a timer/cron/launchd context.
 # ---------------------------------------------------------------------------
@@ -896,6 +941,7 @@ test_live_owner_with_matching_generation_still_counts
 test_owner_with_mismatched_generation_is_abandoned
 test_pinned_researcher_route_preserved
 test_unapproved_route_id_refused
+test_malformed_request_shapes_are_refused_before_any_write
 test_refresh_runs_standalone_with_fake_bounded_readers
 test_a_failed_refresh_install_leaves_no_temp_plist
 test_any_failed_limit_marks_deepseek_outage_regardless_of_position

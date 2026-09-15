@@ -558,6 +558,24 @@ fm_route_json_error() {  # <message>
   jq -cn --arg msg "$1" '{result:"error", error:$msg}'
 }
 
+# Read one request field that the protocol declares a string, and fail unless
+# it really is a non-empty string. Without the type check `jq -r` happily
+# renders an object or array as its pretty-printed text, so a malformed
+# request would flow on as a plausible-looking identifier instead of being
+# refused at the boundary.
+fm_route_req_string() {  # <request-json> <jq-path>
+  jq -er "$2 | if type == \"string\" and length > 0 then . else empty end" <<<"$1" 2>/dev/null
+}
+
+# Same idea for the routes list: it must be a JSON array of non-empty strings.
+# A bare string would otherwise pass a `length` check as a character count and
+# then crash the route-id validation loop mid-iteration.
+fm_route_req_id_array() {  # <request-json>
+  jq -ec '.routes
+    | if type == "array" and length > 0 and (all(.[]; type == "string" and length > 0))
+      then . else empty end' <<<"$1" 2>/dev/null
+}
+
 # Eligible-for-selection means: manually disabled routes are dropped first
 # (effective immediately, not waiting for refresh); the last refresh's
 # recorded state must be "eligible"; and a route finish's immediate
@@ -568,19 +586,17 @@ cmd_acquire() {
   local req=$1
   local assignment owner_identity owner_gen routes_json doc gen r best_count count
   local existing existing_owner existing_status state
-  local has_unknown=0 reasons="" route_count abandoned
+  local has_unknown=0 reasons="" abandoned
   local -a tied_routes best_route
 
-  assignment=$(jq -r '.assignment_id // empty' <<<"$req" 2>/dev/null) || assignment=
-  owner_identity=$(jq -r '.owner.identity // empty' <<<"$req" 2>/dev/null) || owner_identity=
-  owner_gen=$(jq -r '.owner.generation // empty' <<<"$req" 2>/dev/null) || owner_gen=
-  routes_json=$(jq -c '.routes // []' <<<"$req" 2>/dev/null) || routes_json='[]'
-  route_count=$(jq 'length' <<<"$routes_json" 2>/dev/null) || route_count=0
-
-  [ -n "$assignment" ] || { fm_route_json_error "assignment_id is required"; return 1; }
-  [ -n "$owner_identity" ] || { fm_route_json_error "owner.identity is required"; return 1; }
-  [ -n "$owner_gen" ] || { fm_route_json_error "owner.generation is required"; return 1; }
-  [ "$route_count" -gt 0 ] 2>/dev/null || { fm_route_json_error "routes must be a non-empty array"; return 1; }
+  assignment=$(fm_route_req_string "$req" '.assignment_id') \
+    || { fm_route_json_error "assignment_id is required, as a non-empty string"; return 1; }
+  owner_identity=$(fm_route_req_string "$req" '.owner.identity') \
+    || { fm_route_json_error "owner.identity is required, as a non-empty string"; return 1; }
+  owner_gen=$(fm_route_req_string "$req" '.owner.generation') \
+    || { fm_route_json_error "owner.generation is required, as a non-empty string"; return 1; }
+  routes_json=$(fm_route_req_id_array "$req") \
+    || { fm_route_json_error "routes must be a non-empty array of route id strings"; return 1; }
   while IFS= read -r r; do
     fm_route_is_known "$r" || { fm_route_json_error "unknown route id: $r"; return 1; }
   done < <(jq -r '.[]' <<<"$routes_json")
@@ -702,11 +718,11 @@ cmd_acquire() {
 cmd_finish() {
   local req=$1
   local assignment outcome profile doc existing route
-  assignment=$(jq -r '.assignment_id // empty' <<<"$req" 2>/dev/null) || assignment=
-  outcome=$(jq -r '.outcome // empty' <<<"$req" 2>/dev/null) || outcome=
+  assignment=$(fm_route_req_string "$req" '.assignment_id') \
+    || { fm_route_json_error "assignment_id is required, as a non-empty string"; return 1; }
+  outcome=$(fm_route_req_string "$req" '.outcome') || outcome=
   profile=$(jq -c '.profile // empty' <<<"$req" 2>/dev/null) || profile=
 
-  [ -n "$assignment" ] || { fm_route_json_error "assignment_id is required"; return 1; }
   case "$outcome" in
     success|launch-failed|auth-failed|exhausted|outage) : ;;
     *) fm_route_json_error "outcome must be one of success, launch-failed, auth-failed, exhausted, outage"; return 1 ;;
