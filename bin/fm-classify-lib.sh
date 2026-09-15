@@ -1379,8 +1379,8 @@ crew_reconcile_stall_recovery() {
 }
 
 crew_stall_transition() {
-  local state=$1 task=$2 win=$3 action=$4 detail=${5:-} pane_hash=${6:-}
-  local key marker receipt generation identity result observed_generation=${7:-} status=0
+  local state=$1 win=$3 action=$4 detail=${5:-} pane_hash=${6:-}
+  local key marker generation identity result observed_generation=${7:-} status=0
   # shellcheck disable=SC2034 # Consumed by the wake library inside the subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
   (
@@ -1390,8 +1390,6 @@ crew_stall_transition() {
   . "$_FM_CLASSIFY_LIB_DIR/fm-wake-lib.sh"
   key=$(printf '%s' "$win" | tr ':/.' '___')
   marker="$state/.stale-since-$key.stalled"
-  key=$(printf '%s' "$task" | tr ':/.' '___')
-  receipt="$state/.subsuper-stalled-$key"
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
   generation=$(crew_stalled_generation "$marker.generation")
   if [ "$action" != observe ]; then
@@ -1425,9 +1423,7 @@ crew_stall_transition() {
       fi
       ;;
     recover)
-      if [ -s "$marker" ] || { [ -s "$receipt" ] && [ "$(crew_stalled_generation "$receipt.generation")" = "$generation" ]; }; then
-        printf '%s' "$((generation + 1))" > "$marker.generation" || status=$?
-      fi
+      printf '%s' "$((generation + 1))" > "$marker.generation" || status=$?
       if [ "$status" -eq 0 ]; then
         rm -f "$marker" "$marker.hash" || status=$?
       fi
