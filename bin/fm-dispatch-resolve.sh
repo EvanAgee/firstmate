@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # Resolve one crewmate or scout dispatch class from config/crew-dispatch.json.
 # Usage: fm-dispatch-resolve.sh --class <class> [--home <FM_HOME>] [--override-harness <harness>] [--override-model <model>] [--override-effort <effort>] [--exclude-routes <r1,r2,...>]
+#        fm-dispatch-resolve.sh --class <class> [--home <FM_HOME>] --list-candidate-routes
 # Prints exactly one successful result:
 #   harness=<h> model=<m> effort=<e> reason=<pin|round-robin|default-pin|default>
+# --list-candidate-routes instead prints, one per line, the provider-
+# availability route ids this class can currently be SERVED by: it runs this
+# file's own pool resolution, pin detection, and profiles_tsv enabled
+# filtering (which already layers the model-scoped quota window on top of the
+# static enabled column), then groups each surviving member through
+# bin/fm-route.sh group-for and dedupes. This file is the single owner of
+# what a class can resolve to, so bin/fm-route.sh's "routes --class" is a
+# thin pass-through over this mode rather than a second, drifting copy of
+# the same rules.
 # A class absent from rules uses the default pool.
 # Pins select their exact pool member when enabled.
 # Unpinned pools select the enabled member with the fewest matching live
@@ -27,6 +37,7 @@ OVERRIDE_HARNESS_SET=0
 OVERRIDE_MODEL_SET=0
 OVERRIDE_EFFORT_SET=0
 EXCLUDE_ROUTES=
+LIST_CANDIDATE_ROUTES=0
 want_value=
 
 for arg in "$@"; do
@@ -58,6 +69,7 @@ for arg in "$@"; do
     --override-effort=*) OVERRIDE_EFFORT=${arg#--override-effort=}; OVERRIDE_EFFORT_SET=1 ;;
     --exclude-routes) want_value=exclude-routes ;;
     --exclude-routes=*) EXCLUDE_ROUTES=${arg#--exclude-routes=} ;;
+    --list-candidate-routes) LIST_CANDIDATE_ROUTES=1 ;;
     -h|--help)
       sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -213,6 +225,40 @@ PIN_TSV=$(config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --a
   end
   | if type == "object" then [(.harness // ""), (.model // "default"), (.effort // "default")] | @tsv else "" end
 ')
+
+# A pinned pool always resolves to its pin's exact tuple and never
+# round-robins, so its candidate list is exactly the pinned member's route.
+# The pin's route is listed even when the pin itself is switched off, so this
+# file's own deliberate switched-off-pin refusal still happens on the real
+# resolve rather than being converted into a silent fallback onto another
+# route.
+if [ "$LIST_CANDIDATE_ROUTES" -eq 1 ]; then
+  route_for() {  # <harness> <model>
+    "$SCRIPT_DIR/fm-route.sh" group-for --harness "$1" --model "$2" 2>/dev/null || true
+  }
+  CANDIDATE_SEEN=" "
+  emit_candidate() {  # <harness> <model>
+    local r
+    r=$(route_for "$1" "$2")
+    [ -n "$r" ] || return 0
+    case "$CANDIDATE_SEEN" in
+      *" $r "*) return 0 ;;
+    esac
+    CANDIDATE_SEEN="$CANDIDATE_SEEN$r "
+    printf '%s\n' "$r"
+  }
+  if [ -n "$PIN_TSV" ]; then
+    IFS=$'\t' read -r PIN_HARNESS PIN_MODEL PIN_EFFORT <<< "$PIN_TSV"
+    emit_candidate "$PIN_HARNESS" "$PIN_MODEL"
+  else
+    while IFS=$'\t' read -r harness model effort enabled; do
+      [ -n "$harness" ] || continue
+      [ "$enabled" = false ] && continue
+      emit_candidate "$harness" "$model"
+    done < <(profiles_tsv)
+  fi
+  exit 0
+fi
 
 if [ -n "$PIN_TSV" ]; then
   SELECT_REASON=$PIN_REASON

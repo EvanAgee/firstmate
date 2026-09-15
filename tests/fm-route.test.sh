@@ -456,14 +456,17 @@ test_owner_with_mismatched_generation_is_abandoned() {
   jq '.assignments["relaunched-1"] = {owner:"relaunched-1", ownerGeneration:"s400.4.4", status:"running", route:"codex", reason:"fewest-pending"}' \
     "$home/state/route.json" > "$home/state/route.json.tmp" && mv "$home/state/route.json.tmp" "$home/state/route.json"
   # Live meta exists but its spawn_gen is a NEWER attempt than the one this
-  # assignment recorded: the old attempt is abandoned.
+  # assignment recorded: the old attempt is abandoned. This half of
+  # reconciliation applies only to a caller passing a spawn_gen-shaped
+  # owner.generation, which is why the seeded record uses that shape; see
+  # fm_route_owner_abandoned's own scope-limit note.
   cat > "$home/state/relaunched-1.meta" <<'EOF'
 spawn_gen=s999.9.9
 EOF
   out=$(acquire "$home" new3 new3 g1 '["codex","claude"]')
   [ "$(result_field "$out" route_id)" = codex ] \
     || fail "an assignment whose owner meta spawn_gen no longer matches (relaunched under a new attempt) must be reconciled away: $out"
-  pass "an owner relaunched under a new spawn_gen no longer counts its old assignment"
+  pass "a spawn_gen-shaped owner generation that no longer matches its meta is reconciled away"
 }
 
 # ---------------------------------------------------------------------------

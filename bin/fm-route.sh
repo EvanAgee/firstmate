@@ -169,27 +169,28 @@ fm_route_group_for() {
   printf '%s\n' "$harness"
 }
 
-# With no argument, list every route id the whole approved catalog covers.
-# With a class name, list only the route ids that class can actually RESOLVE
-# to, which is a narrower thing than the routes its pool merely mentions.
-# fm-dispatch-resolve.sh is the owner of that meaning and this mirrors it
-# exactly, against the identical config:
-#   - Pool selection: rules[].use for a class that names a rule, .default
-#     otherwise (its POOL_KIND branch).
-#   - A pool member with enabled == false is never selectable (its
-#     profiles_tsv enabled column), so a route whose only member in this pool
-#     is disabled is never offered; winning it could only zero the real pool.
-#   - A pinned pool (pin for a class, defaultPin for the default pool) always
-#     resolves to the pin's exact tuple and never round-robins (its PIN_TSV
-#     branch), so a pinned pool's candidate list is exactly the pinned
-#     member's own route. The pin's route is emitted even when the pin itself
-#     is switched off, so fm-dispatch-resolve.sh's deliberate
-#     switched-off-pin refusal still happens there rather than being
-#     converted here into a silent fallback onto another route.
+# With no argument, list every route id the whole approved catalog covers,
+# derived from every approved profile in config/crew-dispatch.json.
+#
+# With a class name, list only the route ids that class can currently be
+# SERVED by. That question belongs to bin/fm-dispatch-resolve.sh, which
+# already owns pool selection, pin detection, the static enabled column, and
+# the model-scoped quota window, so this shells out to its
+# --list-candidate-routes mode and prints the answer verbatim rather than
+# re-deriving a parallel copy that drifts one exclusion rule at a time.
+# acquire is unaffected: it still balances fewest-pending across whatever
+# route ids it is handed.
 fm_route_ids_from_config() {
   local class=${1:-} config="$FM_ROUTE_CANONICAL_CONFIG_DIR/crew-dispatch.json" harness model seen="" g
   [ -f "$config" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
+  if [ -n "$class" ]; then
+    FM_CONFIG_OVERRIDE="$FM_ROUTE_CANONICAL_CONFIG_DIR" \
+    FM_STATE_OVERRIDE="$FM_ROUTE_CANONICAL_STATE_DIR" \
+      "$SCRIPT_DIR/fm-dispatch-resolve.sh" --class "$class" \
+        --home "$ROUTE_CANONICAL_HOME" --list-candidate-routes 2>/dev/null || return 0
+    return 0
+  fi
   while IFS=$'\t' read -r harness model; do
     [ -n "$harness" ] || continue
     g=$(fm_route_group_for "$harness" "${model:-default}")
@@ -198,24 +199,14 @@ fm_route_ids_from_config() {
     esac
     seen="$seen $g"
     printf '%s\n' "$g"
-  done < <(jq -r --arg class "$class" '
+  done < <(jq -r '
     def profiles($v):
       if ($v == null) then []
       elif ($v | type) == "array" then $v
       else [$v]
       end;
-    def pinned($v): if ($v | type) == "object" then [$v] else [] end;
-    if $class == "" then
-      ((.rules // [])[]? | (profiles(.use) + profiles(.pin) + profiles(.defaultPin))[]?),
-      (profiles(.default)[]?)
-    else
-      ([(.rules // [])[]? | select(.class == $class)] | .[0]) as $rule
-      | (if $rule == null then pinned(.defaultPin) else pinned($rule.pin) end) as $pin
-      | (if $rule == null then profiles(.default) else profiles($rule.use) end) as $pool
-      | if ($pin | length) > 0 then $pin[]
-        else ($pool[] | select(.enabled? != false))
-        end
-    end
+    ((.rules // [])[]? | (profiles(.use) + profiles(.pin) + profiles(.defaultPin))[]?),
+    (profiles(.default)[]?)
     | select(. != null)
     | [(.harness // ""), (.model // "default")] | @tsv
   ' "$config" 2>/dev/null)
@@ -414,6 +405,16 @@ fm_route_manual_disabled() {
 # longer exists, or exists but its spawn_gen no longer matches the
 # assignment's stored owner_generation (a relaunch created a new attempt).
 # Elapsed time is never consulted. Returns 0 (abandoned) or 1 (still owned).
+#
+# Scope limit, stated plainly: only the meta-existence half runs for
+# Firstmate's own current callers. The generation-mismatch half applies
+# solely to a caller that passes an owner.generation in fm-spawn.sh's
+# spawn_gen shape ("s<epoch>.<pid>.<random>"), the only value directly
+# comparable to a meta's spawn_gen= line. fm-spawn.sh's route acquire runs
+# long before it assigns SPAWN_GEN and fm-control.sh's relaunch mints its own
+# "r"-shaped token, so both are pure freshness markers today and neither
+# reaches the mismatch branch. The branch stays for the separate native
+# no-mistakes integration, which can pass a comparable shape.
 fm_route_owner_abandoned() {
   local owner=$1 owner_gen=$2 meta spawn_gen
   meta="$FM_ROUTE_CANONICAL_STATE_DIR/$owner.meta"

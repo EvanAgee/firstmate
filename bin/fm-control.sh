@@ -700,6 +700,22 @@ resolve_relaunch_profile() {
 # is stopped, so a refusal never touches the live process. An explicit
 # --harness the captain passed is treated the same as fm-spawn.sh's captain
 # override: it bypasses admission entirely.
+# fm-route.sh reports validation failures as a JSON {"error":...} on stdout,
+# but a usage/argument-parse failure exits 2 with plain text on stderr and an
+# empty stdout. Callers capture both streams, so read whichever the run
+# actually produced instead of reporting a bare "unknown error".
+fm_route_failure_detail() {  # <captured-output>
+  local raw=$1 parsed
+  parsed=$(jq -r '.error // empty' <<<"$raw" 2>/dev/null) || parsed=
+  if [ -n "$parsed" ]; then
+    printf '%s' "$parsed"
+    return 0
+  fi
+  raw=$(printf '%s' "$raw" | tr '\n' ' ')
+  raw=${raw%"${raw##*[! ]}"}
+  printf '%s' "${raw:-unknown error}"
+}
+
 RELAUNCH_ROUTE_ASSIGNMENT_ACTIVE=0
 RELAUNCH_ROUTE_ASSIGNMENT_ID=
 check_relaunch_route_admission() {
@@ -721,8 +737,8 @@ check_relaunch_route_admission() {
   RELAUNCH_ROUTE_ASSIGNMENT_ID="$ID-relaunch-$gen"
   acquire_request=$(jq -cn --arg a "$RELAUNCH_ROUTE_ASSIGNMENT_ID" --arg owner "$ID" --arg gen "$gen" --arg route "$route" \
     '{assignment_id:$a, owner:{identity:$owner, generation:$gen}, routes:[$route]}')
-  acquire_result=$(printf '%s' "$acquire_request" | "$SCRIPT_DIR/fm-route.sh" acquire) \
-    || die "provider-availability admission failed for $ID's relaunch: $(jq -r '.error // "unknown error"' <<<"$acquire_result" 2>/dev/null)"
+  acquire_result=$(printf '%s' "$acquire_request" | "$SCRIPT_DIR/fm-route.sh" acquire 2>&1) \
+    || die "provider-availability admission failed for $ID's relaunch: $(fm_route_failure_detail "$acquire_result")"
   # Only result=="selected" authorizes stopping the live worker.
   result=$(jq -r '.result // empty' <<<"$acquire_result" 2>/dev/null) || result=
   acquired=$(jq -r 'select(.result == "selected") | .route_id // empty' <<<"$acquire_result" 2>/dev/null) || acquired=

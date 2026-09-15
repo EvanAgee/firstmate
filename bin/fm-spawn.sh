@@ -1387,8 +1387,14 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
           --arg a "$ROUTE_ASSIGNMENT_ID" --arg owner "$ID" --arg gen "$ROUTE_ASSIGNMENT_GEN" \
           --argjson routes "$ROUTE_CANDIDATES_JSON" \
           '{assignment_id:$a, owner:{identity:$owner, generation:$gen}, routes:$routes}')
-        ROUTE_ACQUIRE_RESULT=$(printf '%s' "$ROUTE_ACQUIRE_REQUEST" | "$SCRIPT_DIR/fm-route.sh" acquire) || {
-          echo "error: provider-availability admission failed for $ID: $(jq -r '.error // "unknown error"' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null)" >&2
+        ROUTE_ACQUIRE_RESULT=$(printf '%s' "$ROUTE_ACQUIRE_REQUEST" | "$SCRIPT_DIR/fm-route.sh" acquire 2>&1) || {
+          # fm-route.sh reports validation failures as JSON on stdout, but a
+          # usage/argument-parse failure exits 2 with plain text on stderr
+          # and an empty stdout. Both streams are captured, so report
+          # whichever this run produced rather than a bare "unknown error".
+          ROUTE_ACQUIRE_DETAIL=$(jq -r '.error // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRE_DETAIL=
+          [ -n "$ROUTE_ACQUIRE_DETAIL" ] || ROUTE_ACQUIRE_DETAIL=$(printf '%s' "$ROUTE_ACQUIRE_RESULT" | tr '\n' ' ')
+          echo "error: provider-availability admission failed for $ID: ${ROUTE_ACQUIRE_DETAIL:-unknown error}" >&2
           exit 1
         }
         # Only result=="selected" ever authorizes a launch. A deferred or

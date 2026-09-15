@@ -214,6 +214,83 @@ SH
   pass "a model-specific exhausted window excludes only that model, not the whole account/route"
 }
 
+# --list-candidate-routes is the single owner of "which routes can this class
+# currently be served by". Every answer it gives must be a route the real
+# resolve then accepts, which is the invariant the route admission caller
+# depends on: a candidate it cannot resolve to becomes an --exclude-routes
+# entry that switches off the pool's only usable member.
+candidate_routes() {  # <home> [extra-path]
+  local home=$1 class=$2 extra=${3:-}
+  PATH="${extra:+$extra:}$PATH" FM_DISPATCH_QUOTA_AXI_BIN=quota-axi \
+    $RESOLVER --class "$class" --home "$home" --list-candidate-routes
+}
+
+test_candidate_routes_lists_only_servable_routes() {
+  local home out
+  home=$(make_home candidate-basic)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]},{"class":"tester","use":[{"harness":"claude","model":"opus","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"xhigh"},{"harness":"pi","model":"xai/grok-4.6","effort":"high","enabled":false}]},{"class":"builder","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"claude","model":"opus","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}],"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"pi","model":"xai/grok-4.6","effort":"high"}]}
+EOF
+  out=$(candidate_routes "$home" designer | sort | tr '\n' ' ')
+  [ "$out" = "claude codex " ] || fail "designer candidates wrong: $out"
+
+  # tester's only pi member is switched off, so pi-grok is not servable.
+  out=$(candidate_routes "$home" tester | sort | tr '\n' ' ')
+  [ "$out" = "claude codex " ] \
+    || fail "a switched-off member's route must never be a candidate: $out"
+
+  # A pinned class always resolves to its pin, so it offers exactly that route.
+  out=$(candidate_routes "$home" builder | sort | tr '\n' ' ')
+  [ "$out" = "codex " ] || fail "a pinned class must offer only its pin's route: $out"
+
+  # An unmatched class falls through to the default pool.
+  out=$(candidate_routes "$home" nosuchclass | sort | tr '\n' ' ')
+  [ "$out" = "codex pi-grok " ] || fail "default-pool candidates wrong: $out"
+  pass "--list-candidate-routes lists only the routes a class can actually be served by"
+}
+
+# The regression this whole mode exists for: a class whose ONLY member on a
+# route has an exhausted model-scoped window. The static enabled column says
+# that member is fine, so any separate copy of the eligibility rules offers
+# its route; the real resolve then refuses once the sibling route is
+# excluded. Same fake quota-axi shape as
+# test_model_specific_exhaustion_excludes_only_that_model (account 64%,
+# model:fable 0%).
+test_candidate_routes_drops_a_model_exhausted_only_member() {
+  local home out fakebin resolved
+  home=$(make_home candidate-model-exhausted)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]}]}
+EOF
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"--provider claude"*)
+    cat <<'JSON'
+{"generatedAt":"2026-09-15T00:00:00.000Z","schemaVersion":3,"providers":[{"provider":"claude","label":"Claude","source":"oauth","windows":[],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":64},{"scope":"model:fable","status":"known","effectivePercentRemaining":0}]},"state":{"status":"fresh","stale":false,"refreshedAt":"2026-09-15T00:00:00.000Z","sourcesTried":["oauth"]}}]}
+JSON
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+
+  out=$(candidate_routes "$home" designer "$fakebin" | sort | tr '\n' ' ')
+  [ "$out" = "codex " ] \
+    || fail "claude's only designer member has a dead model window, so claude must not be a candidate: $out"
+
+  # Every listed candidate must survive the real resolve once the others are
+  # excluded, which is exactly how the admission caller uses this list.
+  resolved=$(PATH="$fakebin:$PATH" FM_DISPATCH_QUOTA_AXI_BIN=quota-axi \
+    $RESOLVER --class designer --home "$home" --exclude-routes claude) \
+    || fail "the listed candidate did not survive a real resolve"
+  [ "$resolved" = "harness=codex model=gpt-5.6-sol effort=high reason=round-robin" ] \
+    || fail "resolve of the listed candidate returned '$resolved'"
+  pass "a route whose only class member has an exhausted model window is never a candidate"
+}
+
 test_pinned_class
 test_unpinned_class_uses_fewest_live_workers
 test_switched_off_pin_refuses_without_fallback
@@ -225,5 +302,7 @@ test_round_robin_breaks_ties_by_list_order
 test_pool_without_enabled_member_refuses
 test_unsupported_runtime_refuses_before_output
 test_override_ignores_disabled_tuple_outside_resolved_pool
+test_candidate_routes_lists_only_servable_routes
+test_candidate_routes_drops_a_model_exhausted_only_member
 
 echo "# all fm-dispatch-resolve tests passed"

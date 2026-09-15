@@ -125,21 +125,27 @@ Each route's recorded state is one of `eligible`, `exhausted`, `outage`, `auth-f
 
 ```
 fm-route.sh routes
-fm-route.sh routes --class <class>
+fm-route.sh routes --class <class>   # pass-through over fm-dispatch-resolve.sh --list-candidate-routes
 fm-route.sh group-for --harness <h> --model <m>
 fm-route.sh disable --route <id>
 fm-route.sh enable --route <id>
 ```
 
 `routes` lists the derived catalog (see "Route ids" above).
-`routes --class <class>` narrows that list to only the route ids that one class can actually RESOLVE to, mirroring `bin/fm-dispatch-resolve.sh`'s own meaning against the identical config:
+`routes --class <class>` narrows that list to only the route ids one class can currently be SERVED by.
+
+**`bin/fm-dispatch-resolve.sh` is the sole owner of that question**, and `routes --class` is a thin pass-through over its `--list-candidate-routes` mode, printing the answer verbatim and filtering nothing of its own.
+That mode runs the resolver's real pool resolution, pin detection, and `profiles_tsv` enabled filtering, then groups each surviving member through `group-for` and dedupes.
+Because it is the same code path a real resolve runs, every exclusion the resolver applies is reflected automatically, with no second copy to keep in sync:
 
 - the pool is `rules[].use` for a class that names a rule, `.default` when it does not;
 - a pool member with `"enabled": false` is never selectable, so a route whose only member in this pool is disabled is never offered;
+- a member whose model-scoped quota window is exhausted is likewise not selectable (see "Model-specific limits" below), so a route whose only member in this class is model-exhausted is not offered either;
 - a pinned pool (`pin` for a class, `defaultPin` for the default pool) always resolves to the pin's exact tuple and never round-robins, so its candidate list is exactly the pinned member's own route.
 
-A pinned pool still lists its pin's route even when that pin is itself switched off, so `fm-dispatch-resolve.sh`'s deliberate switched-off-pin refusal still happens there instead of being converted into a silent fallback onto another route.
+A pinned pool still lists its pin's route even when that pin is itself switched off, so `fm-dispatch-resolve.sh`'s deliberate switched-off-pin refusal still happens on the real resolve instead of being converted into a silent fallback onto another route.
 A class-based caller must pass THIS list as `acquire`'s candidates, never the full catalog: `acquire` selecting a route the class cannot resolve to would turn every usable pool member into an `--exclude-routes` entry and refuse an otherwise healthy launch.
+This single-owner split was reached after three review rounds in which a parallel copy of the eligibility rules inside `fm-route.sh` missed one more exclusion mechanism each time.
 `group-for` is the single owner of the harness/model-to-route mapping; every other script (`bin/fm-dispatch-resolve.sh`'s `--exclude-routes`, `bin/fm-control.sh`'s relaunch admission) calls out to it rather than re-deriving the mapping.
 `disable`/`enable` write `config/route-disabled` at the canonical home: a manual disable always wins over `refresh`'s own recorded state and survives every subsequent refresh, and only an explicit `enable` clears it.
 
@@ -162,7 +168,7 @@ Gateway/DeepSeek reads through `omp usage --provider vercel-ai-gateway --json` (
 ## Model-specific limits
 
 `bin/fm-dispatch-resolve.sh`'s own `model_exhausted` check, separate from `fm-route.sh`'s account-wide route admission, excludes one claude or codex pool member whose quota-axi `model:<name>` scope reports `effectivePercentRemaining <= 0`, even while that same account's `all_models` scope stays healthy.
-This mirrors quota-axi's own documented model-window semantics: a model-specific window is an additional bound on top of the account-wide one, never a replacement for it, so a route can stay admitted while one of its models is individually exhausted (`tests/fm-dispatch-resolve.test.sh`'s `test_model_specific_exhaustion_excludes_only_that_model` proves this with a fake quota-axi reader whose `all_models` scope is 64% remaining and whose `model:fable` scope is 0%).
+This mirrors quota-axi's own documented model-window semantics: a model-specific window is an additional bound on top of the account-wide one, never a replacement for it, so a route can stay admitted while one of its models is individually exhausted, provided that class's pool still has another member on that route (when the exhausted model is the route's only representation in the class, `--list-candidate-routes` drops the route for that class, as described above) (`tests/fm-dispatch-resolve.test.sh`'s `test_model_specific_exhaustion_excludes_only_that_model` proves this with a fake quota-axi reader whose `all_models` scope is 64% remaining and whose `model:fable` scope is 0%).
 Non-claude/codex harnesses (Pi/Grok, Gateway/DeepSeek) carry no named model-scoped quota-axi window today and are never excluded by this check.
 
 ## Callers today
