@@ -263,6 +263,73 @@ test_idempotent_acquire_and_finish() {
   pass "acquire and finish are both idempotent for a repeated identity"
 }
 
+# A closed assignment record is history, never a reusable slot: acquire must
+# answer already-closed with NO route_id, so a caller keying on route_id can
+# never relaunch from it -- not even onto a route since proven exhausted.
+test_closed_assignment_never_reauthorizes() {
+  local home out
+  home=$(make_home closed-contract "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+  acquire "$home" a1 a1 g1 '["codex"]' >/dev/null
+  finish "$home" a1 success >/dev/null
+
+  out=$(acquire "$home" a1 a1 g2 '["codex"]')
+  [ "$(result_field "$out" result)" = already-closed ] \
+    || fail "a closed assignment must answer already-closed, never selected: $out"
+  [ -z "$(result_field "$out" route_id)" ] \
+    || fail "an already-closed answer must carry no route_id at all: $out"
+  [ "$(result_field "$out" assignment_id)" = a1 ] \
+    || fail "an already-closed answer must name the assignment it echoes: $out"
+
+  # Even after the route it originally ran on is proven exhausted, the echo
+  # must not hand back that route id.
+  jq -c '.routes.codex.state = "exhausted"' "$home/state/route.json" > "$home/state/route.json.tmp"
+  mv -f "$home/state/route.json.tmp" "$home/state/route.json"
+  out=$(acquire "$home" a1 a1 g3 '["codex"]')
+  [ -z "$(result_field "$out" route_id)" ] \
+    || fail "a closed echo must never authorize a launch onto an exhausted route: $out"
+  pass "a closed assignment answers already-closed with no route_id and never reauthorizes a launch"
+}
+
+# routes --class must narrow to exactly the pool fm-dispatch-resolve.sh would
+# resolve from, so a caller never hands acquire a candidate its own class has
+# no member for. Pool shape matches docs/examples/crew-dispatch.json: the
+# designer class covers claude+codex while the catalog also holds pi-grok.
+NARROW_CLASS_POOL='{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"xhigh"}]},{"class":"builder","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]}],"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]}'
+
+test_class_scoped_routes_narrow_to_that_class_pool() {
+  local home out
+  home=$(make_home class-scope "$NARROW_CLASS_POOL")
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes | sort | tr '\n' ' ')
+  [ "$out" = "claude codex pi-grok " ] || fail "full catalog wrong: $out"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class designer | sort | tr '\n' ' ')
+  [ "$out" = "claude codex " ] \
+    || fail "designer's class-scoped routes must exclude the unrelated pi-grok: $out"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class builder | sort | tr '\n' ' ')
+  [ "$out" = "codex pi-grok " ] || fail "builder's class-scoped routes wrong: $out"
+
+  # A class with no rule of its own falls back to the default pool, exactly
+  # as fm-dispatch-resolve.sh does.
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class nosuchclass | sort | tr '\n' ' ')
+  [ "$out" = "codex " ] || fail "an unmatched class must fall back to the default pool: $out"
+
+  # Acquire scoped to that class can then only ever pick a route the class
+  # actually has a member for.
+  seed_routes "$home" '{
+    "claude":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},
+    "codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},
+    "pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}
+  }'
+  out=$(acquire "$home" d1 d1 g1 "$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class designer | jq -R . | jq -cs .)")
+  case "$(result_field "$out" route_id)" in
+    claude|codex) : ;;
+    *) fail "a designer acquire must never select a route outside its own pool: $out" ;;
+  esac
+  pass "routes --class narrows candidates to that class's own approved pool"
+}
+
 test_different_owner_reusing_assignment_id_refused() {
   local home out
   home=$(make_home owner-mismatch "$FOUR_ROUTE_POOL")
@@ -437,6 +504,8 @@ test_manual_disable_wins_and_survives
 test_zero_prepaid_grok_credits_not_exhaustion
 test_zero_prepaid_grok_credits_alone_is_unknown_not_exhausted
 test_idempotent_acquire_and_finish
+test_closed_assignment_never_reauthorizes
+test_class_scoped_routes_narrow_to_that_class_pool
 test_different_owner_reusing_assignment_id_refused
 test_launch_failure_finish_excludes_route_immediately
 test_abandoned_owner_does_not_block_fewest_pending

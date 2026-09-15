@@ -299,6 +299,72 @@ test_launch_failure_releases_route_assignment() {
   pass "a real post-acquire launch failure releases its acquired route assignment exactly once"
 }
 
+# A class pool narrower than the whole catalog (docs/examples/crew-dispatch
+# .json's own shape: designer covers claude+codex while builder also brings
+# pi-grok into the catalog) must never have an unrelated route win admission
+# and then switch off every member the class actually has.
+enable_narrow_class_dispatch_profile() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"class":"designer","when":"design work","use":[{"harness":"codex","model":"gpt-5","effort":"xhigh"}]},{"class":"builder","when":"builder work","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5","effort":"high"}]}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+    > "$home/config/crew-dispatch.json"
+}
+
+test_narrow_class_pool_never_excludes_its_own_healthy_member() {
+  local rec id out status route_home rec_json
+  id=$(profile_id profile-route-narrow-z7)
+  rec=$(make_spawn_case profile-route-narrow codex "$id")
+  read_case_record "$rec"
+  enable_narrow_class_dispatch_profile "$HOME_DIR"
+  route_home=$(make_route_home route-narrow)
+  cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+  # pi-grok is in the catalog (builder uses it) and is the LEAST loaded
+  # route, so an unscoped candidate list would hand it the win and then
+  # exclude codex -- the designer pool's only member -- failing the spawn.
+  seed_route_state "$route_home" \
+    '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class designer)
+  status=$?
+  expect_code 0 "$status" "a narrow class pool with a healthy member must still launch"
+  assert_contains "$out" "spawned $id harness=codex" "spawn did not land on the class pool's own healthy member"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 xhigh
+
+  rec_json=$(cat "$route_home/state/route.json")
+  assert_contains "$rec_json" '"route":"codex"' \
+    "admission must select a route the class actually has a member for"
+  assert_not_contains "$rec_json" '"route":"pi-grok"' \
+    "admission must never select a route outside the spawning class's own pool"
+  pass "a class pool narrower than the catalog never has an unrelated route exclude its own healthy members"
+}
+
+# A closed assignment record is spent history. If a spawn ever reuses one,
+# acquire answers already-closed with no route_id and the spawn must refuse
+# rather than launch from a record that authorized nothing.
+test_already_closed_assignment_refuses_launch() {
+  local rec id out status route_home
+  id=$(profile_id profile-route-closed-z8)
+  rec=$(make_spawn_case profile-route-closed codex "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  route_home=$(make_route_home route-closed)
+  cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+  # Seed a already-closed record under exactly the assignment id this spawn
+  # will use (the task id), owned by the same identity.
+  printf '%s' "{\"generation\":1,\"routes\":{\"codex\":{\"state\":\"eligible\",\"reason\":\"ok\",\"observedAt\":\"t\",\"manualDisabled\":false},\"pi-grok\":{\"state\":\"eligible\",\"reason\":\"ok\",\"observedAt\":\"t\",\"manualDisabled\":false}},\"assignments\":{\"$id\":{\"owner\":\"$id\",\"ownerGeneration\":\"g0\",\"status\":\"closed\",\"route\":\"codex\",\"reason\":\"fewest-pending\",\"outcome\":\"success\"}}}" \
+    > "$route_home/state/route.json"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 1 "$status" "a spent closed assignment must never authorize a launch"
+  assert_contains "$out" "already closed" "spawn did not explain the closed-record refusal"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused spawn should not have written meta"
+  pass "an already-closed assignment record never authorizes a fresh launch"
+}
+
 test_no_class_spawn_never_touches_route_store() {
   local rec id out status route_home
   id=$(profile_id profile-route-noclass-z5)
@@ -321,6 +387,8 @@ test_class_spawn_excludes_ineligible_route
 test_class_spawn_refuses_when_every_route_excluded
 test_captain_override_bypasses_route_admission
 test_launch_failure_releases_route_assignment
+test_narrow_class_pool_never_excludes_its_own_healthy_member
+test_already_closed_assignment_refuses_launch
 test_no_class_spawn_never_touches_route_store
 
 echo "# all fm-spawn-route-admission tests passed"

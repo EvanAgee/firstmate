@@ -1377,7 +1377,11 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
       # until much later in this script, so it is not reused here.
       ROUTE_ASSIGNMENT_GEN="r$(date +%s).${BASHPID:-$$}.$RANDOM"
       ROUTE_ASSIGNMENT_ID="$ID"
-      ROUTE_CANDIDATES_JSON=$("$SCRIPT_DIR/fm-route.sh" routes 2>/dev/null | jq -R . | jq -s .) || ROUTE_CANDIDATES_JSON='[]'
+      # Candidates are scoped to THIS class's own approved pool, never the
+      # whole catalog: acquire picking a route the class has no member for
+      # would turn every other pool member into an --exclude-routes entry
+      # and refuse an otherwise healthy launch.
+      ROUTE_CANDIDATES_JSON=$("$SCRIPT_DIR/fm-route.sh" routes --class "$DISPATCH_CLASS" 2>/dev/null | jq -R . | jq -s .) || ROUTE_CANDIDATES_JSON='[]'
       if [ "$(jq 'length' <<<"$ROUTE_CANDIDATES_JSON")" -gt 0 ]; then
         ROUTE_ACQUIRE_REQUEST=$(jq -cn \
           --arg a "$ROUTE_ASSIGNMENT_ID" --arg owner "$ID" --arg gen "$ROUTE_ASSIGNMENT_GEN" \
@@ -1387,7 +1391,15 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
           echo "error: provider-availability admission failed for $ID: $(jq -r '.error // "unknown error"' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null)" >&2
           exit 1
         }
-        ROUTE_ACQUIRED=$(jq -r '.route_id // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRED=
+        # Only result=="selected" ever authorizes a launch. A deferred or
+        # already-closed answer carries no authorization (and already-closed
+        # carries no route_id at all), so neither may set the active flag.
+        ROUTE_ACQUIRE_STATUS=$(jq -r '.result // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRE_STATUS=
+        if [ "$ROUTE_ACQUIRE_STATUS" = already-closed ]; then
+          echo "error: assignment '$ROUTE_ASSIGNMENT_ID' is already closed; a new attempt needs a new assignment id, not a spent record" >&2
+          exit 1
+        fi
+        ROUTE_ACQUIRED=$(jq -r 'select(.result == "selected") | .route_id // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRED=
         if [ -z "$ROUTE_ACQUIRED" ]; then
           ROUTE_DEFER_REASON=$(jq -r '.reason // "no reason given"' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null)
           echo "error: no approved route is currently eligible for class '$DISPATCH_CLASS' ($ROUTE_DEFER_REASON); wait for verified recovery or ask the captain to override" >&2

@@ -35,6 +35,7 @@
 #   fm-route.sh disable --route <id>
 #   fm-route.sh enable --route <id>
 #   fm-route.sh routes                         # list route ids derived from config
+#   fm-route.sh routes --class <class>         # only the route ids that class's own pool covers
 #   fm-route.sh group-for --harness <h> --model <m>   # print the route id one profile maps to
 #
 # acquire request fields (all required):
@@ -43,7 +44,8 @@
 #                   the SAME owner.identity, while the record is pending,
 #                   running, or closed, returns that existing record
 #                   unchanged (idempotent) -- closed never authorizes another
-#                   launch. A deferred record is re-evaluated fresh on the
+#                   launch: it answers "already-closed" with no route_id. A
+#                   deferred record is re-evaluated fresh on the
 #                   next call with the same id (retriable), never returned
 #                   stale, so newer eligibility evidence can admit it. A
 #                   different owner.identity reusing an existing id is
@@ -60,6 +62,11 @@
 # acquire response, one of:
 #   {"result":"selected","route_id":"codex","reason":"fewest-pending","generation":5}
 #   {"result":"deferred","reason":"...","generation":5}
+#   {"result":"already-closed","assignment_id":"<id>","generation":5,"note":"..."}
+#   {"result":"error","error":"..."}
+# ONLY "selected" carries route_id and only "selected" authorizes a launch;
+# "already-closed" deliberately omits route_id so a caller keying on it can
+# never relaunch from a spent record.
 # "generation" here is route.json's own monotonic decision/observation
 # generation (bumped by refresh), distinct from the caller-supplied
 # owner.generation.
@@ -162,8 +169,13 @@ fm_route_group_for() {
   printf '%s\n' "$harness"
 }
 
+# With no argument, list every route id the whole approved catalog covers.
+# With a class name, list only the route ids THAT class's own pool covers --
+# exactly the pool fm-dispatch-resolve.sh would resolve from (rules[].use for
+# a named class, .default otherwise), so a caller never hands acquire a
+# candidate its own pool has no member for and then excludes its whole pool.
 fm_route_ids_from_config() {
-  local config="$FM_ROUTE_CANONICAL_CONFIG_DIR/crew-dispatch.json" harness model seen="" g
+  local class=${1:-} config="$FM_ROUTE_CANONICAL_CONFIG_DIR/crew-dispatch.json" harness model seen="" g
   [ -f "$config" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   while IFS=$'\t' read -r harness model; do
@@ -174,14 +186,19 @@ fm_route_ids_from_config() {
     esac
     seen="$seen $g"
     printf '%s\n' "$g"
-  done < <(jq -r '
+  done < <(jq -r --arg class "$class" '
     def profiles($v):
       if ($v == null) then []
       elif ($v | type) == "array" then $v
       else [$v]
       end;
-    ((.rules // [])[]? | (profiles(.use) + profiles(.pin) + profiles(.defaultPin))[]?),
-    (profiles(.default)[]?)
+    if $class == "" then
+      ((.rules // [])[]? | (profiles(.use) + profiles(.pin) + profiles(.defaultPin))[]?),
+      (profiles(.default)[]?)
+    else
+      ([(.rules // [])[]? | select(.class == $class)] | .[0]) as $rule
+      | if $rule == null then profiles(.default)[]? else profiles($rule.use)[]? end
+    end
     | select(. != null)
     | [(.harness // ""), (.model // "default")] | @tsv
   ' "$config" 2>/dev/null)
@@ -513,9 +530,12 @@ cmd_acquire() {
     if [ "$existing_status" != deferred ]; then
       fm_lock_release "$ROUTE_LOCK"
       if [ "$existing_status" = closed ]; then
-        jq -cn --argjson gen "$gen" \
-          --arg route "$(jq -r '.route' <<<"$existing")" --arg reason "$(jq -r '.reason' <<<"$existing")" \
-          '{result:"selected", route_id:$route, reason:$reason, generation:$gen, note:"already closed; not relaunched"}'
+        # A closed record is history, never a reusable slot: it carries no
+        # route_id at all, so no caller keying on route_id can mistake this
+        # echo for an authorization. A genuinely new attempt needs a new
+        # assignment id.
+        jq -cn --argjson gen "$gen" --arg a "$assignment" \
+          '{result:"already-closed", assignment_id:$a, generation:$gen, note:"already closed; not relaunched"}'
       else
         jq -cn --argjson gen "$gen" \
           --arg route "$(jq -r '.route' <<<"$existing")" --arg reason "$(jq -r '.reason' <<<"$existing")" \
@@ -540,6 +560,9 @@ cmd_acquire() {
       continue
     fi
     count=0
+    # The "pending" half of the status filter below is not written by any
+    # current path (acquire writes running/deferred, finish writes closed);
+    # it is harmless and kept for a future async-acquire state.
     while IFS=$'\t' read -r a_owner a_owner_gen; do
       [ -n "$a_owner" ] || continue
       abandoned=0
@@ -657,6 +680,7 @@ shift
 ROUTE_ID=
 GROUP_HARNESS=
 GROUP_MODEL=
+ROUTE_CLASS=
 want_value=
 
 for arg in "$@"; do
@@ -665,6 +689,7 @@ for arg in "$@"; do
       route) ROUTE_ID=$arg ;;
       harness) GROUP_HARNESS=$arg ;;
       model) GROUP_MODEL=$arg ;;
+      class) ROUTE_CLASS=$arg ;;
     esac
     want_value=
     continue
@@ -676,6 +701,8 @@ for arg in "$@"; do
     --harness=*) GROUP_HARNESS=${arg#--harness=} ;;
     --model) want_value=model ;;
     --model=*) GROUP_MODEL=${arg#--model=} ;;
+    --class) want_value=class ;;
+    --class=*) ROUTE_CLASS=${arg#--class=} ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -692,7 +719,7 @@ case "$SUBCOMMAND" in
     cmd_status "$ROUTE_ID"
     ;;
   routes)
-    fm_route_ids_from_config
+    fm_route_ids_from_config "$ROUTE_CLASS"
     ;;
   group-for)
     [ -n "$GROUP_HARNESS" ] || { echo "error: --harness is required" >&2; exit 2; }

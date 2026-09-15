@@ -46,9 +46,11 @@ Request fields (all required):
 - `owner.identity`: the identity that owns this assignment.
 - `owner.generation`: a freshness token the caller supplies; stored on the record and read back by `finish`/inspection, but not itself part of the idempotency key.
   When the caller is `fm-spawn.sh` this is its own `spawn_gen`-shaped token (`s<epoch>.<pid>.<random>`), which `acquire`'s abandoned-owner reconciliation (below) compares directly against `state/<owner>.meta`'s `spawn_gen=`; any other shape is treated as an opaque freshness marker only, with no meta counterpart to reconcile against.
-- `routes`: array of the caller's own approved candidate route ids for this launch (a subset of `fm-route.sh routes`'s output). `acquire` never invents a route id outside this list and never picks a profile within the chosen route; an id not in the canonical catalog is refused with a JSON error object before anything is written.
+- `routes`: array of the caller's own approved candidate route ids for this launch (a subset of `fm-route.sh routes`'s output, and for a class-based caller exactly `fm-route.sh routes --class <class>`'s output). `acquire` never invents a route id outside this list and never picks a profile within the chosen route; an id not in the canonical catalog is refused with a JSON error object before anything is written.
 
-Response, one of:
+Response, exactly one of four `result` values: `selected`, `deferred`, `already-closed`, `error`.
+**Only `selected` carries a `route_id`, and only `selected` authorizes a launch.**
+Every caller, including the separate native no-mistakes hook (`nm-native-assignment-routing`), must key on `result` and must never launch from a `route_id` read off any other shape.
 
 ```json
 {"result":"selected","route_id":"codex","reason":"fewest-pending","generation":5}
@@ -57,6 +59,19 @@ Response, one of:
 ```json
 {"result":"deferred","reason":"every candidate route is excluded (exhausted, outage, auth-failed, or manually disabled)","generation":5}
 ```
+
+```json
+{"result":"already-closed","assignment_id":"aos-4213","generation":5,"note":"already closed; not relaunched"}
+```
+
+```json
+{"result":"error","error":"assignment aos-4213 is already owned by a different owner"}
+```
+
+A closed assignment record is history, not a reusable slot: `already-closed` deliberately omits `route_id` so no caller can relaunch from a spent record, and it is not an authorization any more than `deferred` is.
+A genuinely new attempt needs a NEW `assignment_id`.
+`bin/fm-control.sh`'s relaunch admission does exactly that: it acquires under `<task-id>-relaunch-<generation>`, never the bare task id the original spawn already closed, so every relaunch gets a freshly evaluated decision against its own requested route.
+`error` responses also exit nonzero.
 
 `generation` here is `state/route.json`'s own monotonic decision/observation generation (bumped by `refresh`), distinct from the request's `owner.generation`.
 
@@ -110,12 +125,15 @@ Each route's recorded state is one of `eligible`, `exhausted`, `outage`, `auth-f
 
 ```
 fm-route.sh routes
+fm-route.sh routes --class <class>
 fm-route.sh group-for --harness <h> --model <m>
 fm-route.sh disable --route <id>
 fm-route.sh enable --route <id>
 ```
 
 `routes` lists the derived catalog (see "Route ids" above).
+`routes --class <class>` narrows that list to only the route ids that one class's own approved pool covers, derived from exactly the pool `bin/fm-dispatch-resolve.sh` resolves from (`rules[].use` for a named class, `.default` when the class names no rule).
+A class-based caller must pass THIS list as `acquire`'s candidates, never the full catalog: `acquire` selecting a route the class has no member for would turn every real pool member into an `--exclude-routes` entry and refuse an otherwise healthy launch.
 `group-for` is the single owner of the harness/model-to-route mapping; every other script (`bin/fm-dispatch-resolve.sh`'s `--exclude-routes`, `bin/fm-control.sh`'s relaunch admission) calls out to it rather than re-deriving the mapping.
 `disable`/`enable` write `config/route-disabled` at the canonical home: a manual disable always wins over `refresh`'s own recorded state and survives every subsequent refresh, and only an explicit `enable` clears it.
 
@@ -143,7 +161,7 @@ Non-claude/codex harnesses (Pi/Grok, Gateway/DeepSeek) carry no named model-scop
 
 ## Callers today
 
-`bin/fm-dispatch-resolve.sh --exclude-routes <r1,r2,...>` marks matching pool members `enabled=false` for that one resolution call, without touching `config/crew-dispatch.json`; `bin/fm-spawn.sh` computes the caller's candidate routes, pipes an `acquire` request as shown above, translates the non-selected routes into `--exclude-routes`, and pipes a `finish` request from its existing abort-cleanup trap so a failed launch releases its assignment exactly once.
+`bin/fm-dispatch-resolve.sh --exclude-routes <r1,r2,...>` marks matching pool members `enabled=false` for that one resolution call, without touching `config/crew-dispatch.json`; `bin/fm-spawn.sh` computes the caller's candidate routes with `fm-route.sh routes --class <class>`, pipes an `acquire` request as shown above, translates the non-selected routes into `--exclude-routes`, and pipes a `finish` request from its existing abort-cleanup trap so a failed launch releases its assignment exactly once.
 A captain-supplied explicit `--harness` bypasses this admission entirely, the same way it already bypasses the pool's own `enabled` filter.
 `bin/fm-control.sh`'s `relaunch` verb runs the same `acquire`/`finish` JSON pair around an authorized relaunch's already-resolved profile, before `safe_checkpoint` and before anything is stopped, so a refusal never touches the live process; it stays inert when the resolved route is not part of the canonical catalog at all (no routing policy configured for that profile).
 Neither caller runs `refresh`; both assume a periodic timer (`bin/fm-route-refresh-install.sh`, following `bin/fm-watcher-beat-alarm-install.sh`'s pattern) keeps `state/route.json` current independent of any LLM turn.

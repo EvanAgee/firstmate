@@ -201,6 +201,7 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_PREPARE="${FM_FAKE_TRACE_PREPARE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
+    FM_ROUTE_HOME_OVERRIDE="${FM_ROUTE_HOME_OVERRIDE:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -578,6 +579,43 @@ test_relaunch_onto_an_unverified_harness_is_refused() {
   assert_contains "$out" "not a verified harness" "the refusal should name the unverified adapter"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
   pass "fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics"
+}
+
+# A relaunch must get its OWN freshly evaluated admission decision. The
+# original spawn already acquired and closed an assignment under the bare
+# task id; reusing that id would echo the spawn's old route instead of
+# judging the route this relaunch actually asks for.
+test_relaunch_reevaluates_admission_instead_of_echoing_the_closed_spawn_record() {
+  local dir out rc route_home
+  dir=$(new_case routeecho rl60)
+  add_ship_task "$dir" rl60 claude
+  mkdir -p "$dir/home/config"
+  printf '%s\n' '{"rules":[{"class":"builder","when":"builder work","use":[{"harness":"claude","model":"opus","effort":"high"},{"harness":"codex","model":"gpt-5","effort":"high"}]}],"default":{"harness":"codex","model":"gpt-5"}}' \
+    > "$dir/home/config/crew-dispatch.json"
+  route_home="$dir/routehome"
+  mkdir -p "$route_home/state" "$route_home/config"
+  cp "$dir/home/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+  # The original spawn's assignment is already CLOSED, recorded back when
+  # claude was healthy. Claude is now proven exhausted, so a relaunch that
+  # re-evaluates must refuse; one that echoes the closed record would see
+  # claude "selected" and stop the live agent.
+  printf '%s' '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"claude":{"state":"exhausted","reason":"0%","observedAt":"t","manualDisabled":false}},"assignments":{"rl60":{"owner":"rl60","ownerGeneration":"g0","status":"closed","route":"claude","reason":"fewest-pending","outcome":"success"}}}' \
+    > "$route_home/state/route.json"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" run_control "$dir" rl60 relaunch --note "retry after stall"); rc=$?
+  expect_code 1 "$rc" "a relaunch onto an exhausted route must refuse, not echo the spawn's closed record"$'\n'"$out"
+  assert_contains "$out" "is not currently eligible" "the refusal should name the ineligible route"
+  [ "$(meta_field "$dir" rl60 harness)" = claude ] \
+    || fail "a refused relaunch must leave the recorded harness untouched"
+  assert_no_grep "/exit" "$dir/fake/literal" "a refused relaunch must never stop the live agent"
+  # The relaunch must have evaluated under its own scoped id (recorded as
+  # deferred), never reusing the spawn's spent record, and must never have
+  # marked that spent record running again.
+  grep -q '"rl60-relaunch-' "$route_home/state/route.json" \
+    || fail "the relaunch did not record its own relaunch-scoped assignment: $(cat "$route_home/state/route.json")"
+  [ "$(jq -r '.assignments.rl60.status' "$route_home/state/route.json")" = closed ] \
+    || fail "the original spawn's closed record must stay closed and untouched"
+  pass "fm-control relaunch: admission is re-evaluated fresh, never echoed from the spawn's closed record"
 }
 
 test_relaunch_onto_disabled_omitted_model_rung_is_refused() {
@@ -1452,6 +1490,7 @@ test_same_harness_relaunch_keeps_the_profile_axes
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_relaunch_onto_disabled_omitted_model_rung_is_refused
+test_relaunch_reevaluates_admission_instead_of_echoing_the_closed_spawn_record
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
