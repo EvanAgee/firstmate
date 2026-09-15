@@ -703,8 +703,11 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
              (.state == "queued" or
               (.state == "in_flight" and .current_role == "held"
                and (.id as $id
-                    | any($tasks[]; .id == $id and (.current_state.state == "working" or .current_state.state == "stalled")) | not)))) ]) as $queued_all
-    | ([ $queued_all[]
+                    | any($tasks[]; .id == $id and .current_state.state == "working") | not)))) ]) as $held_and_queued
+    | ([ $held_and_queued[]
+         | select(.state == "queued" or
+             (.id as $id | any($tasks[]; .id == $id and .current_state.state == "stalled") | not)) ]) as $queued_all
+    | ([ $held_and_queued[]
          | select(.captain_actionable == true)
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
             reason:(.hold_reason | trunc(160)),source:"backlog"} ]) as $captain_holds_all
@@ -754,7 +757,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     | ($captain_holds_all
        + ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
             | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ])) as $decisions_all
-    | ([ $queued_all[]
+    | ([ $held_and_queued[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
          | {id:(.id | trunc(120)),title:(.title | trunc(90)),
             blocked_by:((.unresolved_blocker_ids | join(",")) | if . == "" then null else trunc(120) end),

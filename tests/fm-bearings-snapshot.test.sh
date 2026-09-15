@@ -758,7 +758,28 @@ SH
         and .contradiction == ($state == "stalled")
     ' >/dev/null || fail "$child_state child incorrectly reconciled the parent working claim: $canonical"
   done
-  pass "only working children corroborate parent working claims while stalled children remain active"
+  printf '## In flight\n- [ ] foo - Validate foo (repo: sample) (kind: ship) (hold: choose recovery) (hold-kind: captain)\n' > "$mate/data/backlog.md"
+  printf 'blocked: [key=foo] waiting on recovery\n' > "$home/state/mate.status"
+  canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_TEST_ACTIVITY=13h \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    .secondmate_current.records[] | select(.id == "mate")
+    | .counts.active_children == 1 and .counts.queued == 0
+      and (.holds | map({id,reason,source})) == [{id:"foo",reason:"choose recovery",source:"backlog"}]
+      and (.parent_event.reconciliation.decisions
+        | any(.key == "foo" and .verb == "blocked" and .verdict == "corroborates"
+          and .matched == {surface:"holds",id:"foo",key:null,verb:"blocked"}))
+      and .contradiction == false
+  ' >/dev/null || fail "held stalled child lost evidence for the parent blocked claim: $canonical"
+  canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_TEST_ACTIVITY=10s \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    .secondmate_current.records[] | select(.id == "mate")
+    | .counts.active_children == 1 and .active_children[0].state == "working"
+      and .counts.queued == 0 and .counts.holds == 0 and .holds == []
+      and .contradiction == true
+  ' >/dev/null || fail "held working child changed queue or hold behavior: $canonical"
+  pass "stalled children retain hold evidence and only working children corroborate working claims"
 }
 
 test_nonprogressing_child_states_are_explicit() {

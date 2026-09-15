@@ -179,12 +179,15 @@ SH
     .valid == true and .state == "captain_decision"
     and (.active_children | map({id,state})) == [{id:"stalled-task",state:"stalled"}]
     and .counts.active_children == 1 and .counts.queued == 0 and .queued == []
+    and .counts.holds == 1
+    and .holds == [{id:"stalled-task",title:"Stalled task",blocked_by:null,
+      blocked_by_ids:[],unresolved_blocker_ids:[],reason:"choose recovery",source:"backlog"}]
     and .counts.decisions_open == 2
     and (.decisions_open | sort_by(.key) | map({id,key,verb,summary})) == [
       {id:"stalled-task",key:"access",verb:"blocked",summary:"waiting on access"},
       {id:"stalled-task",key:"recovery",verb:"needs-decision",summary:"choose recovery"}
     ]
-  ' >/dev/null || fail "held stalled task was double-counted or lost its decisions: $out"
+  ' >/dev/null || fail "held stalled task was double-counted or lost its hold or decisions: $out"
   pass "stalled work stays active, counts once, and preserves open and held decisions"
 }
 
