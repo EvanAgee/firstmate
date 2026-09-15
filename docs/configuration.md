@@ -345,7 +345,8 @@ The resolver refuses a switched-off pin without falling through to another membe
 Without a pin, the resolver chooses the enabled pool member carrying the fewest matching live workers in this home.
 It counts `state/*.meta` records whose harness, model, and effort match the member and excludes `kind=secondmate`.
 List order breaks a tie.
-Ad hoc quota reads (`quota-axi`, `teamclaude status`, `teamcodex status`) do not select, remove, rank, or break a tie between members; [`docs/provider-availability-routing.md`](provider-availability-routing.md) owns the separate, automatic provider-availability admission that does exclude a route on proven evidence, ahead of this pool-member selection.
+This count-and-list-order selection never reads `quota-axi`, `teamclaude status`, or `teamcodex status`, so an ad hoc quota reading never ranks or breaks a tie between members.
+Two separate automatic checks do remove a member before that selection runs: [`docs/provider-availability-routing.md`](provider-availability-routing.md) owns the route-level admission that excludes a whole service on proven evidence, and the resolver's own `model_exhausted` check reads `quota-axi` to drop one individually exhausted claude or codex model from an otherwise-eligible pool (see that document's "Model-specific limits" section for the full contract).
 An unknown class uses `defaultPin` when present, otherwise it applies the same count and list-order selection to `default`.
 An empty enabled pool is an error with no fallback.
 
@@ -376,8 +377,9 @@ The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, j
 [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-chrome-devtools-axi-lib.sh`](../bin/fm-chrome-devtools-axi-lib.sh) hold their own tools' floor constants.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 In that list, jq handles structured state, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi backs backlog mutations.
-Optional quota-axi supports captain-facing dispatch health notes only.
-The resolver itself never reads it or requires it to select a runtime; [`docs/provider-availability-routing.md`](provider-availability-routing.md) owns the separate automatic admission gate that does read health/quota evidence.
+Optional quota-axi supports captain-facing dispatch health notes, and the resolver's own `model_exhausted` check reads it to exclude one individually exhausted claude or codex model from a pool.
+It is never required to select a runtime: an unreachable quota-axi leaves every pool member eligible rather than blocking dispatch.
+[`docs/provider-availability-routing.md`](provider-availability-routing.md) owns both the separate route-level admission gate and the "Model-specific limits" contract for that per-model check.
 The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
 That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`: the resolved backend's own session-provider CLI (`tmux`, `herdr`, `zellij`, `orca`, or `cmux`) and the `treehouse` worktree provider for every session-provider-only backend (`tmux`, `herdr`, `zellij`, `cmux`).
 Backend tool availability uses the adapter's own executable resolver, so bootstrap and spawn agree on supported non-`PATH` locations such as cmux's bundled CLI.
