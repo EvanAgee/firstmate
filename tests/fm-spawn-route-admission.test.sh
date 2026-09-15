@@ -42,10 +42,15 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) [ ! -f "$0.windows" ] || cat "$0.windows"; exit 0 ;;
   has-session|new-session) exit 0 ;;
-  kill-window) exit 0 ;;
-  new-window) exit 0 ;;
+  kill-window) rm -f "$0.windows"; exit 0 ;;
+  new-window)
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" > "$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -299,44 +304,75 @@ test_launch_failure_releases_route_assignment() {
   pass "a real post-acquire launch failure releases its acquired route assignment exactly once"
 }
 
-# A class pool narrower than the whole catalog (docs/examples/crew-dispatch
-# .json's own shape: designer covers claude+codex while builder also brings
-# pi-grok into the catalog) must never have an unrelated route win admission
-# and then switch off every member the class actually has.
-enable_narrow_class_dispatch_profile() {
+# These are the real pool shapes from this repo's own
+# docs/examples/crew-dispatch.json, the ones that reproduced live failures:
+# builder carries an enabled codex pin inside a three-route pool, and tester
+# carries a switched-off pi-grok member. In both cases a candidate route the
+# class cannot actually resolve to would win admission and then turn every
+# usable pool member into an --exclude-routes entry, failing a healthy spawn.
+enable_example_shaped_dispatch_profile() {
   local home=$1
-  printf '%s\n' '{"rules":[{"class":"designer","when":"design work","use":[{"harness":"codex","model":"gpt-5","effort":"xhigh"}]},{"class":"builder","when":"builder work","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5","effort":"high"}]}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+  printf '%s\n' '{"rules":[{"class":"builder","when":"builder work","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5","effort":"high"},{"harness":"claude","model":"opus","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5","effort":"high"}},{"class":"tester","when":"test work","use":[{"harness":"claude","model":"opus","effort":"high"},{"harness":"codex","model":"gpt-5","effort":"xhigh"},{"harness":"pi","model":"xai/grok-4.6","effort":"high","enabled":false}]}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
     > "$home/config/crew-dispatch.json"
 }
 
-test_narrow_class_pool_never_excludes_its_own_healthy_member() {
-  local rec id out status route_home rec_json
-  id=$(profile_id profile-route-narrow-z7)
-  rec=$(make_spawn_case profile-route-narrow codex "$id")
-  read_case_record "$rec"
-  enable_narrow_class_dispatch_profile "$HOME_DIR"
-  route_home=$(make_route_home route-narrow)
-  cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
-  # pi-grok is in the catalog (builder uses it) and is the LEAST loaded
-  # route, so an unscoped candidate list would hand it the win and then
-  # exclude codex -- the designer pool's only member -- failing the spawn.
-  seed_route_state "$route_home" \
-    '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
+ALL_ROUTES_ELIGIBLE='{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"claude":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
 
-  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
-    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --class designer)
-  status=$?
-  expect_code 0 "$status" "a narrow class pool with a healthy member must still launch"
-  assert_contains "$out" "spawned $id harness=codex" "spawn did not land on the class pool's own healthy member"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 xhigh
+# A pinned class always resolves to its pin, so a healthy pinned spawn must
+# succeed on EVERY attempt. Repeated across enough spawns to advance the tie
+# cursor past all three catalog routes, which is exactly what made the
+# unscoped version fail 2 out of every 3 times.
+test_pinned_class_spawn_succeeds_on_every_rotation() {
+  local rec id out status route_home rec_json n
+  route_home=$(make_route_home route-pinned)
+  for n in 1 2 3 4; do
+    id=$(profile_id "profile-route-pinned-z7$n")
+    rec=$(make_spawn_case "profile-route-pinned-$n" codex "$id")
+    read_case_record "$rec"
+    enable_example_shaped_dispatch_profile "$HOME_DIR"
+    cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+    [ -f "$route_home/state/route.json" ] || seed_route_state "$route_home" "$ALL_ROUTES_ELIGIBLE"
 
-  rec_json=$(cat "$route_home/state/route.json")
-  assert_contains "$rec_json" '"route":"codex"' \
-    "admission must select a route the class actually has a member for"
-  assert_not_contains "$rec_json" '"route":"pi-grok"' \
-    "admission must never select a route outside the spawning class's own pool"
-  pass "a class pool narrower than the catalog never has an unrelated route exclude its own healthy members"
+    out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+      run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --class builder)
+    status=$?
+    expect_code 0 "$status" "pinned builder spawn #$n must launch, not break its own pin"$'\n'"$out"
+    assert_contains "$out" "spawned $id harness=codex" "pinned builder spawn #$n did not land on its pin"
+    assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
+
+    rec_json=$(jq -c --arg a "$id" '.assignments[$a]' "$route_home/state/route.json")
+    [ "$(jq -r '.route' <<<"$rec_json")" = codex ] \
+      || fail "pinned builder spawn #$n acquired a route other than its pin: $rec_json"
+  done
+  pass "a pinned class spawn resolves to its pin on every tie-cursor rotation"
+}
+
+# tester's only pi-grok member is switched off, so pi-grok must never be
+# offered; winning it would exclude claude and codex and empty the pool.
+test_disabled_pool_member_never_wins_admission() {
+  local rec id out status route_home picked n
+  route_home=$(make_route_home route-disabled)
+  for n in 1 2 3 4; do
+    id=$(profile_id "profile-route-disabled-z9$n")
+    rec=$(make_spawn_case "profile-route-disabled-$n" codex "$id")
+    read_case_record "$rec"
+    enable_example_shaped_dispatch_profile "$HOME_DIR"
+    cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+    [ -f "$route_home/state/route.json" ] || seed_route_state "$route_home" "$ALL_ROUTES_ELIGIBLE"
+
+    out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+      run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --class tester)
+    status=$?
+    expect_code 0 "$status" "tester spawn #$n must launch; its enabled members are healthy"$'\n'"$out"
+    picked=$(jq -r --arg a "$id" '.assignments[$a].route' "$route_home/state/route.json")
+    case "$picked" in
+      claude|codex) : ;;
+      *) fail "tester spawn #$n acquired '$picked', whose only pool member is switched off" ;;
+    esac
+  done
+  pass "a switched-off pool member's route never wins admission for its class"
 }
 
 # A closed assignment record is spent history. If a spawn ever reuses one,
@@ -387,7 +423,8 @@ test_class_spawn_excludes_ineligible_route
 test_class_spawn_refuses_when_every_route_excluded
 test_captain_override_bypasses_route_admission
 test_launch_failure_releases_route_assignment
-test_narrow_class_pool_never_excludes_its_own_healthy_member
+test_pinned_class_spawn_succeeds_on_every_rotation
+test_disabled_pool_member_never_wins_admission
 test_already_closed_assignment_refuses_launch
 test_no_class_spawn_never_touches_route_store
 

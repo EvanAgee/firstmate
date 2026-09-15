@@ -170,10 +170,22 @@ fm_route_group_for() {
 }
 
 # With no argument, list every route id the whole approved catalog covers.
-# With a class name, list only the route ids THAT class's own pool covers --
-# exactly the pool fm-dispatch-resolve.sh would resolve from (rules[].use for
-# a named class, .default otherwise), so a caller never hands acquire a
-# candidate its own pool has no member for and then excludes its whole pool.
+# With a class name, list only the route ids that class can actually RESOLVE
+# to, which is a narrower thing than the routes its pool merely mentions.
+# fm-dispatch-resolve.sh is the owner of that meaning and this mirrors it
+# exactly, against the identical config:
+#   - Pool selection: rules[].use for a class that names a rule, .default
+#     otherwise (its POOL_KIND branch).
+#   - A pool member with enabled == false is never selectable (its
+#     profiles_tsv enabled column), so a route whose only member in this pool
+#     is disabled is never offered; winning it could only zero the real pool.
+#   - A pinned pool (pin for a class, defaultPin for the default pool) always
+#     resolves to the pin's exact tuple and never round-robins (its PIN_TSV
+#     branch), so a pinned pool's candidate list is exactly the pinned
+#     member's own route. The pin's route is emitted even when the pin itself
+#     is switched off, so fm-dispatch-resolve.sh's deliberate
+#     switched-off-pin refusal still happens there rather than being
+#     converted here into a silent fallback onto another route.
 fm_route_ids_from_config() {
   local class=${1:-} config="$FM_ROUTE_CANONICAL_CONFIG_DIR/crew-dispatch.json" harness model seen="" g
   [ -f "$config" ] || return 0
@@ -192,12 +204,17 @@ fm_route_ids_from_config() {
       elif ($v | type) == "array" then $v
       else [$v]
       end;
+    def pinned($v): if ($v | type) == "object" then [$v] else [] end;
     if $class == "" then
       ((.rules // [])[]? | (profiles(.use) + profiles(.pin) + profiles(.defaultPin))[]?),
       (profiles(.default)[]?)
     else
       ([(.rules // [])[]? | select(.class == $class)] | .[0]) as $rule
-      | if $rule == null then profiles(.default)[]? else profiles($rule.use)[]? end
+      | (if $rule == null then pinned(.defaultPin) else pinned($rule.pin) end) as $pin
+      | (if $rule == null then profiles(.default) else profiles($rule.use) end) as $pool
+      | if ($pin | length) > 0 then $pin[]
+        else ($pool[] | select(.enabled? != false))
+        end
     end
     | select(. != null)
     | [(.harness // ""), (.model // "default")] | @tsv

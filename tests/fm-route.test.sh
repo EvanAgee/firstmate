@@ -291,43 +291,93 @@ test_closed_assignment_never_reauthorizes() {
   pass "a closed assignment answers already-closed with no route_id and never reauthorizes a launch"
 }
 
-# routes --class must narrow to exactly the pool fm-dispatch-resolve.sh would
-# resolve from, so a caller never hands acquire a candidate its own class has
-# no member for. Pool shape matches docs/examples/crew-dispatch.json: the
-# designer class covers claude+codex while the catalog also holds pi-grok.
-NARROW_CLASS_POOL='{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"xhigh"}]},{"class":"builder","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]}],"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]}'
+# routes --class must narrow to exactly the routes a class can actually
+# RESOLVE to, not merely the ones its pool mentions. These pools are the real
+# shapes from this repo's own docs/examples/crew-dispatch.json, the ones that
+# reproduced live failures: builder carries an enabled pin inside a
+# three-route pool, tester carries a disabled pi-grok member, designer is a
+# plain two-route pool, and researcher spans all three unpinned.
+EXAMPLE_SHAPED_POOL='{"rules":[
+  {"class":"researcher","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"xhigh"},{"harness":"pi","model":"xai/grok-4.6","effort":"high"}]},
+  {"class":"builder","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"claude","model":"claude-opus-4-8","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}},
+  {"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"xhigh"}]},
+  {"class":"tester","use":[{"harness":"claude","model":"opus","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"xhigh"},{"harness":"pi","model":"xai/grok-4.6","effort":"high","enabled":false}]}
+],"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"pi","model":"xai/grok-4.6","effort":"high"}],"defaultPin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}'
+
+ALL_THREE_ELIGIBLE='{
+  "claude":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},
+  "codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},
+  "pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}
+}'
+
+class_routes() {  # <home> <class>
+  FM_ROUTE_HOME_OVERRIDE="$1" "$ROUTE" routes --class "$2" | sort | tr '\n' ' '
+}
 
 test_class_scoped_routes_narrow_to_that_class_pool() {
   local home out
-  home=$(make_home class-scope "$NARROW_CLASS_POOL")
+  home=$(make_home class-scope "$EXAMPLE_SHAPED_POOL")
   out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes | sort | tr '\n' ' ')
   [ "$out" = "claude codex pi-grok " ] || fail "full catalog wrong: $out"
 
-  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class designer | sort | tr '\n' ' ')
+  out=$(class_routes "$home" designer)
   [ "$out" = "claude codex " ] \
     || fail "designer's class-scoped routes must exclude the unrelated pi-grok: $out"
 
-  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class builder | sort | tr '\n' ' ')
-  [ "$out" = "codex pi-grok " ] || fail "builder's class-scoped routes wrong: $out"
+  out=$(class_routes "$home" researcher)
+  [ "$out" = "claude codex pi-grok " ] \
+    || fail "an unpinned all-enabled pool must still offer every route: $out"
 
-  # A class with no rule of its own falls back to the default pool, exactly
-  # as fm-dispatch-resolve.sh does.
-  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class nosuchclass | sort | tr '\n' ' ')
-  [ "$out" = "codex " ] || fail "an unmatched class must fall back to the default pool: $out"
-
-  # Acquire scoped to that class can then only ever pick a route the class
-  # actually has a member for.
-  seed_routes "$home" '{
-    "claude":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},
-    "codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},
-    "pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}
-  }'
-  out=$(acquire "$home" d1 d1 g1 "$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class designer | jq -R . | jq -cs .)")
-  case "$(result_field "$out" route_id)" in
-    claude|codex) : ;;
-    *) fail "a designer acquire must never select a route outside its own pool: $out" ;;
-  esac
+  # An unmatched class falls back to the default pool, which is pinned to
+  # codex, so it offers exactly codex.
+  out=$(class_routes "$home" nosuchclass)
+  [ "$out" = "codex " ] \
+    || fail "an unmatched class must fall back to the default pool's pin: $out"
   pass "routes --class narrows candidates to that class's own approved pool"
+}
+
+# A pinned pool always resolves to its pin's exact tuple, so offering any
+# other route can only make the rotation break the pin. Candidates must be
+# exactly the pinned route, every single call, no matter how far the tie
+# cursor has advanced.
+test_pinned_class_offers_only_its_pinned_route() {
+  local home out i picked
+  home=$(make_home pinned-class "$EXAMPLE_SHAPED_POOL")
+  out=$(class_routes "$home" builder)
+  [ "$out" = "codex " ] \
+    || fail "a pinned class must offer exactly its pinned route, got: $out"
+
+  seed_routes "$home" "$ALL_THREE_ELIGIBLE"
+  # Advance the tie cursor well past every catalog route: a pinned class must
+  # land on codex every time, never rotate onto claude or pi-grok.
+  for i in 1 2 3 4 5 6; do
+    picked=$(result_field "$(acquire "$home" "b$i" "b$i" g1 \
+      "$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class builder | jq -R . | jq -cs .)")" route_id)
+    [ "$picked" = codex ] \
+      || fail "acquire #$i for a codex-pinned builder selected '$picked', which breaks the pin"
+  done
+  pass "a pinned class offers only its pinned route, across every tie-cursor rotation"
+}
+
+# A route whose only member in this class's pool is switched off can never be
+# resolved to, so offering it as a candidate could only zero the real pool.
+test_disabled_only_route_is_never_offered_as_a_candidate() {
+  local home out i picked
+  home=$(make_home disabled-member "$EXAMPLE_SHAPED_POOL")
+  out=$(class_routes "$home" tester)
+  [ "$out" = "claude codex " ] \
+    || fail "tester's disabled-only pi-grok member must never be offered: $out"
+
+  seed_routes "$home" "$ALL_THREE_ELIGIBLE"
+  for i in 1 2 3 4 5 6; do
+    picked=$(result_field "$(acquire "$home" "t$i" "t$i" g1 \
+      "$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes --class tester | jq -R . | jq -cs .)")" route_id)
+    case "$picked" in
+      claude|codex) : ;;
+      *) fail "acquire #$i for tester selected '$picked', whose only pool member is switched off" ;;
+    esac
+  done
+  pass "a route whose only class-pool member is disabled is never offered as a candidate"
 }
 
 test_different_owner_reusing_assignment_id_refused() {
@@ -506,6 +556,8 @@ test_zero_prepaid_grok_credits_alone_is_unknown_not_exhausted
 test_idempotent_acquire_and_finish
 test_closed_assignment_never_reauthorizes
 test_class_scoped_routes_narrow_to_that_class_pool
+test_pinned_class_offers_only_its_pinned_route
+test_disabled_only_route_is_never_offered_as_a_candidate
 test_different_owner_reusing_assignment_id_refused
 test_launch_failure_finish_excludes_route_immediately
 test_abandoned_owner_does_not_block_fewest_pending

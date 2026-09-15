@@ -132,8 +132,14 @@ fm-route.sh enable --route <id>
 ```
 
 `routes` lists the derived catalog (see "Route ids" above).
-`routes --class <class>` narrows that list to only the route ids that one class's own approved pool covers, derived from exactly the pool `bin/fm-dispatch-resolve.sh` resolves from (`rules[].use` for a named class, `.default` when the class names no rule).
-A class-based caller must pass THIS list as `acquire`'s candidates, never the full catalog: `acquire` selecting a route the class has no member for would turn every real pool member into an `--exclude-routes` entry and refuse an otherwise healthy launch.
+`routes --class <class>` narrows that list to only the route ids that one class can actually RESOLVE to, mirroring `bin/fm-dispatch-resolve.sh`'s own meaning against the identical config:
+
+- the pool is `rules[].use` for a class that names a rule, `.default` when it does not;
+- a pool member with `"enabled": false` is never selectable, so a route whose only member in this pool is disabled is never offered;
+- a pinned pool (`pin` for a class, `defaultPin` for the default pool) always resolves to the pin's exact tuple and never round-robins, so its candidate list is exactly the pinned member's own route.
+
+A pinned pool still lists its pin's route even when that pin is itself switched off, so `fm-dispatch-resolve.sh`'s deliberate switched-off-pin refusal still happens there instead of being converted into a silent fallback onto another route.
+A class-based caller must pass THIS list as `acquire`'s candidates, never the full catalog: `acquire` selecting a route the class cannot resolve to would turn every usable pool member into an `--exclude-routes` entry and refuse an otherwise healthy launch.
 `group-for` is the single owner of the harness/model-to-route mapping; every other script (`bin/fm-dispatch-resolve.sh`'s `--exclude-routes`, `bin/fm-control.sh`'s relaunch admission) calls out to it rather than re-deriving the mapping.
 `disable`/`enable` write `config/route-disabled` at the canonical home: a manual disable always wins over `refresh`'s own recorded state and survives every subsequent refresh, and only an explicit `enable` clears it.
 
