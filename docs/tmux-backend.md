@@ -44,10 +44,27 @@ Verify setup by spawning a small task and confirming its `fm-<id>` window appear
 
 ## Current behavior and safety
 
+### Exact targets and recovery
+
+The shared resolver in [`bin/fm-tmux-lib.sh`](../bin/fm-tmux-lib.sh) proves exact session and window membership before reading a named target, then reads through its stable window or pane ID.
+Canonical `fm-<id>` names always mean whole windows, including names such as `fm-v1.0`.
+If that window is gone, `session:fm-v1.0` cannot select pane 0 of a live `fm-v1` sibling.
+To select a pane explicitly, use its stable `%<pane-id>` or a numeric window-and-pane selector.
+Numeric selectors such as `session:1.0` select pane 0 of window `1` only when no window is literally named `1.0`.
+Native relative window selectors such as `session:+1` and `session:-1` remain supported for explicit operator targets.
+
+Captures and explicit key sends resolve a stable pane ID before acting.
+Message submission keeps typing, Enter retries, and composer verification on the same resolved pane.
+Fresh spawns and relaunches likewise pin launch input to one pane while retaining the canonical window name in metadata.
+
+A missing named window, session, or server returns an empty current path.
+tmux relaunch recreates the recorded session and task window as needed at the recorded worktree.
+[`agent-control.md`](agent-control.md#transactional-relaunch) owns the relaunch transaction and its [refusal rules](agent-control.md#fail-closed-boundaries), including refusal of a present endpoint in the wrong directory.
+
 ### Agent liveness probe
 
 A target-existence check proves only that the pane exists.
-The deeper tmux agent-liveness probe first verifies exact window membership, then reads process names to distinguish a running harness from a bare idle shell.
+The deeper tmux agent-liveness probe uses the exact-target check above, then reads process names to distinguish a running harness from a bare idle shell.
 It classifies recognized Claude, Codex, OpenCode, omp, Pi, pi-signed, Grok, Kimi, Cursor, and Muse process identities as `alive`, common shells as `dead`, an authoritatively absent window as `missing`, unreadable state as `unreadable`, and every other process as `ambiguous`.
 Only `dead` and `missing` authorize recovery because a false dead result could launch a duplicate agent.
 
@@ -113,6 +130,8 @@ Without that baseline, an `unknown` verdict is preserved untouched, so a busy-lo
 
 ```sh
 tests/fm-backend-tmux-smoke.test.sh
+tests/fm-control-relaunch.test.sh
+tests/fm-teardown-gone-window-reap.test.sh
 tests/fm-tmux-agent-liveness.test.sh
 tests/fm-harness-liveness-drift-live-e2e.test.sh
 tests/fm-composer-ghost.test.sh

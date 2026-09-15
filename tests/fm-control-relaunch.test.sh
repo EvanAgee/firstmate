@@ -60,14 +60,16 @@ case "${1:-}" in
   send-keys)
     shift
     literal=0
+    target=
     while [ $# -gt 0 ]; do
       case "$1" in
-        -t) shift 2 ;;
+        -t) target=$2; shift 2 ;;
         -l) literal=1; shift ;;
         *) break ;;
       esac
     done
     payload=${1:-}
+    printf '%s\n' "$target" >> "$D/targets"
     if [ "$literal" = 1 ]; then
       printf '%s\n' "$payload" >> "$D/literal"
       case "$payload" in
@@ -98,6 +100,7 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
+        *pane_id*) printf '%%1\n'; exit 0 ;;
         *cursor_y*) printf '1\n'; exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*)
@@ -110,7 +113,33 @@ case "${1:-}" in
     done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
+  has-session) [ -f "$D/server" ]; exit $? ;;
+  list-windows)
+    if [ ! -f "$D/server" ]; then
+      printf 'no server running on fake socket\n' >&2
+      exit 1
+    fi
+    [ -f "$D/windows" ] && cat "$D/windows"
+    exit 0 ;;
+  new-window|new-session)
+    op=$1
+    shift
+    name=
+    cwd=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -n) name=$2; shift 2 ;;
+        -c) cwd=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ "$op" != new-session ] || { : > "$D/server"; : > "$D/windows"; }
+    [ -f "$D/server" ] || exit 1
+    printf '%s\n' "$name" >> "$D/windows"
+    printf '%s' "$cwd" > "$D/cwd"
+    printf '@fake\n'
+    exit 0 ;;
+  set-window-option) exit 0 ;;
 esac
 exit 0
 SH
@@ -130,6 +159,7 @@ new_case() {
   : > "$dir/fake/keys"
   printf 'claude' > "$dir/fake/command"
   printf 'claude' > "$dir/fake/becomes"
+  : > "$dir/fake/server"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
   make_tmux_stub "$dir"
   printf '%s\n' "$dir"
@@ -1375,6 +1405,39 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
   pass "fm-spawn --relaunch: refuses to start a replacement outside the copy holding the work"
 }
 
+test_relaunch_recreates_a_missing_tmux_window() {
+  local dir out rc
+  dir=$(new_case missing-window rl37.0)
+  add_ship_task "$dir" rl37.0 claude
+  : > "$dir/fake/windows"
+  out=$(run_control "$dir" rl37.0 relaunch --note "continue after window loss"); rc=$?
+  expect_code 0 "$rc" "a missing tmux window should be recreated"$'\n'"$out"
+  assert_contains "$out" "relaunched rl37.0" "the control command should report the relaunch"
+  assert_grep "fm-rl37.0" "$dir/fake/windows" "the recorded window name should be recreated"
+  [ "$(cat "$dir/fake/cwd")" = "$dir/wt" ] \
+    || fail "the recreated window should start in the recorded worktree"
+  [ "$(sort -u "$dir/fake/targets")" = '%1' ] \
+    || fail "every relaunch send should use the resolved pane ID"
+  [ "$(meta_field "$dir" rl37.0 window)" = 'fmses:fm-rl37.0' ] \
+    || fail "relaunch should retain the canonical window name in metadata"
+  pass "fm-control relaunch: a missing tmux window is recreated in the recorded worktree"
+}
+
+test_relaunch_recreates_a_missing_tmux_server() {
+  local dir out rc
+  dir=$(new_case missing-server rl38)
+  add_ship_task "$dir" rl38 claude
+  rm -f "$dir/fake/server" "$dir/fake/windows"
+  out=$(run_control "$dir" rl38 relaunch --note "continue after server loss"); rc=$?
+  expect_code 0 "$rc" "a missing tmux server should be recreated"$'\n'"$out"
+  assert_contains "$out" "relaunched rl38" "the control command should report the relaunch"
+  [ -f "$dir/fake/server" ] || fail "the missing tmux server should be recreated"
+  assert_grep "fm-rl38" "$dir/fake/windows" "the recorded window name should be recreated"
+  [ "$(cat "$dir/fake/cwd")" = "$dir/wt" ] \
+    || fail "the recreated server window should start in the recorded worktree"
+  pass "fm-control relaunch: a missing tmux server is recreated in the recorded worktree"
+}
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_preserves_durable_task_metadata
 test_relaunch_serializes_concurrent_durable_metadata_publication
@@ -1423,3 +1486,5 @@ test_spawn_relaunch_refuses_a_live_agent
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
+test_relaunch_recreates_a_missing_tmux_window
+test_relaunch_recreates_a_missing_tmux_server

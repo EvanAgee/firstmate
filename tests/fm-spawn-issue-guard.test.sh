@@ -31,8 +31,21 @@ case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows)
     for w in ${FM_FAKE_WINDOWS:-}; do printf '%s\n' "$w"; done
+    [ ! -f "$0.windows" ] || cat "$0.windows"
     exit 0 ;;
-  has-session|new-session|new-window|kill-window)
+  new-window)
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" > "$0.windows"; break; }
+      shift
+    done
+    if [ -n "${FM_FAKE_WINDOW_LOG:-}" ]; then printf '%s\n' new-window >> "$FM_FAKE_WINDOW_LOG"; fi
+    printf '@fake\n'
+    exit 0 ;;
+  kill-window)
+    rm -f "$0.windows"
+    if [ -n "${FM_FAKE_WINDOW_LOG:-}" ]; then printf '%s\n' "$1" >> "$FM_FAKE_WINDOW_LOG"; fi
+    exit 0 ;;
+  has-session|new-session)
     if [ -n "${FM_FAKE_WINDOW_LOG:-}" ]; then printf '%s\n' "$1" >> "$FM_FAKE_WINDOW_LOG"; fi
     exit 0 ;;
   send-keys) exit 0 ;;

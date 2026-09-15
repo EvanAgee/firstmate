@@ -164,8 +164,14 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|send-keys) exit 0 ;;
+  list-windows) [ ! -f "$0.windows" ] || cat "$0.windows"; exit 0 ;;
+  new-window)
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" >> "$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
+  has-session|new-session|send-keys) exit 0 ;;
 esac
 exit 0
 SH
@@ -226,8 +232,8 @@ test_spawn_isolation_abort() {
 #     collides under base-index 1;
 #   - the window id is captured (-P -F #{window_id}) and automatic-rename/allow-rename
 #     are disabled so the fm-<id> name survives treehouse cd'ing into the worktree;
-#   - the treehouse-get send-keys and the worktree wait loop target that stable
-#     window id, never the (possibly-renamed) name - a lost name would let
+#   - pane resolution targets that stable window id, then treehouse-get and the
+#     worktree wait loop target the resolved pane id. A lost name would let
 #     display-message fall back to the active client's window and misread firstmate's
 #     OWN pane as the worktree, tangling a hook into the primary checkout.
 make_spawn_record_fakebin() {
@@ -238,12 +244,18 @@ make_spawn_record_fakebin() {
 set -u
 [ -n "${FM_TMUX_REC:-}" ] && printf 'tmux %s\n' "$*" >> "$FM_TMUX_REC"
 case "$*" in
+  *"#{pane_id}"*) printf '%%1\n'; exit 0 ;;
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  new-window) printf '%s\n' "@spawnwid"; exit 0 ;;
-  list-windows) exit 0 ;;
+  new-window)
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" >> "$0.windows"; break; }
+      shift
+    done
+    printf '%s\n' "@spawnwid"; exit 0 ;;
+  list-windows) [ ! -f "$0.windows" ] || cat "$0.windows"; exit 0 ;;
   has-session|new-session|send-keys|set-window-option) exit 0 ;;
 esac
 exit 0
@@ -282,9 +294,9 @@ test_spawn_tmux_window_construction() {
   assert_contains "$out" "spawned rec-win-gg7" "recording spawn did not report success"
 
   # Bug 1 fix: append-form window creation (trailing colon on the session target).
-  assert_grep "new-window -dP -F #{window_id} -t firstmate: -n fm-rec-win-gg7" "$rec" \
+  assert_grep "new-window -dP -F #{window_id} -t =firstmate: -n fm-rec-win-gg7" "$rec" \
     "new-window must append at the session (trailing colon) and capture the window id"
-  assert_no_grep "new-window -dP -F #{window_id} -t firstmate -n" "$rec" \
+  assert_no_grep "new-window -dP -F #{window_id} -t =firstmate -n" "$rec" \
     "new-window must not target the bare session name (collides under base-index 1)"
 
   # Bug 2 fix (a): pin the window name against automatic-rename / allow-rename.
@@ -293,13 +305,15 @@ test_spawn_tmux_window_construction() {
   assert_grep "set-window-option -t @spawnwid allow-rename off" "$rec" \
     "must disable allow-rename on the spawned window"
 
-  # Bug 2 fix (b): treehouse-get and the worktree wait loop target the stable id.
-  assert_grep "send-keys -t @spawnwid treehouse get Enter" "$rec" \
-    "treehouse get must be sent to the stable window id"
-  assert_grep "display-message -p -t @spawnwid #{pane_current_path}" "$rec" \
-    "the worktree wait loop must query the stable window id, not the name"
+  assert_grep "display-message -p -t @spawnwid #{pane_id}" "$rec" \
+    "spawn must resolve the pane from the created window id"
+  # Bug 2 fix (b): treehouse-get and the worktree wait loop target the resolved pane id.
+  assert_grep "send-keys -t %1 treehouse get Enter" "$rec" \
+    "treehouse get must be sent to the resolved pane id"
+  assert_grep "display-message -p -t %1 #{pane_current_path}" "$rec" \
+    "the worktree wait loop must query the resolved pane id"
 
-  pass "fm-spawn: appends windows by session-colon, pins the name, and targets the window id"
+  pass "fm-spawn: appends windows by session-colon, pins the name, and resolves the pane from the window id"
 }
 
 test_lib_classification

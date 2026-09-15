@@ -27,7 +27,7 @@ COMPOSER="${FM_FAKE_COMPOSER:?}"
 case "${1:-}" in
   display-message)
     for a in "$@"; do
-      case "$a" in *cursor_y*) printf '%s\n' "${FM_FAKE_CURSOR_Y:-1}"; exit 0 ;; esac
+      case "$a" in *pane_id*) printf '%%1\n'; exit 0 ;; *cursor_y*) printf '%s\n' "${FM_FAKE_CURSOR_Y:-1}"; exit 0 ;; esac
     done
     exit 0 ;;
   capture-pane)

@@ -48,7 +48,7 @@ set -u
 case "${1:-}" in
   display-message)
     for a in "$@"; do case "$a" in *cursor_y*) printf '%s\n' "${FM_FAKE_CY:-0}"; exit 0 ;; esac; done
-    printf 'fakepane\n'; exit 0 ;;
+    printf '%%1\n'; exit 0 ;;
   capture-pane)
     has_e=0
     start= end= prev=
@@ -73,7 +73,7 @@ case "${1:-}" in
       LC_ALL=C awk '{gsub(/\033\[[0-9;]*m/, ""); print}' "$f" 2>/dev/null
     fi
     exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) printf '@1 win\n'; exit 0 ;;
 esac
 exit 1
 SH

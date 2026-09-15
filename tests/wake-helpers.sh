@@ -63,7 +63,10 @@ make_case() {
 set -u
 if [ "${1:-}" = "list-windows" ]; then
   if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
-    printf '%s\n' "${FM_FAKE_TMUX_WINDOW#*:}"
+    case "$*" in
+      *window_id*) printf '@1 %s\n' "${FM_FAKE_TMUX_WINDOW#*:}" ;;
+      *) printf '%s\n' "$FM_FAKE_TMUX_WINDOW" ;;
+    esac
   fi
   exit 0
 fi
@@ -75,6 +78,7 @@ if [ "${1:-}" = "capture-pane" ]; then
 fi
 if [ "${1:-}" = "display-message" ]; then
   case "$*" in
+    *pane_id*) printf '%%1\n'; exit 0 ;;
     *pane_current_command*) printf '%s\n' "${FM_FAKE_TMUX_CURRENT_COMMAND:-}"; exit 0 ;;
   esac
 fi
@@ -153,7 +157,12 @@ case "${1:-}" in
     [ "$_print" = 1 ] && printf 'fakepane\n'
     exit 0 ;;
   list-windows)
-    [ -n "${FM_FAKE_TMUX_WINDOW:-}" ] && printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
+    if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
+      case "$*" in
+        *session_name*) printf '%s\n' "$FM_FAKE_TMUX_WINDOW" ;;
+        *) printf '%s\n' "${FM_FAKE_TMUX_WINDOW#*:}" ;;
+      esac
+    fi
     exit 0 ;;
   capture-pane)
     # Honor a single-line band capture (-S N -E M, both non-negative) for the
@@ -241,7 +250,7 @@ case "${1:-}" in
     [ "$print" = 1 ] && printf 'fakepane\n'
     exit 0 ;;
   capture-pane) cat "$COMPOSER" 2>/dev/null; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) printf 'win\n'; exit 0 ;;
   send-keys)
     shift
     text=""; is_enter=0; lit=0

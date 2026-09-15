@@ -26,18 +26,52 @@ make_fake_tmux() {
 #!/usr/bin/env bash
 set -u
 case "${1:-}" in
-  has-session|new-session|new-window|send-keys|kill-window)
+  new-window)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -n ] || { printf '%s\n' "$2" >> "$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'
+    exit 0
+    ;;
+  has-session|new-session|send-keys)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
     exit 0
     ;;
-  list-windows)
-    if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
-      printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
+  kill-window)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    target=
+    while [ "$#" -gt 1 ]; do
+      [ "$1" != -t ] || { target=$2; break; }
+      shift
+    done
+    if [ -n "$target" ] && [ -f "$0.windows" ]; then
+      window=${target##*:}
+      window=${window#=}
+      awk -v window="$window" '$0 != window' "$0.windows" > "$0.windows.next"
+      mv "$0.windows.next" "$0.windows"
     fi
     exit 0
     ;;
-  display-message)
+  list-windows)
     case "$*" in
+      *window_id*)
+        [ "${3:-}" = =firstmate ] || exit 0
+        [ ! -f "$0.windows" ] || sed 's/^/@1 /' "$0.windows"
+        exit 0
+        ;;
+    esac
+    if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
+      printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
+    fi
+    [ ! -f "$0.windows" ] || cat "$0.windows"
+    exit 0
+    ;;
+  display-message)
+    printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    case "$*" in
+      *'#{pane_id}'*) printf '%%1\n' ;;
       *'#{cursor_y}'*) printf '0\n' ;;
       *) printf 'firstmate\n' ;;
     esac

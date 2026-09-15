@@ -633,7 +633,7 @@ case "${1:-}" in
   send-keys) exit 0 ;;
   display-message)
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
-    printf 'fakepane\n'; exit 0 ;;
+    printf '%%1\n'; exit 0 ;;
   capture-pane)
     start= end=
     while [ $# -gt 0 ]; do
@@ -649,7 +649,7 @@ case "${1:-}" in
       printf '╭────╮\n│    │\n╰────╯\n'
     fi
     exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) printf '@1 win\n'; exit 0 ;;
 esac
 exit 0
 SH
@@ -664,12 +664,6 @@ run_send_case() {  # <bin-root> <fakebin> <log> <home> -- <send args...>
   env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$bin" FM_HOME="$home" FM_TMUX_LOG="$log" \
     FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \
     "$bin/bin/fm-send.sh" "$@" >/dev/null 2>&1
-}
-
-strip_send_preflight() {  # <log>
-  local preflight
-  preflight=$'tmux\x1fdisplay-message\x1f-p\x1f-t\x1fsess:win\x1f#{pane_id}'
-  awk -v preflight="$preflight" '$0 != preflight { print }' "$1"
 }
 
 # The byte-identical old-vs-new tmux log comparison this test used to run
@@ -689,9 +683,10 @@ test_send_tmux_contract() {
   run_send_case "$ROOT" "$fb" "$log" "$home" -- "sess:win" --key Escape
   rc=$?
   expect_code 0 "$rc" "fm-send --key should succeed against a live fake pane"
-  assert_contains "$(cat "$log")" $'\x1f''display-message'$'\x1f''-p'$'\x1f''-t'$'\x1f''sess:win'$'\x1f''#{pane_id}' \
+  assert_contains "$(cat "$log")" $'\x1f''display-message'$'\x1f''-p'$'\x1f''-t'$'\x1f''@1'$'\x1f''#{pane_id}' \
     "fm-send --key did not verify the explicit tmux target before sending"
-  assert_contains "$(cat "$log")" $'\x1f''Escape' "fm-send --key did not send the named key"
+  assert_contains "$(cat "$log")" $'\x1f''send-keys'$'\x1f''-t'$'\x1f''%1'$'\x1f''Escape' \
+    "fm-send --key did not send the named key through the resolved pane"
   assert_not_contains "$(cat "$log")" $'\x1f''-l'$'\x1f' "fm-send --key must not type literal text"
 
   # Case 2: plain text - typed literally exactly once, submitted with Enter,
@@ -699,7 +694,7 @@ test_send_tmux_contract() {
   run_send_case "$ROOT" "$fb" "$log" "$home" -- "sess:win" hello captain
   rc=$?
   expect_code 0 "$rc" "fm-send plain text should confirm against the empty fake composer"
-  assert_contains "$(cat "$log")" $'\x1f''send-keys'$'\x1f''-t'$'\x1f''sess:win'$'\x1f''-l'$'\x1f''hello captain' \
+  assert_contains "$(cat "$log")" $'\x1f''send-keys'$'\x1f''-t'$'\x1f''%1'$'\x1f''-l'$'\x1f''hello captain' \
     "fm-send did not send the literal text with send-keys -l"
   [ "$(grep -c $'\x1f''-l'$'\x1f' "$log")" -eq 1 ] \
     || fail "fm-send must type the text exactly once (Enter-only retries, never a retype)"
@@ -711,7 +706,7 @@ test_send_tmux_contract() {
   run_send_case "$ROOT" "$fb" "$log" "$home" -- "sess:win" /some-skill
   rc=$?
   expect_code 0 "$rc" "fm-send /skill should confirm against the empty fake composer"
-  assert_contains "$(cat "$log")" $'\x1f''send-keys'$'\x1f''-t'$'\x1f''sess:win'$'\x1f''-l'$'\x1f''/some-skill' \
+  assert_contains "$(cat "$log")" $'\x1f''send-keys'$'\x1f''-t'$'\x1f''%1'$'\x1f''-l'$'\x1f''/some-skill' \
     "fm-send /skill did not type the literal slash command"
   [ "$(grep -c $'\x1f''-l'$'\x1f' "$log")" -eq 1 ] \
     || fail "fm-send /skill must type the text exactly once"
@@ -730,6 +725,8 @@ make_peek_fakebin() {  # <dir> <capture-output> -> echoes fakebin dir
 set -u
 { printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
 case "\${1:-}" in
+  list-windows) printf '@1 win\\n' ;;
+  display-message) printf '%%1\\n' ;;
   capture-pane) cat "$dir/capture.out" ;;
 esac
 exit 0
@@ -759,12 +756,10 @@ test_peek_conformance_old_vs_new() {
 
   [ "$out_old" = "$out_new" ] || fail "fm-peek output differs old vs new"$'\n'"--- old ---"$'\n'"$out_old"$'\n'"--- new ---"$'\n'"$out_new"
   [ "$out_new" = "$payload" ] || fail "fm-peek did not pass through the fake capture-pane output exactly"
-  diff -u "$log_old" "$log_new" > "$TMP_ROOT/peek-diff.txt" 2>&1 \
-    || fail "fm-peek: tmux command log differs old vs new"$'\n'"$(cat "$TMP_ROOT/peek-diff.txt")"
-  assert_contains "$(cat "$log_new")" $'\x1f''capture-pane'$'\x1f''-p'$'\x1f''-t'$'\x1f''sess:win'$'\x1f''-S'$'\x1f''-25' \
-    "fm-peek did not call capture-pane -p -t <target> -S -<lines> exactly"
+  assert_contains "$(cat "$log_new")" $'\x1f''capture-pane'$'\x1f''-p'$'\x1f''-t'$'\x1f''%1'$'\x1f''-S'$'\x1f''-25' \
+    "fm-peek did not capture the resolved pane with the requested line limit"
 
-  pass "fm-peek.sh: capture-pane invocation and output are byte-identical old vs new"
+  pass "fm-peek.sh: plain output is unchanged and capture uses the resolved pane ID"
 }
 
 # --- old vs new: fm-spawn.sh --------------------------------------------------
@@ -780,7 +775,13 @@ case "\${1:-}" in
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) [ ! -f "\$0.windows" ] || cat "\$0.windows"; exit 0 ;;
+  new-window)
+    while [ "\$#" -gt 1 ]; do
+      [ "\$1" != -n ] || { printf '%s\n' "\$2" >> "\$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
 esac
 exit 0
 SH
@@ -850,7 +851,13 @@ case "\${1:-}" in
       exit 0
     ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) [ ! -f "\$0.windows" ] || cat "\$0.windows"; exit 0 ;;
+  new-window)
+    while [ "\$#" -gt 1 ]; do
+      [ "\$1" != -n ] || { printf '%s\n' "\$2" >> "\$0.windows"; break; }
+      shift
+    done
+    printf '@fake\n'; exit 0 ;;
 esac
 exit 0
 SH

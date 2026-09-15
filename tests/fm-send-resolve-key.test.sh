@@ -61,9 +61,15 @@ case "${1:-}" in
     exit 0 ;;
   display-message)
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
-    printf 'fakepane\n'; exit 0 ;;
+    printf '%%1\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows)
+    printf '@1 win\n@2 elsewhere\n'
+    if [ -n "${FM_HOME:-}" ]; then
+      sed -n 's/^window=[^:]*://p' "$FM_HOME"/state/*.meta 2>/dev/null \
+        | awk '{ print "@" (NR + 2) " " $0 }'
+    fi
+    exit 0 ;;
 esac
 exit 0
 SH

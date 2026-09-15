@@ -39,6 +39,40 @@ PANE="$TMP_ROOT/pane.txt"
 ALPHA_ORIGIN=
 BETA_ORIGIN=
 
+test_fake_tmux_create_kill_relaunch_preserves_sibling() {
+  local fakebin log inventory remaining
+  fakebin=$(make_fake_tmux "$TMP_ROOT/fake-window-lifecycle")
+  log="$TMP_ROOT/fake-window-lifecycle/tmux.log"
+  inventory="$fakebin/tmux.windows"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_LOG="$log" bash -s -- "$ROOT" "$TMP_ROOT" <<'SH' \
+    || fail "production tmux create-kill-relaunch sequence failed"
+    set -u
+    root=$1
+    tmp_root=$2
+    # shellcheck source=bin/fm-backend.sh disable=SC1091
+    . "$root/bin/fm-backend.sh"
+    fm_backend_source tmux
+
+    fm_backend_tmux_create_task firstmate fm-design "$tmp_root" >/dev/null
+    fm_backend_tmux_create_task firstmate fm-design.0 "$tmp_root" >/dev/null
+    fm_backend_kill tmux firstmate:fm-design
+    remaining=$(tmux list-windows -t firstmate -F '#{window_name}')
+    if [ "$remaining" != fm-design.0 ]; then
+      printf 'fake kill-window did not preserve only the sibling: %s\n' "$remaining" >&2
+      exit 1
+    fi
+    fm_backend_tmux_create_task firstmate fm-design "$tmp_root" >/dev/null
+SH
+
+  remaining=$(PATH="$fakebin:$PATH" FM_FAKE_TMUX_LOG="$log" tmux list-windows -t firstmate -F '#{window_name}')
+  [ "$remaining" = $'fm-design.0\nfm-design' ] || fail "fake relaunch inventory is wrong: $remaining"
+  assert_grep 'kill-window -t =firstmate:=fm-design' "$log" "production kill did not send the expected exact-name target"
+  [ "$(grep -Fxc 'fm-design' "$inventory")" -eq 1 ] || fail "fake relaunch did not recreate the target exactly once"
+  [ "$(grep -Fxc 'fm-design.0' "$inventory")" -eq 1 ] || fail "fake relaunch disturbed the similarly named sibling"
+  pass "fake tmux: create, kill, and relaunch preserve the sibling inventory"
+}
+
 # --- shared world + seed ----------------------------------------------------
 setup_world() {
   mkdir -p "$HOME_DIR/projects" "$HOME_DIR/data" "$HOME_DIR/state"
@@ -145,7 +179,8 @@ phase_send() {
   # design is a kind=secondmate target, so the request is prefixed with the
   # from-firstmate marker (bin/fm-marker-lib.sh): the send targets the meta window
   # AND carries the marker label, and the original payload still follows it.
-  assert_grep 'send-keys -t firstmate:fm-design -l [fm-from-firstmate]' "$LOG" "send did not use the window recorded in this home's meta, or did not mark the secondmate request"
+  assert_grep 'display-message -p -t @1 #{pane_id}' "$LOG" "send did not resolve the task window to a pane"
+  assert_grep 'send-keys -t %1 -l [fm-from-firstmate]' "$LOG" "send did not use the window recorded in this home's meta, or did not mark the secondmate request"
   assert_grep 'route this work' "$LOG" "the original request text did not survive the marker"
   assert_no_grep 'send-keys -t other-session:fm-design' "$LOG" "send targeted a foreign same-named window"
   pass "send: a bare fm-<id> secondmate routes to the meta window with the from-firstmate marker"
@@ -196,9 +231,9 @@ EOF
 }
 
 phase_recovery() {
-  # Simulate a restart: drop the live meta, then respawn from the registry +
-  # persistent home (no explicit home argument).
-  rm -f "$HOME_DIR/state/design.meta"
+  # Simulate losing the server and live metadata, then respawn from the
+  # registry and persistent home without an explicit home argument.
+  rm -f "$HOME_DIR/state/design.meta" "$FAKEBIN/tmux.windows"
   PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
     "$ROOT/bin/fm-spawn.sh" design "echo relaunch" --secondmate >/dev/null 2>&1 \
     || fail "recovery respawn failed"
@@ -225,6 +260,7 @@ phase_teardown() {
   pass "teardown: removes the home, then clears meta and the registry route"
 }
 
+test_fake_tmux_create_kill_relaunch_preserves_sibling
 setup_world
 phase_seed
 phase_spawn

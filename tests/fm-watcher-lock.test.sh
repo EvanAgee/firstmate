@@ -539,22 +539,23 @@ test_arm_self_eviction_is_loud_without_successor() {
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
   mark_pr_check_migration_complete "$state"
-  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" > "$armout" &
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=0.2 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=10 "$WATCH_ARM" > "$armout" &
   armpid=$!
   i=0
-  while [ "$i" -lt 80 ]; do
+  while [ "$i" -lt 200 ]; do
     grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break
     sleep 0.1
     i=$((i + 1))
   done
   watcher_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
-  grep -qF "watcher: started pid=$watcher_pid" "$armout" || fail "arm did not start before self-eviction check"
+  grep -qF "watcher: started pid=$watcher_pid" "$armout" || fail "arm did not start before self-eviction check: $(cat "$armout")"
 
   # A live but identity-mismatched replacement lock makes the owned watcher
   # self-evict normally. With no verified successor, the arm must turn that
   # otherwise clean empty close into the typed nonzero failure.
   printf '%s\n' "$$" > "$state/.watch.lock/pid"
-  wait_for_exit "$armpid" 80
+  # Allow the ten-second successor confirmation window to expire before cleanup.
+  wait_for_exit "$armpid" 200
   status=$?
   [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "self-evicted arm did not fail nonzero (status $status)"
   grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$armout" || fail "self-evicted arm omitted the typed cycle-end failure"

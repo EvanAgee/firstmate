@@ -141,7 +141,11 @@ LOG_VERB=$(status_line_verb "$LOG_LINE")
 # pane_readable is consulted ONLY in the no-run fallback below. The run-step path
 # stays authoritative regardless of pane liveness - judge by the run-step, not the
 # shell - so a finished crew whose endpoint has closed still reports its run-step
-# state (e.g. done) instead of being masked as unknown. Backend-aware
+# state (e.g. done) instead of being masked as unknown. The tmux arm reads
+# through fm_tmux_display_message, which proves the named window exists first:
+# a raw display-message answers for the client's current window when the target
+# window is gone, so a dead endpoint would otherwise read as readable.
+# Backend-aware
 # (fm_backend_of_meta defaults absent backend= to tmux, the P1 contract): a
 # herdr task is read through fm_backend_capture instead of a bare tmux probe.
 TASK_BACKEND=$(fm_backend_of_meta "$META")
@@ -149,7 +153,7 @@ BACKEND_TARGET=$(fm_backend_target_of_meta "$META")
 EXPECTED_LABEL="fm-$ID"
 pane_readable() {  # <target>
   case "$TASK_BACKEND" in
-    tmux) tmux display-message -p -t "$1" '#{pane_id}' >/dev/null 2>&1 ;;
+    tmux) [ -n "$(fm_tmux_display_message "$1" '#{pane_id}')" ] ;;
     *) fm_backend_capture "$TASK_BACKEND" "$1" 1 "$EXPECTED_LABEL" >/dev/null 2>&1 ;;
   esac
 }

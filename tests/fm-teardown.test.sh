@@ -2284,6 +2284,14 @@ test_lsof_absent_reaps_tmux_process_group() {
   kill -0 "$pid" 2>/dev/null || fail "lsof-absent-process-group-reap: setup sleeper did not start"
   cat > "$case_dir/fakebin/tmux" <<EOF
 #!/usr/bin/env bash
+# The named-window membership gate lists the session's windows before any
+# display-message read, so this stub must report the task's window as present.
+# Without it the recorded window reads as gone and the legitimate reap below
+# never runs.
+if [ "\${1:-}" = list-windows ]; then
+  printf '%s\n' 'fm-task-x1'
+  exit 0
+fi
 if [ "\${1:-}" = display-message ] && [ "\${*: -1}" = '#{pane_pid}' ]; then
   printf '%s\n' '$pid'
 fi
