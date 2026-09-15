@@ -221,7 +221,9 @@ fm_route_ids_from_config() {
 
 fm_route_is_known() {
   local r=$1 x
-  for x in $(fm_route_ids_from_config); do [ "$x" != "$r" ] || return 0; done
+  while IFS= read -r x; do
+    [ "$x" != "$r" ] || return 0
+  done < <(fm_route_ids_from_config)
   return 1
 }
 
@@ -357,7 +359,7 @@ fm_route_probe_pi_deepseek() {
     printf 'exhausted\tvercel-ai-gateway remaining fraction at or below zero\t%s\n' "$ts"
     return 0
   fi
-  if [ -z "$remaining_fraction" ] && [ -n "$balance" ] && awk -v b="$balance" 'BEGIN{exit !(b<=0)}' 2>/dev/null; then
+  if [ -n "$balance" ] && awk -v b="$balance" 'BEGIN{exit !(b<=0)}' 2>/dev/null; then
     printf 'exhausted\tvercel-ai-gateway balance at or below zero\t%s\n' "$ts"
     return 0
   fi
@@ -466,7 +468,8 @@ cmd_refresh() {
   gen=$(printf '%s' "$doc" | jq -r '.generation // 0')
   gen=$((gen + 1))
   routes_json='{}'
-  for r in $(fm_route_ids_from_config); do
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
     IFS=$'\t' read -r state reason ts < <(fm_route_probe "$r")
     if fm_route_manual_disabled "$r"; then
       manual=true
@@ -475,7 +478,7 @@ cmd_refresh() {
     fi
     routes_json=$(jq -c --arg r "$r" --arg state "$state" --arg reason "$reason" --arg ts "$ts" --argjson manual "$manual" \
       '.[$r] = {state:$state, reason:$reason, observedAt:$ts, manualDisabled:$manual}' <<<"$routes_json")
-  done
+  done < <(fm_route_ids_from_config)
   doc=$(jq -c --argjson gen "$gen" --argjson routes "$routes_json" '.generation=$gen | .routes=$routes' <<<"$doc")
   fm_route_write "$doc"
   fm_lock_release "$ROUTE_LOCK"

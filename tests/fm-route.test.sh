@@ -685,6 +685,72 @@ test_any_failed_limit_marks_deepseek_outage_regardless_of_position() {
   pass "any failed limit in omp's reports marks pi-deepseek outage, whatever its position"
 }
 
+# A spent balance and a spent fraction are two independent proofs of
+# exhaustion, not a fallback chain. A healthy fraction on one limit must not
+# mask a zero balance on another.
+test_a_zero_balance_limit_exhausts_even_beside_a_healthy_fraction() {
+  local state
+
+  state=$(deepseek_state_for_payload deepseek-balance-only-zero \
+    '{"generatedAt":1789485834620,"reports":[{"limits":[
+      {"status":"ok","amount":{"remainingFraction":0.9,"remaining":90,"unit":"usd"}},
+      {"status":"ok","amount":{"remaining":0,"unit":"usd"}}]}]}')
+  [ "$state" = exhausted ] \
+    || fail "a zero balance beside a healthy fraction must read exhausted, got $state"
+
+  state=$(deepseek_state_for_payload deepseek-fraction-only-zero \
+    '{"generatedAt":1789485834620,"reports":[{"limits":[
+      {"status":"ok","amount":{"remaining":90,"unit":"usd"}},
+      {"status":"ok","amount":{"remainingFraction":0,"unit":"usd"}}]}]}')
+  [ "$state" = exhausted ] \
+    || fail "a zero fraction beside a healthy balance must read exhausted, got $state"
+
+  state=$(deepseek_state_for_payload deepseek-both-healthy \
+    '{"generatedAt":1789485834620,"reports":[{"limits":[
+      {"status":"ok","amount":{"remainingFraction":0.9,"remaining":90,"unit":"usd"}},
+      {"status":"ok","amount":{"remaining":50,"unit":"usd"}}]}]}')
+  [ "$state" = eligible ] \
+    || fail "every bound healthy must stay eligible, got $state"
+
+  pass "any spent bound exhausts pi-deepseek, whether it is the fraction or the balance"
+}
+
+# Route ids come from operator-authored config, so one may contain a shell
+# glob character. It must stay the literal configured string: expanding it
+# against the caller's working directory would publish invented routes and
+# let arbitrary filenames pass the known-route check.
+test_a_glob_shaped_route_id_is_never_pathname_expanded() {
+  local home out state_keys acquire_out
+
+  home=$(make_home glob-route-id \
+    '{"rules":[{"class":"builder","use":[{"harness":"*","model":"default","effort":"high"}]}]}')
+  # Run from a directory that really does contain files a glob would match.
+  mkdir -p "$home/cwd"
+  : > "$home/cwd/AGENTS.md"
+  : > "$home/cwd/bin"
+
+  out=$( (cd "$home/cwd" && FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes) | tr '\n' ' ')
+  [ "$out" = "* " ] || fail "the catalog must list the literal configured route id, got: [$out]"
+
+  (cd "$home/cwd" && FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null) \
+    || fail "refresh failed for a glob-shaped route id"
+  state_keys=$(jq -cr '.routes | keys' "$home/state/route.json")
+  [ "$state_keys" = '["*"]' ] \
+    || fail "refresh published expanded filenames instead of the configured route: $state_keys"
+
+  # The known-route check must not accept a name that merely matches the glob.
+  acquire_out=$( (cd "$home/cwd" && acquire "$home" A1 w1 r1.1.1 '["bin"]') )
+  [ "$(result_field "$acquire_out" result)" = error ] \
+    || fail "a filename matching the glob was accepted as a route id: $acquire_out"
+
+  # The real configured id is still usable.
+  acquire_out=$( (cd "$home/cwd" && acquire "$home" A2 w2 r2.2.2 '["*"]') )
+  [ "$(result_field "$acquire_out" result)" != error ] \
+    || fail "the literal configured route id must still be a known route: $acquire_out"
+
+  pass "a glob-shaped route id stays literal and never expands against the working directory"
+}
+
 # ---------------------------------------------------------------------------
 # Real concurrent acquisition processes (not simulated sequential calls)
 # ---------------------------------------------------------------------------
@@ -732,6 +798,8 @@ test_pinned_researcher_route_preserved
 test_unapproved_route_id_refused
 test_refresh_runs_standalone_with_fake_bounded_readers
 test_any_failed_limit_marks_deepseek_outage_regardless_of_position
+test_a_zero_balance_limit_exhausts_even_beside_a_healthy_fraction
+test_a_glob_shaped_route_id_is_never_pathname_expanded
 test_real_concurrent_processes_split_evenly_no_lost_updates
 
 echo "# all fm-route tests passed"
