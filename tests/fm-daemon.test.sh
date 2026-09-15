@@ -1927,13 +1927,46 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+test_focused_dispatchers_validate_selectors_and_status() {
+  local dir suite selector status output
+  dir=$(make_supercase focused-dispatch)
+  cat > "$dir/test-env.sh" <<'SH'
+test_dispatch_success() { printf 'selected test passed\n'; }
+test_dispatch_failure() { return 23; }
+SH
+  for suite in fm-bearings-snapshot fm-crew-state fm-daemon fm-fleet-snapshot-view fm-watch-triage fm-watch-wedge-two-signal; do
+    for selector in test_missing_selector printf; do
+      output=$(env -u FM_TEST_DAEMON_SOURCED BASH_ENV="$dir/test-env.sh" bash "$ROOT/tests/$suite.test.sh" "$selector" 2>&1)
+      status=$?
+      [ "$status" -eq 2 ] || fail "$suite accepted unknown selector $selector: $status"
+      assert_contains "$output" "unknown test: $selector" "$suite did not identify the invalid selector"
+    done
+    output=$(env -u FM_TEST_DAEMON_SOURCED BASH_ENV="$dir/test-env.sh" bash "$ROOT/tests/$suite.test.sh" test_dispatch_failure test_dispatch_success 2>&1)
+    status=$?
+    [ "$status" -eq 23 ] || fail "$suite lost the selected test failure: $status"
+    assert_not_contains "$output" 'selected test passed' "$suite continued after the selected test failed"
+    output=$(env -u FM_TEST_DAEMON_SOURCED BASH_ENV="$dir/test-env.sh" bash "$ROOT/tests/$suite.test.sh" test_dispatch_success 2>&1)
+    status=$?
+    [ "$status" -eq 0 ] || fail "$suite rejected a successful selected test: $status"
+    assert_contains "$output" 'selected test passed' "$suite did not execute the selected test"
+  done
+  pass "all focused dispatchers reject unknown selectors and preserve test status"
+}
+
 if [ "$#" -gt 0 ]; then
   for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
     "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
   done
   exit 0
 fi
 
+test_focused_dispatchers_validate_selectors_and_status
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid

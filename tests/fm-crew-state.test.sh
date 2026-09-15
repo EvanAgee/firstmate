@@ -1525,7 +1525,13 @@ test_missing_run_head_falls_back_to_current_state() {
 
 if [ "$#" -gt 0 ]; then
   for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
     "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
   done
   exit 0
 fi

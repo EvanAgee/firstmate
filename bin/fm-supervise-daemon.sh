@@ -1244,13 +1244,17 @@ handle_durable_wakes() {  # <watcher-reason> <state>
   fi
 
   tab=$(printf '\t')
+  if ! sort -t "$tab" -k2,2n -o "$out" "$out"; then
+    rm -f "$out" "$err"
+    return 1
+  fi
   while IFS="$tab" read -r epoch sequence kind key payload rest; do
     case "$epoch" in ''|*[!0-9]*) continue ;; esac
     case "$sequence" in ''|*[!0-9]*) continue ;; esac
     case "$kind" in signal|stale|check|heartbeat) ;; *) continue ;; esac
     handle_wake "$payload" "$state" "$key" || { rm -f "$out" "$err"; return 1; }
     handled=$((handled + 1))
-  done < <(sort -t "$tab" -k2,2n "$out")
+  done < "$out"
   [ "$handled" -gt 0 ] || handle_wake "$fallback_reason" "$state"
 
   ack_through=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err" | tail -1)

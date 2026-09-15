@@ -847,10 +847,11 @@ test_declared_pause_with_live_agent_stays_none() {
 }
 
 poll_stalled_case() {
-  local dir=$1 win=$2 state key target pid deadline count recovery_token completed=0
+  local dir=$1 win=$2 state key target pid deadline count recovery_token sequence reason completed=0
   state="$dir/state"
   key=$(printf '%s' "$win" | tr ':/.' '___')
   target=$(( $(cat "$state/.count-$key" 2>/dev/null || echo 0) + 2 ))
+  sequence=$(cat "$state/.wake-queue.seq" 2>/dev/null || echo 0)
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
     FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
     FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
@@ -859,7 +860,19 @@ poll_stalled_case() {
   pid=$!
   deadline=$(( $(date +%s) + 60 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if ! kill -0 "$pid" 2>/dev/null; then completed=1; break; fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      reason=$(cat "$dir/watch.out")
+      if wait "$pid" && awk -F '\t' -v sequence="$sequence" -v reason="$reason" -v win="$win" '
+        $2 > sequence && $3 == "stale" && $5 == reason &&
+          ($4 == win || index($4, win "|pipeline-stall|") == 1) { found=1 }
+        END { exit !found }
+      ' "$state/.wake-queue" 2>/dev/null; then
+        completed=1
+        break
+      fi
+      fail "watcher exited before required polls or a new wake publication"
+      return 1
+    fi
     count=$(cat "$state/.count-$key" 2>/dev/null || echo 0)
     if [ "$count" -ge "$target" ] && [ ! -s "$state/.wake-queue" ]; then
       completed=1
@@ -1292,6 +1305,71 @@ test_generic_before_detailed_episodes_delivers_each_once() {
   [ "$(head -n 1 "$state/.subsuper-stalled-ps.generation")" = 1 ] || fail "older detailed row moved the delivery generation backward"
   [ "$(sed -n '2,$p' "$state/.subsuper-stalled-ps.generation" | sort)" = "$(printf '%s\n%s' '0|review, run 01RUN, agent none' '1|review, run 01RUN, agent none')" ] || fail "delivery receipt did not retain both delivered episodes"
   ok "a generic stale before two detailed episodes buffers each episode once"
+}
+
+test_selected_wake_sort_failure_retains_unhandled_episodes() {
+  local dir state rows mode
+  dir=$(make_shared_episode_case episode-sort-failure)
+  state="$dir/state"
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  shared_episode_recover "$dir" watcher || return
+  shared_episode_pending_poll "$dir" || return
+  rows=$(cat "$state/.wake-queue")
+  [ "$(wc -l < "$state/.wake-queue" | tr -d ' ')" = 2 ] || fail "sort fixture needs both detailed episodes"
+  printf '#!/usr/bin/env bash\nREAL_SORT=%q\n' "$(command -v sort)" > "$dir/fakebin/sort"
+  cat >> "$dir/fakebin/sort" <<'SH'
+case " $* " in
+  *' -k2,2n '*)
+    if [ "$FM_TEST_SORT_OUTPUT" = partial ]; then head -n 1 "${!#}"; fi
+    printf 'selected wake sort failed\n' >&2
+    exit 23 ;;
+esac
+exec "$REAL_SORT" "$@"
+SH
+  chmod +x "$dir/fakebin/sort"
+  for mode in empty partial; do
+    if FM_TEST_SORT_OUTPUT="$mode" run_poll_daemon "$dir" handle_durable_wakes 'check: unhandled fallback' > "$dir/sort.out" 2> "$dir/sort.err"; then
+      fail "$mode sort failure was reported as success"
+    fi
+    grep -F 'selected wake sort failed' "$dir/sort.err" >/dev/null || fail "fixture did not reach selected-row sorting"
+    [ "$(cat "$state/.wake-queue")" = "$rows" ] || fail "$mode sort failure consumed durable wakes"
+    [ ! -s "$state/.subsuper-escalations" ] || fail "$mode sort failure handled a row or fallback"
+    [ ! -e "$state/.subsuper-stalled-ps.generation" ] || fail "$mode sort failure recorded episode delivery"
+  done
+  rm "$dir/fakebin/sort"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  ok "failed selected-row sorting retains every episode until successful ingestion and acknowledgement"
+}
+
+test_poll_rejects_early_exit_with_existing_episode_evidence() {
+  local dir state count receipt rows pending result
+  dir=$(make_shared_episode_case early-poll-exit)
+  state="$dir/state"
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  shared_episode_ingest "$dir" || return
+  count=$(cat "$state/.count-fmtest_fm-ps")
+  receipt=$(cat "$state/.subsuper-stalled-ps.generation")
+  mkdir "$state/.watch.lock"
+  printf '%s\n' "$$" > "$state/.watch.lock/pid"
+  fm_test_pid_identity "$$" > "$state/.watch.lock/pid-identity"
+  touch "$state/.last-watcher-beat"
+  for pending in no yes; do
+    if [ "$pending" = yes ]; then
+      append_wake "$state" stale fmtest:fm-ps 'stale: fmtest:fm-ps'
+    fi
+    rows=$(cat "$state/.wake-queue")
+    (poll_stalled_case "$dir" fmtest:fm-ps) > "$dir/poll-result" 2>&1
+    result=$?
+    [ "$result" -ne 0 ] || fail "premature watcher exit passed with pending wake $pending"
+    grep -F 'watcher exited before required polls or a new wake publication' "$dir/poll-result" >/dev/null || fail "poll helper did not reject the premature exit"
+    grep -F 'watcher: already running pid' "$dir/watch.out" >/dev/null || fail "fixture did not reach the real watcher early exit"
+    [ "$(cat "$state/.count-fmtest_fm-ps")" = "$count" ] || fail "early-exit watcher completed a poll"
+    [ "$(cat "$state/.wake-queue")" = "$rows" ] || fail "early-exit check changed pending rows"
+    [ "$(cat "$state/.subsuper-stalled-ps.generation")" = "$receipt" ] || fail "early-exit check changed the episode receipt"
+    shared_episode_buffer "$dir" 1
+  done
+  ok "real watcher early exits fail despite existing queue and receipt evidence"
 }
 
 test_detailed_episodes_do_not_repeat_after_failed_acknowledgement() {
@@ -1730,7 +1808,13 @@ test_pane_sourced_working_is_not_gated_on_the_pipeline() {
 
 if [ "$#" -gt 0 ]; then
   for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
     "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
   done
   exit "$FAILED"
 fi
@@ -1748,6 +1832,8 @@ test_concurrent_watcher_and_daemon_detection_share_episode
 test_unknown_observation_preserves_active_episode
 test_deduped_stall_rows_are_handled_in_sequence_order
 test_generic_before_detailed_episodes_delivers_each_once
+test_selected_wake_sort_failure_retains_unhandled_episodes
+test_poll_rejects_early_exit_with_existing_episode_evidence
 test_detailed_episodes_do_not_repeat_after_failed_acknowledgement
 test_daemon_only_recovery_rearms_same_stall_identity
 test_changed_idle_pane_recovery_rearms_stall_before_housekeeping
