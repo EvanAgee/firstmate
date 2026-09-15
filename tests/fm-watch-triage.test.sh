@@ -1251,6 +1251,7 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
   if ! wait_live "$pid" 30; then
     reap "$pid"; fail "watcher exited on the priming round (should absorb): $(cat "$out")"
   fi
+  wait_numeric_file "$state/.stale-since-$key" 300 || fail "priming round did not start a wedge timer"
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional wedge priming stop"
 
@@ -1375,7 +1376,7 @@ test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   if ! wait_live "$pid" 30; then
     reap "$pid"; fail "a stable-hash busy pane past the turn-age bound escalated before the wedge threshold: $(cat "$out")"
   fi
-  [ -s "$state/.stale-since-$key" ] || fail "a stable-hash busy pane past the turn-age bound did not start a wedge timer"
+  wait_numeric_file "$state/.stale-since-$key" 300 || fail "a stable-hash busy pane past the turn-age bound did not start a wedge timer"
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional stable-hash phase-A stop"
 
