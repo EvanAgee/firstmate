@@ -751,6 +751,45 @@ test_a_glob_shaped_route_id_is_never_pathname_expanded() {
   pass "a glob-shaped route id stays literal and never expands against the working directory"
 }
 
+# The installer writes its agent plist through a temp file in the LaunchAgents
+# directory itself. When the install fails after that temp file exists, it must
+# not be left behind: launchd ignores the non-.plist suffix, so the debris is
+# invisible and would accumulate one file per failed attempt. The fake mv below
+# stands in for the real failure causes the install cannot provoke on demand
+# (a read-only agent directory, a full disk), which strike at exactly this
+# point: after mktemp created the file, before the rename lands.
+test_a_failed_refresh_install_leaves_no_temp_plist() {
+  local home agents fakebin status out leftovers
+
+  if [ "$(uname)" != Darwin ]; then
+    pass "route-refresh install cleanup (skipped: launchd agents are macOS-only)"
+    return 0
+  fi
+
+  home="$TMP_ROOT/refresh-install-fail"
+  agents="$home/agents"
+  mkdir -p "$home/state" "$agents"
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+echo "mv: rename failed: Permission denied" >&2
+exit 1
+SH
+  chmod +x "$fakebin/mv"
+
+  out=$(PATH="$fakebin:$PATH" LAUNCH_AGENTS_DIR="$agents" FM_HOME="$home" \
+    "$ROOT/bin/fm-route-refresh-install.sh" install --yes 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "an install whose rename fails must exit nonzero, got 0: $out"
+
+  leftovers=$(find "$agents" -maxdepth 1 -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$leftovers" = 0 ] \
+    || fail "a failed install left $leftovers temp plist file(s) in the LaunchAgents directory"
+  [ ! -f "$agents/$(basename "$agents")".plist ] || fail "a failed install must not publish a plist"
+
+  pass "a failed route-refresh install leaves no temp plist behind"
+}
+
 # ---------------------------------------------------------------------------
 # Real concurrent acquisition processes (not simulated sequential calls)
 # ---------------------------------------------------------------------------
@@ -797,6 +836,7 @@ test_owner_with_mismatched_generation_is_abandoned
 test_pinned_researcher_route_preserved
 test_unapproved_route_id_refused
 test_refresh_runs_standalone_with_fake_bounded_readers
+test_a_failed_refresh_install_leaves_no_temp_plist
 test_any_failed_limit_marks_deepseek_outage_regardless_of_position
 test_a_zero_balance_limit_exhausts_even_beside_a_healthy_fraction
 test_a_glob_shaped_route_id_is_never_pathname_expanded

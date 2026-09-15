@@ -154,8 +154,10 @@ case "$ACTION" in
     consent "install" "write $PLIST and load it into launchd now (refresh every ${INTERVAL}s; refresh only reads quota/health evidence and writes state/route.json, never launches or stops anything)" || exit 1
     mkdir -p "$(dirname "$PLIST")" "$FM_HOME/state"
     tmp=$(mktemp "$PLIST.tmp.XXXXXX") || exit 1
-    PLIST=$tmp write_plist
-    mv -f "$tmp" "$PLIST" || exit 1
+    trap 'rm -f "$tmp"' EXIT
+    PLIST=$tmp write_plist || { echo "error: could not write the agent plist for $PLIST" >&2; exit 1; }
+    mv -f "$tmp" "$PLIST" || { echo "error: could not install $PLIST" >&2; exit 1; }
+    trap - EXIT
     launchctl unload "$PLIST" >/dev/null 2>&1 || true
     launchctl load -w "$PLIST" || { echo "error: launchctl load failed for $PLIST" >&2; exit 1; }
     printf 'installed: %s (every %ss; refresh-only: reads quota/health evidence and writes state/route.json)\n' "$PLIST" "$INTERVAL"
