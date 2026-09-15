@@ -555,6 +555,10 @@ if [ "$HAVE_RUN" = 1 ]; then
             secs=${parsed%%|*}; parsed=${parsed#*|}
             pid=${parsed%%|*}; age_dur=${parsed#*|}
             if [ -n "$secs" ] && [ "$secs" -ge "$FM_PIPELINE_PARKED_MAX" ]; then
+              case "$pid" in
+                ''|*[!0-9]*|0) pid=none ;;
+                *) kill -0 "$pid" 2>/dev/null || pid=none ;;
+              esac
               RUN_STATE=stalled
               RUN_DETAIL="pipeline stalled $age_dur at $step, run $(strip_quotes "$(nm_field id)"), agent $pid"
             fi

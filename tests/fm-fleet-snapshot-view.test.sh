@@ -173,7 +173,19 @@ SH
       {id:"stalled-task",key:"recovery",verb:"needs-decision",summary:"choose recovery"}
     ]
   ' >/dev/null || fail "stalled task lost open decisions: $out"
-  pass "stalled work stays active and preserves open decisions"
+  printf '## In flight\n- [ ] stalled-task - Stalled task (repo: alpha) (kind: ship) (hold: choose recovery) (hold-kind: captain)\n' > "$home/data/backlog.md"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == true and .state == "captain_decision"
+    and (.active_children | map({id,state})) == [{id:"stalled-task",state:"stalled"}]
+    and .counts.active_children == 1 and .counts.queued == 0 and .queued == []
+    and .counts.decisions_open == 2
+    and (.decisions_open | sort_by(.key) | map({id,key,verb,summary})) == [
+      {id:"stalled-task",key:"access",verb:"blocked",summary:"waiting on access"},
+      {id:"stalled-task",key:"recovery",verb:"needs-decision",summary:"choose recovery"}
+    ]
+  ' >/dev/null || fail "held stalled task was double-counted or lost its decisions: $out"
+  pass "stalled work stays active, counts once, and preserves open and held decisions"
 }
 
 test_empty_fleet_json() {

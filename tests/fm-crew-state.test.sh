@@ -448,13 +448,40 @@ test_quiet_agent_past_threshold_is_stalled() {
   make_repo_on_branch "$d/wt" fm/feat-quiet
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-quiet.meta" "window=fm:fm-feat-quiet" "worktree=$d/wt" "kind=ship"
-  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet 25m 86240)"
+  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet 25m "$$")"
   local out; out=$(run_crew_state "$d" feat-quiet)
   assert_contains "$out" "state: stalled" "quiet agent past default threshold -> stalled"
   assert_contains "$out" "source: run-step" "stalled -> run-step source"
-  assert_contains "$out" "pipeline stalled 25m at review, run 01RUN, agent 86240" \
+  assert_contains "$out" "pipeline stalled 25m at review, run 01RUN, agent $$" \
     "stalled detail carries the pinned shape: duration, step, run id, agent pid"
   pass "a quiet agent past the parked threshold classifies as stalled"
+}
+
+test_quiet_agent_pid_liveness() {
+  reset_fakes
+  local d out exited_pid pid age expected
+  d=$(new_case quiet-pid)
+  make_repo_on_branch "$d/wt" fm/quiet-pid
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/quiet-pid.meta" "window=fm:fm-quiet-pid" "worktree=$d/wt" "kind=ship"
+  bash -c 'exit 0' &
+  exited_pid=$!
+  wait "$exited_pid"
+  for pid in "$exited_pid" "$$"; do
+    for age in 19m59s 20m 25m; do
+      FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/quiet-pid "$age" "$pid")"
+      out=$(run_crew_state "$d" quiet-pid)
+      if [ "$age" = 19m59s ]; then
+        expected='state: working · source: run-step · validating (running)'
+      elif [ "$pid" = "$exited_pid" ]; then
+        expected="state: stalled · source: run-step · pipeline stalled $age at review, run 01RUN, agent none"
+      else
+        expected="state: stalled · source: run-step · pipeline stalled $age at review, run 01RUN, agent $pid"
+      fi
+      [ "$out" = "$expected" ] || fail "quiet PID $pid at $age: expected '$expected', got '$out'"
+    done
+  done
+  pass "quiet steps normalize exited PIDs and preserve live PIDs and threshold behavior"
 }
 
 # (a4) an active_steps row quiet, but still inside FM_PIPELINE_PARKED_MAX, stays working
@@ -493,7 +520,7 @@ test_parked_threshold_supervision_config() {
   make_repo_on_branch "$d/wt" fm/feat-quiet-config
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-quiet-config.meta" "window=fm:fm-feat-quiet-config" "worktree=$d/wt" "kind=ship"
-  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet-config 25m 86240)"
+  FM_FAKE_AXI_STATUS="$(run_quiet_agent fm/feat-quiet-config 25m "$$")"
   mkdir -p "$d/config" "$d/override-config"
   printf 'FM_PIPELINE_PARKED_MAX=3600\n' > "$d/config/supervision.env"
   printf 'FM_PIPELINE_PARKED_MAX=1200\n' > "$d/override-config/supervision.env"
@@ -501,10 +528,10 @@ test_parked_threshold_supervision_config() {
   [ "$out" = 'state: working · source: run-step · validating (running)' ] \
     || fail "direct crew-state ignored the home's parked threshold: $out"
   out=$(FM_HOME="$d" FM_PIPELINE_PARKED_MAX=1200 run_crew_state "$d" feat-quiet-config)
-  [ "$out" = 'state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent 86240' ] \
+  [ "$out" = "state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent $$" ] \
     || fail "supervision config overrode the explicit environment threshold: $out"
   out=$(unset FM_PIPELINE_PARKED_MAX; FM_HOME="$d" FM_CONFIG_OVERRIDE="$d/override-config" run_crew_state "$d" feat-quiet-config)
-  [ "$out" = 'state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent 86240' ] \
+  [ "$out" = "state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent $$" ] \
     || fail "crew-state ignored the configured supervision directory: $out"
   pass "crew-state loads the home's supervision threshold and preserves override precedence"
 }
@@ -1539,6 +1566,7 @@ fi
 test_active_run_is_authoritative
 test_active_agent_stays_working
 test_quiet_agent_past_threshold_is_stalled
+test_quiet_agent_pid_liveness
 test_quiet_agent_inside_threshold_stays_working
 test_parked_threshold_env_override
 test_parked_threshold_supervision_config

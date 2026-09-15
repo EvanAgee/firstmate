@@ -703,7 +703,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
              (.state == "queued" or
               (.state == "in_flight" and .current_role == "held"
                and (.id as $id
-                    | any($tasks[]; .id == $id and .current_state.state == "working") | not)))) ]) as $queued_all
+                    | any($tasks[]; .id == $id and (.current_state.state == "working" or .current_state.state == "stalled")) | not)))) ]) as $queued_all
     | ([ $queued_all[]
          | select(.captain_actionable == true)
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
