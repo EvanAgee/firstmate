@@ -975,6 +975,7 @@ run_poll_daemon_confirmed_flush() {
     export FM_FAKE_TMUX_WINDOW=fmtest:fm-ps FM_FAKE_TMUX_CAPTURE="$dir/pane.txt"
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-supervise-daemon.sh"
+    # shellcheck disable=SC2034 # Read by the sourced daemon functions.
     LOG="$dir/daemon.log"
     inject_msg() { return 0; }
     escalate_flush "$dir/state"
@@ -1368,7 +1369,10 @@ SH
     shared_episode_ingest "$dir" || return
     [ "$(cat "$state/.subsuper-escalations" 2>/dev/null)" = "$expected" ] || fail "retired task produced an alert"
     if [ "$prior" = present ]; then
-      cmp -s "$receipt" "$dir/prior-receipt" && cmp -s "$receipt.generation" "$dir/prior-generation" || fail "retirement modified an existing receipt"
+      if ! cmp -s "$receipt" "$dir/prior-receipt" \
+        || ! cmp -s "$receipt.generation" "$dir/prior-generation"; then
+        fail "retirement modified an existing receipt"
+      fi
     else
       [ ! -e "$receipt" ] && [ ! -e "$receipt.generation" ] || fail "retirement created a delivery receipt"
     fi
@@ -2318,74 +2322,75 @@ test_pane_sourced_working_is_not_gated_on_the_pipeline() {
   fi
 }
 
-if [ "$#" -eq 0 ]; then
-  set -- \
-    test_declared_pause_beats_run_step_done \
-    test_declared_pause_with_live_agent_stays_none \
-    test_poll_reports_stall_after_generic_wedge_removed_timer \
-    test_poll_reports_stall_over_old_terminal_status_without_timer \
-    test_away_poll_reports_stall_after_generic_escalation_removed_marker \
-    test_away_recovery_rearms_stall_without_housekeeping \
-    test_late_healthy_observation_cannot_rearm_current_stall \
-    test_changed_stall_identity_supersedes_older_observation \
-    test_retired_task_drops_queued_stall_without_touching_receipts \
-    test_daemon_first_multiple_generic_stales_share_one_episode \
-    test_daemon_first_recovery_separates_identical_stall \
-    test_delayed_detailed_delivery_keeps_publication_episode \
-    test_concurrent_watcher_and_daemon_detection_share_episode \
-    test_unknown_observation_preserves_active_episode \
-    test_deduped_stall_rows_are_handled_in_sequence_order \
-    test_stalled_observation_cannot_cross_daemon_recovery \
-    test_recovery_before_first_stall_begin_supersedes_observation \
-    test_queued_stall_binding_survives_watcher_recovery_during_daemon_read \
-    test_generic_before_detailed_episodes_delivers_each_once \
-    test_selected_wake_sort_failure_retains_unhandled_episodes \
-    test_poll_rejects_early_exit_with_existing_episode_evidence \
-    test_detailed_episodes_do_not_repeat_after_failed_acknowledgement \
-    test_stalled_alert_receipt_faults_replay_each_episode_once \
-    test_stall_publication_fault_resumes_queued_episode \
-    test_recovery_prevents_resuming_an_old_queued_episode \
-    test_retired_receipt_fault_drops_only_its_bound_episode \
-    test_daemon_only_recovery_rearms_same_stall_identity \
-    test_changed_idle_pane_recovery_rearms_stall_before_housekeeping \
-    test_acknowledged_stall_identity_does_not_repeat_on_same_episode \
-    test_working_hash_transition_surfaces_stalled_diagnosis \
-    test_active_pipeline_blocks_escalation \
-    test_quiet_pipeline_and_idle_pane_escalates \
-    test_active_pipeline_resets_the_wedge_timer \
-    test_dead_agent_with_nothing_still_escalates \
-    test_no_mode_skips_the_pipeline_read \
-    test_stale_working_run_step_does_not_beat_a_pause \
-    test_live_agent_with_working_run_stays_working \
-    test_secondmate_with_declared_pause_is_not_absorbed \
-    test_busy_pane_escalates_even_with_an_active_pipeline \
-    test_pane_sourced_working_is_not_gated_on_the_pipeline \
-    test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll \
-    test_stalled_validation_overrides_previous_merge_wait \
-    test_green_pr_without_an_armed_watch_still_surfaces \
-    test_stalled_run_step_is_not_absorbed_by_pause_class \
-    test_declared_pause_preserves_stalled_diagnosis \
-    test_paused_stalled_pipeline_surfaces_on_new_and_same_hash \
-    test_stalled_pipeline_surfaces_with_detail_on_the_wake_line \
-    test_secondmate_paused_still_writes_the_recheck_marker \
-    test_sibling_table_rows_are_not_active_steps \
-    test_unattributed_run_is_not_this_tasks_pipeline \
-    test_done_without_a_pr_url_is_not_awaiting_merge \
-    test_blank_line_between_rows_does_not_hide_a_running_step \
-    test_unreadable_activity_is_no_answer_not_a_stop \
-    test_green_pr_awaiting_merge_absorbed_on_a_repeat_hash \
-    test_unrelated_custom_check_is_not_an_armed_merge_watch \
-    test_awaiting_merge_absorb_stays_throttled_across_restarts \
-    test_awaiting_merge_absorb_resurfaces_once_the_window_elapses
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name"
+    test_status=$?
+    [ "$test_status" -eq 0 ] || exit "$test_status"
+  done
+  exit 0
 fi
 
-for test_name in "$@"; do
-  case "$test_name" in
-    test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
-    *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
-  esac
-  "$test_name"
-  test_status=$?
-  [ "$test_status" -eq 0 ] || exit "$test_status"
-done
+test_declared_pause_beats_run_step_done
+test_declared_pause_with_live_agent_stays_none
+test_poll_reports_stall_after_generic_wedge_removed_timer
+test_poll_reports_stall_over_old_terminal_status_without_timer
+test_away_poll_reports_stall_after_generic_escalation_removed_marker
+test_away_recovery_rearms_stall_without_housekeeping
+test_late_healthy_observation_cannot_rearm_current_stall
+test_changed_stall_identity_supersedes_older_observation
+test_retired_task_drops_queued_stall_without_touching_receipts
+test_daemon_first_multiple_generic_stales_share_one_episode
+test_daemon_first_recovery_separates_identical_stall
+test_delayed_detailed_delivery_keeps_publication_episode
+test_concurrent_watcher_and_daemon_detection_share_episode
+test_unknown_observation_preserves_active_episode
+test_deduped_stall_rows_are_handled_in_sequence_order
+test_stalled_observation_cannot_cross_daemon_recovery
+test_recovery_before_first_stall_begin_supersedes_observation
+test_queued_stall_binding_survives_watcher_recovery_during_daemon_read
+test_generic_before_detailed_episodes_delivers_each_once
+test_selected_wake_sort_failure_retains_unhandled_episodes
+test_poll_rejects_early_exit_with_existing_episode_evidence
+test_detailed_episodes_do_not_repeat_after_failed_acknowledgement
+test_stalled_alert_receipt_faults_replay_each_episode_once
+test_stall_publication_fault_resumes_queued_episode
+test_recovery_prevents_resuming_an_old_queued_episode
+test_retired_receipt_fault_drops_only_its_bound_episode
+test_daemon_only_recovery_rearms_same_stall_identity
+test_changed_idle_pane_recovery_rearms_stall_before_housekeeping
+test_acknowledged_stall_identity_does_not_repeat_on_same_episode
+test_working_hash_transition_surfaces_stalled_diagnosis
+test_active_pipeline_blocks_escalation
+test_quiet_pipeline_and_idle_pane_escalates
+test_active_pipeline_resets_the_wedge_timer
+test_dead_agent_with_nothing_still_escalates
+test_no_mode_skips_the_pipeline_read
+test_stale_working_run_step_does_not_beat_a_pause
+test_live_agent_with_working_run_stays_working
+test_secondmate_with_declared_pause_is_not_absorbed
+test_busy_pane_escalates_even_with_an_active_pipeline
+test_pane_sourced_working_is_not_gated_on_the_pipeline
+test_green_pr_awaiting_merge_is_absorbed_by_the_real_poll
+test_stalled_validation_overrides_previous_merge_wait
+test_green_pr_without_an_armed_watch_still_surfaces
+test_stalled_run_step_is_not_absorbed_by_pause_class
+test_declared_pause_preserves_stalled_diagnosis
+test_paused_stalled_pipeline_surfaces_on_new_and_same_hash
+test_stalled_pipeline_surfaces_with_detail_on_the_wake_line
+test_secondmate_paused_still_writes_the_recheck_marker
+test_sibling_table_rows_are_not_active_steps
+test_unattributed_run_is_not_this_tasks_pipeline
+test_done_without_a_pr_url_is_not_awaiting_merge
+test_blank_line_between_rows_does_not_hide_a_running_step
+test_unreadable_activity_is_no_answer_not_a_stop
+test_green_pr_awaiting_merge_absorbed_on_a_repeat_hash
+test_unrelated_custom_check_is_not_an_armed_merge_watch
+test_awaiting_merge_absorb_stays_throttled_across_restarts
+test_awaiting_merge_absorb_resurfaces_once_the_window_elapses
+
 exit "$FAILED"
