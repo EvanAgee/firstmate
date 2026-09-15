@@ -418,6 +418,33 @@ test_no_class_spawn_never_touches_route_store() {
   pass "a spawn with no dispatch class never touches the route store"
 }
 
+# A resolver that cannot answer "which routes can this class use" must refuse
+# the spawn, not look identical to "no routing policy configured" and skip the
+# admission gate entirely. The duplicate class below makes
+# fm-dispatch-resolve.sh's own validation reject the config.
+test_class_spawn_refuses_when_candidate_lookup_fails() {
+  local rec id out status route_home
+  id=$(profile_id profile-route-badcfg-z9)
+  rec=$(make_spawn_case profile-route-badcfg codex "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  route_home=$(make_route_home route-badcfg)
+  jq '.rules += [.rules[0]]' "$HOME_DIR/config/crew-dispatch.json" \
+    > "$route_home/config/crew-dispatch.json"
+  seed_route_state "$route_home" \
+    '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 1 "$status" "spawn should refuse when candidate routes cannot be determined"
+  assert_contains "$out" "could not determine candidate routes for class 'builder'" \
+    "spawn did not report the candidate lookup failure"
+  assert_absent "$HOME_DIR/state/$id.meta" "refused spawn should not have written meta"
+  pass "a failed candidate lookup refuses the spawn instead of silently skipping admission"
+}
+
 test_class_spawn_acquires_and_finishes_route
 test_class_spawn_excludes_ineligible_route
 test_class_spawn_refuses_when_every_route_excluded
@@ -427,5 +454,6 @@ test_pinned_class_spawn_succeeds_on_every_rotation
 test_disabled_pool_member_never_wins_admission
 test_already_closed_assignment_refuses_launch
 test_no_class_spawn_never_touches_route_store
+test_class_spawn_refuses_when_candidate_lookup_fails
 
 echo "# all fm-spawn-route-admission tests passed"

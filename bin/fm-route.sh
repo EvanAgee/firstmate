@@ -185,10 +185,18 @@ fm_route_ids_from_config() {
   [ -f "$config" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   if [ -n "$class" ]; then
-    FM_CONFIG_OVERRIDE="$FM_ROUTE_CANONICAL_CONFIG_DIR" \
-    FM_STATE_OVERRIDE="$FM_ROUTE_CANONICAL_STATE_DIR" \
+    local out status
+    out=$(FM_CONFIG_OVERRIDE="$FM_ROUTE_CANONICAL_CONFIG_DIR" \
+      FM_STATE_OVERRIDE="$FM_ROUTE_CANONICAL_STATE_DIR" \
       "$SCRIPT_DIR/fm-dispatch-resolve.sh" --class "$class" \
-        --home "$ROUTE_CANONICAL_HOME" --list-candidate-routes 2>/dev/null || return 0
+        --home "$ROUTE_CANONICAL_HOME" --list-candidate-routes 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      printf 'error: could not determine candidate routes for class %s: %s\n' \
+        "$class" "$(printf '%s' "$out" | tr '\n' ' ')" >&2
+      return "$status"
+    fi
+    [ -z "$out" ] || printf '%s\n' "$out"
     return 0
   fi
   while IFS=$'\t' read -r harness model; do

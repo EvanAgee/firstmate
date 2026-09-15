@@ -182,6 +182,27 @@ route_excluded() {
 # carry named model-scoped windows today; other harnesses have no model
 # scope to check and are never excluded here.
 : "${FM_DISPATCH_QUOTA_AXI_BIN:=quota-axi}"
+
+# One quota-axi read per provider per invocation. A pool with several claude
+# or codex members asks about the same account once, not once per member,
+# and profiles_tsv runs on the spawn hot path.
+# Answers into QUOTA_AXI_JSON rather than stdout: a command substitution would
+# run this in a subshell and throw the cache away on every call.
+QUOTA_AXI_CACHED_PROVIDERS=" "
+QUOTA_AXI_JSON=
+quota_axi_read() {  # <provider>
+  local provider=$1 var
+  var="QUOTA_AXI_CACHE_${provider//[^A-Za-z0-9_]/_}"
+  case "$QUOTA_AXI_CACHED_PROVIDERS" in
+    *" $provider "*) ;;
+    *)
+      QUOTA_AXI_CACHED_PROVIDERS="$QUOTA_AXI_CACHED_PROVIDERS$provider "
+      printf -v "$var" '%s' "$("$FM_DISPATCH_QUOTA_AXI_BIN" --provider "$provider" --json 2>/dev/null)"
+      ;;
+  esac
+  QUOTA_AXI_JSON=${!var}
+  [ -n "$QUOTA_AXI_JSON" ]
+}
 model_exhausted() {
   local harness=$1 model=$2 provider scope pct json
   case "$harness" in
@@ -193,7 +214,8 @@ model_exhausted() {
     default|'') return 1 ;;
   esac
   scope="model:$model"
-  json=$("$FM_DISPATCH_QUOTA_AXI_BIN" --provider "$provider" --json 2>/dev/null) || return 1
+  quota_axi_read "$provider" || return 1
+  json=$QUOTA_AXI_JSON
   pct=$(printf '%s' "$json" | jq -r --arg p "$provider" --arg scope "$scope" '
     (.providers[]? | select(.provider == $p) | .quotaSemantics.effectiveAvailability[]?
       | select(.scope == $scope) | .effectivePercentRemaining) // empty
@@ -202,7 +224,11 @@ model_exhausted() {
   awk -v p="$pct" 'BEGIN{exit !(p<=0)}' 2>/dev/null
 }
 
-profiles_tsv() {
+# Every consumer reads this through `< <(profiles_tsv)`, which runs it in a
+# subshell, so the enabled column is computed once up front and replayed from
+# a variable instead. Without that, each consumer re-ran the quota-axi probes
+# and the per-provider cache above could never survive its own subshell.
+compute_profiles_tsv() {
   local harness model effort enabled
   while IFS=$'\t' read -r harness model effort enabled; do
     [ -n "$harness" ] || continue
@@ -214,6 +240,11 @@ profiles_tsv() {
     fi
     printf '%s\t%s\t%s\t%s\n' "$harness" "$model" "$effort" "$enabled"
   done < <(profiles_tsv_raw)
+}
+
+PROFILES_TSV_CACHE=$(compute_profiles_tsv)
+profiles_tsv() {
+  [ -z "$PROFILES_TSV_CACHE" ] || printf '%s\n' "$PROFILES_TSV_CACHE"
 }
 
 # shellcheck disable=SC2016

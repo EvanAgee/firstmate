@@ -1381,7 +1381,19 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
       # whole catalog: acquire picking a route the class has no member for
       # would turn every other pool member into an --exclude-routes entry
       # and refuse an otherwise healthy launch.
-      ROUTE_CANDIDATES_JSON=$("$SCRIPT_DIR/fm-route.sh" routes --class "$DISPATCH_CLASS" 2>/dev/null | jq -R . | jq -s .) || ROUTE_CANDIDATES_JSON='[]'
+      # An empty list means "no routing policy covers this class", which is
+      # inert by design. A non-zero exit means the resolver could not answer
+      # at all; that must refuse the spawn rather than look identical to
+      # inert and silently skip the admission gate.
+      ROUTE_CANDIDATES_RAW=$("$SCRIPT_DIR/fm-route.sh" routes --class "$DISPATCH_CLASS" 2>&1) || {
+        echo "error: provider-availability admission could not determine candidate routes for class '$DISPATCH_CLASS': $(printf '%s' "$ROUTE_CANDIDATES_RAW" | tr '\n' ' ')" >&2
+        exit 1
+      }
+      if [ -z "$ROUTE_CANDIDATES_RAW" ]; then
+        ROUTE_CANDIDATES_JSON='[]'
+      else
+        ROUTE_CANDIDATES_JSON=$(printf '%s\n' "$ROUTE_CANDIDATES_RAW" | jq -R . | jq -s .)
+      fi
       if [ "$(jq 'length' <<<"$ROUTE_CANDIDATES_JSON")" -gt 0 ]; then
         ROUTE_ACQUIRE_REQUEST=$(jq -cn \
           --arg a "$ROUTE_ASSIGNMENT_ID" --arg owner "$ID" --arg gen "$ROUTE_ASSIGNMENT_GEN" \
