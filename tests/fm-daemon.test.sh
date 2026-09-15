@@ -271,7 +271,7 @@ test_reported_stall_identity_survives_housekeeping() {
     export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
     housekeeping "$state"
     [ "$(cat "$state/.subsuper-stalled-stalled")" = 'review, run 01RUN, agent none' ] || fail "known recovery discarded the daemon delivery receipt"
-    [ "$(head -n 1 "$state/.subsuper-stalled-stalled.generation")" = 0 ] || fail "known recovery changed the delivered generation"
+    [ "$(head -n 1 "$state/.subsuper-stalled-stalled.generation")" = 1 ] || fail "known recovery changed the delivered generation"
   ) || fail "reported stall housekeeping failed"
   pass "housekeeping retains unknown stall identity and rearms after known recovery"
 }

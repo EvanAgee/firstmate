@@ -502,13 +502,17 @@ clear_pause_tracking() {  # <window> <state>
 
 escalate_stalled() (
   local win=$1 state=$2 detail=$3 episode=${4:-} task marker identity generation
-  local delivered_identity delivered_generation observed_generation=${5:-} receipt_tmp=''
+  local delivered_identity delivered_generation observed_generation=${5:-} receipt_tmp='' meta_lock
   # shellcheck disable=SC2030 # Queue bindings must stay inside this receipt subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
   # shellcheck source=bin/fm-wake-lib.sh
   . "$FM_DAEMON_DIR/fm-wake-lib.sh"
   task=$(window_to_task "$win" "$state")
   marker="$state/.subsuper-stalled-$(_stale_key "$task")"
+  meta_lock=$(fm_meta_lock_path "$state/$task.meta") || return 1
+  fm_lock_acquire_wait "$meta_lock" || return 1
+  trap 'fm_lock_release "$meta_lock"' EXIT
+  [ -f "$state/$task.meta" ] || return 0
   if [ -z "$episode" ]; then
     episode=$(crew_stall_transition "$state" "$task" "$win" begin "$detail" "" "$observed_generation") || return 1
     [ "$episode" != superseded ] || return 0
@@ -517,7 +521,7 @@ escalate_stalled() (
   generation=${episode%%|*}
   identity=${episode#*|}
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  trap 'rm -f "$receipt_tmp"; fm_lock_release "$FM_WAKE_QUEUE_LOCK"' EXIT
+  trap 'rm -f "$receipt_tmp"; fm_lock_release "$FM_WAKE_QUEUE_LOCK"; fm_lock_release "$meta_lock"' EXIT
   delivered_identity=$(cat "$marker" 2>/dev/null || true)
   delivered_generation=$(crew_stalled_generation "$marker.generation")
   if ! { [ "$delivered_identity" = "$identity" ] && [ "$delivered_generation" = "$generation" ]; } \
