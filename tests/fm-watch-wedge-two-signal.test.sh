@@ -96,7 +96,13 @@ run_in_watcher() {  # <dir> <fn> <args...>
     export PATH FM_HOME FM_STATE_OVERRIDE FM_CREW_STATE_BIN
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-watch.sh"
-    "$@"
+    case "$1" in
+      shared_episode_retire_waiting_delivery)
+        shift
+        shared_episode_retire_waiting_delivery "$@"
+        ;;
+      *) "$@" ;;
+    esac
   )
 }
 
@@ -973,7 +979,7 @@ run_poll_daemon_confirmed_flush() {
     export PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state"
     export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
     export FM_FAKE_TMUX_WINDOW=fmtest:fm-ps FM_FAKE_TMUX_CAPTURE="$dir/pane.txt"
-    # shellcheck source=/dev/null
+    # shellcheck source=bin/fm-supervise-daemon.sh
     . "$ROOT/bin/fm-supervise-daemon.sh"
     # shellcheck disable=SC2034 # Read by the sourced daemon functions.
     LOG="$dir/daemon.log"
