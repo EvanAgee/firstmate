@@ -1,0 +1,15 @@
+fm-crew-state fixture output
+state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent 86240
+
+watcher wake payload
+stale: fmtest:fm-ss (pipeline stalled 13h at review, run 01RUN, agent none)
+
+durable delivery after two distinct episodes
+buffered notifications:
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)
+receipt state:
+4
+1|review, run 01RUN, agent none
+4|review, run 01RUN, agent none
+durable queue bytes after acknowledgement: 0
