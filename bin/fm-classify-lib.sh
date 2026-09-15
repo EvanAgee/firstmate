@@ -1407,23 +1407,31 @@ crew_stall_transition() {
       identity=$(crew_stalled_identity "$detail")
       result="joined|$generation|$identity"
       if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
-        generation=$((generation + 1))
-        if ! printf '%s' "$generation" > "$marker.generation"; then
-          fm_lock_release "$FM_WAKE_QUEUE_LOCK"
-          return 1
-        fi
-        result="joined|$generation|$identity"
-        if [ -n "$pane_hash" ]; then
-          fm_wake_append_locked stale "$win|pipeline-stall|$generation|$identity" "stale: $win ($detail)" || status=$?
+        if [ -n "$pane_hash" ] && fm_wake_queued_keys_locked stale | grep -Fxq -- "$win|pipeline-stall|$generation|$identity"; then
+          printf '%s' "$pane_hash" > "$marker.hash" || status=$?
           if [ "$status" -eq 0 ]; then
-            printf '%s' "$pane_hash" > "$marker.hash" || status=$?
+            printf '%s' "$identity" > "$marker" || status=$?
           fi
           result="published|$generation|$identity"
         else
-          rm -f "$marker.hash" || status=$?
-        fi
-        if [ "$status" -eq 0 ]; then
-          printf '%s' "$identity" > "$marker" || status=$?
+          generation=$((generation + 1))
+          if ! printf '%s' "$generation" > "$marker.generation"; then
+            fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+            return 1
+          fi
+          result="joined|$generation|$identity"
+          if [ -n "$pane_hash" ]; then
+            fm_wake_append_locked stale "$win|pipeline-stall|$generation|$identity" "stale: $win ($detail)" || status=$?
+            if [ "$status" -eq 0 ]; then
+              printf '%s' "$pane_hash" > "$marker.hash" || status=$?
+            fi
+            result="published|$generation|$identity"
+          else
+            rm -f "$marker.hash" || status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            printf '%s' "$identity" > "$marker" || status=$?
+          fi
         fi
       fi
       ;;

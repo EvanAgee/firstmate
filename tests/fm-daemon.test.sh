@@ -247,7 +247,7 @@ test_stalled_stale_escalates_with_diagnosis() {
 
 test_retired_endpoint_cannot_deliver_to_unrelated_task() {
   local backend dir state old_win=default:w1:p2 live_win=default:w9:p9
-  local detail='pipeline stalled 25m at review, run 01RUN, agent none' expected file preserved
+  local generic_win=default:w4:p4 detail='pipeline stalled 25m at review, run 01RUN, agent none' expected file preserved
   for backend in herdr orca; do
     dir=$(make_supercase "retired-endpoint-$backend")
     make_fake_crew_state "$dir/fakebin" >/dev/null
@@ -258,6 +258,7 @@ test_retired_endpoint_cannot_deliver_to_unrelated_task() {
     else
       fm_write_meta "$state/p2.meta" "window=$live_win" 'backend=herdr'
     fi
+    fm_write_meta "$state/generic.meta" "window=$generic_win" 'backend=herdr'
     (
       export FM_STATE_OVERRIDE="$state" FM_HOME="$dir" PATH="$dir/fakebin:$PATH"
       export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
@@ -270,9 +271,14 @@ test_retired_endpoint_cannot_deliver_to_unrelated_task() {
       append_wake "$state" stale "$live_win|pipeline-stall|1|review, run 01RUN, agent none" "stale: $live_win ($detail)"
       handle_durable_wakes "stale: $live_win" "$state" || fail "matching $backend owner failed durable delivery"
       [ ! -s "$state/.wake-queue" ] || fail "matching $backend owner row was not acknowledged"
-      expected=$(printf '%s\n%s' "stale: $old_win ($detail)" "stale: $live_win ($detail)")
+      export FM_FAKE_CREW_STATE="state: stalled · source: run-step · $detail"
+      append_wake "$state" stale "$generic_win" "stale: $generic_win"
+      handle_durable_wakes "stale: $generic_win" "$state" || fail "matching generic owner failed durable delivery"
+      [ ! -s "$state/.wake-queue" ] || fail "matching generic owner row was not acknowledged"
+      expected=$(printf '%s\n%s\n%s' "stale: $old_win ($detail)" "stale: $live_win ($detail)" "stale: $generic_win ($detail)")
       [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "matching endpoint owners did not each deliver once"
-      [ -s "$state/.subsuper-stalled-foo.generation" ] && [ -s "$state/.subsuper-stalled-p2.generation" ] || fail "matching owners did not retain their receipts"
+      [ -s "$state/.subsuper-stalled-foo.generation" ] && [ -s "$state/.subsuper-stalled-p2.generation" ] \
+        && [ -s "$state/.subsuper-stalled-generic.generation" ] || fail "matching owners did not retain their receipts"
       mkdir "$dir/receipts-before"
       for file in "$state"/.subsuper-stalled-*; do
         cp "$file" "$dir/receipts-before/${file##*/}"
@@ -294,13 +300,14 @@ test_retired_endpoint_cannot_deliver_to_unrelated_task() {
         .subsuper-seen-status-p2; do
         cp "$state/$preserved" "$dir/unrelated-state-before/$preserved"
       done
+      append_wake "$state" stale "$old_win" "stale: $old_win"
       append_wake "$state" stale "$old_win|pipeline-stall|3|review, run 01RUN, agent none" "stale: $old_win ($detail)"
       [ -s "$state/.wake-queue" ] || fail "retirement fixture did not queue the later episode"
       rm "$state/foo.meta"
       [ "$(window_to_task "$old_win" "$state")" = p2 ] || fail "fixture did not reach the unrelated candidate"
-      export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+      export FM_FAKE_CREW_STATE="state: stalled · source: run-step · $detail"
       handle_durable_wakes "stale: $old_win" "$state" || fail "retired endpoint collision failed durable acknowledgement"
-      [ ! -s "$state/.wake-queue" ] || fail "retired endpoint row was not acknowledged"
+      [ ! -s "$state/.wake-queue" ] || fail "retired generic and detailed rows were not acknowledged"
       [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "retired endpoint alerted against the unrelated owner"
       cmp -s "$state/p2.meta" "$dir/p2-meta-before" || fail "retired endpoint modified unrelated metadata"
       for preserved in "$dir/unrelated-state-before"/* "$dir/unrelated-state-before"/.*; do

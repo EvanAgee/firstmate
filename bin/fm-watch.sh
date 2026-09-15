@@ -41,6 +41,9 @@
 #                          count, and demand-deep-inspection marker, for human
 #                          inspection only - never an automatic interrupt,
 #                          signal, or restart of the worker or its tool process.
+#   stale: <window> (pipeline stalled <duration> at <step>, run <id>, agent <pid-or-none>)
+#                          a diagnosed stalled run surfaces immediately without
+#                          waiting for the generic stale or wedge timers
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued

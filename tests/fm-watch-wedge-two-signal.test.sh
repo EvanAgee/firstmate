@@ -855,6 +855,7 @@ poll_stalled_case() {
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
     FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
     FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
     FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$WATCH" > "$dir/watch.out" 2>&1 &
   pid=$!
@@ -963,6 +964,20 @@ run_poll_daemon() {
     # shellcheck disable=SC2034 # Read by the sourced daemon functions.
     LOG="$dir/daemon.log"
     "$@" "$dir/state"
+  )
+}
+
+run_poll_daemon_confirmed_flush() {
+  local dir=$1
+  (
+    export PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state"
+    export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+    export FM_FAKE_TMUX_WINDOW=fmtest:fm-ps FM_FAKE_TMUX_CAPTURE="$dir/pane.txt"
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-supervise-daemon.sh"
+    LOG="$dir/daemon.log"
+    inject_msg() { return 0; }
+    escalate_flush "$dir/state"
   )
 }
 
@@ -1128,6 +1143,87 @@ shared_episode_wait_file() {
     [ "$(date +%s)" -lt "$deadline" ] || { fail "timed out waiting for $1"; return 1; }
     sleep 0.05
   done
+}
+
+fail_stall_publication_after_queue() {
+  local dir=$1 state marker detail pane_hash
+  state="$dir/state"
+  marker="$state/.stale-since-fmtest_fm-ps.stalled"
+  detail='pipeline stalled 25m at review, run 01RUN, agent none'
+  pane_hash=$(cat "$state/.hash-fmtest_fm-ps")
+  mkdir "$marker"
+  if run_in_watcher "$dir" crew_stall_transition "$state" ps fmtest:fm-ps begin "$detail" "$pane_hash" 0 \
+    > "$dir/failed-publication.out" 2> "$dir/failed-publication.err"; then
+    fail "active marker write fault was reported as success"
+    rmdir "$marker"
+    return 1
+  fi
+  rmdir "$marker"
+  [ "$(wc -l < "$state/.wake-queue" | tr -d ' ')" = 1 ] || { fail "publication fault did not retain exactly one queued episode"; return 1; }
+  [ "$(cat "$marker.generation")" = 1 ] || { fail "publication fault did not retain its generation"; return 1; }
+}
+
+poll_resumed_stall_case() {
+  local dir=$1 win=$2 expected=$3 state pid deadline sequence
+  state="$dir/state"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/resumed-drain.out" 2> "$dir/resumed-drain.err" \
+    || { fail "daemon handoff could not select the queued episode"; return 1; }
+  sequence=$(cat "$state/.wake-queue.seq")
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$dir/resumed-watch.out" 2>&1 &
+  pid=$!
+  deadline=$(( $(date +%s) + 60 ))
+  while kill -0 "$pid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 0.2; done
+  if kill -0 "$pid" 2>/dev/null; then
+    reap "$pid"
+    fail "watcher did not resume the queued episode"
+    return 1
+  fi
+  wait "$pid" || { fail "watcher failed while resuming the queued episode"; return 1; }
+  [ "$(cat "$dir/resumed-watch.out")" = "$expected" ] \
+    || { fail "resumed watcher lost the stalled wake: $(cat "$dir/resumed-watch.out")"; return 1; }
+  [ "$(cat "$state/.wake-queue.seq")" = "$sequence" ] || { fail "resumed watcher appended a second episode"; return 1; }
+}
+
+test_stall_publication_fault_resumes_queued_episode() {
+  local dir state marker detail expected episode
+  dir=$(make_shared_episode_case publication-resume)
+  state="$dir/state"
+  marker="$state/.stale-since-fmtest_fm-ps.stalled"
+  detail='pipeline stalled 25m at review, run 01RUN, agent none'
+  expected="stale: fmtest:fm-ps ($detail)"
+  fail_stall_publication_after_queue "$dir" || return
+  episode=$(cut -f4 "$state/.wake-queue")
+  poll_resumed_stall_case "$dir" fmtest:fm-ps "$expected" || return
+  [ "$(cut -f4 "$state/.wake-queue")" = "$episode" ] || fail "resumed publication changed its immutable binding"
+  [ "$(cat "$marker")" = 'review, run 01RUN, agent none' ] || fail "resumed publication did not restore its active identity"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 1
+  [ "$(sed -n '2,$p' "$state/.subsuper-stalled-ps.generation")" = '1|review, run 01RUN, agent none' ] \
+    || fail "resumed publication did not commit one receipt identity"
+  ok "publication replay resumes one queued episode without advancing its generation"
+}
+
+test_recovery_prevents_resuming_an_old_queued_episode() {
+  local dir state keys
+  dir=$(make_shared_episode_case publication-recovery)
+  state="$dir/state"
+  fail_stall_publication_after_queue "$dir" || return
+  shared_episode_recover "$dir" watcher || return
+  shared_episode_pending_poll "$dir" || return
+  keys=$(cut -f4 "$state/.wake-queue")
+  [ "$keys" = "$(printf '%s\n%s' \
+    'fmtest:fm-ps|pipeline-stall|1|review, run 01RUN, agent none' \
+    'fmtest:fm-ps|pipeline-stall|3|review, run 01RUN, agent none')" ] \
+    || fail "known recovery resumed an older queued episode"
+  shared_episode_ingest "$dir" || return
+  shared_episode_buffer "$dir" 2
+  [ "$(sed -n '2,$p' "$state/.subsuper-stalled-ps.generation" | wc -l | tr -d ' ')" = 2 ] \
+    || fail "known recovery did not deliver both true episodes once"
+  ok "known recovery keeps the old binding and publishes a fresh episode"
 }
 
 shared_episode_barrier_after_read() {
@@ -1783,6 +1879,47 @@ SH
   ok "buffer and receipt faults replay two identical-detail episodes exactly once"
 }
 
+test_retired_receipt_fault_drops_only_its_bound_episode() {
+  local dir state rows receipt expected visible tagged
+  dir=$(make_shared_episode_case retired-receipt-fault)
+  state="$dir/state"
+  visible='stale: fmtest:fm-ps (pipeline stalled 25m at review, run 01RUN, agent none)'
+  poll_stalled_case "$dir" fmtest:fm-ps || return
+  shared_episode_ingest "$dir" || return
+  shared_episode_recover "$dir" watcher || return
+  shared_episode_pending_poll "$dir" || return
+  rows=$(cat "$state/.wake-queue")
+  receipt=$(cat "$state/.subsuper-stalled-ps.generation")
+  run_poll_daemon "$dir" escalate_add "$state" ordinary-before || return
+  printf '#!/usr/bin/env bash\nREAL_MV=%q\n' "$(command -v mv)" > "$dir/fakebin/mv"
+  cat >> "$dir/fakebin/mv" <<'SH'
+last=${!#}
+if [ "$last" = "$FM_HOME/state/.subsuper-stalled-ps.generation" ]; then
+  exit 1
+fi
+exec "$REAL_MV" "$@"
+SH
+  chmod +x "$dir/fakebin/mv"
+  if run_poll_daemon "$dir" handle_durable_wakes 'stale: fmtest:fm-ps' > "$dir/retired-fault.out" 2>&1; then
+    fail "retirement fixture receipt fault was reported as success"
+    return 1
+  fi
+  [ "$(cat "$state/.wake-queue")" = "$rows" ] || fail "receipt fault acknowledged the episode before retirement"
+  tagged=$(awk -F '\t' '$1 == "@pipeline-stall" { count++ } END { print count + 0 }' "$state/.subsuper-escalations")
+  [ "$tagged" = 1 ] || fail "receipt fault did not leave one bound episode"
+  rm "$dir/fakebin/mv"
+  run_poll_daemon "$dir" escalate_add "$state" ordinary-after || return
+  rm "$state/ps.meta"
+  shared_episode_ingest "$dir" || return
+  [ "$(cat "$state/.subsuper-stalled-ps.generation")" = "$receipt" ] || fail "retired replay changed the existing receipt"
+  expected=$(printf '%s\n%s\n%s' "$visible" ordinary-before ordinary-after)
+  [ "$(cat "$state/.subsuper-escalations")" = "$expected" ] || fail "retired replay changed unrelated buffer bytes or order"
+  [ "$(grep -Fxc "$visible" "$state/.subsuper-escalations" || true)" = 1 ] || fail "retired replay exposed the dropped episode"
+  run_poll_daemon_confirmed_flush "$dir" || { fail "retired bound episode blocked a later flush"; return; }
+  [ ! -s "$state/.subsuper-escalations" ] || fail "later buffered notifications did not flush"
+  ok "retired replay drops only its bound episode and leaves the buffer flushable"
+}
+
 test_daemon_only_recovery_rearms_same_stall_identity() {
   local dir state win marker receipt expected identity sequence generation pane_hash poll_count live_pid result
   dir=$(make_wedge_case daemon-only-recovery ps 'working: validating' 'mode=no-mistakes')
@@ -2206,6 +2343,9 @@ if [ "$#" -eq 0 ]; then
     test_poll_rejects_early_exit_with_existing_episode_evidence \
     test_detailed_episodes_do_not_repeat_after_failed_acknowledgement \
     test_stalled_alert_receipt_faults_replay_each_episode_once \
+    test_stall_publication_fault_resumes_queued_episode \
+    test_recovery_prevents_resuming_an_old_queued_episode \
+    test_retired_receipt_fault_drops_only_its_bound_episode \
     test_daemon_only_recovery_rearms_same_stall_identity \
     test_changed_idle_pane_recovery_rearms_stall_before_housekeeping \
     test_acknowledged_stall_identity_does_not_repeat_on_same_episode \
