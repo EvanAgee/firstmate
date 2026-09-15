@@ -513,6 +513,7 @@ escalate_stalled() (
   fm_lock_acquire_wait "$meta_lock" || return 1
   trap 'fm_lock_release "$meta_lock"' EXIT
   [ -f "$state/$task.meta" ] || return 0
+  [ "$(fm_backend_target_of_meta "$state/$task.meta")" = "$win" ] || return 0
   if [ -z "$episode" ]; then
     episode=$(crew_stall_transition "$state" "$task" "$win" begin "$detail" "" "$observed_generation") || return 1
     [ "$episode" != superseded ] || return 0
