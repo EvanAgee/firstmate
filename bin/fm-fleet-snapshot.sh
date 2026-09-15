@@ -45,8 +45,10 @@
 #     failure reasons. Parent status and bounded terminal evidence are historical,
 #     untrusted supplements only and never override readable structured-home facts.
 #     Each structured-home record carries active_children, decisions_open, holds,
-#     queued, landed, endpoints, counts, and omitted. Actionable captain holds
-#     appear in decisions_open; blocked or deferred captain holds remain queued.
+#     queued, landed, endpoints, counts, and omitted. active_children includes
+#     working and stalled non-program children. A held stalled child remains active
+#     and is not also queued. Actionable captain holds appear in decisions_open;
+#     blocked or deferred captain holds remain queued.
 #   secondmate_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes with an unknown current classification are partial, not

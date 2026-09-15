@@ -93,10 +93,9 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # history every call.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
-# Seconds an active_steps agent may go quiet, or an awaiting_agent gap may sit
-# with no live agent PID, before a `running`/`fixing` run-step is reclassified
-# `stalled` instead of `working`. Default matches FM_PIPELINE_ACTIVE_SECS's
-# default (bin/fm-watch.sh) so both readers agree on "still moving".
+# Seconds an active_steps agent may go quiet before a `running`/`fixing`
+# run-step is reclassified `stalled` instead of `working`; an awaiting_agent
+# gap without a live agent PID is stalled immediately.
 FM_PIPELINE_PARKED_MAX=${FM_PIPELINE_PARKED_MAX:-1200}
 case "$FM_PIPELINE_PARKED_MAX" in ''|*[!0-9]*) FM_PIPELINE_PARKED_MAX=1200 ;; esac
 SEP=' · '

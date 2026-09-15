@@ -5,12 +5,13 @@
 # durable wake after an actionable close, acknowledges only after routing, and
 # either SELF-HANDLES the routine majority in bash (no firstmate turn) or
 # ESCALATES a batched, distilled digest to the supervisor pane on
-# captain-relevant events plus bounded declared-pause rechecks. This is the
+# captain-relevant events, diagnosed stalled pipelines, and bounded
+# declared-pause rechecks. This is the
 # token-efficient replacement for the prior always-inject daemon: routine
 # signal/stale/heartbeat wakes cost zero firstmate context; only done/
-# needs-decision/blocked/failed/persistent-wedge/check-output events and a
-# declared-pause recheck reach the LLM, and even then as one pre-read digest per
-# batch window.
+# needs-decision/blocked/failed/stalled-pipeline/persistent-wedge/check-output
+# events and a declared-pause recheck reach the LLM, and even then as one
+# pre-read digest per batch window.
 #
 # PRESENCE-GATING (the /afk contract). The daemon is the away-mode engine: it
 # injects ONLY when the durable away-mode flag state/.afk is present. Invoking
@@ -458,6 +459,10 @@ classify_unknown() {  # <reason>
 # Marker:   state/.subsuper-stale-<key>   contains the epoch first seen idle.
 # Buffer:   state/.subsuper-escalations    one distilled line per escalation;
 #           an uncommitted stalled episode temporarily carries its binding.
+# Receipt:  state/.subsuper-stalled-<task>.generation keeps the current recovery
+#           generation followed by one deduplicated row per distinct stalled
+#           episode. An unchanged episode adds no row. Missing or replaced task
+#           metadata stops new rows; spawn and teardown do not reclaim the file.
 # Seen:     state/.subsuper-seen-status-<task>  last status line the scan
 #           escalated, so the catch-all does not re-fire the same terminal.
 
@@ -1210,7 +1215,7 @@ is_wake_reason() {  # <reason>
 # --- dispatch one wake reason to self-handle or escalate --------------------
 # Side effects: logging, marker records, escalation buffer appends.
 handle_wake() (  # <reason> <state>
-  local reason=$1 state=$2 queue_key=${3:-} decision action distilled task last stale_detail episode="" generation
+  local reason=$1 state=$2 queue_key=${3:-} decision action distilled task="" last stale_detail episode="" generation
   local kind="" arg="" crew_line="" observed_generation="" stalled_rc meta_lock meta_locked=0
   # shellcheck disable=SC2030 # Queue helpers stay inside this wake subshell.
   local FM_STATE_OVERRIDE="$state" STATE="$state" FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
