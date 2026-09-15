@@ -291,6 +291,87 @@ test_closed_assignment_never_reauthorizes() {
   pass "a closed assignment answers already-closed with no route_id and never reauthorizes a launch"
 }
 
+# state/route.json is this store's own persisted document. A corrupt one
+# must never be silently replaced: every command feeds what it read straight
+# back into jq and writes the result, so accepting corrupt bytes publishes a
+# destroyed store over a real one and wipes every live assignment record.
+# Each case asserts the file's bytes are byte-for-byte unchanged afterwards.
+corrupt_store_refuses() {  # <label> <home> <raw-route-json-bytes>
+  local label=$1 home=$2 body=$3 before after out status
+
+  printf '%s' "$body" > "$home/state/route.json"
+  before=$(cksum < "$home/state/route.json")
+
+  out=$(acquire "$home" A1 w1 r1.1.1 '["claude"]' 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "$label: acquire must refuse a corrupt store, got exit 0"
+  case "$out" in
+    *"corrupt or unparseable"*) ;;
+    *) fail "$label: acquire did not name the corruption, got: [$out]" ;;
+  esac
+  [ "$(jq -r '.result' <<<"$out" 2>/dev/null)" = error ] \
+    || fail "$label: acquire's refusal is not a JSON error object: [$out]"
+
+  status=
+  out=$(printf '%s' '{"assignment_id":"A1","outcome":"exhausted"}' \
+    | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" finish 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "$label: finish must refuse a corrupt store, got exit 0"
+  case "$out" in
+    *"corrupt or unparseable"*) ;;
+    *) fail "$label: finish reported success and dropped the exclusion: [$out]" ;;
+  esac
+
+  status=
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "$label: status must refuse a corrupt store, got exit 0"
+
+  status=
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "$label: refresh must refuse a corrupt store, got exit 0"
+
+  after=$(cksum < "$home/state/route.json")
+  [ "$before" = "$after" ] \
+    || fail "$label: a refused call changed the store ($before -> $after)"
+}
+
+test_corrupt_store_is_refused_and_left_intact() {
+  local home
+
+  home=$(make_home corrupt-truncated "$FOUR_ROUTE_POOL")
+  corrupt_store_refuses truncated "$home" \
+    '{"generation":9,"tieCursor":3,"routes":{"claude":{"state":"eligi'
+
+  home=$(make_home corrupt-shape "$FOUR_ROUTE_POOL")
+  corrupt_store_refuses wrong-shape "$home" '{"generation":9,"hello":"world"}'
+
+  home=$(make_home corrupt-empty "$FOUR_ROUTE_POOL")
+  corrupt_store_refuses empty-file "$home" ''
+
+  pass "a corrupt route store is refused loudly by every reader and never overwritten"
+}
+
+# A store the commands did write must still be readable by all of them, so
+# the new validation cannot be satisfied by refusing everything.
+test_healthy_store_still_serves_every_reader() {
+  local home out
+  home=$(make_home corrupt-control "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{"claude":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+
+  out=$(acquire "$home" A1 w1 r1.1.1 '["claude"]')
+  [ "$(jq -r '.result' <<<"$out")" = selected ] || fail "healthy acquire did not select: $out"
+  FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status >/dev/null \
+    || fail "status refused a healthy store"
+  out=$(printf '%s' '{"assignment_id":"A1","outcome":"exhausted"}' \
+    | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" finish)
+  [ "$(jq -r '.result' <<<"$out")" = closed ] || fail "healthy finish did not close: $out"
+  [ "$(jq -r '.routes.claude.state' "$home/state/route.json")" = exhausted ] \
+    || fail "healthy finish did not record the immediate exclusion"
+  pass "a healthy store is still served, and finish still records immediate exclusion"
+}
+
 # routes --class must narrow to exactly the routes a class can actually
 # RESOLVE to, not merely the ones its pool mentions. These pools are the real
 # shapes from this repo's own docs/examples/crew-dispatch.json, the ones that
@@ -584,6 +665,8 @@ test_zero_prepaid_grok_credits_not_exhaustion
 test_zero_prepaid_grok_credits_alone_is_unknown_not_exhausted
 test_idempotent_acquire_and_finish
 test_closed_assignment_never_reauthorizes
+test_corrupt_store_is_refused_and_left_intact
+test_healthy_store_still_serves_every_reader
 test_class_scoped_routes_narrow_to_that_class_pool
 test_failed_candidate_lookup_reports_the_resolver_reason
 test_pinned_class_offers_only_its_pinned_route

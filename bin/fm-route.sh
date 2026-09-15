@@ -386,12 +386,21 @@ ROUTE_FILE="$FM_ROUTE_CANONICAL_STATE_DIR/route.json"
 ROUTE_LOCK="$FM_ROUTE_CANONICAL_STATE_DIR/.route.lock"
 ROUTE_DISABLED_FILE="$FM_ROUTE_CANONICAL_CONFIG_DIR/route-disabled"
 
+# An absent store is a fresh one and gets the default document. An existing
+# store that does not parse as this document's shape is NOT silently
+# replaced: every caller feeds the result straight back into jq and writes
+# the result, so returning corrupt bytes here would publish a destroyed
+# store over a real one. Refuse instead and leave the file untouched for a
+# human to inspect.
+FM_ROUTE_CORRUPT_MESSAGE="state/route.json is corrupt or unparseable, refusing to overwrite it"
 fm_route_read() {
-  if [ -f "$ROUTE_FILE" ]; then
-    cat "$ROUTE_FILE"
-  else
-    printf '{"generation":0,"routes":{},"assignments":{}}'
-  fi
+  [ -f "$ROUTE_FILE" ] || { printf '{"generation":0,"routes":{},"assignments":{}}'; return 0; }
+  jq -ce 'if type == "object" and (has("routes") and has("assignments")) then . else error("bad shape") end' \
+    "$ROUTE_FILE" 2>/dev/null || return 1
+}
+
+fm_route_corrupt_text_error() {
+  printf 'error: %s (%s)\n' "$FM_ROUTE_CORRUPT_MESSAGE" "$ROUTE_FILE" >&2
 }
 
 fm_route_write() {
@@ -446,8 +455,12 @@ fm_route_owner_abandoned() {
 cmd_refresh() {
   local doc gen r state reason ts routes_json manual
   fm_lock_acquire_wait "$ROUTE_LOCK"
-  doc=$(fm_route_read)
-  gen=$(printf '%s' "$doc" | jq -r '.generation')
+  doc=$(fm_route_read) || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_corrupt_text_error
+    return 6
+  }
+  gen=$(printf '%s' "$doc" | jq -r '.generation // 0')
   gen=$((gen + 1))
   routes_json='{}'
   for r in $(fm_route_ids_from_config); do
@@ -468,7 +481,7 @@ cmd_refresh() {
 
 cmd_status() {
   local want=$1 doc
-  doc=$(fm_route_read)
+  doc=$(fm_route_read) || { fm_route_corrupt_text_error; return 6; }
   if [ -n "$want" ]; then
     jq -r --arg r "$want" '
       .routes[$r] as $x
@@ -540,8 +553,12 @@ cmd_acquire() {
   done < <(jq -r '.[]' <<<"$routes_json")
 
   fm_lock_acquire_wait "$ROUTE_LOCK"
-  doc=$(fm_route_read)
-  gen=$(printf '%s' "$doc" | jq -r '.generation')
+  doc=$(fm_route_read) || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_json_error "$FM_ROUTE_CORRUPT_MESSAGE"
+    return 1
+  }
+  gen=$(printf '%s' "$doc" | jq -r '.generation // 0')
 
   existing=$(jq -c --arg a "$assignment" '.assignments[$a] // empty' <<<"$doc")
   if [ -n "$existing" ]; then
@@ -655,7 +672,11 @@ cmd_finish() {
   esac
 
   fm_lock_acquire_wait "$ROUTE_LOCK"
-  doc=$(fm_route_read)
+  doc=$(fm_route_read) || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_json_error "$FM_ROUTE_CORRUPT_MESSAGE"
+    return 1
+  }
   existing=$(jq -c --arg a "$assignment" '.assignments[$a] // empty' <<<"$doc")
   if [ -z "$existing" ] || [ "$(jq -r '.status' <<<"$existing")" = closed ]; then
     fm_lock_release "$ROUTE_LOCK"
