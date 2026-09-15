@@ -353,6 +353,65 @@ test_corrupt_store_is_refused_and_left_intact() {
   pass "a corrupt route store is refused loudly by every reader and never overwritten"
 }
 
+# The read check must test value TYPES, not just key presence. A document whose
+# keys are all there but wrongly typed passes a presence-only check, then the
+# acquire-side jq fails on it and the empty result gets published over the real
+# store while acquire still answers "selected".
+test_wrongly_typed_store_is_refused_and_left_intact() {
+  local home before after out status
+
+  home=$(make_home wrong-typed-store "$FOUR_ROUTE_POOL")
+  printf '%s' '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":[]}' \
+    > "$home/state/route.json"
+  before=$(cksum < "$home/state/route.json")
+
+  out=$(acquire "$home" A1 w1 r1.1.1 '["codex"]' 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "acquire must refuse a wrongly-typed store, got exit 0: $out"
+  [ "$(result_field "$out" result)" = error ] \
+    || fail "acquire answered something other than an error for a wrongly-typed store: $out"
+  case "$out" in
+    *"corrupt or unparseable"*) ;;
+    *) fail "the refusal did not name the corruption: $out" ;;
+  esac
+
+  after=$(cksum < "$home/state/route.json")
+  [ "$before" = "$after" ] \
+    || fail "a refused acquire changed the store ($before -> $after)"
+
+  # The same applies to a wrongly-typed routes value.
+  printf '%s' '{"generation":1,"routes":[],"assignments":{}}' > "$home/state/route.json"
+  before=$(cksum < "$home/state/route.json")
+  status=
+  out=$(acquire "$home" A2 w2 r2.2.2 '["codex"]' 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -ne 0 ] || fail "acquire must refuse a wrongly-typed routes value, got exit 0: $out"
+  after=$(cksum < "$home/state/route.json")
+  [ "$before" = "$after" ] || fail "a refused acquire changed the store with a bad routes value"
+
+  pass "a store whose keys are present but wrongly typed is refused, never overwritten"
+}
+
+# defaultPin is a top-level config key, so its route must reach the catalog
+# even when no rule and no default array mentions that route.
+test_top_level_default_pin_contributes_its_route() {
+  local home out
+  home=$(make_home top-level-default-pin \
+    '{"rules":[{"class":"builder","use":[{"harness":"codex","model":"gpt-5","effort":"high"}]}],
+      "defaultPin":{"harness":"claude","model":"opus","effort":"high"}}')
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" routes | sort | tr '\n' ' ')
+  [ "$out" = "claude codex " ] \
+    || fail "a top-level defaultPin's route must appear in the derived catalog, got: [$out]"
+
+  # A route only the defaultPin names must also pass the known-route check.
+  out=$(acquire "$home" A1 w1 r1.1.1 '["claude"]' 2>&1)
+  [ "$(result_field "$out" result)" != error ] \
+    || fail "a defaultPin-only route was refused as unknown: $out"
+
+  pass "a top-level defaultPin contributes its route id to the catalog"
+}
+
 # A store the commands did write must still be readable by all of them, so
 # the new validation cannot be satisfied by refusing everything.
 test_healthy_store_still_serves_every_reader() {
@@ -823,6 +882,8 @@ test_zero_prepaid_grok_credits_alone_is_unknown_not_exhausted
 test_idempotent_acquire_and_finish
 test_closed_assignment_never_reauthorizes
 test_corrupt_store_is_refused_and_left_intact
+test_wrongly_typed_store_is_refused_and_left_intact
+test_top_level_default_pin_contributes_its_route
 test_healthy_store_still_serves_every_reader
 test_class_scoped_routes_narrow_to_that_class_pool
 test_failed_candidate_lookup_reports_the_resolver_reason

@@ -77,7 +77,7 @@ A genuinely new attempt needs a NEW `assignment_id`.
 `generation` here is `state/route.json`'s own monotonic decision/observation generation (bumped by `refresh`), distinct from the request's `owner.generation`.
 
 Selection rule: among `routes` candidates whose last-refreshed state is `eligible` and not manually disabled, and after dropping any candidate's `pending`/`running` assignment whose owner is abandoned (see "Abandoned-owner reconciliation" below) from its count, pick the route with the fewest remaining `pending`/`running` assignments.
-A genuine tie rotates through a monotonic `tieCursor` stored on `state/route.json` and advanced by one on every tie-broken pick, so a burst of concurrent ties spreads across the tied routes instead of always landing on the first-scanned one (`tests/fm-spawn-route-admission.test.sh` proves a real 20-process concurrent split).
+A genuine tie rotates through a monotonic `tieCursor` stored on `state/route.json` and advanced by one on every tie-broken pick, so a burst of concurrent ties spreads across the tied routes instead of always landing on the first-scanned one (`tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates` proves a real 20-process concurrent split).
 `unknown` (unrefreshed or inconclusive telemetry) is never selected and never counted as proven unavailable; when every candidate is either excluded or unknown, `deferred` names which case applied so a caller can distinguish "wait for a verified reset" from "wait for the next refresh".
 
 #### Abandoned-owner reconciliation
@@ -85,6 +85,11 @@ A genuine tie rotates through a monotonic `tieCursor` stored on `state/route.jso
 Before counting a candidate route's `pending`/`running` assignments, `acquire` drops any assignment whose owner is abandoned: no live `state/<owner>.meta` in the canonical home at all, or a live meta whose `spawn_gen=` no longer matches that assignment's stored `owner.generation` (the owner was torn down or relaunched under a new attempt).
 The second condition only applies when that stored `owner.generation` is itself `spawn_gen`-shaped (`s<epoch>.<pid>.<random>`); see `owner.generation` above. Firstmate's own callers send `r`-shaped markers, so today only the meta-existence condition fires for them.
 Elapsed time alone never triggers this; only actual process/task/run ownership evidence does.
+
+Accepted limit on fresh-spawn fairness: `fm-spawn.sh` calls `acquire` well before it writes `state/<id>.meta`, because the meta write happens after worktree creation, the git fetch, config inheritance, and the launch itself, so that window can be substantial.
+An in-flight spawn that has not yet written its meta looks abandoned by the rule above, so it is not counted against its route's `pending` total for the length of that window.
+A burst of concurrent fresh spawns can therefore skew temporarily toward one route, and it self-corrects as each spawn's meta lands.
+This is a deliberate scope narrowing, not a defect: fewest-pending is exact for settled assignments and approximate for in-flight ones.
 
 ### `finish`
 
@@ -162,7 +167,7 @@ Gateway/DeepSeek reads through `omp usage --provider vercel-ai-gateway --json` (
 
 - A health probe that cannot reach its source, cannot parse a usable observation timestamp, or reports a value that does not clearly prove eligibility or exhaustion records `unknown` with a `reason` explaining why, never a guessed state.
 - Zero prepaid credits on a provider whose eligibility is subscription-scoped (Grok) is explicitly never read as subscription exhaustion (see "Evidence sources" above for the live-verified proof).
-- Every write (`refresh`, `acquire`, `finish`, `disable`, `enable`) takes `state/.route.lock` via `bin/fm-wake-lib.sh`'s `fm_lock_acquire_wait`/`fm_lock_release` before reading, and publishes with a tmp-file-plus-`mv -f` atomic replace, so concurrent callers never interleave a partial write; twenty concurrent `acquire` calls against a two-route eligible pool split the assignments evenly with no lost updates, including the rotating-tie case (see `tests/fm-spawn-route-admission.test.sh` for a live concurrency proof at the `fm-spawn.sh` integration layer).
+- Every write (`refresh`, `acquire`, `finish`, `disable`, `enable`) takes `state/.route.lock` via `bin/fm-wake-lib.sh`'s `fm_lock_acquire_wait`/`fm_lock_release` before reading, and publishes with a tmp-file-plus-`mv -f` atomic replace, so concurrent callers never interleave a partial write; twenty concurrent `acquire` calls against a two-route eligible pool split the assignments evenly with no lost updates, including the rotating-tie case (see `tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates`, which drives `fm-route.sh`'s own `acquire` endpoint directly rather than going through `fm-spawn.sh`).
 - `acquire` never blocks on network I/O: all quota/health evidence it reads was already written by the most recent `refresh`, and it never holds `state/.route.lock` while probing a provider.
   A caller that needs fresher evidence runs `refresh` itself first.
 - `finish` never blocks on network I/O either; a failure outcome it records is applied to route state immediately under the same lock acquisition that closes the assignment, never deferred to a background probe.

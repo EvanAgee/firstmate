@@ -212,8 +212,9 @@ fm_route_ids_from_config() {
       elif ($v | type) == "array" then $v
       else [$v]
       end;
-    ((.rules // [])[]? | (profiles(.use) + profiles(.pin) + profiles(.defaultPin))[]?),
-    (profiles(.default)[]?)
+    ((.rules // [])[]? | (profiles(.use) + profiles(.pin))[]?),
+    (profiles(.default)[]?),
+    (profiles(.defaultPin)[]?)
     | select(. != null)
     | [(.harness // ""), (.model // "default")] | @tsv
   ' "$config" 2>/dev/null)
@@ -400,7 +401,11 @@ ROUTE_DISABLED_FILE="$FM_ROUTE_CANONICAL_CONFIG_DIR/route-disabled"
 FM_ROUTE_CORRUPT_MESSAGE="state/route.json is corrupt or unparseable, refusing to overwrite it"
 fm_route_read() {
   [ -f "$ROUTE_FILE" ] || { printf '{"generation":0,"routes":{},"assignments":{}}'; return 0; }
-  jq -ce 'if type == "object" and (has("routes") and has("assignments")) then . else error("bad shape") end' \
+  jq -ce '
+    if type == "object"
+      and (.routes | type) == "object"
+      and (.assignments | type) == "object"
+    then . else error("bad shape") end' \
     "$ROUTE_FILE" 2>/dev/null || return 1
 }
 
@@ -408,12 +413,21 @@ fm_route_corrupt_text_error() {
   printf 'error: %s (%s)\n' "$FM_ROUTE_CORRUPT_MESSAGE" "$ROUTE_FILE" >&2
 }
 
+# The read side refuses corrupt bytes; this is the matching guard on the way
+# out. Every caller builds its payload in a command substitution, which set -e
+# does not abort on, so a failed jq leaves an empty string that would otherwise
+# be published atomically over a real store.
 fm_route_write() {
   local content=$1 tmp
+  printf '%s' "$content" | jq -ce '
+    if type == "object"
+      and (.routes | type) == "object"
+      and (.assignments | type) == "object"
+    then . else error("bad shape") end' >/dev/null 2>&1 || return 1
   mkdir -p "$FM_ROUTE_CANONICAL_STATE_DIR"
   tmp="$ROUTE_FILE.tmp.$$"
-  printf '%s' "$content" > "$tmp"
-  mv -f -- "$tmp" "$ROUTE_FILE"
+  printf '%s' "$content" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f -- "$tmp" "$ROUTE_FILE" || { rm -f "$tmp"; return 1; }
 }
 
 fm_route_manual_disabled() {
@@ -436,6 +450,15 @@ fm_route_manual_disabled() {
 # "r"-shaped token, so both are pure freshness markers today and neither
 # reaches the mismatch branch. The branch stays for the separate native
 # no-mistakes integration, which can pass a comparable shape.
+#
+# Accepted limit on fresh-spawn fairness: fm-spawn.sh acquires its route long
+# before it writes state/<id>.meta, since that write follows worktree creation,
+# the git fetch, config inheritance, and the launch. An in-flight spawn with no
+# meta yet reads as abandoned here, so it is not counted against its route's
+# pending total for that window, and a burst of concurrent fresh spawns can
+# skew toward one route until each meta lands. Deliberate narrowing, not a
+# defect: fewest-pending is exact for settled assignments, approximate for
+# in-flight ones.
 fm_route_owner_abandoned() {
   local owner=$1 owner_gen=$2 meta spawn_gen
   meta="$FM_ROUTE_CANONICAL_STATE_DIR/$owner.meta"
@@ -480,7 +503,11 @@ cmd_refresh() {
       '.[$r] = {state:$state, reason:$reason, observedAt:$ts, manualDisabled:$manual}' <<<"$routes_json")
   done < <(fm_route_ids_from_config)
   doc=$(jq -c --argjson gen "$gen" --argjson routes "$routes_json" '.generation=$gen | .routes=$routes' <<<"$doc")
-  fm_route_write "$doc"
+  fm_route_write "$doc" || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_corrupt_text_error
+    return 6
+  }
   fm_lock_release "$ROUTE_LOCK"
   printf 'refreshed generation=%s\n' "$gen"
 }
@@ -650,7 +677,11 @@ cmd_acquire() {
     fi
     doc=$(jq -c --arg a "$assignment" --arg owner "$owner_identity" --arg gen "$owner_gen" --arg reason "$reasons" \
       '.assignments[$a] = {owner:$owner, ownerGeneration:$gen, status:"deferred", route:null, reason:$reason}' <<<"$doc")
-    fm_route_write "$doc"
+    fm_route_write "$doc" || {
+      fm_lock_release "$ROUTE_LOCK"
+      fm_route_json_error "$FM_ROUTE_CORRUPT_MESSAGE"
+      return 1
+    }
     fm_lock_release "$ROUTE_LOCK"
     jq -cn --argjson gen "$gen" --arg reason "$reasons" '{result:"deferred", reason:$reason, generation:$gen}'
     return 0
@@ -658,7 +689,11 @@ cmd_acquire() {
 
   doc=$(jq -c --arg a "$assignment" --arg owner "$owner_identity" --arg gen "$owner_gen" --arg route "$best_route" \
     '.assignments[$a] = {owner:$owner, ownerGeneration:$gen, status:"running", route:$route, reason:"fewest-pending"}' <<<"$doc")
-  fm_route_write "$doc"
+  fm_route_write "$doc" || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_json_error "$FM_ROUTE_CORRUPT_MESSAGE"
+    return 1
+  }
   fm_lock_release "$ROUTE_LOCK"
   jq -cn --argjson gen "$gen" --arg route "$best_route" \
     '{result:"selected", route_id:$route, reason:"fewest-pending", generation:$gen}'
@@ -714,7 +749,11 @@ cmd_finish() {
       ;;
   esac
 
-  fm_route_write "$doc"
+  fm_route_write "$doc" || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_json_error "$FM_ROUTE_CORRUPT_MESSAGE"
+    return 1
+  }
   fm_lock_release "$ROUTE_LOCK"
   jq -cn --arg a "$assignment" '{result:"closed", assignment_id:$a}'
 }
