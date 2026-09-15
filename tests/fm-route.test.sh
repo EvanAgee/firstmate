@@ -392,6 +392,84 @@ test_wrongly_typed_store_is_refused_and_left_intact() {
   pass "a store whose keys are present but wrongly typed is refused, never overwritten"
 }
 
+# ---------------------------------------------------------------------------
+# A store whose top-level shape passes but whose MEMBER values are wrongly
+# typed is corruption too: every reader must refuse it clearly rather than
+# indexing a scalar and turning the resulting empty value into a route
+# decision.
+# ---------------------------------------------------------------------------
+test_wrongly_typed_store_member_values_are_refused_by_every_reader() {
+  local home before after out status desc doc
+
+  home=$(make_home wrong-typed-member "$FOUR_ROUTE_POOL")
+
+  while IFS=$'\t' read -r desc doc; do
+    [ -n "$desc" ] || continue
+    printf '%s' "$doc" > "$home/state/route.json"
+    before=$(cksum < "$home/state/route.json")
+
+    status=
+    out=$(acquire "$home" M1 w1 r1.1.1 '["codex"]' 2>&1) || status=$?
+    status=${status:-0}
+    [ "$status" -ne 0 ] \
+      || fail "acquire must refuse $desc, got exit 0: $out"
+    [ "$(result_field "$out" result)" = error ] \
+      || fail "acquire answered something other than an error for $desc: $out"
+    case "$out" in
+      *"corrupt or unparseable"*) ;;
+      *) fail "acquire's refusal of $desc did not name the corruption: $out" ;;
+    esac
+
+    status=
+    out=$(finish "$home" M1 success 2>&1) || status=$?
+    status=${status:-0}
+    [ "$status" -ne 0 ] \
+      || fail "finish must refuse $desc, got exit 0: $out"
+    [ "$(result_field "$out" result)" = error ] \
+      || fail "finish answered something other than an error for $desc: $out"
+
+    status=
+    out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status 2>&1) || status=$?
+    status=${status:-0}
+    [ "$status" -ne 0 ] || fail "status must refuse $desc, got exit 0: $out"
+    case "$out" in
+      *"corrupt or unparseable"*) ;;
+      *) fail "status's refusal of $desc did not name the corruption: $out" ;;
+    esac
+
+    status=
+    out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh 2>&1) || status=$?
+    status=${status:-0}
+    [ "$status" -ne 0 ] || fail "refresh must refuse $desc, got exit 0: $out"
+    case "$out" in
+      *"corrupt or unparseable"*) ;;
+      *) fail "refresh's refusal of $desc did not name the corruption: $out" ;;
+    esac
+
+    after=$(cksum < "$home/state/route.json")
+    [ "$before" = "$after" ] \
+      || fail "a refused reader rewrote the store for $desc ($before -> $after)"
+  done <<EOF
+a scalar routes member	{"generation":1,"routes":{"codex":"garbage"},"assignments":{}}
+a null routes member	{"generation":1,"routes":{"codex":null},"assignments":{}}
+an array routes member	{"generation":1,"routes":{"codex":["eligible"]},"assignments":{}}
+a scalar assignments member	{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{"M1":42}}
+EOF
+
+  # A healthy store with both maps populated, and a fresh store with both
+  # empty, must still be accepted: the tightened guard rejects wrong member
+  # types only, never a legitimate document.
+  seed_routes "$home" '{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+  out=$(acquire "$home" M2 w2 r2.2.2 '["codex"]')
+  [ "$(result_field "$out" result)" = selected ] \
+    || fail "a healthy store must still be accepted after the member-type guard: $out"
+  out=$(finish "$home" M2 success)
+  [ "$(result_field "$out" result)" = closed ] \
+    || fail "finish must still close a healthy store's assignment: $out"
+
+  pass "a store with a wrongly-typed value inside routes or assignments is refused by acquire, finish, status and refresh"
+}
+
 # defaultPin is a top-level config key, so its route must reach the catalog
 # even when no rule and no default array mentions that route.
 test_top_level_default_pin_contributes_its_route() {
@@ -928,6 +1006,7 @@ test_idempotent_acquire_and_finish
 test_closed_assignment_never_reauthorizes
 test_corrupt_store_is_refused_and_left_intact
 test_wrongly_typed_store_is_refused_and_left_intact
+test_wrongly_typed_store_member_values_are_refused_by_every_reader
 test_top_level_default_pin_contributes_its_route
 test_healthy_store_still_serves_every_reader
 test_class_scoped_routes_narrow_to_that_class_pool

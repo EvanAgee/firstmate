@@ -405,6 +405,8 @@ fm_route_read() {
     if type == "object"
       and (.routes | type) == "object"
       and (.assignments | type) == "object"
+      and (.routes | all(.[]; type == "object"))
+      and (.assignments | all(.[]; type == "object"))
     then . else error("bad shape") end' \
     "$ROUTE_FILE" 2>/dev/null || return 1
 }
@@ -423,6 +425,8 @@ fm_route_write() {
     if type == "object"
       and (.routes | type) == "object"
       and (.assignments | type) == "object"
+      and (.routes | all(.[]; type == "object"))
+      and (.assignments | all(.[]; type == "object"))
     then . else error("bad shape") end' >/dev/null 2>&1 || return 1
   mkdir -p "$FM_ROUTE_CANONICAL_STATE_DIR"
   tmp="$ROUTE_FILE.tmp.$$"
