@@ -162,6 +162,13 @@ control_cleanup() {
      && declare -F relaunch_rollback >/dev/null 2>&1; then
     relaunch_rollback || true
   fi
+  if declare -F finish_relaunch_route_admission >/dev/null 2>&1; then
+    if [ "$status" -eq 0 ]; then
+      finish_relaunch_route_admission success
+    else
+      finish_relaunch_route_admission launch-failed
+    fi
+  fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
     fm_lock_release "$CONTROL_LOCK" || true
@@ -684,6 +691,78 @@ resolve_relaunch_profile() {
   fi
 }
 
+# Provider-availability admission for an authorized relaunch
+# (data/fm-dynamic-subscription-routing/report.md addendum: "Integrate fresh
+# spawn and authorized relaunch admission"). fm-spawn.sh's own admission is
+# scoped to a fresh --class spawn, which a relaunch never uses (a relaunch
+# always carries a concrete resolved harness/model/effort here), so this is
+# the only gate on the relaunch path. Runs before safe_checkpoint or anything
+# is stopped, so a refusal never touches the live process. An explicit
+# --harness the captain passed is treated the same as fm-spawn.sh's captain
+# override: it bypasses admission entirely.
+# fm-route.sh reports validation failures as a JSON {"error":...} on stdout,
+# but a usage/argument-parse failure exits 2 with plain text on stderr and an
+# empty stdout. Callers capture both streams, so read whichever the run
+# actually produced instead of reporting a bare "unknown error".
+fm_route_failure_detail() {  # <captured-output>
+  local raw=$1 parsed
+  parsed=$(jq -r '.error // empty' <<<"$raw" 2>/dev/null) || parsed=
+  if [ -n "$parsed" ]; then
+    printf '%s' "$parsed"
+    return 0
+  fi
+  raw=$(printf '%s' "$raw" | tr '\n' ' ')
+  raw=${raw%"${raw##*[! ]}"}
+  printf '%s' "${raw:-unknown error}"
+}
+
+RELAUNCH_ROUTE_ASSIGNMENT_ACTIVE=0
+RELAUNCH_ROUTE_ASSIGNMENT_ID=
+check_relaunch_route_admission() {
+  local route acquire_result acquired known_routes acquire_request gen result
+  [ "$HARNESS_SET" = 0 ] || return 0
+  route=$("$SCRIPT_DIR/fm-route.sh" group-for --harness "$TARGET_HARNESS" --model "${TARGET_MODEL:-default}" 2>/dev/null) || return 0
+  [ -n "$route" ] || return 0
+  # Stay inert when the canonical route catalog does not name this route at
+  # all (no routing policy configured for this profile, or none configured
+  # anywhere): admission only applies to profiles the operator has actually
+  # approved through config/crew-dispatch.json.
+  known_routes=$("$SCRIPT_DIR/fm-route.sh" routes 2>/dev/null) || return 0
+  grep -qxF "$route" <<< "$known_routes" || return 0
+  # The original spawn already acquired and CLOSED an assignment under the
+  # bare task id; reusing it would only echo that spent record instead of
+  # evaluating this relaunch's own requested route. Scope the id to this
+  # attempt's freshness token so admission is decided fresh every time.
+  gen="r$(date -u +%Y%m%dT%H%M%SZ).${BASHPID:-$$}.$RANDOM"
+  RELAUNCH_ROUTE_ASSIGNMENT_ID="$ID-relaunch-$gen"
+  acquire_request=$(jq -cn --arg a "$RELAUNCH_ROUTE_ASSIGNMENT_ID" --arg owner "$ID" --arg gen "$gen" --arg route "$route" \
+    '{assignment_id:$a, owner:{identity:$owner, generation:$gen}, routes:[$route]}')
+  acquire_result=$(printf '%s' "$acquire_request" | "$SCRIPT_DIR/fm-route.sh" acquire 2>&1) \
+    || die "provider-availability admission failed for $ID's relaunch: $(fm_route_failure_detail "$acquire_result")"
+  # Only result=="selected" authorizes stopping the live worker.
+  result=$(jq -r '.result // empty' <<<"$acquire_result" 2>/dev/null) || result=
+  acquired=$(jq -r 'select(.result == "selected") | .route_id // empty' <<<"$acquire_result" 2>/dev/null) || acquired=
+  if [ -z "$acquired" ]; then
+    local defer_reason
+    if [ "$result" = already-closed ]; then
+      defer_reason="assignment $RELAUNCH_ROUTE_ASSIGNMENT_ID is already closed; a new attempt needs a new assignment id"
+    else
+      defer_reason=$(jq -r '.reason // "no reason given"' <<<"$acquire_result" 2>/dev/null)
+    fi
+    RELAUNCH_ROUTE_ASSIGNMENT_ID=
+    die "route '$route' for $TARGET_HARNESS/$TARGET_MODEL is not currently eligible ($defer_reason); the live worker keeps running. Wait for verified recovery or pass an explicit --harness to override"
+  fi
+  RELAUNCH_ROUTE_ASSIGNMENT_ACTIVE=1
+}
+
+finish_relaunch_route_admission() {  # <outcome>
+  [ "$RELAUNCH_ROUTE_ASSIGNMENT_ACTIVE" = 1 ] || return 0
+  RELAUNCH_ROUTE_ASSIGNMENT_ACTIVE=0
+  jq -cn --arg a "$RELAUNCH_ROUTE_ASSIGNMENT_ID" --arg outcome "$1" --arg adapter "$TARGET_HARNESS" --arg model "${TARGET_MODEL:-default}" --arg effort "${TARGET_EFFORT:-default}" \
+    '{assignment_id:$a, outcome:$outcome, profile:{adapter:$adapter, model:$model, effort:$effort}}' \
+    | "$SCRIPT_DIR/fm-route.sh" finish >/dev/null 2>&1 || true
+}
+
 # safe_checkpoint: prove, before anything is stopped, that the work a relaunch
 # must preserve is actually there and recoverable afterwards. Fills
 # CHECKPOINT_LINES with the journal lines describing what it proved, and
@@ -785,6 +864,7 @@ do_relaunch() {
 
   require_state_verified_backend relaunch
   resolve_relaunch_profile
+  check_relaunch_route_admission
 
   case "$KIND" in
     ship|scout)

@@ -520,6 +520,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/provider-availability-routing.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },

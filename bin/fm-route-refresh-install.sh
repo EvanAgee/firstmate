@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# Consent-guarded installer for bounded, non-inference fm-route.sh refresh,
+# independent of any LLM turn (report: "Use the existing system-timer pattern
+# for periodic refresh independent of LLM turns"). Same shape as
+# bin/fm-watcher-beat-alarm-install.sh: installs and removes a macOS launchd
+# interval agent that runs `bin/fm-route.sh refresh` on a bounded interval.
+# refresh only reads non-inference health/quota evidence and writes
+# state/route.json; it never launches, stops, or supervises anything.
+#
+# Consent contract: install and uninstall print the exact action and ask once
+# on the terminal; only --yes skips the prompt (a non-interactive run the
+# captain already approved). Nothing is installed or removed silently.
+#
+# Usage:
+#   bin/fm-route-refresh-install.sh status
+#   bin/fm-route-refresh-install.sh install [--yes]
+#   bin/fm-route-refresh-install.sh uninstall [--yes]
+#   bin/fm-route-refresh-install.sh crontab          # print the Linux cron line
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+FM_HOME="${FM_ROUTE_HOME_OVERRIDE:-$FM_ROOT}"
+INTERVAL=${FM_ROUTE_REFRESH_INTERVAL:-300}
+
+ACTION=
+YES=0
+
+usage() {
+  sed -n '2,/^set -u$/p' "$0" | sed '$d'
+  exit "${1:-2}"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    status|install|uninstall|crontab)
+      [ -z "$ACTION" ] || { echo "route-refresh install: pass at most one action" >&2; usage 2; }
+      ACTION=$1
+      shift
+      ;;
+    --yes)
+      YES=1
+      shift
+      ;;
+    -h|--help)
+      usage 0
+      ;;
+    *)
+      echo "route-refresh install: unknown argument: $1" >&2
+      usage 2
+      ;;
+  esac
+done
+[ -n "$ACTION" ] || usage 2
+
+case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=300 ;; esac
+[ "$INTERVAL" -gt 0 ] || INTERVAL=300
+
+# The label is stable per canonical home so distinct route stores never
+# collide, and pwd-resolution keeps it stable across symlink aliases.
+home_key=$(printf '%s' "$(cd "$FM_HOME" && pwd -P)" | shasum -a 256 | cut -c1-8 2>/dev/null || true)
+[ -n "$home_key" ] || home_key=default
+LABEL="com.firstmate.route-refresh.$home_key"
+PLIST="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}/$LABEL.plist"
+REFRESHER="$SCRIPT_DIR/fm-route.sh"
+LOG_PATH="$FM_HOME/state/.route-refresh.launchd.log"
+
+consent() {  # <verb> <action-description>
+  local verb=$1
+  printf 'route-refresh %s:\n' "$verb" >&2
+  printf '  label:  %s\n' "$LABEL" >&2
+  printf '  plist:  %s\n' "$PLIST" >&2
+  printf '  action: %s\n' "$2" >&2
+  [ "$YES" -eq 1 ] && return 0
+  if [ -t 0 ] || [ -c /dev/tty ]; then
+    printf 'Proceed? [y/N] ' >&2
+    local reply
+    read -r reply < /dev/tty 2>/dev/null || read -r reply
+    case "$reply" in y|Y|yes|YES) return 0 ;; esac
+  fi
+  echo "refused: consent not given (pass --yes only when the captain already approved this exact action)" >&2
+  return 1
+}
+
+require_macos() {
+  [ "$(uname)" = Darwin ] && return 0
+  echo "route-refresh install: launchd agents are macOS-only; on $(uname) wire bin/fm-route.sh refresh from cron or a systemd timer instead" >&2
+  return 1
+}
+
+write_plist() {
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$REFRESHER</string>
+    <string>refresh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FM_ROUTE_HOME_OVERRIDE</key>
+    <string>$FM_HOME</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>$INTERVAL</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$LOG_PATH</string>
+  <key>StandardErrorPath</key>
+  <string>$LOG_PATH</string>
+</dict>
+</plist>
+EOF
+}
+
+is_installed() {
+  [ -f "$PLIST" ]
+}
+
+case "$ACTION" in
+  crontab)
+    minutes=$(( INTERVAL / 60 ))
+    [ "$minutes" -ge 1 ] || minutes=1
+    printf '# Linux: add this line with "crontab -e".\n'
+    printf '*/%s * * * * FM_ROUTE_HOME_OVERRIDE=%s %s refresh\n' \
+      "$minutes" "$FM_HOME" "$REFRESHER"
+    exit 0
+    ;;
+  status)
+    if is_installed; then
+      printf 'installed: %s (interval %ss, refresher %s)\n' "$PLIST" "$INTERVAL" "$REFRESHER"
+      if launchctl list 2>/dev/null | grep -q "$LABEL"; then
+        printf 'launchd: loaded\n'
+      else
+        printf 'launchd: not loaded (install exists but is not active)\n'
+      fi
+    else
+      printf 'not installed: %s absent\n' "$PLIST"
+    fi
+    exit 0
+    ;;
+  install)
+    require_macos || exit 1
+    if [ ! -d "$FM_HOME/state" ]; then
+      printf 'warning: %s/state does not exist yet; it will be created by the first refresh\n' "$FM_HOME" >&2
+    fi
+    consent "install" "write $PLIST and load it into launchd now (refresh every ${INTERVAL}s; refresh only reads quota/health evidence and writes state/route.json, never launches or stops anything)" || exit 1
+    mkdir -p "$(dirname "$PLIST")" "$FM_HOME/state"
+    tmp=$(mktemp "$PLIST.tmp.XXXXXX") || exit 1
+    trap 'rm -f "$tmp"' EXIT
+    PLIST=$tmp write_plist || { echo "error: could not write the agent plist for $PLIST" >&2; exit 1; }
+    mv -f "$tmp" "$PLIST" || { echo "error: could not install $PLIST" >&2; exit 1; }
+    trap - EXIT
+    launchctl unload "$PLIST" >/dev/null 2>&1 || true
+    launchctl load -w "$PLIST" || { echo "error: launchctl load failed for $PLIST" >&2; exit 1; }
+    printf 'installed: %s (every %ss; refresh-only: reads quota/health evidence and writes state/route.json)\n' "$PLIST" "$INTERVAL"
+    exit 0
+    ;;
+  uninstall)
+    if [ ! -f "$PLIST" ]; then
+      printf 'not installed: %s absent; nothing to remove\n' "$PLIST"
+      exit 0
+    fi
+    consent "uninstall" "unload $LABEL from launchd and delete $PLIST" || exit 1
+    launchctl unload -w "$PLIST" >/dev/null 2>&1 || true
+    rm -f "$PLIST" || exit 1
+    printf 'removed: %s (launchd refresh stopped)\n' "$PLIST"
+    exit 0
+    ;;
+esac
