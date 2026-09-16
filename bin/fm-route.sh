@@ -221,11 +221,17 @@ fm_route_ids_from_config() {
 }
 
 fm_route_is_known() {
-  local r=$1 x
+  # Read the full stream before returning: an early return here would close
+  # the process substitution's read end while fm_route_ids_from_config's
+  # background writer may still be mid-printf, producing a SIGPIPE/EPIPE
+  # "Broken pipe" message on its stderr under load (observed in CI). The
+  # route catalog is always small (one line per approved billing surface),
+  # so consuming it fully costs nothing.
+  local r=$1 x found=1
   while IFS= read -r x; do
-    [ "$x" != "$r" ] || return 0
+    [ "$x" != "$r" ] || found=0
   done < <(fm_route_ids_from_config)
-  return 1
+  return "$found"
 }
 
 # ---- non-inference health probes ------------------------------------------
