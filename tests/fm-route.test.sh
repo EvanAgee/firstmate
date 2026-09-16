@@ -172,11 +172,32 @@ test_no_probe_route_verified_failure_excludes_then_recovers() {
   out=$(acquire "$home" a2 a2 g1 '["omp"]')
   [ "$(result_field "$out" result)" = deferred ] || fail "the just-excluded no-probe route must not be selected for a new assignment: $out"
 
-  jq '.routes.omp.state = "eligible" | .routes.omp.reason = "no probe for route omp; eligible until a launch or worker failure proves otherwise"' \
-    "$home/state/route.json" > "$home/state/route.json.tmp" && mv "$home/state/route.json.tmp" "$home/state/route.json"
+  # A real refresh must NOT silently clear the verified failure with its own
+  # synthetic eligible reading: only a later verified success does.
+  FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route omp)
+  case "$out" in
+    *state=launch-failed*) : ;;
+    *) fail "refresh must preserve a no-probe route's verified failure, not overwrite it with a synthetic eligible reading: $out" ;;
+  esac
   out=$(acquire "$home" a2 a2 g1 '["omp"]')
-  [ "$(result_field "$out" result)" = selected ] || fail "a later verified-eligible refresh should re-admit the no-probe route: $out"
-  pass "a verified failure excludes a no-probe route until a later refresh re-admits it"
+  [ "$(result_field "$out" result)" = deferred ] || fail "the excluded no-probe route must still defer after a refresh alone: $out"
+
+  # finish's success path only clears a prior failure for an assignment that
+  # actually holds the excluded route (route:null on a deferred record
+  # carries no route to clear), so seed a running record directly the same
+  # way test_abandoned_owner_does_not_block_fewest_pending does.
+  jq '.assignments["a3"] = {owner:"a3", ownerGeneration:"g1", status:"running", route:"omp", reason:"fewest-pending"}' \
+    "$home/state/route.json" > "$home/state/route.json.tmp" && mv "$home/state/route.json.tmp" "$home/state/route.json"
+  finish "$home" a3 success >/dev/null
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route omp)
+  case "$out" in
+    *state=eligible*) : ;;
+    *) fail "a verified success finish should clear the no-probe route's prior failure: $out" ;;
+  esac
+  out=$(acquire "$home" a4 a4 g1 '["omp"]')
+  [ "$(result_field "$out" result)" = selected ] || fail "a later verified-success finish should re-admit the no-probe route: $out"
+  pass "a verified failure excludes a no-probe route until a later verified success re-admits it"
 }
 
 test_route_with_erroring_probe_still_records_unknown() {

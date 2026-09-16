@@ -89,9 +89,14 @@
 # verified failure evidence against that route: refresh's next probe
 # corroborates or clears it, but finish itself marks the route EXCLUDED from
 # that moment (never waiting for the next timer tick), until newer
-# route-relevant success clears it. finish never blocks on network I/O and
-# never holds the assignment lock while waiting on anything external -- it
-# only writes the already-decided outcome.
+# route-relevant success clears it. A success outcome, in turn, clears a
+# prior verified failure it finds on its own route: this is the only
+# recovery path for a route with no real probe source, since refresh
+# deliberately preserves that route's verified-failure state rather than
+# overwriting it with a synthetic eligible reading on every tick. finish
+# never blocks on network I/O and never holds the assignment lock while
+# waiting on anything external -- it only writes the already-decided
+# outcome.
 #
 # finish response: {"result":"closed","assignment_id":"<id>"}, idempotent (a
 # second finish on an already-closed assignment succeeds with no effect).
@@ -386,6 +391,15 @@ fm_route_ms_to_rfc3339() {
   date -u -r "$s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
 }
 
+# True (0) when a route id matches none of fm_route_probe's real evidence
+# sources, meaning its "eligible" reading is synthetic rather than verified.
+fm_route_no_probe_route() {
+  case "$1" in
+    claude|codex|pi-grok|pi-deepseek) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 fm_route_probe() {
   case "$1" in
     claude) fm_route_probe_claude ;;
@@ -518,6 +532,25 @@ cmd_refresh() {
       manual=true
     else
       manual=false
+    fi
+    # A no-probe route's "eligible" reading is synthetic (fm_route_probe has
+    # no real evidence source for it), never a verified success. Overwriting
+    # an existing verified failure (launch-failed/auth-failed/exhausted/
+    # outage) with that synthetic reading on every refresh would silently
+    # clear finish's immediate exclusion without the newer verified success
+    # the documented contract requires, so refresh keeps the prior recorded
+    # state for that case instead of replacing it.
+    if fm_route_no_probe_route "$r"; then
+      local prior_state prior_entry
+      prior_state=$(jq -r --arg r "$r" '.routes[$r].state // empty' <<<"$doc")
+      case "$prior_state" in
+        launch-failed|auth-failed|exhausted|outage)
+          prior_entry=$(jq -c --arg r "$r" '.routes[$r]' <<<"$doc")
+          routes_json=$(jq -c --arg r "$r" --argjson entry "$prior_entry" --argjson manual "$manual" \
+            '.[$r] = ($entry + {manualDisabled:$manual})' <<<"$routes_json")
+          continue
+          ;;
+      esac
     fi
     routes_json=$(jq -c --arg r "$r" --arg state "$state" --arg reason "$reason" --arg ts "$ts" --argjson manual "$manual" \
       '.[$r] = {state:$state, reason:$reason, observedAt:$ts, manualDisabled:$manual}' <<<"$routes_json")
@@ -782,6 +815,25 @@ cmd_finish() {
         esac
         doc=$(jq -c --arg r "$route" --arg state "$state_name" --arg ts "$(fm_route_now)" \
           '.routes[$r] = ((.routes[$r] // {}) + {state:$state, reason:("finish recorded " + $state), observedAt:$ts, manualDisabled:((.routes[$r].manualDisabled) // false)})' <<<"$doc")
+      fi
+      ;;
+    success)
+      # A successful launch is itself verified evidence clearing a prior
+      # verified failure on its route. This matters most for a no-probe
+      # route: refresh preserves that route's existing failure state rather
+      # than overwriting it with a synthetic eligible reading (see
+      # fm_route_no_probe_route above), so a successful finish is the only
+      # real signal that re-admits it, per the documented "later verified
+      # success" contract.
+      if [ -n "$route" ]; then
+        local existing_state
+        existing_state=$(jq -r --arg r "$route" '.routes[$r].state // empty' <<<"$doc")
+        case "$existing_state" in
+          launch-failed|auth-failed|exhausted|outage)
+            doc=$(jq -c --arg r "$route" --arg ts "$(fm_route_now)" \
+              '.routes[$r] = ((.routes[$r] // {}) + {state:"eligible", reason:"finish recorded success", observedAt:$ts})' <<<"$doc")
+            ;;
+        esac
       fi
       ;;
   esac

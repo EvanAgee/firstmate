@@ -110,6 +110,8 @@ Request fields:
 
 Closes the assignment idempotently: a second `finish` on an already-closed assignment succeeds with no effect and no state change.
 A `launch-failed`/`auth-failed`/`exhausted`/`outage` outcome is verified failure evidence against that assignment's route: `finish` writes the route's own state to that value IMMEDIATELY, at decision time, never waiting for `refresh`'s next probe tick; `refresh`'s later fresh probe corroborates or clears it, and only a newer verified `eligible` reading clears the exclusion (never elapsed time alone).
+A `success` outcome, in turn, clears a prior verified failure it finds on its own route.
+This matters most for a route with no real probe source: `refresh` preserves that route's verified-failure state rather than overwriting it with the synthetic `eligible` reading described in the no-probe rule above, so a successful `finish` is the only real recovery signal for it.
 `finish` never blocks on network I/O and never holds `state/.route.lock` while waiting on anything external: every field it writes was already decided by the caller before the call.
 
 Response:
@@ -126,7 +128,7 @@ fm-route.sh status [--route <id>]
 ```
 
 `refresh` re-reads non-inference health/quota evidence for every route in the canonical catalog and atomically republishes `state/route.json`'s `routes` map; it never runs inside `acquire`, so a stalled refresh timer degrades to stale (`unknown`-treated) evidence, never a hang.
-Each route's recorded state is one of `eligible`, `exhausted`, `outage`, `auth-failed`, `unknown`, each carrying a `reason` string and an `observedAt` timestamp attributed to the evidence source, never to `refresh`'s own collection time.
+Each route's recorded state is one of `eligible`, `launch-failed`, `exhausted`, `outage`, `auth-failed`, `unknown`, each carrying a `reason` string and an `observedAt` timestamp attributed to the evidence source, never to `refresh`'s own collection time.
 A route with no probe source records `eligible`, not `unknown`; see "Evidence sources" below.
 `status` prints the current recorded state for one or every route without mutating anything.
 
@@ -168,6 +170,7 @@ Gateway/DeepSeek reads through `omp usage --provider vercel-ai-gateway --json` (
 **No-probe rule** (captain's word, 2026-09-16): a route whose catalog entry has no probe source at all, meaning its id matches none of `fm_route_probe`'s known cases above, is never `unknown`.
 It records `eligible` with a `reason` of `no probe for route <id>; eligible until a launch or worker failure proves otherwise`.
 It stays eligible until a verified launch or worker failure (`finish` with `launch-failed`, `auth-failed`, `exhausted`, or `outage`) excludes it exactly as any other route's verified failure does (see `finish` above); a later verified success re-admits it on the next `refresh`.
+Because a no-probe route's own reading is always the same synthetic `eligible`, `refresh` preserves an existing verified-failure state for it instead of overwriting that state with the synthetic reading on every tick: only a newer verified success (via `finish`) clears the exclusion, never `refresh` alone.
 `unknown` stays reserved for a probe that exists (claude, codex, pi-grok, pi-deepseek) but returned inconclusive or stale evidence, as described above.
 
 ## Timeout and error behavior
