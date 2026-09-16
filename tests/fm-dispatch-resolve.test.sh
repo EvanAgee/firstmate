@@ -162,15 +162,192 @@ EOF
   pass "an override checks disabled members only in its resolved pool"
 }
 
+# A model-specific window can be exhausted while the account-wide bound is
+# fine (quota-axi: "A model-specific window is an additional bound"). The
+# fake quota-axi below reports claude/fable's model:fable scope at 0%
+# effective remaining while all_models stays healthy, so the fable rung must
+# be excluded from the pool while the account-wide route (fm-route.sh)
+# would still admit claude.
+test_model_specific_exhaustion_excludes_only_that_model() {
+  local home out fakebin
+  home=$(make_home model-specific-limit)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"claude","model":"opus","effort":"high"}]}]}
+EOF
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"--provider claude"*)
+    cat <<'JSON'
+{
+  "generatedAt": "2026-09-15T00:00:00.000Z",
+  "schemaVersion": 3,
+  "providers": [
+    {
+      "provider": "claude",
+      "label": "Claude",
+      "source": "oauth",
+      "windows": [],
+      "quotaSemantics": {
+        "status": "known",
+        "effectiveAvailability": [
+          {"scope": "all_models", "status": "known", "effectivePercentRemaining": 64},
+          {"scope": "model:fable", "status": "known", "effectivePercentRemaining": 0}
+        ]
+      },
+      "state": {"status": "fresh", "stale": false, "refreshedAt": "2026-09-15T00:00:00.000Z", "sourcesTried": ["oauth"]}
+    }
+  ]
+}
+JSON
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+  out=$(PATH="$fakebin:$PATH" FM_DISPATCH_QUOTA_AXI_BIN=quota-axi \
+    $RESOLVER --class designer --home "$home") || fail "designer class did not resolve around the exhausted model"
+  [ "$out" = "harness=claude model=opus effort=high reason=round-robin" ] \
+    || fail "model-specific exhaustion did not steer the resolver away from fable, got '$out'"
+  pass "a model-specific exhausted window excludes only that model, not the whole account/route"
+}
+
+# --list-candidate-routes is the single owner of "which routes can this class
+# currently be served by". Every answer it gives must be a route the real
+# resolve then accepts, which is the invariant the route admission caller
+# depends on: a candidate it cannot resolve to becomes an --exclude-routes
+# entry that switches off the pool's only usable member.
+candidate_routes() {  # <home> [extra-path]
+  local home=$1 class=$2 extra=${3:-}
+  PATH="${extra:+$extra:}$PATH" FM_DISPATCH_QUOTA_AXI_BIN=quota-axi \
+    $RESOLVER --class "$class" --home "$home" --list-candidate-routes
+}
+
+test_candidate_routes_lists_only_servable_routes() {
+  local home out
+  home=$(make_home candidate-basic)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]},{"class":"tester","use":[{"harness":"claude","model":"opus","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"xhigh"},{"harness":"pi","model":"xai/grok-4.6","effort":"high","enabled":false}]},{"class":"builder","use":[{"harness":"pi","model":"xai/grok-4.6","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"claude","model":"opus","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}],"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"pi","model":"xai/grok-4.6","effort":"high"}]}
+EOF
+  out=$(candidate_routes "$home" designer | sort | tr '\n' ' ')
+  [ "$out" = "claude codex " ] || fail "designer candidates wrong: $out"
+
+  # tester's only pi member is switched off, so pi-grok is not servable.
+  out=$(candidate_routes "$home" tester | sort | tr '\n' ' ')
+  [ "$out" = "claude codex " ] \
+    || fail "a switched-off member's route must never be a candidate: $out"
+
+  # A pinned class always resolves to its pin, so it offers exactly that route.
+  out=$(candidate_routes "$home" builder | sort | tr '\n' ' ')
+  [ "$out" = "codex " ] || fail "a pinned class must offer only its pin's route: $out"
+
+  # An unmatched class falls through to the default pool.
+  out=$(candidate_routes "$home" nosuchclass | sort | tr '\n' ' ')
+  [ "$out" = "codex pi-grok " ] || fail "default-pool candidates wrong: $out"
+  pass "--list-candidate-routes lists only the routes a class can actually be served by"
+}
+
+# The regression this whole mode exists for: a class whose ONLY member on a
+# route has an exhausted model-scoped window. The static enabled column says
+# that member is fine, so any separate copy of the eligibility rules offers
+# its route; the real resolve then refuses once the sibling route is
+# excluded. Same fake quota-axi shape as
+# test_model_specific_exhaustion_excludes_only_that_model (account 64%,
+# model:fable 0%).
+test_candidate_routes_drops_a_model_exhausted_only_member() {
+  local home out fakebin resolved
+  home=$(make_home candidate-model-exhausted)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]}]}
+EOF
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"--provider claude"*)
+    cat <<'JSON'
+{"generatedAt":"2026-09-15T00:00:00.000Z","schemaVersion":3,"providers":[{"provider":"claude","label":"Claude","source":"oauth","windows":[],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":64},{"scope":"model:fable","status":"known","effectivePercentRemaining":0}]},"state":{"status":"fresh","stale":false,"refreshedAt":"2026-09-15T00:00:00.000Z","sourcesTried":["oauth"]}}]}
+JSON
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+
+  out=$(candidate_routes "$home" designer "$fakebin" | sort | tr '\n' ' ')
+  [ "$out" = "codex " ] \
+    || fail "claude's only designer member has a dead model window, so claude must not be a candidate: $out"
+
+  # Every listed candidate must survive the real resolve once the others are
+  # excluded, which is exactly how the admission caller uses this list.
+  resolved=$(PATH="$fakebin:$PATH" FM_DISPATCH_QUOTA_AXI_BIN=quota-axi \
+    $RESOLVER --class designer --home "$home" --exclude-routes claude) \
+    || fail "the listed candidate did not survive a real resolve"
+  [ "$resolved" = "harness=codex model=gpt-5.6-sol effort=high reason=round-robin" ] \
+    || fail "resolve of the listed candidate returned '$resolved'"
+  pass "a route whose only class member has an exhausted model window is never a candidate"
+}
+
+# Two claude members in one pool both need the same account-wide quota-axi
+# read. profiles_tsv runs on the spawn hot path, so the reader must be asked
+# once per provider per invocation, not once per member.
+test_quota_axi_is_read_once_per_provider_per_run() {
+  local home out fakebin calls
+  home=$(make_home quota-axi-cache)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"designer","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"claude","model":"opus","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}]}]}
+EOF
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/quota-axi" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$home/quota-axi.calls"
+case "\$*" in
+  *"--provider claude"*)
+    cat <<'JSON'
+{"generatedAt":"2026-09-15T00:00:00.000Z","schemaVersion":3,"providers":[{"provider":"claude","label":"Claude","source":"oauth","windows":[],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":64},{"scope":"model:fable","status":"known","effectivePercentRemaining":0}]},"state":{"status":"fresh","stale":false,"refreshedAt":"2026-09-15T00:00:00.000Z","sourcesTried":["oauth"]}}]}
+JSON
+    ;;
+  *"--provider codex"*)
+    cat <<'JSON'
+{"generatedAt":"2026-09-15T00:00:00.000Z","schemaVersion":3,"providers":[{"provider":"codex","label":"Codex","source":"oauth","windows":[],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":80}]},"state":{"status":"fresh","stale":false,"refreshedAt":"2026-09-15T00:00:00.000Z","sourcesTried":["oauth"]}}]}
+JSON
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+  : > "$home/quota-axi.calls"
+
+  out=$(candidate_routes "$home" designer "$fakebin" | sort | tr '\n' ' ')
+  [ "$out" = "claude codex " ] \
+    || fail "cached reads changed the candidate answer: '$out'"
+
+  calls=$(grep -c -- '--provider claude' "$home/quota-axi.calls" || true)
+  [ "$calls" = 1 ] \
+    || fail "two claude members caused $calls quota-axi claude reads, expected exactly 1"
+  calls=$(grep -c -- '--provider codex' "$home/quota-axi.calls" || true)
+  [ "$calls" = 1 ] \
+    || fail "codex was read $calls times, expected exactly 1"
+  pass "quota-axi is read at most once per provider per resolver invocation"
+}
+
 test_pinned_class
 test_unpinned_class_uses_fewest_live_workers
 test_switched_off_pin_refuses_without_fallback
 test_pin_accepts_an_enabled_duplicate_tuple
 test_unknown_class_uses_default_pin
 test_unknown_class_round_robins_default
+test_model_specific_exhaustion_excludes_only_that_model
 test_round_robin_breaks_ties_by_list_order
 test_pool_without_enabled_member_refuses
 test_unsupported_runtime_refuses_before_output
 test_override_ignores_disabled_tuple_outside_resolved_pool
+test_candidate_routes_lists_only_servable_routes
+test_candidate_routes_drops_a_model_exhausted_only_member
+test_quota_axi_is_read_once_per_provider_per_run
 
 echo "# all fm-dispatch-resolve tests passed"

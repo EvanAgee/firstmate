@@ -1,13 +1,29 @@
 #!/usr/bin/env bash
 # Resolve one crewmate or scout dispatch class from config/crew-dispatch.json.
-# Usage: fm-dispatch-resolve.sh --class <class> [--home <FM_HOME>] [--override-harness <harness>] [--override-model <model>] [--override-effort <effort>]
+# Usage: fm-dispatch-resolve.sh --class <class> [--home <FM_HOME>] [--override-harness <harness>] [--override-model <model>] [--override-effort <effort>] [--exclude-routes <r1,r2,...>]
+#        fm-dispatch-resolve.sh --class <class> [--home <FM_HOME>] --list-candidate-routes
 # Prints exactly one successful result:
 #   harness=<h> model=<m> effort=<e> reason=<pin|round-robin|default-pin|default>
+# --list-candidate-routes instead prints, one per line, the provider-
+# availability route ids this class can currently be SERVED by: it runs this
+# file's own pool resolution, pin detection, and profiles_tsv enabled
+# filtering (which already layers the model-scoped quota window on top of the
+# static enabled column), then groups each surviving member through
+# bin/fm-route.sh group-for and dedupes. This file is the single owner of
+# what a class can resolve to, so bin/fm-route.sh's "routes --class" is a
+# thin pass-through over this mode rather than a second, drifting copy of
+# the same rules.
 # A class absent from rules uses the default pool.
 # Pins select their exact pool member when enabled.
 # Unpinned pools select the enabled member with the fewest matching live
 # state/*.meta workers in this home, excluding kind=secondmate, with list order
 # breaking ties.
+# --exclude-routes treats every pool member whose provider-availability route
+# (bin/fm-route.sh group-for) is in the given comma-separated list as though
+# it were disabled=false for this call only, without touching
+# config/crew-dispatch.json; bin/fm-route.sh remains the sole owner of
+# eligibility evidence (see quota-array-dispatch skill and this file's own
+# routing-precedence cross-reference).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +36,8 @@ OVERRIDE_EFFORT=
 OVERRIDE_HARNESS_SET=0
 OVERRIDE_MODEL_SET=0
 OVERRIDE_EFFORT_SET=0
+EXCLUDE_ROUTES=
+LIST_CANDIDATE_ROUTES=0
 want_value=
 
 for arg in "$@"; do
@@ -33,6 +51,7 @@ for arg in "$@"; do
       override-harness) OVERRIDE_HARNESS=$arg; OVERRIDE_HARNESS_SET=1 ;;
       override-model) OVERRIDE_MODEL=$arg; OVERRIDE_MODEL_SET=1 ;;
       override-effort) OVERRIDE_EFFORT=$arg; OVERRIDE_EFFORT_SET=1 ;;
+      exclude-routes) EXCLUDE_ROUTES=$arg ;;
     esac
     want_value=
     continue
@@ -48,6 +67,9 @@ for arg in "$@"; do
     --override-model=*) OVERRIDE_MODEL=${arg#--override-model=}; OVERRIDE_MODEL_SET=1 ;;
     --override-effort) want_value=override-effort ;;
     --override-effort=*) OVERRIDE_EFFORT=${arg#--override-effort=}; OVERRIDE_EFFORT_SET=1 ;;
+    --exclude-routes) want_value=exclude-routes ;;
+    --exclude-routes=*) EXCLUDE_ROUTES=${arg#--exclude-routes=} ;;
+    --list-candidate-routes) LIST_CANDIDATE_ROUTES=1 ;;
     -h|--help)
       sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -118,7 +140,7 @@ else
   ROUND_REASON=default
 fi
 
-profiles_tsv() {
+profiles_tsv_raw() {
   # shellcheck disable=SC2016
   config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" '
     def profiles($value):
@@ -137,6 +159,94 @@ profiles_tsv() {
   '
 }
 
+# --exclude-routes marks a matching row's enabled column false for this call
+# only; bin/fm-route.sh group-for is the single owner of the harness/model ->
+# route mapping (never duplicated here).
+route_excluded() {
+  local harness=$1 model=$2 route
+  [ -n "$EXCLUDE_ROUTES" ] || return 1
+  route=$("$SCRIPT_DIR/fm-route.sh" group-for --harness "$harness" --model "$model" 2>/dev/null) || return 1
+  case ",$EXCLUDE_ROUTES," in
+    *",$route,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The in-service profile pick still excludes one model whose OWN window is
+# exhausted even while its account-wide bound (fm-route.sh's route-level
+# admission) is fine: quota-axi reports a model-specific window as an
+# ADDITIONAL bound beyond the account-wide one (its own docs: "A model-
+# specific window is an additional bound, so that model's effective
+# remaining percentage is the minimum across the named windows"), so the two
+# checks are deliberately separate and both required. Only claude and codex
+# carry named model-scoped windows today; other harnesses have no model
+# scope to check and are never excluded here.
+: "${FM_DISPATCH_QUOTA_AXI_BIN:=quota-axi}"
+
+# One quota-axi read per provider per invocation. A pool with several claude
+# or codex members asks about the same account once, not once per member,
+# and profiles_tsv runs on the spawn hot path.
+# Answers into QUOTA_AXI_JSON rather than stdout: a command substitution would
+# run this in a subshell and throw the cache away on every call.
+QUOTA_AXI_CACHED_PROVIDERS=" "
+QUOTA_AXI_JSON=
+quota_axi_read() {  # <provider>
+  local provider=$1 var
+  var="QUOTA_AXI_CACHE_${provider//[^A-Za-z0-9_]/_}"
+  case "$QUOTA_AXI_CACHED_PROVIDERS" in
+    *" $provider "*) ;;
+    *)
+      QUOTA_AXI_CACHED_PROVIDERS="$QUOTA_AXI_CACHED_PROVIDERS$provider "
+      printf -v "$var" '%s' "$("$FM_DISPATCH_QUOTA_AXI_BIN" --provider "$provider" --json 2>/dev/null)"
+      ;;
+  esac
+  QUOTA_AXI_JSON=${!var}
+  [ -n "$QUOTA_AXI_JSON" ]
+}
+model_exhausted() {
+  local harness=$1 model=$2 provider scope pct json
+  case "$harness" in
+    claude) provider=claude ;;
+    codex) provider=codex ;;
+    *) return 1 ;;
+  esac
+  case "$model" in
+    default|'') return 1 ;;
+  esac
+  scope="model:$model"
+  quota_axi_read "$provider" || return 1
+  json=$QUOTA_AXI_JSON
+  pct=$(printf '%s' "$json" | jq -r --arg p "$provider" --arg scope "$scope" '
+    (.providers[]? | select(.provider == $p) | .quotaSemantics.effectiveAvailability[]?
+      | select(.scope == $scope) | .effectivePercentRemaining) // empty
+  ' 2>/dev/null) || pct=
+  [ -n "$pct" ] || return 1
+  awk -v p="$pct" 'BEGIN{exit !(p<=0)}' 2>/dev/null
+}
+
+# Every consumer reads this through `< <(profiles_tsv)`, which runs it in a
+# subshell, so the enabled column is computed once up front and replayed from
+# a variable instead. Without that, each consumer re-ran the quota-axi probes
+# and the per-provider cache above could never survive its own subshell.
+compute_profiles_tsv() {
+  local harness model effort enabled
+  while IFS=$'\t' read -r harness model effort enabled; do
+    [ -n "$harness" ] || continue
+    if [ "$enabled" != false ] && route_excluded "$harness" "$model"; then
+      enabled=false
+    fi
+    if [ "$enabled" != false ] && model_exhausted "$harness" "$model"; then
+      enabled=false
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$harness" "$model" "$effort" "$enabled"
+  done < <(profiles_tsv_raw)
+}
+
+PROFILES_TSV_CACHE=$(compute_profiles_tsv)
+profiles_tsv() {
+  [ -z "$PROFILES_TSV_CACHE" ] || printf '%s\n' "$PROFILES_TSV_CACHE"
+}
+
 # shellcheck disable=SC2016
 PIN_TSV=$(config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --arg pin "$PIN_KEY" '
   if $kind == "class" then
@@ -146,6 +256,40 @@ PIN_TSV=$(config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --a
   end
   | if type == "object" then [(.harness // ""), (.model // "default"), (.effort // "default")] | @tsv else "" end
 ')
+
+# A pinned pool always resolves to its pin's exact tuple and never
+# round-robins, so its candidate list is exactly the pinned member's route.
+# The pin's route is listed even when the pin itself is switched off, so this
+# file's own deliberate switched-off-pin refusal still happens on the real
+# resolve rather than being converted into a silent fallback onto another
+# route.
+if [ "$LIST_CANDIDATE_ROUTES" -eq 1 ]; then
+  route_for() {  # <harness> <model>
+    "$SCRIPT_DIR/fm-route.sh" group-for --harness "$1" --model "$2" 2>/dev/null || true
+  }
+  CANDIDATE_SEEN=" "
+  emit_candidate() {  # <harness> <model>
+    local r
+    r=$(route_for "$1" "$2")
+    [ -n "$r" ] || return 0
+    case "$CANDIDATE_SEEN" in
+      *" $r "*) return 0 ;;
+    esac
+    CANDIDATE_SEEN="$CANDIDATE_SEEN$r "
+    printf '%s\n' "$r"
+  }
+  if [ -n "$PIN_TSV" ]; then
+    IFS=$'\t' read -r PIN_HARNESS PIN_MODEL PIN_EFFORT <<< "$PIN_TSV"
+    emit_candidate "$PIN_HARNESS" "$PIN_MODEL"
+  else
+    while IFS=$'\t' read -r harness model effort enabled; do
+      [ -n "$harness" ] || continue
+      [ "$enabled" = false ] && continue
+      emit_candidate "$harness" "$model"
+    done < <(profiles_tsv)
+  fi
+  exit 0
+fi
 
 if [ -n "$PIN_TSV" ]; then
   SELECT_REASON=$PIN_REASON

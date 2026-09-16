@@ -831,6 +831,10 @@ RELAUNCH_REPLACEMENT_STATE=
 RELAUNCH_REPLACEMENT_WT=
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
+ROUTE_ASSIGNMENT_ACTIVE=0
+ROUTE_ASSIGNMENT_ID=
+ROUTE_ACQUIRED=
+ROUTE_FINISHED=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -1003,6 +1007,20 @@ spawn_abort_cleanup() {
   if [ "$CONFIG_INHERIT_LOCK_HELD" = 1 ]; then
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
+  fi
+  # Provider-availability: close the acquired assignment exactly once, on
+  # every exit path (success or failure), so a failed launch releases its
+  # slot instead of leaking it (report: "Failed launches release once").
+  if [ "$ROUTE_ASSIGNMENT_ACTIVE" = 1 ] && [ "$ROUTE_FINISHED" = 0 ]; then
+    ROUTE_FINISHED=1
+    if [ "$status" -eq 0 ]; then
+      jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" --arg adapter "$HARNESS" --arg model "${MODEL:-default}" --arg effort "${EFFORT:-default}" \
+        '{assignment_id:$a, outcome:"success", profile:{adapter:$adapter, model:$model, effort:$effort}}' \
+        | "$SCRIPT_DIR/fm-route.sh" finish >/dev/null 2>&1 || true
+    else
+      jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" '{assignment_id:$a, outcome:"launch-failed"}' \
+        | "$SCRIPT_DIR/fm-route.sh" finish >/dev/null 2>&1 || true
+    fi
   fi
   return "$status"
 }
@@ -1344,6 +1362,71 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
       fi
       [ "$MODEL_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-model "${MODEL:-default}")
       [ "$EFFORT_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-effort "$EFFORT")
+    else
+      # Provider-availability admission (data/fm-dynamic-subscription-routing
+      # report.md addendum): a captain override bypasses this, same as it
+      # already bypasses the pool's own enabled filter above. Only one route
+      # is acquired per spawn: acquire's own fewest-pending/running balance
+      # already accounts for concurrent spawns without this script tracking
+      # counts itself.
+      # Assignment id is the task id itself, stable across a relaunch retry
+      # of the same task (report: "Duplicate identities reuse their
+      # record"); acquire's idempotency keys on assignment_id+owner.identity,
+      # not owner.generation, so a fresh generation token here is a
+      # freshness marker only. SPAWN_GEN (meta publication) is not assigned
+      # until much later in this script, so it is not reused here.
+      ROUTE_ASSIGNMENT_GEN="r$(date +%s).${BASHPID:-$$}.$RANDOM"
+      ROUTE_ASSIGNMENT_ID="$ID"
+      # Candidates are scoped to THIS class's own approved pool, never the
+      # whole catalog: acquire picking a route the class has no member for
+      # would turn every other pool member into an --exclude-routes entry
+      # and refuse an otherwise healthy launch.
+      # An empty list means "no routing policy covers this class", which is
+      # inert by design. A non-zero exit means the resolver could not answer
+      # at all; that must refuse the spawn rather than look identical to
+      # inert and silently skip the admission gate.
+      ROUTE_CANDIDATES_RAW=$("$SCRIPT_DIR/fm-route.sh" routes --class "$DISPATCH_CLASS" 2>&1) || {
+        echo "error: provider-availability admission could not determine candidate routes for class '$DISPATCH_CLASS': $(printf '%s' "$ROUTE_CANDIDATES_RAW" | tr '\n' ' ')" >&2
+        exit 1
+      }
+      if [ -z "$ROUTE_CANDIDATES_RAW" ]; then
+        ROUTE_CANDIDATES_JSON='[]'
+      else
+        ROUTE_CANDIDATES_JSON=$(printf '%s\n' "$ROUTE_CANDIDATES_RAW" | jq -R . | jq -s .)
+      fi
+      if [ "$(jq 'length' <<<"$ROUTE_CANDIDATES_JSON")" -gt 0 ]; then
+        ROUTE_ACQUIRE_REQUEST=$(jq -cn \
+          --arg a "$ROUTE_ASSIGNMENT_ID" --arg owner "$ID" --arg gen "$ROUTE_ASSIGNMENT_GEN" \
+          --argjson routes "$ROUTE_CANDIDATES_JSON" \
+          '{assignment_id:$a, owner:{identity:$owner, generation:$gen}, routes:$routes}')
+        ROUTE_ACQUIRE_RESULT=$(printf '%s' "$ROUTE_ACQUIRE_REQUEST" | "$SCRIPT_DIR/fm-route.sh" acquire 2>&1) || {
+          # fm-route.sh reports validation failures as JSON on stdout, but a
+          # usage/argument-parse failure exits 2 with plain text on stderr
+          # and an empty stdout. Both streams are captured, so report
+          # whichever this run produced rather than a bare "unknown error".
+          ROUTE_ACQUIRE_DETAIL=$(jq -r '.error // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRE_DETAIL=
+          [ -n "$ROUTE_ACQUIRE_DETAIL" ] || ROUTE_ACQUIRE_DETAIL=$(printf '%s' "$ROUTE_ACQUIRE_RESULT" | tr '\n' ' ')
+          echo "error: provider-availability admission failed for $ID: ${ROUTE_ACQUIRE_DETAIL:-unknown error}" >&2
+          exit 1
+        }
+        # Only result=="selected" ever authorizes a launch. A deferred or
+        # already-closed answer carries no authorization (and already-closed
+        # carries no route_id at all), so neither may set the active flag.
+        ROUTE_ACQUIRE_STATUS=$(jq -r '.result // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRE_STATUS=
+        if [ "$ROUTE_ACQUIRE_STATUS" = already-closed ]; then
+          echo "error: assignment '$ROUTE_ASSIGNMENT_ID' is already closed; a new attempt needs a new assignment id, not a spent record" >&2
+          exit 1
+        fi
+        ROUTE_ACQUIRED=$(jq -r 'select(.result == "selected") | .route_id // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRED=
+        if [ -z "$ROUTE_ACQUIRED" ]; then
+          ROUTE_DEFER_REASON=$(jq -r '.reason // "no reason given"' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null)
+          echo "error: no approved route is currently eligible for class '$DISPATCH_CLASS' ($ROUTE_DEFER_REASON); wait for verified recovery or ask the captain to override" >&2
+          exit 1
+        fi
+        ROUTE_ASSIGNMENT_ACTIVE=1
+        EXCLUDE_ROUTES_LIST=$(jq -r --arg picked "$ROUTE_ACQUIRED" '[.[] | select(. != $picked)] | join(",")' <<<"$ROUTE_CANDIDATES_JSON")
+        [ -z "$EXCLUDE_ROUTES_LIST" ] || DISPATCH_ARGS+=(--exclude-routes "$EXCLUDE_ROUTES_LIST")
+      fi
     fi
     DISPATCH_RESULT=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" "${DISPATCH_ARGS[@]}") || exit 1
     DISPATCH_HARNESS=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^harness=\([^ ]*\) model=.*/\1/p')
