@@ -314,7 +314,10 @@ fm_backend_validate "$BACKEND" || exit 1
 # --- shared helpers ---------------------------------------------------------
 
 agent_state() {
-  fm_backend_agent_state "$BACKEND" "$T"
+  # Pass the task record so an OMP endpoint's Bun/OMP identity can be bound;
+  # without it the tmux probe cannot attribute a `bun` foreground process and
+  # every OMP lane reads `ambiguous` (backlog fm-control-omp-agent-state-meta).
+  fm_backend_agent_state "$BACKEND" "$T" "$META"
 }
 
 busy_verdict() {

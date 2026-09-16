@@ -21,6 +21,15 @@ Either can fail on its own, so both labels are listed.
 | subs.agee.dev | 3000 | `dev.agee.usage-tracker` | `dev.agee.cloudflared-subs` | `~/.cloudflared/subs-config.yml` | `~/Sites/firstmate/projects/usage-tracker` (on `main`) | `npm run start` (prod build) |
 | ci.agee.dev | 4200 | separate aos CI backend | `dev.agee.cloudflared-aos-ci` | `~/.cloudflared/aos-ci-config.yml` | separate aos CI backend | out of scope here |
 | aos.agee.dev | 4112 | separate aos review service | `dev.agee.cloudflared-aos-review` | `~/.cloudflared/aos-review-config.yml` | separate aos review service | out of scope here |
+| bluray.agee.dev | 8010 | `dev.agee.bluray-api` | `dev.agee.cloudflared-bluray` | `~/.cloudflared/bluray-config.yml` | `~/Sites/firstmate/projects/bluray-api` (on `main`) | `uvicorn bluray_api.api.main:app` (via `.venv`) |
+
+`bluray.agee.dev` is the combined Blu-ray + UPCitemdb operator UI.
+One FastAPI process serves both the `/v1` API and the built SPA (`web/dist`).
+The SPA calls `/v1` same-origin and attaches the API key.
+It is behind Cloudflare Access like the rest because the UPCitemdb licence is internal-only.
+The SPA bakes the API key into its bundle, so an ungated host leaks the whole dataset.
+The app agent runs from the canonical checkout.
+Rebuild `web/dist` there after any UI change, then kickstart the agent.
 
 `agee.dev` is one Next.js app that serves `/`, `/fleet`, and `/subs`.
 `subs.agee.dev` is a different app (the usage tracker), not the `agee.dev/subs` page.
@@ -47,6 +56,15 @@ cd ~/Sites/firstmate/projects/usage-tracker &&
   git checkout main &&
   npm run build &&
   launchctl kickstart -k gui/$(id -u)/dev.agee.usage-tracker
+```
+
+For `bluray.agee.dev` (rebuild the SPA, then restart the FastAPI app):
+
+```bash
+cd ~/Sites/firstmate/projects/bluray-api &&
+  git checkout main &&
+  npm --prefix web run build &&
+  launchctl kickstart -k gui/$(id -u)/dev.agee.bluray-api
 ```
 
 The commands are chained with `&&` so a failed checkout or build stops the sequence and never restarts a stale build.
