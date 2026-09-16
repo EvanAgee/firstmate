@@ -941,7 +941,7 @@ test_a_glob_shaped_route_id_is_never_pathname_expanded() {
 # (a read-only agent directory, a full disk), which strike at exactly this
 # point: after mktemp created the file, before the rename lands.
 test_a_failed_refresh_install_leaves_no_temp_plist() {
-  local home agents fakebin status out leftovers
+  local home agents fakebin status out leftovers published
 
   if [ "$(uname)" != Darwin ]; then
     pass "route-refresh install cleanup (skipped: launchd agents are macOS-only)"
@@ -967,7 +967,8 @@ SH
   leftovers=$(find "$agents" -maxdepth 1 -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')
   [ "$leftovers" = 0 ] \
     || fail "a failed install left $leftovers temp plist file(s) in the LaunchAgents directory"
-  [ ! -f "$agents/$(basename "$agents")".plist ] || fail "a failed install must not publish a plist"
+  published=$(find "$agents" -maxdepth 1 -name '*.plist' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$published" = 0 ] || fail "a failed install must not publish a plist"
 
   pass "a failed route-refresh install leaves no temp plist behind"
 }

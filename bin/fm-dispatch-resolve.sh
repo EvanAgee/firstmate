@@ -28,6 +28,8 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 DISPATCH_CLASS=
 DISPATCH_HOME=${FM_HOME:-$FM_ROOT}
 OVERRIDE_HARNESS=
@@ -182,12 +184,18 @@ route_excluded() {
 # carry named model-scoped windows today; other harnesses have no model
 # scope to check and are never excluded here.
 : "${FM_DISPATCH_QUOTA_AXI_BIN:=quota-axi}"
+: "${FM_DISPATCH_QUOTA_AXI_TIMEOUT:=10}"
 
 # One quota-axi read per provider per invocation. A pool with several claude
 # or codex members asks about the same account once, not once per member,
 # and profiles_tsv runs on the spawn hot path.
 # Answers into QUOTA_AXI_JSON rather than stdout: a command substitution would
 # run this in a subshell and throw the cache away on every call.
+# Bounded by fm_run_timed (bin/fm-timeout-lib.sh, the repo's single owner of
+# bounded command execution): a stalled quota-axi must never block a
+# class-based spawn indefinitely. A timeout (rc 124) is treated exactly like
+# any other empty/unreachable read -- model_exhausted's caller already reads
+# an empty QUOTA_AXI_JSON as "no evidence", never as "exhausted".
 QUOTA_AXI_CACHED_PROVIDERS=" "
 QUOTA_AXI_JSON=
 quota_axi_read() {  # <provider>
@@ -197,7 +205,7 @@ quota_axi_read() {  # <provider>
     *" $provider "*) ;;
     *)
       QUOTA_AXI_CACHED_PROVIDERS="$QUOTA_AXI_CACHED_PROVIDERS$provider "
-      printf -v "$var" '%s' "$("$FM_DISPATCH_QUOTA_AXI_BIN" --provider "$provider" --json 2>/dev/null)"
+      printf -v "$var" '%s' "$(fm_run_timed "$FM_DISPATCH_QUOTA_AXI_TIMEOUT" "$FM_DISPATCH_QUOTA_AXI_BIN" --provider "$provider" --json 2>/dev/null)"
       ;;
   esac
   QUOTA_AXI_JSON=${!var}
@@ -280,7 +288,17 @@ if [ "$LIST_CANDIDATE_ROUTES" -eq 1 ]; then
   }
   if [ -n "$PIN_TSV" ]; then
     IFS=$'\t' read -r PIN_HARNESS PIN_MODEL PIN_EFFORT <<< "$PIN_TSV"
-    emit_candidate "$PIN_HARNESS" "$PIN_MODEL"
+    # The pin's route is still listed even when the pin is STATICALLY
+    # disabled (the comment above explains why: the real resolve's own
+    # refusal must fire, not a silent fallback). A DYNAMICALLY exhausted
+    # pinned model is different: the real resolve already refuses it via
+    # profiles_tsv's model_exhausted-aware enabled column, so offering its
+    # route here would only win a route-level admission that the resolve
+    # then throws away, wasting a full acquire/resolve round trip for a
+    # model quota-axi already proved is out. Filter it here too.
+    if ! model_exhausted "$PIN_HARNESS" "$PIN_MODEL"; then
+      emit_candidate "$PIN_HARNESS" "$PIN_MODEL"
+    fi
   else
     while IFS=$'\t' read -r harness model effort enabled; do
       [ -n "$harness" ] || continue

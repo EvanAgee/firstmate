@@ -291,6 +291,38 @@ SH
   pass "a route whose only class member has an exhausted model window is never a candidate"
 }
 
+# A pinned class's own pin can be dynamically model-exhausted too, not just
+# statically disabled. The real resolve already refuses this via
+# profiles_tsv's model_exhausted-aware enabled column; --list-candidate-routes
+# must not offer the pin's route in that case either, or the caller wins a
+# route-level admission the real resolve then throws away.
+test_candidate_routes_drops_a_model_exhausted_pin() {
+  local home out fakebin
+  home=$(make_home candidate-pin-exhausted)
+  cat > "$home/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"class":"builder","use":[{"harness":"claude","model":"fable","effort":"xhigh"},{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"pin":{"harness":"claude","model":"fable","effort":"xhigh"}}]}
+EOF
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"--provider claude"*)
+    cat <<'JSON'
+{"generatedAt":"2026-09-15T00:00:00.000Z","schemaVersion":3,"providers":[{"provider":"claude","label":"Claude","source":"oauth","windows":[],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":64},{"scope":"model:fable","status":"known","effectivePercentRemaining":0}]},"state":{"status":"fresh","stale":false,"refreshedAt":"2026-09-15T00:00:00.000Z","sourcesTried":["oauth"]}}]}
+JSON
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/quota-axi"
+
+  out=$(candidate_routes "$home" builder "$fakebin" | sort | tr '\n' ' ')
+  [ "$out" = "" ] \
+    || fail "a dynamically exhausted pin must never offer its route as a candidate: '$out'"
+  pass "a pinned class's own exhausted pin is never offered as a candidate"
+}
+
 # Two claude members in one pool both need the same account-wide quota-axi
 # read. profiles_tsv runs on the spawn hot path, so the reader must be asked
 # once per provider per invocation, not once per member.
@@ -348,6 +380,7 @@ test_unsupported_runtime_refuses_before_output
 test_override_ignores_disabled_tuple_outside_resolved_pool
 test_candidate_routes_lists_only_servable_routes
 test_candidate_routes_drops_a_model_exhausted_only_member
+test_candidate_routes_drops_a_model_exhausted_pin
 test_quota_axi_is_read_once_per_provider_per_run
 
 echo "# all fm-dispatch-resolve tests passed"
