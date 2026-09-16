@@ -78,7 +78,8 @@ A genuinely new attempt needs a NEW `assignment_id`.
 
 Selection rule: among `routes` candidates whose last-refreshed state is `eligible` and not manually disabled, and after dropping any candidate's `pending`/`running` assignment whose owner is abandoned (see "Abandoned-owner reconciliation" below) from its count, pick the route with the fewest remaining `pending`/`running` assignments.
 A genuine tie rotates through a monotonic `tieCursor` stored on `state/route.json` and advanced by one on every tie-broken pick, so a burst of concurrent ties spreads across the tied routes instead of always landing on the first-scanned one (`tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates` proves a real 20-process concurrent split).
-`unknown` (unrefreshed or inconclusive telemetry) is never selected and never counted as proven unavailable; when every candidate is either excluded or unknown, `deferred` names which case applied so a caller can distinguish "wait for a verified reset" from "wait for the next refresh".
+`unknown` (a probe that exists but returned inconclusive or stale telemetry) is never selected and never counted as proven unavailable; when every candidate is either excluded or unknown, `deferred` names which case applied so a caller can distinguish "wait for a verified reset" from "wait for the next refresh".
+A route whose catalog entry has no probe source at all is a separate case, not `unknown`: see "Evidence sources" below for the no-probe rule.
 
 #### Abandoned-owner reconciliation
 
@@ -108,7 +109,9 @@ Request fields:
 - `profile`: optional `{adapter, model, effort}`, the actual resolved, nonsecret profile identity the caller launched, recorded on the closed assignment for a future session-reuse qualifier (by adapter/provider/effective-model/billing-route/settings) to key on, without `fm-route.sh` owning that qualification logic itself.
 
 Closes the assignment idempotently: a second `finish` on an already-closed assignment succeeds with no effect and no state change.
-An `auth-failed`/`exhausted`/`outage` outcome is verified failure evidence against that assignment's route: `finish` writes the route's own state to that value IMMEDIATELY, at decision time, never waiting for `refresh`'s next probe tick; `refresh`'s later fresh probe corroborates or clears it, and only a newer verified `eligible` reading clears the exclusion (never elapsed time alone).
+A `launch-failed`/`auth-failed`/`exhausted`/`outage` outcome is verified failure evidence against that assignment's route: `finish` writes the route's own state to that value IMMEDIATELY, at decision time, never waiting for `refresh`'s next probe tick; `refresh`'s later fresh probe corroborates or clears it, and only a newer verified `eligible` reading clears the exclusion (never elapsed time alone).
+A `success` outcome, in turn, clears a prior verified failure it finds on its own route.
+This matters most for a route with no real probe source: `refresh` preserves that route's verified-failure state rather than overwriting it with the synthetic `eligible` reading described in the no-probe rule above, so a successful `finish` is the only real recovery signal for it.
 `finish` never blocks on network I/O and never holds `state/.route.lock` while waiting on anything external: every field it writes was already decided by the caller before the call.
 
 Response:
@@ -125,7 +128,8 @@ fm-route.sh status [--route <id>]
 ```
 
 `refresh` re-reads non-inference health/quota evidence for every route in the canonical catalog and atomically republishes `state/route.json`'s `routes` map; it never runs inside `acquire`, so a stalled refresh timer degrades to stale (`unknown`-treated) evidence, never a hang.
-Each route's recorded state is one of `eligible`, `exhausted`, `outage`, `auth-failed`, `unknown`, each carrying a `reason` string and an `observedAt` timestamp attributed to the evidence source, never to `refresh`'s own collection time.
+Each route's recorded state is one of `eligible`, `launch-failed`, `exhausted`, `outage`, `auth-failed`, `unknown`, each carrying a `reason` string and an `observedAt` timestamp attributed to the evidence source, never to `refresh`'s own collection time.
+A route with no probe source records `eligible`, not `unknown`; see "Evidence sources" below.
 `status` prints the current recorded state for one or every route without mutating anything.
 
 ### `routes`, `group-for`, `disable`, `enable`
@@ -163,9 +167,16 @@ Claude, Codex, and Grok all read through `quota-axi --provider <p> --json` (sche
 Grok's `providers[].credits.remaining` field is PREPAID balance and is never read by the eligibility probe at all; live-verified evidence: `quota-axi --provider grok --json` can report `credits.remaining: 0` in the same response where `quotaSemantics.status` is merely `unknown` because the windows are stale, which is exactly the "zero prepaid credits is not subscription exhaustion" case, proven against the real tool rather than a fixture.
 Gateway/DeepSeek reads through `omp usage --provider vercel-ai-gateway --json` (live-verified shape: `{generatedAt, reports[], accountsWithoutUsage[], disabledCredentials[], capacity{}}`, with `reports[].limits[].amount.{used,limit,remaining,usedFraction,remainingFraction,unit}` when an account has usage); an empty `reports:[]` (the observed live state at authoring time: the authorized Gateway trial account has not yet recorded usage) maps to `unknown`, never `exhausted` and never an invented balance.
 
+**No-probe rule** (captain's word, 2026-09-16): a route whose catalog entry has no probe source at all, meaning its id matches none of `fm_route_probe`'s known cases above, is never `unknown`.
+It records `eligible` with a `reason` of `no probe for route <id>; eligible until a launch or worker failure proves otherwise`.
+It stays eligible until a verified launch or worker failure (`finish` with `launch-failed`, `auth-failed`, `exhausted`, or `outage`) excludes it exactly as any other route's verified failure does (see `finish` above); a later verified success re-admits it on the next `refresh`.
+Because a no-probe route's own reading is always the same synthetic `eligible`, `refresh` preserves an existing verified-failure state for it instead of overwriting that state with the synthetic reading on every tick: only a newer verified success (via `finish`) clears the exclusion, never `refresh` alone.
+`unknown` stays reserved for a probe that exists (claude, codex, pi-grok, pi-deepseek) but returned inconclusive or stale evidence, as described above.
+
 ## Timeout and error behavior
 
 - A health probe that cannot reach its source, cannot parse a usable observation timestamp, or reports a value that does not clearly prove eligibility or exhaustion records `unknown` with a `reason` explaining why, never a guessed state.
+- A route with no probe source at all is a distinct case from the above and is never `unknown`; see the no-probe rule under "Evidence sources".
 - Zero prepaid credits on a provider whose eligibility is subscription-scoped (Grok) is explicitly never read as subscription exhaustion (see "Evidence sources" above for the live-verified proof).
 - Every write (`refresh`, `acquire`, `finish`, `disable`, `enable`) takes `state/.route.lock` via `bin/fm-wake-lib.sh`'s `fm_lock_acquire_wait`/`fm_lock_release` before reading, and publishes with a tmp-file-plus-`mv -f` atomic replace, so concurrent callers never interleave a partial write; twenty concurrent `acquire` calls against a two-route eligible pool split the assignments evenly with no lost updates, including the rotating-tie case (see `tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates`, which drives `fm-route.sh`'s own `acquire` endpoint directly rather than going through `fm-spawn.sh`).
 - `acquire` never blocks on network I/O: all quota/health evidence it reads was already written by the most recent `refresh`, and it never holds `state/.route.lock` while probing a provider.

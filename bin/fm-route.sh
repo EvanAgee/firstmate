@@ -7,15 +7,19 @@
 # publishes with a tmp-file + mv -f atomic replace.
 #
 # Contract (data/fm-dynamic-subscription-routing/report.md, "Addendum: minimum
-# assignment routing", plus the 2026-09-15 admission corrections): balance by
-# fewest pending/running managed assignments per eligible route, ROTATING
-# ties (not first-in-array); multiple Claude models never multiply the claude
-# route's slots. Exclude only PROVEN exhaustion/outage/auth failure;
-# unknown/stale telemetry is a distinct "unknown" state, never proven
-# unavailable, and never blocks selection on its own. Zero prepaid Grok
-# credits is never read as subscription exhaustion. Manual disable
-# (config/route-disabled) always wins, takes effect immediately (never
-# waiting for the next refresh), and survives refresh.
+# assignment routing", plus the 2026-09-15 admission corrections, plus the
+# 2026-09-16 no-probe-route ruling): balance by fewest pending/running managed
+# assignments per eligible route, ROTATING ties (not first-in-array);
+# multiple Claude models never multiply the claude route's slots. Exclude
+# only PROVEN exhaustion/outage/auth failure; unknown/stale telemetry is a
+# distinct "unknown" state, never proven unavailable, and never blocks
+# selection on its own. A route whose catalog entry has NO probe source at
+# all is eligible, not unknown, until a launch or worker failure proves it
+# unavailable -- unknown stays reserved for a probe that exists but returned
+# inconclusive or stale evidence. Zero prepaid Grok credits is never read as
+# subscription exhaustion. Manual disable (config/route-disabled) always
+# wins, takes effect immediately (never waiting for the next refresh), and
+# survives refresh.
 #
 # Public acquire/finish protocol: bounded JSON on stdin, one JSON object on
 # stdout. No other subcommand (refresh/status/routes/group-for/disable/
@@ -81,13 +85,18 @@
 #                   qualifier to key on (adapter/provider/effective-model/
 #                   billing-route/settings), without fm-route.sh owning that
 #                   qualification logic itself.
-# An auth-failed/exhausted/outage outcome is recorded as verified failure
-# evidence against that route: refresh's next probe corroborates or clears
-# it, but finish itself marks the route EXCLUDED from that moment (never
-# waiting for the next timer tick), until newer route-relevant success
-# clears it. finish never blocks on network I/O and never holds the
-# assignment lock while waiting on anything external -- it only writes the
-# already-decided outcome.
+# A launch-failed/auth-failed/exhausted/outage outcome is recorded as
+# verified failure evidence against that route: refresh's next probe
+# corroborates or clears it, but finish itself marks the route EXCLUDED from
+# that moment (never waiting for the next timer tick), until newer
+# route-relevant success clears it. A success outcome, in turn, clears a
+# prior verified failure it finds on its own route: this is the only
+# recovery path for a route with no real probe source, since refresh
+# deliberately preserves that route's verified-failure state rather than
+# overwriting it with a synthetic eligible reading on every tick. finish
+# never blocks on network I/O and never holds the assignment lock while
+# waiting on anything external -- it only writes the already-decided
+# outcome.
 #
 # finish response: {"result":"closed","assignment_id":"<id>"}, idempotent (a
 # second finish on an already-closed assignment succeeds with no effect).
@@ -117,8 +126,9 @@
 # with vercel-ai-gateway/ groups to pi-deepseek). A profile whose
 # harness/model matches no known billing surface still gets a route id (its
 # harness name) so it is never silently dropped from the catalog, but
-# fm_route_probe for that id returns unknown ("unsupported telemetry";
-# defer explicitly rather than guess).
+# fm_route_probe for that id has no probe source, so it returns eligible with
+# a "no probe for route" reason (see the no-probe-route ruling above), not
+# unknown.
 #
 # Canonical owner home: the route store always lives under the primary
 # firstmate checkout's own state/ and config/ directories, the same shared
@@ -381,13 +391,27 @@ fm_route_ms_to_rfc3339() {
   date -u -r "$s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
 }
 
+# True (0) when a route id matches none of fm_route_probe's real evidence
+# sources, meaning its "eligible" reading is synthetic rather than verified.
+fm_route_no_probe_route() {
+  case "$1" in
+    claude|codex|pi-grok|pi-deepseek) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 fm_route_probe() {
   case "$1" in
     claude) fm_route_probe_claude ;;
     codex) fm_route_probe_codex ;;
     pi-grok) fm_route_probe_pi_grok ;;
     pi-deepseek) fm_route_probe_pi_deepseek ;;
-    *) printf 'unknown\tno probe for route %s\t%s\n' "$1" "$(fm_route_now)" ;;
+    # A route with no probe source is eligible by captain's word
+    # (2026-09-16) until a launch or worker failure proves it
+    # unavailable, so it must read eligible, never unknown -- unknown
+    # stays reserved for a probe that exists but returned inconclusive
+    # or stale evidence.
+    *) printf 'eligible\tno probe for route %s; eligible until a launch or worker failure proves otherwise\t%s\n' "$1" "$(fm_route_now)" ;;
   esac
 }
 
@@ -508,6 +532,25 @@ cmd_refresh() {
       manual=true
     else
       manual=false
+    fi
+    # A no-probe route's "eligible" reading is synthetic (fm_route_probe has
+    # no real evidence source for it), never a verified success. Overwriting
+    # an existing verified failure (launch-failed/auth-failed/exhausted/
+    # outage) with that synthetic reading on every refresh would silently
+    # clear finish's immediate exclusion without the newer verified success
+    # the documented contract requires, so refresh keeps the prior recorded
+    # state for that case instead of replacing it.
+    if fm_route_no_probe_route "$r"; then
+      local prior_state prior_entry
+      prior_state=$(jq -r --arg r "$r" '.routes[$r].state // empty' <<<"$doc")
+      case "$prior_state" in
+        launch-failed|auth-failed|exhausted|outage)
+          prior_entry=$(jq -c --arg r "$r" '.routes[$r]' <<<"$doc")
+          routes_json=$(jq -c --arg r "$r" --argjson entry "$prior_entry" --argjson manual "$manual" \
+            '.[$r] = ($entry + {manualDisabled:$manual})' <<<"$routes_json")
+          continue
+          ;;
+      esac
     fi
     routes_json=$(jq -c --arg r "$r" --arg state "$state" --arg reason "$reason" --arg ts "$ts" --argjson manual "$manual" \
       '.[$r] = {state:$state, reason:$reason, observedAt:$ts, manualDisabled:$manual}' <<<"$routes_json")
@@ -761,16 +804,36 @@ cmd_finish() {
   # later corroborates or clears it against fresh evidence; only that
   # verified fresh success clears the exclusion, never a timer alone.
   case "$outcome" in
-    auth-failed|exhausted|outage)
+    launch-failed|auth-failed|exhausted|outage)
       if [ -n "$route" ]; then
         local state_name
         case "$outcome" in
+          launch-failed) state_name=launch-failed ;;
           auth-failed) state_name=auth-failed ;;
           exhausted) state_name=exhausted ;;
           outage) state_name=outage ;;
         esac
         doc=$(jq -c --arg r "$route" --arg state "$state_name" --arg ts "$(fm_route_now)" \
           '.routes[$r] = ((.routes[$r] // {}) + {state:$state, reason:("finish recorded " + $state), observedAt:$ts, manualDisabled:((.routes[$r].manualDisabled) // false)})' <<<"$doc")
+      fi
+      ;;
+    success)
+      # A successful launch is itself verified evidence clearing a prior
+      # verified failure on its route. This matters most for a no-probe
+      # route: refresh preserves that route's existing failure state rather
+      # than overwriting it with a synthetic eligible reading (see
+      # fm_route_no_probe_route above), so a successful finish is the only
+      # real signal that re-admits it, per the documented "later verified
+      # success" contract.
+      if [ -n "$route" ]; then
+        local existing_state
+        existing_state=$(jq -r --arg r "$route" '.routes[$r].state // empty' <<<"$doc")
+        case "$existing_state" in
+          launch-failed|auth-failed|exhausted|outage)
+            doc=$(jq -c --arg r "$route" --arg ts "$(fm_route_now)" \
+              '.routes[$r] = ((.routes[$r] // {}) + {state:"eligible", reason:"finish recorded success", observedAt:$ts})' <<<"$doc")
+            ;;
+        esac
       fi
       ;;
   esac
