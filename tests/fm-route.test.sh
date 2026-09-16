@@ -115,6 +115,95 @@ test_unknown_never_selected_never_proven_unavailable() {
 }
 
 # ---------------------------------------------------------------------------
+# No-probe routes (captain's word, 2026-09-16): eligible until a launch or
+# worker failure proves them unavailable, never unknown.
+# ---------------------------------------------------------------------------
+NO_PROBE_POOL='{"rules":[{"class":"builder","use":[{"harness":"omp","model":"glm-5.3-flash","effort":"high"},{"harness":"pi","model":"kimi-k3","effort":"high"}]}]}'
+
+test_refresh_marks_no_probe_route_eligible_with_reason() {
+  local home fakebin out
+  home=$(make_home no-probe-refresh "$NO_PROBE_POOL")
+  fakebin=$(fm_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh)
+  case "$out" in
+    refreshed\ generation=*) : ;;
+    *) fail "refresh did not run for the no-probe pool: $out" ;;
+  esac
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route omp)
+  case "$out" in
+    *state=eligible*"no probe for route omp; eligible until a launch or worker failure proves otherwise"*) : ;;
+    *) fail "a route with no probe source must record eligible with the no-probe reason, not unknown: $out" ;;
+  esac
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route pi)
+  case "$out" in
+    *state=eligible*"no probe for route pi; eligible until a launch or worker failure proves otherwise"*) : ;;
+    *) fail "a route with no probe source must record eligible with the no-probe reason, not unknown: $out" ;;
+  esac
+  pass "refresh marks a no-probe route eligible with the no-probe reason"
+}
+
+test_acquire_selects_a_no_probe_route() {
+  local home out
+  home=$(make_home no-probe-acquire "$NO_PROBE_POOL")
+  seed_routes "$home" '{
+    "omp":{"state":"eligible","reason":"no probe for route omp; eligible until a launch or worker failure proves otherwise","observedAt":"t","manualDisabled":false},
+    "pi":{"state":"eligible","reason":"no probe for route pi; eligible until a launch or worker failure proves otherwise","observedAt":"t","manualDisabled":false}
+  }'
+  out=$(acquire "$home" a1 a1 g1 '["omp","pi"]')
+  [ "$(result_field "$out" result)" = selected ] || fail "acquire must select a no-probe route recorded eligible: $out"
+  pass "acquire selects a no-probe route once refresh has recorded it eligible"
+}
+
+test_no_probe_route_verified_failure_excludes_then_recovers() {
+  local home out
+  home=$(make_home no-probe-failure "$NO_PROBE_POOL")
+  seed_routes "$home" '{
+    "omp":{"state":"eligible","reason":"no probe for route omp; eligible until a launch or worker failure proves otherwise","observedAt":"t","manualDisabled":false}
+  }'
+  out=$(acquire "$home" a1 a1 g1 '["omp"]')
+  [ "$(result_field "$out" result)" = selected ] || fail "expected initial selection of the no-probe route: $out"
+  finish "$home" a1 launch-failed >/dev/null
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route omp)
+  case "$out" in
+    *state=launch-failed*) : ;;
+    *) fail "a verified launch failure must exclude the no-probe route immediately: $out" ;;
+  esac
+  out=$(acquire "$home" a2 a2 g1 '["omp"]')
+  [ "$(result_field "$out" result)" = deferred ] || fail "the just-excluded no-probe route must not be selected for a new assignment: $out"
+
+  jq '.routes.omp.state = "eligible" | .routes.omp.reason = "no probe for route omp; eligible until a launch or worker failure proves otherwise"' \
+    "$home/state/route.json" > "$home/state/route.json.tmp" && mv "$home/state/route.json.tmp" "$home/state/route.json"
+  out=$(acquire "$home" a2 a2 g1 '["omp"]')
+  [ "$(result_field "$out" result)" = selected ] || fail "a later verified-eligible refresh should re-admit the no-probe route: $out"
+  pass "a verified failure excludes a no-probe route until a later refresh re-admits it"
+}
+
+test_route_with_erroring_probe_still_records_unknown() {
+  local home fakebin out
+  home=$(make_home probe-error "$FOUR_ROUTE_POOL")
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/quota-axi"
+  cat > "$fakebin/omp" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/omp"
+  PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null \
+    || fail "refresh failed against an erroring probe"
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route claude)
+  case "$out" in
+    *state=unknown*) : ;;
+    *) fail "a route with a real probe that errors must still record unknown, not eligible: $out" ;;
+  esac
+  pass "a route with a probe source that errors still records unknown, never eligible"
+}
+
+# ---------------------------------------------------------------------------
 # Verified recovery (fresh evidence re-enables automatic eligibility)
 # ---------------------------------------------------------------------------
 test_verified_recovery_reenables_after_deferral() {
@@ -999,6 +1088,10 @@ test_real_concurrent_processes_split_evenly_no_lost_updates() {
 test_all_four_routes_derived_and_assignable
 test_exhaustion_outage_auth_failure_exclude
 test_unknown_never_selected_never_proven_unavailable
+test_refresh_marks_no_probe_route_eligible_with_reason
+test_acquire_selects_a_no_probe_route
+test_no_probe_route_verified_failure_excludes_then_recovers
+test_route_with_erroring_probe_still_records_unknown
 test_verified_recovery_reenables_after_deferral
 test_manual_disable_wins_and_survives
 test_zero_prepaid_grok_credits_not_exhaustion
