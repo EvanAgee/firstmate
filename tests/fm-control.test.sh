@@ -120,6 +120,7 @@ case "${1:-}" in
     for a in "$@"; do
       case "$a" in
         *cursor_y*) printf '1\n'; exit 0 ;;
+        *pane_pid*) printf '99999999\n'; exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
       esac
@@ -146,6 +147,41 @@ fi
 exit 0
 SH
   chmod +x "$fb/sleep"
+  # An OMP record binds its launch identity to two real executables, and the
+  # bun-identity probe reads that process through ps and lsof. Fake both
+  # against a fixed pid pair no real process can own (above every default
+  # pid_max) and delegate every other invocation to the real tools so the
+  # non-OMP cases keep their baseline behavior.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fake/bun"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fake/omp"
+  chmod +x "$dir/fake/bun" "$dir/fake/omp"
+  cat > "$fb/ps" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *99999999*|*99999998*) ;;
+  *) exec /bin/ps "$@" ;;
+esac
+case "$*" in
+  *tpgid=*) printf '99999998\n' ;;
+  *comm=*) printf 'bun\n' ;;
+  *args=*) printf '%s %s run\n' "$FM_FAKE_DIR/bun" "$FM_FAKE_DIR/omp" ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/ps"
+  cat > "$fb/lsof" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *99999998*) printf 'n%s\n' "$FM_FAKE_DIR/bun"; exit 0 ;;
+esac
+for cand in /usr/bin/lsof /usr/sbin/lsof; do
+  [ -x "$cand" ] && exec "$cand" "$@"
+done
+exit 0
+SH
+  chmod +x "$fb/lsof"
   printf '%s\n' "$fb"
 }
 
@@ -182,6 +218,13 @@ add_task() {
     echo "yolo=off"
     echo "model=default"
     echo "effort=default"
+    if [ "$harness" = omp ]; then
+      # Production omp records carry their launch-bound Bun and OMP entry
+      # paths (bin/fm-spawn.sh), and the agent-state probe reads an omp
+      # record without them as unreadable rather than guessing.
+      printf 'omp_bin=%s/omp\n' "$(cd "$dir/fake" && pwd -P)"
+      printf 'omp_bun=%s/bun\n' "$(cd "$dir/fake" && pwd -P)"
+    fi
     [ "$backend" = tmux ] || echo "backend=$backend"
   } > "$home/state/$id.meta"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
@@ -216,6 +259,19 @@ keys_sent() {  # <case-dir>
 }
 
 # --- 1. adapter contract across every verified harness -----------------------
+
+test_omp_exit_refuses_an_unbound_identity_record() {
+  local dir out rc kept
+  dir=$(new_case exit-omp-unbound)
+  add_task "$dir" t1 omp
+  kept="$dir/home/state/t1.meta.stripped"
+  grep -v '^omp_' "$dir/home/state/t1.meta" > "$kept" && mv "$kept" "$dir/home/state/t1.meta"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "exit on an omp record without its bound identity should refuse"$'\n'"$out"
+  assert_contains "$out" "unreadable" \
+    "the refusal should name the unattributed endpoint state"
+  pass "fm-control exit: an omp record without its bound identity is unreadable, not alive"
+}
 
 test_exit_types_each_harness_verified_command() {
   local dir out rc harness expected key repeat clear
@@ -908,6 +964,7 @@ test_fm_send_still_marks_the_same_secondmate_task() {
   pass "fm-control's arrival leaves fm-send's from-firstmate marking untouched"
 }
 
+test_omp_exit_refuses_an_unbound_identity_record
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
 test_opencode_interrupts_twice_and_others_once
