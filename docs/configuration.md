@@ -189,6 +189,11 @@ Fleet-local operational facts and gotchas live locally in `data/learnings.md`; i
 The file is created lazily on first learning and follows the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) aging-tier and cold-archive contract: inspect the current file first and curate it instead of appending forever.
 There is no shared learnings file by captain decision.
 
+## Flow switch (bin/fm-flow.sh)
+
+`bin/fm-flow.sh <project> fast|full|status` switches one project between the full PR flow and the fast local-only flow, flipping the project's GitHub rulesets and the registry posture together.
+The script's header owns the behavior table, the discovery rules, the guard-workflow requirement, and the stored-posture format in `state/.flow-<project>`; [`docs/specs/flow-switch.md`](specs/flow-switch.md) is the contract.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.

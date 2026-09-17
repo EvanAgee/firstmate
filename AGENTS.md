@@ -302,6 +302,8 @@ Treat file or subsystem overlap as a risk signal rather than an automatic reason
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
 
+`bin/fm-flow.sh <project> fast|full|status` owns a project's flow flip between the full PR flow and the fast local-only flow, including its GitHub rulesets and the push-authority line in `data/captain.md`.
+
 ### Dispatch and supervision handoff
 
 Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in section 4.
