@@ -53,6 +53,8 @@
 #     token_count event carries info.last_token_usage (that response's own
 #     usage) and info.total_token_usage (cumulative for the thread). Twice the
 #     same cumulative total is one response written twice, so it counts once.
+#     The --since window is applied before that comparison, so a copy written
+#     outside the window never suppresses the copy inside it.
 #     input_tokens includes the cached and cache-write tokens, so input is the
 #     uncached remainder and the summed total matches total_tokens. Codex
 #     records no cost or branch, so cost_usd stays 0 and branch stays "-".

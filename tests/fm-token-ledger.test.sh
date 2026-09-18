@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-token-ledger.sh.
 #
-# Every case builds its own Claude and Pi session logs under the test's temp
-# root and points the ledger at them with FM_CLAUDE_SESSIONS_ROOT and
-# FM_PI_SESSIONS_ROOT, so no case ever reads the captain's real session logs.
+# Every case builds its own Claude, Pi, and Codex session logs under the test's
+# temp root and points the ledger at them with FM_CLAUDE_SESSIONS_ROOT,
+# FM_PI_SESSIONS_ROOT, and FM_CODEX_SESSIONS_ROOT, so no case ever reads the
+# captain's real session logs.
 #
 # Covered: Claude parent and child token columns, response deduplication,
 # Claude cumulative cost association, Pi token and cost columns, Pi compaction
 # and branch summary usage, pipeline
 # attribution by agreeing manager-branch and no-mistakes cwd evidence, Codex
 # token_count usage and cached-input mapping, a duplicated Codex cumulative
-# total counting once, Codex pipeline attribution by no-mistakes cwd, a machine
+# total counting once, a Codex duplicate written across the --since cutoff still
+# counting its in-window copy, Codex pipeline attribution by no-mistakes cwd, a machine
 # with no Codex logs still producing a snapshot, and the Codex reader leaving
 # the Claude and Pi totals unchanged, the no-guess rule that keeps conflicting
 # pipeline evidence or a session outside
