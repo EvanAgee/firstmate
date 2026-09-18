@@ -1220,6 +1220,13 @@ if ! fm_pr_poll_retirement_recover_all "$STATE" "$SCRIPT_DIR/fm-pr-poll.sh"; the
 fi
 
 resurface_after_downtime() {
+  # A handling successor's predecessor already delivered this cycle's wake, so
+  # this watcher supervises instead of re-announcing recovery. Re-announcing
+  # here is what turned a delayed handling handshake into an unbounded resurface
+  # loop: the resurface wake was not durable, so the marker never settled and
+  # every successor re-announced. A non-successor arm still owns the recovery
+  # announcement and takes the path below unchanged.
+  [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] || return 0
   if [ "$WATCHER_RECOVERY_PENDING" -ne 1 ]; then
     if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
       echo "watcher: recovery state could not be consumed safely" >&2
@@ -1232,8 +1239,16 @@ resurface_after_downtime() {
 
 if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
   touch "$STATE/.last-watcher-beat"
+  # Give the delivery path a bounded window to confirm handling so a successor
+  # never races the predecessor's own delivery. When confirmation does not
+  # arrive, settle the episode as handling here: the predecessor delivered the
+  # wake, and resurface_after_downtime suppresses this cycle's recovery
+  # announcement, so leaving the episode in a recover state would only let a
+  # later arm mistake an already-delivered wake for a fresh downtime.
   handling_wait=0
-  while [ "$handling_wait" -lt 600 ]; do
+  handling_wait_max=${FM_WATCH_HANDLING_WAIT_ITERS:-600}
+  case "$handling_wait_max" in ''|*[!0-9]*|0) handling_wait_max=600 ;; esac
+  while [ "$handling_wait" -lt "$handling_wait_max" ]; do
     fm_recovery_marker_snapshot "$WATCHER_DOWNTIME_MARKER" || true
     case "$FM_RECOVERY_MARKER_TOKEN" in
       pending:downtime:*) ;;
@@ -1242,7 +1257,9 @@ if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
     sleep 0.05
     handling_wait=$((handling_wait + 1))
   done
-  [ "$handling_wait" -lt 600 ] || WATCHER_RECOVERY_PENDING=1
+  if [ "$handling_wait" -ge "$handling_wait_max" ]; then
+    fm_recovery_marker_begin_handling "$WATCHER_DOWNTIME_MARKER" || true
+  fi
 fi
 
 while :; do

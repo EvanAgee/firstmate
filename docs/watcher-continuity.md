@@ -42,7 +42,9 @@ A first run with no surfaced-seq file baselines that leftover high-water instead
 It surfaces a typed coordinator-degraded failure rather than exiting 0 into a still-needed-but-unsurfaced state.
 Once the coordinator has stood down, the parked notifier's bound for an absent coordinator fires and drives that same typed failure plus the guard's failed-epoch progression.
 Because the coordinator keeps one live watcher across the whole handling turn, a turn longer than the beacon grace no longer leaves supervision genuinely absent, which was the false "watcher down" the former next-Stop design produced.
-For every supported arm path, a successor that observes an accepted down stretch emits `check: rearm-resurface` through the ordinary durable handling path before settling into its live wait.
+A first-cycle arm with no real predecessor, and any non-successor arm that observes an accepted down stretch, emits `check: rearm-resurface` through the ordinary durable handling path before settling into its live wait.
+A handling successor - one armed with a real predecessor after that predecessor already delivered its wake - never emits `rearm-resurface`; it waits a bounded time for the handling confirmation, then settles the pending downtime episode into handling if none arrives, so a later arm cannot mistake the delivered wake for a fresh recovery.
+The arm layer treats an absent predecessor, empty or the coordinator's literal `none` sentinel, as no real predecessor, so a genuine session-start downtime still recovers.
 That recovery presentation includes all unacknowledged queue rows, the cursor-folded OPEN DECISIONS set, and still-unread informational status lines, so a still-open decision or a buried `note:` answer reappears even when recovery has no queue row of its own.
 The model no longer re-arms after ordinary wakes.
 No PreToolUse hook denies fleet commands based on watcher status.

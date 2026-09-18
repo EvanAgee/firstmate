@@ -456,7 +456,13 @@ print_watch_output() {
 }
 
 handling_successor_generation() {
-  [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ] || return 0
+  # The coordinator's first cycle passes the literal sentinel "none" for its
+  # absent predecessor; only a real predecessor arm pid marks a handling
+  # successor. Treating "none" as one would suppress a genuine downtime
+  # recovery at session start.
+  case "${FM_WATCH_PREDECESSOR_ARM_PID:-}" in
+    ''|none) return 0 ;;
+  esac
   fm_recovery_marker_snapshot "$STATE/.watcher-down" || return 1
   case "$FM_RECOVERY_MARKER_TOKEN" in
     pending:downtime:*|pending:handling:*) printf '%s' "${FM_RECOVERY_MARKER_TOKEN##*:}" ;;
@@ -561,11 +567,10 @@ child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
   echo "watcher: FAILED - no live watcher with a fresh beacon"
   exit 1
 }
-if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
-  FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" &
-else
-  "$WATCH" >"$child_out" &
-fi
+case "${FM_WATCH_PREDECESSOR_ARM_PID:-}" in
+  ''|none) "$WATCH" >"$child_out" & ;;
+  *) FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" & ;;
+esac
 child=$!
 cycle_begin "$child" started "$(fm_pid_identity "$child" 2>/dev/null || true)"
 child_done=0

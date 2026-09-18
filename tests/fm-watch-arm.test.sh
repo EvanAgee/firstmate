@@ -380,16 +380,13 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
   append_wake "$state" check startup-network 'check: startup-network'
 
   start_rearm_arm "$home" "$state" "$fakebin" "$armout"
-  sleep 0.25
-  if is_live_non_zombie "$ARM_PID"; then
-    # End the fixture through an ordinary actionable status transition so this
-    # failing pre-fix path leaves no child behind.
-    printf 'done: fixture cleanup\n' > "$state/cleanup.status"
-    wait_for_exit "$ARM_PID" 80 || true
-    fail "re-arm stayed live instead of surfacing durable wakes and the still-open remote decision"
-  fi
-  wait "$ARM_PID"
+  # Bounded wait rather than a fixed short sleep: arm teardown and
+  # lifecycle-ledger writes can exceed a fixed pause under load, while a
+  # genuinely live arm still fails here once the bound elapses.
+  wait_for_exit "$ARM_PID" 300
   status=$?
+  [ "$status" -ne 124 ] \
+    || fail "re-arm stayed live instead of surfacing durable wakes and the still-open remote decision"
   expect_code 0 "$status" "re-arm re-surface wake must close successfully"
   grep -F 'check: rearm-resurface' "$armout" >/dev/null \
     || fail "re-arm did not report the durable recovery wake: $(cat "$armout")"
@@ -887,6 +884,97 @@ test_moved_generation_acknowledgement_is_self_healing() {
   pass "watch-arm: a moved recovery generation consumes handled rows and names its remedy"
 }
 
+# The regression behind the rearm-resurface spam: a handling successor is the
+# continuation of a cycle that ALREADY delivered its wake, so it must supervise
+# rather than re-announce recovery. The predecessor's resurface wake was not
+# durable, so when the handling handshake arrived late the successor
+# re-announced, the marker never settled, and every successor repeated it.
+test_handling_successor_supervises_through_delayed_handshake() {
+  local dir home state fakebin generation_before handling_pid first_arm i
+  dir=$(make_case handling-successor-delayed-handshake)
+  home="$dir/home"
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  mkdir -p "$home/data"
+
+  # A real actionable wake opens a downtime episode and leaves it durable.
+  start_rearm_arm "$home" "$state" "$fakebin" "$dir/first-arm.out"
+  first_arm=$ARM_PID
+  is_live_non_zombie "$first_arm" || fail "delayed-handshake fixture watcher did not stay live"
+  printf 'done: first delivered wake\n' > "$state/first.status"
+  wait_for_exit "$ARM_PID" 120 || fail "first watcher did not deliver its status wake"
+  generation_before=$(sed -n 's/^pending:downtime:\(.*\)$/\1/p' "$state/.watcher-down")
+  [ -n "$generation_before" ] || fail "delivered wake did not open a downtime episode"
+  grep "$(printf '\tsignal\tfirst.status\t')" "$state/.wake-queue" >/dev/null \
+    || fail "delivered wake was not durable before the successor armed"
+
+  # The continuity mechanism arms a handling successor, but the delivery
+  # handshake is deliberately never confirmed. The successor must settle the
+  # episode into handling and keep supervising, not re-announce recovery.
+  FM_WATCH_HANDLING_WAIT_ITERS=2 \
+    start_rearm_arm "$home" "$state" "$fakebin" "$dir/successor.out" "$first_arm"
+  i=0
+  while [ "$i" -lt 200 ]; do
+    case "$(cat "$state/.watcher-down" 2>/dev/null || true)" in
+      pending:handling:*) break ;;
+    esac
+    is_live_non_zombie "$ARM_PID" || break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  case "$(cat "$state/.watcher-down" 2>/dev/null || true)" in
+    "pending:handling:$generation_before") ;;
+    *) fail "delayed handling handshake did not settle the episode as handling: $(cat "$state/.watcher-down" 2>/dev/null || true)" ;;
+  esac
+  ! grep -F 'check: rearm-resurface' "$dir/successor.out" >/dev/null \
+    || fail "handling successor re-announced recovery for an already-delivered wake"
+  is_live_non_zombie "$ARM_PID" \
+    || fail "handling successor exited instead of supervising through the delayed handshake"
+  handling_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  [ -n "$handling_pid" ] || fail "handling successor did not own the watcher lock"
+
+  # The ordinary generation-bound acknowledgement still retires the episode.
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" \
+    2> "$dir/drain.err" || fail "delayed-handshake handling drain failed"
+  grep "$(printf '\tsignal\tfirst.status\t')" "$dir/drain.out" >/dev/null \
+    || fail "delayed-handshake drain did not present the durable wake"
+  ack_wakes "$state" || fail "delayed-handshake handling acknowledgement failed"
+  case "$(cat "$state/.watcher-down" 2>/dev/null || true)" in
+    acked:*) ;;
+    *) fail "acknowledgement did not retire the settled episode" ;;
+  esac
+  is_live_non_zombie "$ARM_PID" \
+    || fail "handling successor did not stay live after the episode retired"
+
+  kill "$ARM_PID" 2>/dev/null || true
+  wait "$ARM_PID" 2>/dev/null || true
+  pass "watch-arm: a handling successor supervises through a delayed handshake without resurfacing"
+}
+
+# The coordinator passes the literal predecessor sentinel "none" for its first
+# cycle. That is not a real predecessor, so the first watcher must still emit the
+# genuine downtime recovery wake rather than suppress it as a handling
+# successor.
+test_none_predecessor_sentinel_still_recovers_downtime() {
+  local dir home state fakebin
+  dir=$(make_case none-predecessor-sentinel)
+  home="$dir/home"
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  mkdir -p "$home/data"
+
+  # No watcher has run, so there is no marker: a queued wake is a genuine
+  # downtime that must be resurfaced on the first arm.
+  append_wake "$state" check startup-network 'check: startup-network at first arm' \
+    || fail "could not queue the genuine downtime wake"
+  start_rearm_arm "$home" "$state" "$fakebin" "$dir/arm.out" none
+  wait_for_exit "$ARM_PID" 80 \
+    || fail "a first-cycle arm with predecessor=none suppressed the genuine downtime recovery"
+  grep -F 'check: rearm-resurface' "$dir/arm.out" >/dev/null \
+    || fail "a first-cycle arm with predecessor=none did not recover the queued wake"
+  pass "watch-arm: the coordinator's none sentinel still recovers a genuine downtime"
+}
+
 test_downtime_marker_does_not_follow_symlink() {
   local dir home state fakebin armout watcher_pid sentinel
   dir=$(make_case downtime-marker-symlink)
@@ -927,4 +1015,6 @@ test_restart_preserves_recovery_across_reused_pid_lock
 test_markerless_legacy_queue_is_recovered_on_arm
 test_handling_window_close_keeps_the_acknowledgement_valid
 test_moved_generation_acknowledgement_is_self_healing
+test_handling_successor_supervises_through_delayed_handshake
+test_none_predecessor_sentinel_still_recovers_downtime
 test_downtime_marker_does_not_follow_symlink
