@@ -8,8 +8,12 @@
 # Covered: Claude parent and child token columns, response deduplication,
 # Claude cumulative cost association, Pi token and cost columns, Pi compaction
 # and branch summary usage, pipeline
-# attribution by agreeing manager-branch and no-mistakes cwd evidence, the
-# no-guess rule that keeps conflicting pipeline evidence or a session outside
+# attribution by agreeing manager-branch and no-mistakes cwd evidence, Codex
+# token_count usage and cached-input mapping, a duplicated Codex cumulative
+# total counting once, Codex pipeline attribution by no-mistakes cwd, a machine
+# with no Codex logs still producing a snapshot, and the Codex reader leaving
+# the Claude and Pi totals unchanged, the no-guess rule that keeps conflicting
+# pipeline evidence or a session outside
 # every spawn window unattributed
 # when a worktree slot is reused, the same no-guess rule holding under a --since
 # cutoff placed after the slot was respawned, the same rule holding for a session
@@ -244,6 +248,53 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
+# codex_session <codex-root> <session-id> <cwd> <model> <epoch> <input> <cache_write> <cache_read> <output> <reasoning> [duplicate]
+# One Codex rollout: session_meta, turn_context, and a token_count event.
+# input is the uncached count; Codex reports input_tokens as the cached and
+# cache-write tokens inside the whole input, so the fixture mirrors that.
+# duplicate=1 appends the same cumulative total a second time, as Codex does.
+codex_session() {
+  local root=$1 id=$2 cwd=$3 model=$4 epoch=$5
+  local input=$6 cache_write=$7 cache_read=$8 output=$9 reasoning=${10} duplicate=${11:-0}
+  local dir="$root/sessions/2026/09/04"
+  mkdir -p "$dir"
+  python3 - "$dir/$id.jsonl" "$cwd" "$model" "$(iso_at "$epoch")" \
+    "$input" "$cache_write" "$cache_read" "$output" "$reasoning" "$duplicate" <<'PY'
+import json, sys
+path, cwd, model, stamp = sys.argv[1:5]
+uncached, cache_write, cache_read, output, reasoning = [int(v) for v in sys.argv[5:10]]
+duplicate = sys.argv[10] == "1"
+input_tokens = uncached + cache_write + cache_read
+total = input_tokens + output
+lines = [
+    {"type": "session_meta", "timestamp": stamp, "payload": {"id": "thread", "cwd": cwd}},
+    {"type": "turn_context", "timestamp": stamp, "payload": {"cwd": cwd, "model": model}},
+]
+for _ in range(2 if duplicate else 1):
+    lines.append({
+        "type": "event_msg",
+        "timestamp": stamp,
+        "payload": {
+            "type": "token_count",
+            "info": {
+                "last_token_usage": {
+                    "input_tokens": input_tokens,
+                    "cached_input_tokens": cache_read,
+                    "cache_write_input_tokens": cache_write,
+                    "output_tokens": output,
+                    "reasoning_output_tokens": reasoning,
+                    "total_tokens": total,
+                },
+                "total_token_usage": {"total_tokens": total},
+            },
+        },
+    })
+with open(path, "a", encoding="utf-8") as handle:
+    for line in lines:
+        handle.write(json.dumps(line) + "\n")
+PY
+}
+
 # make_home <name>: a firstmate home with empty state/ and data/, echoed.
 make_home() {
   local home=$TMP_ROOT/$1
@@ -252,6 +303,9 @@ make_home() {
 }
 
 # run_ledger <home> <claude-root> <pi-root> <nm-worktrees> <args...>
+# A case that needs Codex fixtures declares `local codex_root=<path>`; bash's
+# dynamic scoping exposes that local here. Without it, the Codex root is a
+# path that never exists, so every other case exercises the absent-log path.
 run_ledger() {
   local home=$1 claude_root=$2 pi_root=$3 nm_root=$4
   shift 4
@@ -261,6 +315,7 @@ run_ledger() {
     FM_DATA_OVERRIDE="$home/data" \
     FM_CLAUDE_SESSIONS_ROOT="$claude_root" \
     FM_PI_SESSIONS_ROOT="$pi_root" \
+    FM_CODEX_SESSIONS_ROOT="${codex_root:-$TMP_ROOT/no-codex-logs}" \
     FM_NO_MISTAKES_WORKTREES="$nm_root" \
     "$LEDGER" "$@"
 }
@@ -516,6 +571,155 @@ test_pi_model_comes_from_the_latest_usage_message() {
   [ "$(field "$out" sess-pi-model 6)" = openai/model-new ] \
     || fail "Pi reported a model that was unused or belonged to an older turn"
   pass "Pi reports the latest usage message's model, not a later unused selection"
+}
+
+test_codex_columns_and_worker_attribution() {
+  local home claude pi codex_root nm out slot
+  home=$(make_home codex-columns)
+  claude=$TMP_ROOT/codex-columns-claude
+  pi=$TMP_ROOT/codex-columns-pi
+  codex_root=$TMP_ROOT/codex-columns-logs
+  nm=$TMP_ROOT/codex-columns-nm
+  slot=$TMP_ROOT/slot/11/epsilon
+  mkdir -p "$claude" "$pi" "$codex_root" "$nm"
+
+  fm_write_meta "$home/state/epsilon.meta" \
+    "worktree=$slot" \
+    "kind=ship" \
+    "spawn_gen=s$EARLY_SPAWN.111.211"
+  codex_session "$codex_root" sess-codex "$slot" gpt-6-astra \
+    $((EARLY_SPAWN + 45)) 7 8 9 10 11
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the Codex fixture"
+
+  [ "$(field "$out" sess-codex 1)" = epsilon ] \
+    || fail "a Codex session inside the spawn window was not attributed to its task"
+  [ "$(field "$out" sess-codex 2)" = worker ] \
+    || fail "a Codex ship spawn did not produce a worker row"
+  [ "$(field "$out" sess-codex 3)" = codex ] || fail "the harness column is not codex"
+  [ "$(field "$out" sess-codex 5)" = - ] || fail "Codex reported a branch it never records"
+  [ "$(field "$out" sess-codex 6)" = gpt-6-astra ] || fail "the Codex model column is wrong"
+  [ "$(field "$out" sess-codex 9)" = 1 ] || fail "one Codex response was not one turn"
+  [ "$(field "$out" sess-codex 10)" = 7 ] || fail "uncached Codex input did not land in input"
+  [ "$(field "$out" sess-codex 11)" = 8 ] \
+    || fail "Codex cache_write_input_tokens did not land in cache_write"
+  [ "$(field "$out" sess-codex 12)" = 9 ] \
+    || fail "Codex cached input did not land in cache_read"
+  [ "$(field "$out" sess-codex 13)" = 10 ] || fail "Codex output did not land in output"
+  [ "$(field "$out" sess-codex 14)" = 11 ] || fail "Codex reasoning did not land in thinking"
+  assert_contains "$out" "codex: sessions=1" "the by-harness totals are missing codex"
+  pass "a Codex session reports its token columns and its owning worker task"
+}
+
+test_codex_duplicate_cumulative_total_counts_once() {
+  local home claude pi codex_root nm out slot
+  home=$(make_home codex-duplicate)
+  claude=$TMP_ROOT/codex-duplicate-claude
+  pi=$TMP_ROOT/codex-duplicate-pi
+  codex_root=$TMP_ROOT/codex-duplicate-logs
+  nm=$TMP_ROOT/codex-duplicate-nm
+  slot=$TMP_ROOT/slot/12/zeta
+  mkdir -p "$claude" "$pi" "$codex_root" "$nm"
+
+  fm_write_meta "$home/state/zeta.meta" \
+    "worktree=$slot" \
+    "kind=ship" \
+    "spawn_gen=s$EARLY_SPAWN.112.212"
+  codex_session "$codex_root" sess-dup "$slot" gpt-5.6-sol \
+    $((EARLY_SPAWN + 15)) 4 0 3 6 2 1
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the duplicated Codex token_count fixture"
+
+  [ "$(field "$out" sess-dup 9)" = 1 ] \
+    || fail "a duplicated cumulative Codex total counted as a second turn"
+  [ "$(field "$out" sess-dup 10)" = 4 ] || fail "duplicated Codex input was counted twice"
+  [ "$(field "$out" sess-dup 12)" = 3 ] || fail "duplicated Codex cache reads were counted twice"
+  assert_contains "$out" "codex: sessions=1" \
+    "a duplicated cumulative total produced more than one Codex session"
+  pass "a repeated Codex cumulative total counts its usage once"
+}
+
+test_codex_pipeline_cwd_attribution() {
+  local home claude pi codex_root nm out
+  home=$(make_home codex-pipeline)
+  claude=$TMP_ROOT/codex-pipeline-claude
+  pi=$TMP_ROOT/codex-pipeline-pi
+  codex_root=$TMP_ROOT/codex-pipeline-logs
+  nm=$TMP_ROOT/codex-pipeline-nm
+  mkdir -p "$claude" "$pi" "$codex_root" "$nm/repohash"
+
+  codex_session "$codex_root" sess-codex-pipe "$nm/repohash/RUN-CODEX/apps/admin" \
+    gpt-6-astra $((EARLY_SPAWN + 20)) 1 2 3 4 5
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed on the Codex pipeline fixture"
+
+  [ "$(field "$out" sess-codex-pipe 1)" = RUN-CODEX ] \
+    || fail "a Codex session under a no-mistakes run did not attribute to its run id"
+  [ "$(field "$out" sess-codex-pipe 2)" = pipeline ] \
+    || fail "a Codex no-mistakes session was not classified as pipeline"
+  pass "Codex pipeline attribution uses the same no-mistakes cwd evidence as Claude and Pi"
+}
+
+test_codex_absent_logs_are_not_an_error() {
+  local home claude pi codex_root nm out
+  home=$(make_home codex-absent)
+  claude=$TMP_ROOT/codex-absent-claude
+  pi=$TMP_ROOT/codex-absent-pi
+  codex_root=$TMP_ROOT/codex-absent-missing
+  nm=$TMP_ROOT/codex-absent-nm
+  mkdir -p "$claude" "$pi" "$nm"
+
+  claude_session "$claude" sess-no-codex "$TMP_ROOT/elsewhere" HEAD claude-opus-5 \
+    $((EARLY_SPAWN + 1)) 1 0 0 1 0
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed when no Codex logs exist"
+
+  assert_contains "$out" "claude: sessions=1" "the Claude totals vanished without Codex logs"
+  assert_not_contains "$out" "codex:" "an absent Codex root invented a Codex total"
+  pass "a machine with no Codex logs still produces a valid snapshot"
+}
+
+test_codex_reader_leaves_claude_and_pi_totals_unchanged() {
+  local home claude pi codex_root nm out without with slot claude_without claude_with pi_without pi_with
+  home=$(make_home codex-unchanged)
+  claude=$TMP_ROOT/codex-unchanged-claude
+  pi=$TMP_ROOT/codex-unchanged-pi
+  codex_root=$TMP_ROOT/codex-unchanged-missing
+  nm=$TMP_ROOT/codex-unchanged-nm
+  slot=$TMP_ROOT/slot/13/eta
+  mkdir -p "$claude" "$pi" "$nm"
+
+  fm_write_meta "$home/state/eta.meta" \
+    "worktree=$slot" "kind=ship" "spawn_gen=s$EARLY_SPAWN.113.213"
+  claude_session "$claude" sess-eta-claude "$slot" fm/eta claude-opus-5 \
+    $((EARLY_SPAWN + 5)) 10 20 30 40 50
+  pi_session "$pi" sess-eta-pi "$TMP_ROOT/pi/eta" xai grok-4.6 \
+    $((EARLY_SPAWN + 6)) 1 2 3 4 5 0.5
+
+  without=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed without Codex logs"
+
+  codex_root=$TMP_ROOT/codex-unchanged-logs
+  mkdir -p "$codex_root"
+  codex_session "$codex_root" sess-eta-codex "$TMP_ROOT/elsewhere" gpt-6-astra \
+    $((EARLY_SPAWN + 7)) 1 1 1 1 1
+  with=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot --since 2026-01-01 --stdout) \
+    || fail "snapshot failed with Codex logs"
+
+  claude_without=$(printf '%s\n' "$without" | grep '^  claude:')
+  claude_with=$(printf '%s\n' "$with" | grep '^  claude:')
+  pi_without=$(printf '%s\n' "$without" | grep '^  pi:')
+  pi_with=$(printf '%s\n' "$with" | grep '^  pi:')
+  [ -n "$claude_without" ] && [ "$claude_without" = "$claude_with" ] \
+    || fail "adding Codex logs changed the Claude totals"
+  [ -n "$pi_without" ] && [ "$pi_without" = "$pi_with" ] \
+    || fail "adding Codex logs changed the Pi totals"
+  assert_contains "$with" "codex: sessions=1" "adding Codex logs did not add a Codex total"
+  pass "the Codex reader leaves the Claude and Pi totals byte-for-byte unchanged"
 }
 
 test_pipeline_attribution() {
@@ -1329,6 +1533,11 @@ test_pi_columns_cost_and_scout_kind
 test_pi_summary_usage_counts_tokens_but_not_turns
 test_pi_summary_only_window_keeps_the_session_model
 test_pi_model_comes_from_the_latest_usage_message
+test_codex_columns_and_worker_attribution
+test_codex_duplicate_cumulative_total_counts_once
+test_codex_pipeline_cwd_attribution
+test_codex_absent_logs_are_not_an_error
+test_codex_reader_leaves_claude_and_pi_totals_unchanged
 test_pipeline_attribution
 test_reused_slot_never_guesses
 test_future_sessions_stay_unattributed
