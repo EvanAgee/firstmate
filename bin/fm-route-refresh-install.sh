@@ -88,7 +88,55 @@ require_macos() {
   return 1
 }
 
+# home_key is derived from FM_HOME's real path (line above), so installing
+# from a different path for what is meant to be the same logical home (for
+# example a worktree checkout instead of the primary one) mints a distinct
+# label with its own plist. If that worktree is later torn down without
+# running `uninstall` first, its plist file disappears but the launchd job
+# stays registered forever -- an orphan stuck reporting its last exit code,
+# invisible to `status` because status only ever looks at THIS run's own
+# label (firstmate issue #127). Every install call sweeps every other
+# registered com.firstmate.route-refresh.* label and unloads any whose
+# plist file no longer exists, so the fleet self-heals instead of
+# accumulating one dead job per relocated home.
+sweep_orphaned_jobs() {
+  local agents_dir="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}" label
+  command -v launchctl >/dev/null 2>&1 || return 0
+  while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    [ "$label" != "$LABEL" ] || continue
+    [ -f "$agents_dir/$label.plist" ] && continue
+    printf 'route-refresh install: unloading orphaned job %s (no plist at %s/%s.plist)\n' \
+      "$label" "$agents_dir" "$label" >&2
+    launchctl remove "$label" >/dev/null 2>&1 || true
+  done < <(launchctl list 2>/dev/null | awk '{print $3}' | grep '^com\.firstmate\.route-refresh\.')
+}
+
+# launchd runs an agent under a minimal built-in PATH with none of the four
+# probe tools fm-route.sh's refresh depends on (teamclaude, teamcodex,
+# quota-axi, omp): they live under per-tool install locations such as an nvm
+# node version, ~/.local/bin, or ~/.bun/bin, never the system default
+# (firstmate issue #127). Resolve each one's real directory with `command -v`
+# under THIS install run's own (interactive, login-shell-derived) PATH, so
+# the plist gets the real current locations instead of one machine's
+# hardcoded nvm version, and every probe tool refresh needs is covered even
+# if it moves to a different manager later.
+resolve_probe_path() {
+  local tool dir seen=" " out="" bin
+  for tool in teamclaude teamcodex quota-axi omp; do
+    bin=$(command -v "$tool" 2>/dev/null) || continue
+    dir=$(cd "$(dirname "$bin")" && pwd -P) || continue
+    case "$seen" in *" $dir "*) continue ;; esac
+    seen="$seen$dir "
+    out="$out:$dir"
+  done
+  printf '%s\n' "${out#:}"
+}
+
 write_plist() {
+  local probe_path
+  probe_path=$(resolve_probe_path)
+  [ -n "$probe_path" ] || probe_path=/usr/local/bin
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -106,6 +154,8 @@ write_plist() {
   <dict>
     <key>FM_ROUTE_HOME_OVERRIDE</key>
     <string>$FM_HOME</string>
+    <key>PATH</key>
+    <string>$probe_path:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>StartInterval</key>
   <integer>$INTERVAL</integer>
@@ -144,6 +194,14 @@ case "$ACTION" in
     else
       printf 'not installed: %s absent\n' "$PLIST"
     fi
+    orphans=$(launchctl list 2>/dev/null | awk '{print $3}' | grep '^com\.firstmate\.route-refresh\.' | grep -v "^$LABEL\$") || orphans=
+    agents_dir="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
+    while IFS= read -r label; do
+      [ -n "$label" ] || continue
+      [ -f "$agents_dir/$label.plist" ] && continue
+      printf 'orphaned: %s is registered in launchd with no plist at %s/%s.plist (run install to clean it up)\n' \
+        "$label" "$agents_dir" "$label"
+    done <<< "$orphans"
     exit 0
     ;;
   install)
@@ -151,7 +209,8 @@ case "$ACTION" in
     if [ ! -d "$FM_HOME/state" ]; then
       printf 'warning: %s/state does not exist yet; it will be created by the first refresh\n' "$FM_HOME" >&2
     fi
-    consent "install" "write $PLIST and load it into launchd now (refresh every ${INTERVAL}s; refresh only reads quota/health evidence and writes state/route.json, never launches or stops anything)" || exit 1
+    consent "install" "write $PLIST and load it into launchd now (refresh every ${INTERVAL}s; refresh only reads quota/health evidence and writes state/route.json, never launches or stops anything); also unload any orphaned route-refresh job from a relocated home whose plist no longer exists" || exit 1
+    sweep_orphaned_jobs
     mkdir -p "$(dirname "$PLIST")" "$FM_HOME/state"
     tmp=$(mktemp "$PLIST.tmp.XXXXXX") || exit 1
     trap 'rm -f "$tmp"' EXIT
