@@ -149,7 +149,7 @@ usage: fm-fleet-snapshot.sh --json
 
 Print a read-only structured snapshot of the firstmate fleet.
 JSON is the stable machine-readable output contract.
-Task rows are built concurrently, bounded by FM_SNAPSHOT_JOBS (default 8),
+Task rows are built concurrently, bounded by FM_SNAPSHOT_JOBS (default 16),
 then sorted by id. If no temp dir can be made, rows are built one at a time.
 
 --secondmate-home-summary emits the bounded structured summary used after a
@@ -613,10 +613,13 @@ emit_one_task_json() {  # <meta>
 }
 
 # How many tasks to build at once. Each task's stage lookup shells out to
-# no-mistakes several times and takes about a second, so building them in
-# sequence is the whole cost of the snapshot. A bounded pool keeps a busy home
-# from spawning one process per task at once. Override with FM_SNAPSHOT_JOBS.
-FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-8}
+# no-mistakes and the backend several times, and on a loaded machine a live
+# lane's deep read can take seconds of wall time in which the process is only
+# waiting. The old pool of 8 left lanes queued behind each other and made that
+# waiting the snapshot's whole cost, so the default runs every ordinary fleet's
+# lanes at once; the pool is still bounded so a huge home cannot spawn without
+# limit. Override with FM_SNAPSHOT_JOBS.
+FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-16}
 
 # Every task's JSON object, built concurrently, then sorted by id so the output
 # is identical to building them one at a time. Each task writes its object to
@@ -624,7 +627,7 @@ FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-8}
 # completion order does not matter.
 task_json_lines() {
   local jobs=$FM_SNAPSHOT_JOBS
-  case "$jobs" in ''|*[!0-9]*) jobs=8 ;; esac
+  case "$jobs" in ''|*[!0-9]*) jobs=16 ;; esac
   [ "$jobs" -ge 1 ] || jobs=1
   local outdir meta running=0 status
   outdir=$(mktemp -d "${TMPDIR:-/tmp}/fm-snapshot.XXXXXX") || {
@@ -1384,18 +1387,21 @@ secondmate_landed_from_current_json() {  # <secondmate-current-json>
 }
 
 scout_report_lines() {
-  local report id
   if [ ! -d "$DATA" ]; then
     jq -n '[]'
     return 0
   fi
+  # One jq for the whole list rather than one per report: a home with hundreds
+  # of reports paid a shell + interpreter start per report, which dominated the
+  # snapshot on a loaded machine. Same objects, same order.
   LC_ALL=C find "$DATA" -mindepth 2 -maxdepth 2 -type f -name report.md -print \
-    | sort \
-    | while IFS= read -r report; do
-      id=$(basename "$(dirname "$report")")
-      jq -n --arg id "$id" --arg path "$report" '{id:$id,path:$path}'
-    done \
-    | jq -s 'sort_by(.id)'
+    | LC_ALL=C sort \
+    | jq -Rn '
+        [ inputs
+          | (capture("^(?<dir>.*)/report\\.md$")? // null)
+          | select(. != null)
+          | {id:(.dir | split("/") | .[-1]), path:(.dir + "/report.md")} ]
+        | sort_by(.id)'
 }
 
 BACKLOG_JSON=$(backlog_json) || { echo "fm-fleet-snapshot: backlog read failed" >&2; exit 1; }
