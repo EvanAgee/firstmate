@@ -492,7 +492,7 @@ _fm_decision_key() {  # <status-line> [<precomputed-candidate>] -> key slug
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
-_fm_decision_drop_into() {  # <open-set> <key>; sets _FM_CLASSIFY_OPEN
+_fm_decision_drop_into() {  # <open-set> <key>; sets _FM_CLASSIFY_OPEN and _FM_CLASSIFY_OPEN_RAW
   local set=$1 key=$2 line out=''
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -557,7 +557,11 @@ _fm_decision_key_transition_allowed() {  # <key> <note>
   return 0
 }
 
-_fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held-verb>; sets _FM_CLASSIFY_FOLD
+# Sets two cells for the same reason _fm_decision_drop_into does: _FM_CLASSIFY_FOLD
+# is the newline-stripped value the fold callers consume (matching what the old
+# `$(...)` capture gave them), and _FM_CLASSIFY_FOLD_RAW keeps the trailing byte
+# the printing wrapper owes its own stdout contract.
+_fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held-verb>; sets _FM_CLASSIFY_FOLD and _FM_CLASSIFY_FOLD_RAW
   local open=$1 line=$2 resolve=$3 held=$4 verb key note
   # Use a case glob so Bash 3.2 does not run its slow global bracket-class
   # substitution for every status line. This keeps the same whitespace-only
