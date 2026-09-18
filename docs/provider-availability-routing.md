@@ -61,6 +61,9 @@ Every caller, including the separate native no-mistakes hook (`nm-native-assignm
 {"result":"deferred","reason":"every candidate route is excluded (exhausted, outage, auth-failed, or manually disabled)","generation":5}
 ```
 
+A `deferred` `reason` is human-readable explanation only; a caller keys on `result`, never on the reason text.
+`unknown` candidates produce one of two reasons, chosen by whether a broken check caused the unknown (see the selection rule below): `no route proven eligible; at least one candidate has unknown telemetry` when the probes ran, and `no route proven eligible; the health check could not run for at least one candidate (a probe tool is missing from PATH, not a provider verdict)` when at least one candidate's stored reason carries the `check-unavailable:` prefix.
+
 ```json
 {"result":"already-closed","assignment_id":"aos-4213","generation":5,"note":"already closed; not relaunched"}
 ```
@@ -78,8 +81,10 @@ A genuinely new attempt needs a NEW `assignment_id`.
 
 Selection rule: among `routes` candidates whose last-refreshed state is `eligible` and not manually disabled, and after dropping any candidate's `pending`/`running` assignment whose owner is abandoned (see "Abandoned-owner reconciliation" below) from its count, pick the route with the fewest remaining `pending`/`running` assignments.
 A genuine tie rotates through a monotonic `tieCursor` stored on `state/route.json` and advanced by one on every tie-broken pick, so a burst of concurrent ties spreads across the tied routes instead of always landing on the first-scanned one (`tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates` proves a real 20-process concurrent split).
-`unknown` (a probe that exists but returned inconclusive or stale telemetry) is never selected and never counted as proven unavailable; when every candidate is either excluded or unknown, `deferred` names which case applied so a caller can distinguish "wait for a verified reset" from "wait for the next refresh".
-A route whose catalog entry has no probe source at all is a separate case, not `unknown`: see "Evidence sources" below for the no-probe rule.
+`unknown` (a probe that exists but produced no usable reading) is never selected and never counted as proven unavailable; when every candidate is either excluded or unknown, `deferred` names which case applied so a caller can distinguish "wait for a verified reset" from "wait for the next refresh".
+`unknown` covers two causes that are never widened into eligibility but ARE distinguished in the `deferred` reason: the probe ran and returned inconclusive or stale telemetry, or the probe could not run at all because its reader binary is missing from `PATH`.
+Only the second carries the fixed `check-unavailable:` reason prefix on `state/route.json`, and only that case swaps the refusal's wording to name a broken check rather than provider telemetry (see "Evidence sources" below for who writes the prefix).
+A route whose catalog entry has no probe source at all is a third, separate case, not `unknown`: see "Evidence sources" below for the no-probe rule.
 
 #### Abandoned-owner reconciliation
 
@@ -171,12 +176,18 @@ Gateway/DeepSeek reads through `omp usage --provider vercel-ai-gateway --json` (
 It records `eligible` with a `reason` of `no probe for route <id>; eligible until a launch or worker failure proves otherwise`.
 It stays eligible until a verified launch or worker failure (`finish` with `launch-failed`, `auth-failed`, `exhausted`, or `outage`) excludes it exactly as any other route's verified failure does (see `finish` above); a later verified success re-admits it on the next `refresh`.
 Because a no-probe route's own reading is always the same synthetic `eligible`, `refresh` preserves an existing verified-failure state for it instead of overwriting that state with the synthetic reading on every tick: only a newer verified success (via `finish`) clears the exclusion, never `refresh` alone.
-`unknown` stays reserved for a probe that exists (claude, codex, pi-grok, pi-deepseek) but returned inconclusive or stale evidence, as described above.
+`unknown` stays reserved for a probe that exists (claude, codex, pi-grok, pi-deepseek) but produced no usable reading, as described above.
+
+**Missing reader rule**: before invoking `quota-axi` or `omp`, the probe checks that the binary resolves on `PATH`.
+An unresolvable reader records `unknown` with a `reason` prefixed by the fixed `check-unavailable:` tag, so a check that never ran is never mistaken for a provider verdict; the state itself stays `unknown`, so the route is still never eligible and never selected.
+This exists because a scheduled refresh under launchd's minimal built-in `PATH` found none of the probe readers and recorded every healthy route as `unknown` with an exit-127 reason, which dispatch then read as a fleet-wide provider outage.
+`bin/fm-route-refresh-install.sh` writes an explicit `PATH` into its plist, resolved at install time from each probe tool's own `command -v` location, so the scheduled refresh reaches the same readers an interactive shell does; `tests/fm-route.test.sh` drives a real refresh under that extracted plist `PATH` as the regression guard.
 
 ## Timeout and error behavior
 
 - A health probe that cannot reach its source, cannot parse a usable observation timestamp, or reports a value that does not clearly prove eligibility or exhaustion records `unknown` with a `reason` explaining why, never a guessed state.
-- A route with no probe source at all is a distinct case from the above and is never `unknown`; see the no-probe rule under "Evidence sources".
+- A probe whose reader binary does not resolve on `PATH` also records `unknown`, but tags its `reason` with the `check-unavailable:` prefix so `acquire`'s refusal names a broken check instead of provider telemetry; see the missing reader rule under "Evidence sources".
+- A route with no probe source at all is a distinct case from both of the above and is never `unknown`; see the no-probe rule under "Evidence sources".
 - Zero prepaid credits on a provider whose eligibility is subscription-scoped (Grok) is explicitly never read as subscription exhaustion (see "Evidence sources" above for the live-verified proof).
 - Every write (`refresh`, `acquire`, `finish`, `disable`, `enable`) takes `state/.route.lock` via `bin/fm-wake-lib.sh`'s `fm_lock_acquire_wait`/`fm_lock_release` before reading, and publishes with a tmp-file-plus-`mv -f` atomic replace, so concurrent callers never interleave a partial write; twenty concurrent `acquire` calls against a two-route eligible pool split the assignments evenly with no lost updates, including the rotating-tie case (see `tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates`, which drives `fm-route.sh`'s own `acquire` endpoint directly rather than going through `fm-spawn.sh`).
 - `acquire` never blocks on network I/O: all quota/health evidence it reads was already written by the most recent `refresh`, and it never holds `state/.route.lock` while probing a provider.
@@ -195,6 +206,9 @@ Non-claude/codex harnesses (Pi/Grok, Gateway/DeepSeek) carry no named model-scop
 A captain-supplied explicit `--harness` bypasses this admission entirely, the same way it already bypasses the pool's own `enabled` filter.
 `bin/fm-control.sh`'s `relaunch` verb runs the same `acquire`/`finish` JSON pair around an authorized relaunch's already-resolved profile, before `safe_checkpoint` and before anything is stopped, so a refusal never touches the live process; it stays inert when the resolved route is not part of the canonical catalog at all (no routing policy configured for that profile).
 Neither caller runs `refresh`; both assume a periodic timer (`bin/fm-route-refresh-install.sh`, following `bin/fm-watcher-beat-alarm-install.sh`'s pattern) keeps `state/route.json` current independent of any LLM turn.
+That installer's launchd label is derived from the canonical home's real path, so installing from a relocated home (a worktree checkout, say) registers a second, distinct job.
+Tearing that home down without running `uninstall` first leaves a registered job with no plist behind it, so `install` sweeps and unloads every such orphan under the `com.firstmate.route-refresh.` prefix, and `status` reports one read-only without removing it.
+Both the sweep and the report are suppressed when `LAUNCH_AGENTS_DIR` names anything but the real launchd agents directory, because launchd's registry can only be judged against the directory launchd itself reads.
 
 ## For the native no-mistakes integration
 
