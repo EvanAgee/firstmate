@@ -105,6 +105,29 @@ SCHEMA_ERROR=$(printf '%s\n' "$CONFIG_JSON" | jq -r --argjson allow_disabled_pin
     or ($items | any(has("effort") and (((.effort | type) != "string") or (.effort | length) == 0)));
   def malformed_enabled($items):
     ($items | any(has("enabled") and ((.enabled | type) != "boolean")));
+  def malformed_paused($items):
+    ($items | any(
+      if (has("paused") | not) then false
+      elif ((.paused | type) != "object") then true
+      elif ((.paused.reason? | type) != "string") then true
+      elif ((.paused.reason | length) == 0) then true
+      elif (.paused | has("until")) then
+        ((.paused.until | type) != "string")
+        or ((.paused.until | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) | not)
+      else false end
+    ));
+  def malformed_quarantined($items):
+    ($items | any(
+      if (has("quarantined") | not) then false
+      elif ((.quarantined | type) != "object") then true
+      elif ((.quarantined.evidence? | type) != "string") then true
+      elif ((.quarantined.evidence | length) == 0) then true
+      elif ((.quarantined.release? | type) != "string") then true
+      elif ((.quarantined.release | length) == 0) then true
+      else false end
+    ));
+  def malformed_history($items):
+    ($items | any(has("history") and ((.history | type) != "string")));
   def whitespace_error($label; $items):
     [$items[]? as $item
       | ["harness", "model", "effort"][] as $field
@@ -160,6 +183,9 @@ SCHEMA_ERROR=$(printf '%s\n' "$CONFIG_JSON" | jq -r --argjson allow_disabled_pin
     elif [(.rules // [])[]? | profiles(.use?)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "each use profile needs harness"
     elif malformed_optional_fields([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile model and effort must be non-empty strings when present"
     elif malformed_enabled([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile enabled must be true or false when present"
+    elif malformed_paused([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile paused must be an object with a non-empty reason and an optional YYYY-MM-DD until date"
+    elif malformed_quarantined([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile quarantined must be an object with non-empty evidence and release strings"
+    elif malformed_history([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile history must be a string when present"
     elif [(.rules // [])[]? | select(has("pin") and ((.pin | type) != "object"))] | length > 0 then "rule pin must be a profile object"
     elif [(.rules // [])[]? | select(has("pin")) | .pin | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "rule pin needs harness"
     elif malformed_optional_fields([(.rules // [])[]? | select(has("pin")) | .pin]) then "rule pin model and effort must be non-empty strings when present"
@@ -178,6 +204,9 @@ SCHEMA_ERROR=$(printf '%s\n' "$CONFIG_JSON" | jq -r --argjson allow_disabled_pin
     elif has("default") and ([profiles(.default)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length) > 0 then "each default profile needs harness"
     elif has("default") and malformed_optional_fields([profiles(.default)[]?]) then "default profile model and effort must be non-empty strings when present"
     elif has("default") and malformed_enabled([profiles(.default)[]?]) then "default profile enabled must be true or false when present"
+    elif has("default") and malformed_paused([profiles(.default)[]?]) then "default profile paused must be an object with a non-empty reason and an optional YYYY-MM-DD until date"
+    elif has("default") and malformed_quarantined([profiles(.default)[]?]) then "default profile quarantined must be an object with non-empty evidence and release strings"
+    elif has("default") and malformed_history([profiles(.default)[]?]) then "default profile history must be a string when present"
     elif has("defaultPin") and ((.defaultPin | type) != "object") then "defaultPin must be a profile object"
     elif has("defaultPin") and ((.defaultPin.harness? | type) != "string" or (.defaultPin.harness | length) == 0) then "defaultPin needs harness"
     elif has("defaultPin") and malformed_optional_fields([.defaultPin]) then "defaultPin model and effort must be non-empty strings when present"

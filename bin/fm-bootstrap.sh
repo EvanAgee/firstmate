@@ -1004,14 +1004,22 @@ crew_dispatch_validate() {
     return 0
   fi
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
-    jq -r '
+    jq -r --arg today "$(date -u +%Y-%m-%d)" '
+    def paused_now:
+      if ((.paused? | type) != "object") then false
+      elif ((.paused.until? // "") == "") then true
+      else ((.paused.until | type) == "string") and (.paused.until >= $today)
+      end;
     def profile($p):
       ($p.harness | tostring)
       + (if ($p.model? != null) then "/" + ($p.model | tostring)
          elif ($p.effort? != null) then "/default"
          else "" end)
       + (if ($p.effort? != null) then "/" + ($p.effort | tostring) else "" end)
-      + (if ($p.enabled? == false) then " (off)" else "" end);
+      + (if ($p.enabled? == false) then " (off)"
+         elif ($p | paused_now) then " (paused)"
+         elif (($p.quarantined? | type) == "object") then " (quarantined)"
+         else "" end);
     def profile_set($value):
       if ($value | type) == "array" then
         ("round-robin[" + ([$value[] | profile(.)] | join(", ")) + "]")

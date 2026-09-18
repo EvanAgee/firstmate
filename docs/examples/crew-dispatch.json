@@ -1,5 +1,5 @@
 {
-  "note": "Human notes can explain the pools, but the resolver selects only by class, pin, enabled state, and live-worker counts.",
+  "note": "Human notes can explain the pools. The resolver selects a rung only when its route is available through bin/fm-route.sh, it is not paused, and it is not quarantined.",
   "rules": [
     {
       "class": "researcher",
@@ -7,7 +7,13 @@
       "use": [
         { "harness": "claude", "model": "fable", "effort": "xhigh" },
         { "harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
-        { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" }
+        {
+          "harness": "pi",
+          "model": "xai/grok-4.6",
+          "effort": "high",
+          "paused": { "reason": "The captain is preserving the Grok subscription this month.", "until": "2026-10-01" },
+          "history": "Disabled 2026-09-15 while leaning on another subscription."
+        }
       ],
       "why": "Every member meets the research floor."
     },
@@ -17,10 +23,19 @@
       "use": [
         { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" },
         { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
-        { "harness": "claude", "model": "claude-opus-4-8", "effort": "high" }
+        {
+          "harness": "pi",
+          "model": "phala/z-ai/glm-5.3",
+          "effort": "xhigh",
+          "quarantined": {
+            "evidence": "Two 429 storms on a real first turn, minutes after a clean probe.",
+            "release": "A probe that sends a real 20k-token brief."
+          },
+          "history": "Disabled 2026-09-06 after the second 429 storm."
+        }
       ],
       "pin": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
-      "why": "The pin selects Codex until it is removed."
+      "why": "The pin selects Codex until it is removed. The quarantined rung stays out until its release condition is met, never on a passing probe alone."
     },
     {
       "class": "designer",
@@ -36,9 +51,14 @@
       "use": [
         { "harness": "claude", "model": "opus", "effort": "high" },
         { "harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
-        { "harness": "pi", "model": "xai/grok-4.6", "effort": "high", "enabled": false }
+        {
+          "harness": "pi",
+          "model": "xai/grok-4.6",
+          "effort": "high",
+          "paused": { "reason": "The captain is preserving the Grok subscription this month." }
+        }
       ],
-      "why": "The disabled member stays out of selection until the captain turns it on."
+      "why": "A paused member stays out until the captain lifts the pause."
     }
   ],
   "default": [

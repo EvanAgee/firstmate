@@ -146,11 +146,12 @@ fm-route.sh enable --route <id>
 `routes --class <class>` narrows that list to only the route ids one class can currently be SERVED by.
 
 **`bin/fm-dispatch-resolve.sh` is the sole owner of that question**, and `routes --class` is a thin pass-through over its `--list-candidate-routes` mode, printing the answer verbatim and filtering nothing of its own.
-That mode runs the resolver's real pool resolution, pin detection, and `profiles_tsv` enabled filtering, then groups each surviving member through `group-for` and dedupes.
+That mode runs the resolver's real pool resolution, pin detection, and `profiles_tsv` filtering (the `enabled` switch, a paused or quarantined rung, and the model-scoped quota window), then groups each surviving member through `group-for` and dedupes.
 Because it is the same code path a real resolve runs, every exclusion the resolver applies is reflected automatically, with no second copy to keep in sync:
 
 - the pool is `rules[].use` for a class that names a rule, `.default` when it does not;
 - a pool member with `"enabled": false` is never selectable, so a route whose only member in this pool is disabled is never offered;
+- a pool member that is paused (and whose pause has not expired) or quarantined is likewise never selectable, so a captain's preference and a proven defect both park a rung out of the pool without pretending to be a capacity fact;
 - a member whose model-scoped quota window is exhausted is likewise not selectable (see "Model-specific limits" below), so a route whose only member in this class is model-exhausted is not offered either;
 - a pinned pool (`pin` for a class, `defaultPin` for the default pool) always resolves to the pin's exact tuple and never round-robins, so its candidate list is exactly the pinned member's own route.
 
@@ -195,7 +196,7 @@ Non-claude/codex harnesses (Pi/Grok, Gateway/DeepSeek) carry no named model-scop
 ## Callers today
 
 `bin/fm-dispatch-resolve.sh --exclude-routes <r1,r2,...>` marks matching pool members `enabled=false` for that one resolution call, without touching `config/crew-dispatch.json`; `bin/fm-spawn.sh` computes the caller's candidate routes with `fm-route.sh routes --class <class>`, pipes an `acquire` request as shown above, translates the non-selected routes into `--exclude-routes`, and pipes a `finish` request from its existing abort-cleanup trap so a failed launch releases its assignment exactly once.
-A captain-supplied explicit `--harness` bypasses this admission entirely, the same way it already bypasses the pool's own `enabled` filter.
+A captain-supplied explicit `--harness` bypasses this route admission entirely; the spawn's own separate hard lock still refuses an exact tuple the file marks `enabled: false`, paused, or quarantined.
 `bin/fm-control.sh`'s `relaunch` verb runs the same `acquire`/`finish` JSON pair around an authorized relaunch's already-resolved profile, before `safe_checkpoint` and before anything is stopped, so a refusal never touches the live process; it stays inert when the resolved route is not part of the canonical catalog at all (no routing policy configured for that profile).
 Neither caller runs `refresh`; both assume a periodic timer (`bin/fm-route-refresh-install.sh`, following `bin/fm-watcher-beat-alarm-install.sh`'s pattern) keeps `state/route.json` current independent of any LLM turn.
 

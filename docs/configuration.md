@@ -315,7 +315,15 @@ Secondmate spawns do not use classes and continue to resolve through `config/sec
       "class": "builder",
       "when": "<optional human description of this class>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "enabled": true }
+        {
+          "harness": "<adapter>",
+          "model": "<optional model>",
+          "effort": "<low|medium|high|xhigh|max, optional>",
+          "enabled": true,
+          "paused": { "reason": "<captain's reason>", "until": "<optional YYYY-MM-DD>" },
+          "quarantined": { "evidence": "<what failed under real work>", "release": "<exact condition that may readmit it>" },
+          "history": "<verbatim prior note, evidence only>"
+        }
       ],
       "pin": { "harness": "<same adapter>", "model": "<same optional model>", "effort": "<same optional effort>" },
       "why": "<optional human rationale>"
@@ -337,28 +345,36 @@ Every profile requires `harness`.
 Optional `model` and `effort` values select those exact runtime axes, while omission selects the harness default for that axis.
 An omitted model and the literal model `"default"` are the same selection everywhere the configuration is validated or matched.
 Harness, model, and effort values cannot contain whitespace because the resolver's output protocol is space-delimited.
+A rung dispatches only when its route reads available through [`bin/fm-route.sh`](provider-availability-routing.md), the static `enabled` switch is not false, it is not paused, and it is not quarantined.
+The resolver separately drops one claude or codex model whose own quota-axi window is exhausted (see that document's "Model-specific limits" section).
+Availability is a live reading and is never stored in this file, so a window that resets returns the rung to its pool with no edit here.
+`paused` is the captain's preference switch and takes an object with a required `reason` and an optional `until` date in `YYYY-MM-DD` form.
+A paused rung stays out however much capacity it has, and an `until` date that has passed ends the pause on its own.
+`quarantined` records a rung proven to fail under real work and takes an object with a required `evidence` string and a required `release` string naming the exact condition that may readmit it.
+A passing probe never readmits a quarantined rung.
+`history` is an optional string holding the verbatim prior note that explains why a rung was ever excluded; it is evidence and never participates in selection.
 Optional `enabled` must be boolean, and omission means enabled.
-Setting `"enabled": false` switches that member off for new dispatches without moving a live worker.
+Setting `"enabled": false` is a raw static switch retained for compatibility; express a captain preference with `paused` and a proven defect with `quarantined` instead.
 
 A rule's `pin` selects one exact `{harness, model, effort}` member of that rule's own pool.
 Top-level `defaultPin` selects one exact member of `default`.
 Pins are selections, not presentation fields.
 The old `select` field is rejected because the resolver now owns unpinned round-robin selection.
 Bootstrap rejects a pin whose harness, model, and effort do not exactly match one member of its pool.
-The resolver refuses a switched-off pin without falling through to another member or to `default`.
+The resolver refuses a pin that is switched off, paused, or quarantined without falling through to another member or to `default`.
 
-Without a pin, the resolver chooses the enabled pool member carrying the fewest matching live workers in this home.
+Without a pin, the resolver chooses the selectable pool member carrying the fewest matching live workers in this home.
 It counts `state/*.meta` records whose harness, model, and effort match the member and excludes `kind=secondmate`.
 List order breaks a tie.
 This count-and-list-order selection never reads `quota-axi`, `teamclaude status`, or `teamcodex status`, so an ad hoc quota reading never ranks or breaks a tie between members.
 Two separate automatic checks do remove a member before that selection runs: [`docs/provider-availability-routing.md`](provider-availability-routing.md) owns the route-level admission that excludes a whole service on proven evidence, and the resolver's own `model_exhausted` check reads `quota-axi` to drop one individually exhausted claude or codex model from an otherwise-eligible pool (see that document's "Model-specific limits" section for the full contract).
 An unknown class uses `defaultPin` when present, otherwise it applies the same count and list-order selection to `default`.
-An empty enabled pool is an error with no fallback.
+An empty selectable pool is an error with no fallback, and the refusal names each excluded member's pause or quarantine reason when it has one.
 
 With `--class`, `fm-spawn.sh` records `dispatch_class` and the resolver's `dispatch_reason` in task metadata.
 The reasons are `pin`, `round-robin`, `default-pin`, and `default`.
 Passing `--harness`, `--model`, or `--effort` with `--class` requires `--captain-override "<reason>"`, which records `dispatch_override`.
-The resolver applies those override axes before it checks disabled members, so an enabled override outranks a disabled class pin while an override that names a disabled member is refused.
+The resolver applies those override axes before it checks disabled members, so an enabled override outranks a disabled class pin while an override that names a disabled, paused, or quarantined member is refused.
 Without `--class`, an active dispatch file makes a fresh crewmate or scout spawn fail even when a concrete harness was passed.
 Raw launch commands cannot accompany `--class` because arbitrary shell text cannot prove the exact harness, model, and effort that will run.
 Omit `--class` to use the raw launch-command escape hatch.
@@ -368,7 +384,7 @@ See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a star
 `bin/fm-dispatch-validate.sh` is the single executable validation boundary used by bootstrap, the resolver, and API writes.
 It uses the adapter support definitions in `bin/fm-dispatch-runtime-lib.sh` before any caller reads or acts on the config.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, a non-object top level, a missing or duplicate class, an empty or malformed pool, an invalid pin, whitespace in a runtime value, an unsupported runtime setting, a non-boolean `enabled`, or an all-off pool is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+Malformed JSON, a non-object top level, a missing or duplicate class, an empty or malformed pool, an invalid pin, a malformed `paused` or `quarantined` object, a non-string `history`, whitespace in a runtime value, an unsupported runtime setting, a non-boolean `enabled`, or an all-off pool is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
 Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 `GET /rigs` returns each rule's `class`, human name, pool, and pin, plus top-level `defaultPin` raw so the board can label and display the configured pools.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
@@ -634,6 +650,7 @@ A worker relay never closes a durable captain decision.
 `POST /decisions/answer` accepts JSON `{"task":"<id>","key":"<key>","text":"<one line>"}` and queues an answer for firstmate on the same wake queue, encoded as operational input.
 Firstmate closes an active durable captain decision with `bin/fm-send.sh --resolve-key` on its next supervision turn.
 `POST /rigs/rung` accepts JSON `{"rig":"<class or __default__>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
+It edits the static `enabled` switch only, never a `paused` or `quarantined` field, so a paused or quarantined rung is still out after a board toggle and must be edited in the file.
 `rig` is the rule's unique `class`, or `__default__` for the fallback ladder, matching the `class` value `GET /rigs` serves.
 `rung` is that ladder's index, because harness and model can repeat.
 A change that would turn off a ladder's last enabled rung is refused with 400.

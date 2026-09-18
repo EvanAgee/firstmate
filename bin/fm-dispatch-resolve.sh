@@ -6,16 +6,22 @@
 #   harness=<h> model=<m> effort=<e> reason=<pin|round-robin|default-pin|default>
 # --list-candidate-routes instead prints, one per line, the provider-
 # availability route ids this class can currently be SERVED by: it runs this
-# file's own pool resolution, pin detection, and profiles_tsv enabled
-# filtering (which already layers the model-scoped quota window on top of the
-# static enabled column), then groups each surviving member through
+# file's own pool resolution, pin detection, and profiles_tsv filtering (which
+# layers a paused or quarantined rung, the static enabled column, and the
+# model-scoped quota window), then groups each surviving member through
 # bin/fm-route.sh group-for and dedupes. This file is the single owner of
 # what a class can resolve to, so bin/fm-route.sh's "routes --class" is a
 # thin pass-through over this mode rather than a second, drifting copy of
 # the same rules.
 # A class absent from rules uses the default pool.
 # Pins select their exact pool member when enabled.
-# Unpinned pools select the enabled member with the fewest matching live
+# A rung is out for one of four explicit reasons: a captain pause, a proven
+# quarantine, the static enabled switch, or an exhausted model-scoped window.
+# This file owns all four filters; route-level availability is a separate gate
+# owned by bin/fm-route.sh's admission, which excludes a whole route before
+# this file is called with --exclude-routes. Only pause and quarantine are
+# written by hand; no capacity fact is ever stored in the config.
+# Unpinned pools select the selectable member with the fewest matching live
 # state/*.meta workers in this home, excluding kind=secondmate, with list order
 # breaking ties.
 # --exclude-routes treats every pool member whose provider-availability route
@@ -98,6 +104,9 @@ esac
 
 CONFIG_FILE="${FM_CONFIG_OVERRIDE:-$DISPATCH_HOME/config}/crew-dispatch.json"
 STATE_DIR="${FM_STATE_OVERRIDE:-$DISPATCH_HOME/state}"
+# A pause's optional until date is the last day it stays out: a date at or
+# after today keeps the pause active, an earlier one has expired on its own.
+TODAY=$(date -u +%Y-%m-%d)
 [ -f "$CONFIG_FILE" ] || {
   echo "error: no config/crew-dispatch.json in $DISPATCH_HOME" >&2
   exit 1
@@ -119,6 +128,46 @@ fi
 
 config_jq() {
   jq "$@" <<< "$NORMALIZED_CONFIG"
+}
+
+# Human reasons for the members a pool leaves out, one TSV line per member that
+# carries one: harness, model, effort, reason. This is informative text for the
+# refusal messages below, never a gate; a member out only because its own
+# model-scoped quota window is exhausted has no config reason and is omitted.
+pool_member_exclusion_reasons() {
+  # shellcheck disable=SC2016
+  config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --arg today "$TODAY" '
+    def profiles($value):
+      if ($value | type) == "array" then $value
+      elif ($value | type) == "object" then [$value]
+      else []
+      end;
+    def reason($today):
+      if ((.paused? | type) == "object") then
+        (if ((.paused.until? // "") == "") or (((.paused.until | type) == "string") and (.paused.until >= $today))
+         then "paused: " + (.paused.reason // "no reason given")
+         else "" end)
+      elif ((.quarantined? | type) == "object") then
+        "quarantined: " + (.quarantined.evidence // "no evidence given")
+      elif (.enabled? == false) then "switched off"
+      else "" end;
+    (if $kind == "class" then
+       [(.rules // [])[]? | select(.class == $class)][0].use
+     else
+       .default
+     end)
+    | profiles(.)[]?
+    | [(.harness // ""), (.model // "default"), (.effort // "default"), reason($today)]
+    | @tsv
+  '
+}
+
+report_pool_exclusions() {
+  local harness model effort why
+  while IFS=$'\t' read -r harness model effort why; do
+    [ -n "$why" ] || continue
+    printf '  %s/%s/%s: %s\n' "$harness" "$model" "$effort" "$why" >&2
+  done < <(pool_member_exclusion_reasons)
 }
 
 # shellcheck disable=SC2016
@@ -144,19 +193,30 @@ fi
 
 profiles_tsv_raw() {
   # shellcheck disable=SC2016
-  config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" '
+  config_jq -r --arg class "$DISPATCH_CLASS" --arg kind "$POOL_KIND" --arg today "$TODAY" '
     def profiles($value):
       if ($value | type) == "array" then $value
       elif ($value | type) == "object" then [$value]
       else []
       end;
+    def paused_now:
+      if ((.paused? | type) != "object") then false
+      elif ((.paused.until? // "") == "") then true
+      else ((.paused.until | type) == "string") and (.paused.until >= $today)
+      end;
+    def quarantined_now:
+      ((.quarantined? | type) == "object");
     if $kind == "class" then
       [(.rules // [])[]? | select(.class == $class)][0].use
     else
       .default
     end
     | profiles(.)[]?
-    | [(.harness // ""), (.model // "default"), (.effort // "default"), (if .enabled? == false then "false" else "true" end)]
+    | [(.harness // ""), (.model // "default"), (.effort // "default"),
+       (if .enabled? == false then "false"
+        elif paused_now then "false"
+        elif quarantined_now then "false"
+        else "true" end)]
     | @tsv
   '
 }
@@ -332,7 +392,9 @@ if [ -n "$PIN_TSV" ]; then
   }
   if [ "$PIN_ENABLED" -ne 1 ] && [ "$OVERRIDE_HARNESS_SET" -eq 0 ] \
     && [ "$OVERRIDE_MODEL_SET" -eq 0 ] && [ "$OVERRIDE_EFFORT_SET" -eq 0 ]; then
-    echo "error: $PIN_KEY for '$DISPATCH_CLASS' names a switched-off member" >&2
+    PIN_WHY=$(pool_member_exclusion_reasons | awk -F'\t' -v h="$PIN_HARNESS" -v m="$PIN_MODEL" -v e="$PIN_EFFORT" \
+      '$1 == h && $2 == m && $3 == e { print $4; exit }')
+    echo "error: $PIN_KEY for '$DISPATCH_CLASS' names a switched-off member${PIN_WHY:+ ($PIN_WHY)}" >&2
     exit 1
   fi
   BEST_HARNESS=$PIN_HARNESS
@@ -383,7 +445,8 @@ if [ -z "$PIN_TSV" ]; then
 fi
 
 [ -n "$BEST_HARNESS" ] || {
-  echo "error: dispatch pool for '$DISPATCH_CLASS' has no enabled member" >&2
+  echo "error: dispatch pool for '$DISPATCH_CLASS' has no available member" >&2
+  report_pool_exclusions
   exit 1
 }
 

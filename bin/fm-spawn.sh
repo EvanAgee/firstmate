@@ -1911,10 +1911,12 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   fi
 fi
 
-# A rung the captain switched off in config/crew-dispatch.json is a HARD lock:
-# refuse a crewmate/scout spawn that names it, rather than trusting every caller
-# to have filtered the ladder first. The check is deliberately CONCRETE - it
-# matches the resolved harness/model/effort tuple against the file's own rungs,
+# A rung the captain paused, quarantined, or switched off in
+# config/crew-dispatch.json is a HARD lock: refuse a crewmate/scout spawn that
+# names it, rather than trusting every caller to have filtered the ladder
+# first. A pause whose until date has passed no longer locks. The check is
+# deliberately CONCRETE - it matches the resolved harness/model/effort tuple
+# against the file's own rungs,
 # so it cannot be satisfied by a near-miss. A tuple that appears nowhere in the
 # file is NOT refused here: an explicit off-ladder profile stays the captain's
 # call, and only a rung the file actually marks off is blocked. Secondmate
@@ -1925,7 +1927,7 @@ dispatch_rung_disabled() {
   [ -f "$file" ] || return 1
   command -v jq >/dev/null 2>&1 || return 1
   jq -e -n --slurpfile cfg "$file" \
-    --arg h "$harness" --arg m "$model" --arg e "$effort" '
+    --arg h "$harness" --arg m "$model" --arg e "$effort" --arg today "$(date -u +%Y-%m-%d)" '
     def profiles($value):
       if ($value | type) == "array" then $value
       elif ($value | type) == "object" then [$value]
@@ -1934,10 +1936,19 @@ dispatch_rung_disabled() {
       (($p.harness // "") == $h)
       and (($p.model // "default") == (if $m == "" then "default" else $m end))
       and (($p.effort // "") == $e);
+    def paused_now:
+      if ((.paused? | type) != "object") then false
+      elif ((.paused.until? // "") == "") then true
+      else ((.paused.until | type) == "string") and (.paused.until >= $today)
+      end;
+    def quarantined_now:
+      ((.quarantined? | type) == "object");
+    def off:
+      (.enabled? == false) or paused_now or quarantined_now;
     ($cfg[0] // {}) as $c
     | ([($c.rules // [])[]? | profiles(.use?)[]?] + [profiles($c.default // [])[]?])
     | map(select(matches(.)))
-    | (length > 0) and all(.enabled? == false)
+    | (length > 0) and all(off)
   ' >/dev/null 2>&1
 }
 
