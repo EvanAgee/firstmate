@@ -1170,6 +1170,78 @@ SH
   pass "a scheduled refresh under the installed plist's own minimal PATH resolves quota-axi and reads a healthy route as eligible"
 }
 
+# The plist is XML that launchd parses, so every interpolated value is part of
+# that contract. A path carrying an XML metacharacter (a checkout under "R&D",
+# a homebrew prefix the operator never chose) must still produce a plist the
+# real parser accepts, with the original path readable back out. plutil is
+# launchd's own parser, so it is the real consumer, not a substring check.
+test_installed_plist_is_valid_xml_for_paths_with_metacharacters() {
+  local home agents fakebin toolbin out status plist_path got_path got_home got_log
+
+  if [ "$(uname)" != Darwin ]; then
+    pass "plist XML escaping (skipped: launchd agents are macOS-only)"
+    return 0
+  fi
+
+  # Every XML metacharacter the escaper handles, in both a tool directory
+  # (reached through PATH) and the home path (reached through FM_HOME and the
+  # derived log path), because each lands in a different <string> element.
+  home="$TMP_ROOT/plist-xml-escape/a & b <c> d"
+  agents="$home/agents"
+  toolbin="$home/x&y/bin"
+  mkdir -p "$home/state" "$home/config" "$agents" "$toolbin"
+  printf '%s' "$FOUR_ROUTE_POOL" > "$home/config/crew-dispatch.json"
+  home=$(cd "$home" && pwd -P)
+  toolbin=$(cd "$toolbin" && pwd -P)
+
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$toolbin/quota-axi"
+  chmod +x "$toolbin/quota-axi"
+
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/launchctl" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  list) exit 1 ;;
+  load|unload|remove) exit 0 ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/launchctl"
+
+  out=$(PATH="$toolbin:$fakebin:/usr/bin:/bin" LAUNCH_AGENTS_DIR="$agents" \
+    FM_ROUTE_HOME_OVERRIDE="$home" \
+    "$ROOT/bin/fm-route-refresh-install.sh" install --yes 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -eq 0 ] || fail "install failed for a home containing XML metacharacters: $out"
+
+  plist_path=$(find "$agents" -maxdepth 1 -name '*.plist' | head -n1)
+  [ -n "$plist_path" ] || fail "install published no plist in $agents: $out"
+
+  plutil -lint "$plist_path" >/dev/null 2>&1 \
+    || fail "installed plist is not valid XML: $(plutil -lint "$plist_path" 2>&1)"
+
+  # Escaping is only correct if the parser hands back the ORIGINAL path; a
+  # plist that merely lints but yields "a &amp; b" would still break launchd.
+  got_path=$(plutil -extract EnvironmentVariables.PATH raw "$plist_path" 2>/dev/null) \
+    || fail "installed plist has no EnvironmentVariables.PATH"
+  case "$got_path" in
+    *"$toolbin"*) : ;;
+    *) fail "parsed plist PATH lost or mangled the metacharacter directory $toolbin: $got_path" ;;
+  esac
+
+  got_home=$(plutil -extract EnvironmentVariables.FM_ROUTE_HOME_OVERRIDE raw "$plist_path" 2>/dev/null) \
+    || fail "installed plist has no FM_ROUTE_HOME_OVERRIDE"
+  [ "$got_home" = "$home" ] \
+    || fail "parsed plist FM_ROUTE_HOME_OVERRIDE does not round-trip: want [$home] got [$got_home]"
+
+  got_log=$(plutil -extract StandardOutPath raw "$plist_path" 2>/dev/null) \
+    || fail "installed plist has no StandardOutPath"
+  [ "$got_log" = "$home/state/.route-refresh.launchd.log" ] \
+    || fail "parsed plist StandardOutPath does not round-trip: got [$got_log]"
+
+  pass "an install whose paths contain XML metacharacters writes a plist the real parser accepts and round-trips"
+}
+
 # firstmate issue #127 acceptance criteria 2 and 3: a probe tool missing from
 # PATH is a broken check, never provider telemetry, and the dispatch refusal
 # must say so rather than naming "unknown telemetry" (which sends a human
@@ -1345,6 +1417,7 @@ test_a_zero_balance_limit_exhausts_even_beside_a_healthy_fraction
 test_a_glob_shaped_route_id_is_never_pathname_expanded
 test_real_concurrent_processes_split_evenly_no_lost_updates
 test_scheduled_refresh_resolves_probe_tools_under_minimal_path
+test_installed_plist_is_valid_xml_for_paths_with_metacharacters
 test_missing_probe_tool_reads_as_broken_check_not_provider_telemetry
 test_genuinely_unknown_route_keeps_generic_refusal_and_still_defers
 test_install_unloads_orphaned_job_with_no_backing_plist

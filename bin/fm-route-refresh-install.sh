@@ -178,8 +178,22 @@ resolve_probe_path() {
   FM_ROUTE_PROBE_PATH=${out#:}
 }
 
+# A plist is XML, so every value interpolated into a <string> element has to
+# be escaped or the file is malformed and launchd refuses to load it. Real
+# paths carry these characters: a checkout under a directory named "R&D", or
+# a homebrew/nvm prefix the operator never chose. Ampersand goes first, so
+# the escapes this function itself introduces are not re-escaped.
+xml_escape() {
+  local s=$1
+  s=${s//&/&amp;}
+  s=${s//</&lt;}
+  s=${s//>/&gt;}
+  printf '%s' "$s"
+}
+
 write_plist() {
   local probe_path unresolved
+  local x_label x_refresher x_home x_log x_path
   resolve_probe_path
   probe_path=$FM_ROUTE_PROBE_PATH
   unresolved=${FM_ROUTE_UNRESOLVED_TOOLS# }
@@ -193,34 +207,39 @@ write_plist() {
     printf 'route-refresh install: WARNING: no probe tool resolved at all; falling back to PATH /usr/local/bin, which is unlikely to contain any of them.\n' >&2
     probe_path=/usr/local/bin
   fi
+  x_label=$(xml_escape "$LABEL")
+  x_refresher=$(xml_escape "$REFRESHER")
+  x_home=$(xml_escape "$FM_HOME")
+  x_log=$(xml_escape "$LOG_PATH")
+  x_path=$(xml_escape "$probe_path:/usr/bin:/bin:/usr/sbin:/sbin")
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>$LABEL</string>
+  <string>$x_label</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>$REFRESHER</string>
+    <string>$x_refresher</string>
     <string>refresh</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>FM_ROUTE_HOME_OVERRIDE</key>
-    <string>$FM_HOME</string>
+    <string>$x_home</string>
     <key>PATH</key>
-    <string>$probe_path:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>$x_path</string>
   </dict>
   <key>StartInterval</key>
   <integer>$INTERVAL</integer>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$LOG_PATH</string>
+  <string>$x_log</string>
   <key>StandardErrorPath</key>
-  <string>$LOG_PATH</string>
+  <string>$x_log</string>
 </dict>
 </plist>
 EOF
