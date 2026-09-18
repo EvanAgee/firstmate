@@ -760,6 +760,16 @@ NO_1PASSWORD_RULE='Never run the 1Password CLI (`op run`, `op read`, `op item`, 
 # shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
 NO_1PASSWORD_INTENT_CLAUSE='The no-1Password rule above is not scaffold boilerplate: the intent must carry the no-1Password rule verbatim so the pipeline'"'"'s review, test, document, and CI-fix agents inherit it'
 
+# The working-directory guidance steers a worker off a `cd` in a compound
+# command, the shape that can stall a Claude worker on an unresolvable
+# permission prompt. Pin each alternative as literal text.
+# shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
+WORKDIR_CD_RULE='Do not put `cd <dir>` in a compound command such as `cd <dir> && grep ...`.'
+# shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
+WORKDIR_GIT_C_RULE='put an absolute path on the command itself, or use `git -C <dir> ...`.'
+# shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
+WORKDIR_SUBSHELL_RULE='scope the change to a subshell: `(cd <dir> && ...)`.'
+
 test_no_1password_rule_in_ship_and_scout_scaffolds() {
   local home id brief
   home="$TMP_ROOT/no-1password-home"
@@ -796,6 +806,47 @@ test_no_1password_rule_in_ship_and_scout_scaffolds() {
     "scout: brief missing the exact no-1Password rule sentence"
 
   pass "fm-brief.sh: every scaffold with a Rules section forbids the 1Password CLI"
+}
+
+# A Claude worker can stall on a permission prompt when a compound command
+# starts with `cd`, because the command's directory becomes unresolvable. Every
+# ship and scout brief carries the reach-the-target advice; a secondmate charter
+# does not, because it is not a project-work contract.
+test_working_directory_guidance_reaches_ship_and_scout() {
+  local home id mode brief
+  home="$TMP_ROOT/workdir-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-workdir-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Working directory" "$brief" "$mode: ship brief missing the working-directory section"
+    assert_grep "$WORKDIR_CD_RULE" "$brief" \
+      "$mode: ship brief missing the cd-in-compound-command rule"
+    assert_grep "$WORKDIR_GIT_C_RULE" "$brief" \
+      "$mode: ship brief missing the git -C alternative"
+    assert_grep "$WORKDIR_SUBSHELL_RULE" "$brief" \
+      "$mode: ship brief missing the subshell fallback"
+  done
+
+  id="brief-workdir-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 \
+    || fail "scout brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep "# Working directory" "$brief" "scout brief missing the working-directory section"
+  assert_grep "$WORKDIR_CD_RULE" "$brief" \
+    "scout brief missing the cd-in-compound-command rule"
+
+  id="brief-workdir-secondmate"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "secondmate charter failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "# Working directory" "$brief" \
+    "secondmate charter must not carry the ship/scout working-directory section"
+
+  pass "fm-brief.sh: ship and scout briefs carry the working-directory guidance"
 }
 
 test_no_1password_intent_carry_forward_in_ship_scaffolds() {
@@ -1195,6 +1246,7 @@ test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
 test_no_1password_rule_in_ship_and_scout_scaffolds
+test_working_directory_guidance_reaches_ship_and_scout
 test_no_1password_intent_carry_forward_in_ship_scaffolds
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract

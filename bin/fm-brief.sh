@@ -69,6 +69,10 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
 # self-governance section when a touched project AGENTS.md lacks it.
+# Ship and scout briefs add a Working directory section: reach a target with an
+# absolute path or `git -C <dir>` instead of a `cd` in a compound command,
+# because that shape can stall a Claude worker on a permission prompt it cannot
+# resolve.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -333,6 +337,19 @@ For delivered skills, the skill-defined off phrases `stop caveman` and `stop pon
 EOF
 WORKER_SKILLS_SECTION=${WORKER_SKILLS_SECTION%$'\n'}
 
+# A compound command that starts with `cd` hides the directory the rest of the
+# command runs in, so a worker runtime can stall on a permission prompt it
+# cannot resolve. Every ship and scout brief carries the same reach-the-target
+# advice as firstmate's own primary-checkout cd guard.
+IFS= read -r -d '' WORKDIR_SECTION <<'EOF' || true
+# Working directory
+Reach a target without changing your shell's working directory: put an absolute path on the command itself, or use `git -C <dir> ...`.
+Do not put `cd <dir>` in a compound command such as `cd <dir> && grep ...`.
+That shape can stall your session on a permission prompt when the `cd` leaves the command's directory unresolvable.
+If a command genuinely needs a different working directory, scope the change to a subshell: `(cd <dir> && ...)`.
+EOF
+WORKDIR_SECTION=${WORKDIR_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -349,6 +366,8 @@ You are in a disposable git worktree of $REPO, at a detached HEAD on a clean def
 This is a SCOUT task: the deliverable is a written report, not a PR.
 The worktree is your laboratory - install, run, edit, and make scratch commits freely; all of it is discarded at teardown.
 The report is the only thing that survives, so anything worth keeping must be in it.
+
+$WORKDIR_SECTION
 
 # Rules
 1. Never push to any remote and never open a PR.
@@ -540,6 +559,8 @@ The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked [key=worktree-isolation]: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+
+$WORKDIR_SECTION
 $MATT_FLOW_SECTION
 # Rules
 $RULE1
