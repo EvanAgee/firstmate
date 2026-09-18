@@ -1185,6 +1185,83 @@ test_a_zero_balance_limit_exhausts_even_beside_a_healthy_fraction() {
   pass "any spent bound exhausts pi-deepseek, whether it is the fraction or the balance"
 }
 
+# ---------------------------------------------------------------------------
+# Gateway empty reports (captain's word, 2026-09-16): nothing spent yet is not
+# unproven capacity, so an empty reports:[] is eligible until a launch or
+# worker failure proves otherwise -- the same admission a no-probe route gets.
+# ---------------------------------------------------------------------------
+EMPTY_REPORTS_PAYLOAD='{"generatedAt":1789485834620,"reports":[],"accountsWithoutUsage":[],"disabledCredentials":[],"capacity":{}}'
+
+fake_gateway_reading() {  # <home> <omp-json>
+  local fakebin
+  fakebin=$(fm_fakebin "$1")
+  printf '#!/usr/bin/env bash\nprintf %%s %s\n' "$(printf '%q' "$2")" > "$fakebin/omp"
+  chmod +x "$fakebin/omp"
+  printf '%s\n' "$fakebin"
+}
+
+test_gateway_with_no_usage_reports_reads_eligible_with_reason() {
+  local home fakebin out
+
+  home=$(make_home gateway-empty-reports "$DEEPSEEK_ONLY_POOL")
+  fakebin=$(fake_gateway_reading "$home" "$EMPTY_REPORTS_PAYLOAD")
+  PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null \
+    || fail "refresh failed against an empty-reports gateway reading"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route pi-deepseek)
+  case "$out" in
+    *state=eligible*"no usage reports yet"*) : ;;
+    *) fail "an empty reports:[] must read eligible with a reason saying why, not unknown: $out" ;;
+  esac
+
+  pass "a gateway with no usage reports yet reads eligible with a reason saying why"
+}
+
+test_gateway_probe_error_still_reads_unknown() {
+  local home fakebin out
+
+  home=$(make_home gateway-probe-error "$DEEPSEEK_ONLY_POOL")
+  fakebin=$(fm_fakebin "$home")
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/omp"
+  chmod +x "$fakebin/omp"
+  PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null \
+    || fail "refresh must still record a reading when the gateway probe fails"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route pi-deepseek)
+  case "$out" in
+    *state=unknown*) : ;;
+    *) fail "a real gateway probe failure must read unknown, never eligible: $out" ;;
+  esac
+
+  pass "a real gateway probe failure still reads unknown, never eligible"
+}
+
+test_gateway_empty_reports_preserves_a_verified_failure() {
+  local home fakebin out
+
+  home=$(make_home gateway-empty-reports-failure "$DEEPSEEK_ONLY_POOL")
+  fakebin=$(fake_gateway_reading "$home" "$EMPTY_REPORTS_PAYLOAD")
+  PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null \
+    || fail "refresh failed against an empty-reports gateway reading"
+  acquire "$home" a1 a1 g1 '["pi-deepseek"]' >/dev/null
+  finish "$home" a1 launch-failed >/dev/null
+
+  # The empty-reports reading says nothing about whether the route works, only
+  # that nothing has been spent, so it must not clear a proven failure: a
+  # later verified success does that, exactly as for a no-probe route.
+  PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route pi-deepseek)
+  case "$out" in
+    *state=launch-failed*) : ;;
+    *) fail "an empty-reports refresh must preserve pi-deepseek's verified failure: $out" ;;
+  esac
+  out=$(acquire "$home" a2 a2 g1 '["pi-deepseek"]')
+  [ "$(result_field "$out" result)" = deferred ] \
+    || fail "the proven-failed route must stay out until new evidence arrives: $out"
+
+  pass "an empty-reports gateway reading preserves a verified failure until a success clears it"
+}
+
 # Route ids come from operator-authored config, so one may contain a shell
 # glob character. It must stay the literal configured string: expanding it
 # against the caller's working directory would publish invented routes and
@@ -1323,6 +1400,9 @@ test_refresh_runs_standalone_with_fake_bounded_readers
 test_a_failed_refresh_install_leaves_no_temp_plist
 test_any_failed_limit_marks_deepseek_outage_regardless_of_position
 test_a_zero_balance_limit_exhausts_even_beside_a_healthy_fraction
+test_gateway_with_no_usage_reports_reads_eligible_with_reason
+test_gateway_probe_error_still_reads_unknown
+test_gateway_empty_reports_preserves_a_verified_failure
 test_a_glob_shaped_route_id_is_never_pathname_expanded
 test_real_concurrent_processes_split_evenly_no_lost_updates
 

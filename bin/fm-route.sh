@@ -16,7 +16,9 @@
 # selection on its own. A route whose catalog entry has NO probe source at
 # all is eligible, not unknown, until a launch or worker failure proves it
 # unavailable -- unknown stays reserved for a probe that exists but returned
-# inconclusive or stale evidence. Zero prepaid Grok credits is never read as
+# inconclusive or stale evidence. The Gateway's empty-reports reading is
+# eligible on the same until-a-failure-proves-otherwise terms, because nothing
+# spent yet is not unproven capacity. Zero prepaid Grok credits is never read as
 # subscription exhaustion. Manual disable (config/route-disabled) always
 # wins, takes effect immediately (never waiting for the next refresh), and
 # survives refresh.
@@ -416,6 +418,13 @@ fm_route_probe_pi_grok() {
   fm_route_probe_quota_axi grok all_products
 }
 
+# A gateway with no usage reports yet has spent nothing, which is not proof
+# that its capacity is unusable; captain's word (2026-09-16) makes that
+# reading eligible until a launch or worker failure proves otherwise. refresh
+# treats the same reading as evidence-free and preserves a verified failure
+# rather than clearing it, so probe and refresh share this one reason string.
+FM_ROUTE_GATEWAY_NO_USAGE_REASON='omp usage vercel-ai-gateway reported no usage reports yet; eligible until a launch or worker failure proves otherwise'
+
 fm_route_probe_pi_deepseek() {
   local json balance remaining_fraction unit ts reports_count status
   # Gateway's real omp usage shape (live-verified): reports[].limits[].amount
@@ -433,7 +442,7 @@ fm_route_probe_pi_deepseek() {
   fi
   reports_count=$(printf '%s' "$json" | jq -r '(.reports // []) | length' 2>/dev/null) || reports_count=0
   if [ "$reports_count" -le 0 ] 2>/dev/null; then
-    printf 'unknown\tomp usage vercel-ai-gateway reported no usage reports yet (authorized trial allowance unproven)\t%s\n' "$ts"
+    printf 'eligible\t%s\t%s\n' "$FM_ROUTE_GATEWAY_NO_USAGE_REASON" "$ts"
     return 0
   fi
   status=$(printf '%s' "$json" | jq -r '
@@ -618,14 +627,15 @@ cmd_refresh() {
     else
       manual=false
     fi
-    # A no-probe route's "eligible" reading is synthetic (fm_route_probe has
-    # no real evidence source for it), never a verified success. Overwriting
-    # an existing verified failure (launch-failed/auth-failed/exhausted/
-    # outage) with that synthetic reading on every refresh would silently
-    # clear finish's immediate exclusion without the newer verified success
-    # the documented contract requires, so refresh keeps the prior recorded
-    # state for that case instead of replacing it.
-    if fm_route_no_probe_route "$r"; then
+    # A no-probe route's "eligible" reading, and the gateway's
+    # nothing-spent-yet reading, are evidence-free: neither says the route
+    # works, only that no failure is visible. Overwriting an existing verified
+    # failure (launch-failed/auth-failed/exhausted/outage) with one on every
+    # refresh would silently clear finish's immediate exclusion without the
+    # newer verified success the documented contract requires, so refresh keeps
+    # the prior recorded state for those cases instead of replacing it.
+    if fm_route_no_probe_route "$r" \
+      || { [ "$r" = pi-deepseek ] && [ "$reason" = "$FM_ROUTE_GATEWAY_NO_USAGE_REASON" ]; }; then
       local prior_state prior_entry
       prior_state=$(jq -r --arg r "$r" '.routes[$r].state // empty' <<<"$doc")
       case "$prior_state" in
