@@ -620,6 +620,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/treehouse-pool-audit.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/watcher-continuity.md",
       "audience": "operator-current"
     },
