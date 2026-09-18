@@ -1,0 +1,10 @@
+all: sessions=363 turns=19751 input=61,616,748 cache_write=62,266,226 cache_read=4,112,514,160 output=9,296,388 thinking=1,019,989 cost_usd=2645.70
+
+by harness
+  claude: sessions=222 turns=15857 input=100,837 cache_write=62,266,226 cache_read=3,687,664,604 output=7,370,724 thinking=768,046 cost_usd=2565.93
+  codex: sessions=111 turns=1731 input=11,411,624 cache_write=0 cache_read=154,536,704 output=553,408 thinking=108,659 cost_usd=0.00
+  pi: sessions=30 turns=2163 input=50,104,287 cache_write=0 cache_read=270,312,852 output=1,372,256 thinking=143,284 cost_usd=79.77
+
+by kind
+  unattributed: sessions=212 turns=14803 input=61,606,876 cache_write=47,487,861 cache_read=3,638,107,100 output=7,394,991 thinking=1,019,989 cost_usd=2639.18
+  pipeline: sessions=151 turns=4948 input=9,872 cache_write=14,778,365 cache_read=474,407,060 output=1,901,397 thinking=0 cost_usd=6.51

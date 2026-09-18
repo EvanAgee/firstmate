@@ -1,0 +1,4 @@
+by harness
+  claude: sessions=222 turns=15857 input=100,837 cache_write=62,266,226 cache_read=3,687,664,604 output=7,370,724 thinking=768,046 cost_usd=2565.93
+  pi: sessions=30 turns=2163 input=50,104,287 cache_write=0 cache_read=270,312,852 output=1,372,256 thinking=143,284 cost_usd=79.77
+

@@ -1,0 +1,10 @@
+ok - a Claude session reports its token columns and its owning worker task
+ok - Claude child usage rolls into its parent once without replacing parent identity
+ok - Claude cost reports the cumulative delta for the counted window
+ok - a Pi session reports its token columns, its recorded cost, and its scout kind
+ok - Pi compaction and branch summary usage is billed without adding assistant turns
+ok - a summary-only counted window keeps the full session's Pi model
+ok - Pi reports the latest usage message's model, not a later unused selection
+ok - a Codex session reports its token columns and its owning worker task
+ok - a repeated Codex cumulative total counts its usage once
+not ok - the in-window copy of a straddling Codex duplicate was not counted
