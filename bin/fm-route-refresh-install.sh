@@ -106,10 +106,29 @@ require_macos() {
 # only the filesystem half; with it pointed anywhere but the real LaunchAgents
 # directory, every genuinely installed job looks plistless and the sweep
 # unloads the whole fleet. Only sweep when the two halves agree.
+#
+# Agreement is a question about directories, not about spelling, so both sides
+# resolve to a real path first: a trailing slash, a doubled separator or a
+# symlinked home all name the same directory and must still sweep. An
+# unresolvable path (the directory does not exist yet) falls back to its
+# literal form, which can only ever fail the comparison and suppress the
+# sweep -- the safe direction.
+real_dir() {
+  cd "$1" 2>/dev/null && pwd -P || printf '%s\n' "$1"
+}
+
+agents_dir_is_launchd_domain() {
+  [ "$(real_dir "$1")" = "$(real_dir "$HOME/Library/LaunchAgents")" ]
+}
+
 sweep_orphaned_jobs() {
   local agents_dir="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}" label
   command -v launchctl >/dev/null 2>&1 || return 0
-  [ "$agents_dir" = "$HOME/Library/LaunchAgents" ] || return 0
+  if ! agents_dir_is_launchd_domain "$agents_dir"; then
+    printf 'route-refresh install: skipping the orphaned-job sweep: %s is not the launchd agents directory (%s), so a registered job there cannot be judged orphaned\n' \
+      "$agents_dir" "$HOME/Library/LaunchAgents" >&2
+    return 0
+  fi
   while IFS= read -r label; do
     [ -n "$label" ] || continue
     [ "$label" != "$LABEL" ] || continue
@@ -234,7 +253,7 @@ case "$ACTION" in
     agents_dir="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
     # Same domain agreement the sweep needs: launchd's registry can only be
     # compared against the directory launchd itself reads.
-    if [ "$agents_dir" = "$HOME/Library/LaunchAgents" ]; then
+    if agents_dir_is_launchd_domain "$agents_dir"; then
       orphans=$(launchctl list 2>/dev/null | awk '{print $3}' | grep '^com\.firstmate\.route-refresh\.' | grep -v "^$LABEL\$") || orphans=
       while IFS= read -r label; do
         [ -n "$label" ] || continue
