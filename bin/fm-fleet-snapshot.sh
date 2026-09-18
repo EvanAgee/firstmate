@@ -149,7 +149,7 @@ usage: fm-fleet-snapshot.sh --json
 
 Print a read-only structured snapshot of the firstmate fleet.
 JSON is the stable machine-readable output contract.
-Task rows are built concurrently, bounded by FM_SNAPSHOT_JOBS (default 16),
+Task rows are built concurrently, bounded by FM_SNAPSHOT_JOBS (default 8),
 then sorted by id. If no temp dir can be made, rows are built one at a time.
 
 --secondmate-home-summary emits the bounded structured summary used after a
@@ -613,13 +613,15 @@ emit_one_task_json() {  # <meta>
 }
 
 # How many tasks to build at once. Each task's stage lookup shells out to
-# no-mistakes and the backend several times, and on a loaded machine a live
-# lane's deep read can take seconds of wall time in which the process is only
-# waiting. The old pool of 8 left lanes queued behind each other and made that
-# waiting the snapshot's whole cost, so the default runs every ordinary fleet's
-# lanes at once; the pool is still bounded so a huge home cannot spawn without
-# limit. Override with FM_SNAPSHOT_JOBS.
-FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-16}
+# no-mistakes and the backend several times, so building them in sequence is a
+# real cost and a bounded pool helps. The pool stays at 8 deliberately: the
+# per-lane deep reads are bounded by a fixed wall clock, and raising the pool
+# raises peak contention for that clock, which can flip a dead lane's endpoint
+# to `unknown` rather than `dead` on a loaded machine. That guarantee is worth
+# more than the extra concurrency, and the no-fork fold below already cuts the
+# snapshot far enough under the API cap on its own. Override with
+# FM_SNAPSHOT_JOBS if a home is genuinely too large for 8.
+FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-8}
 
 # Every task's JSON object, built concurrently, then sorted by id so the output
 # is identical to building them one at a time. Each task writes its object to
@@ -627,7 +629,7 @@ FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-16}
 # completion order does not matter.
 task_json_lines() {
   local jobs=$FM_SNAPSHOT_JOBS
-  case "$jobs" in ''|*[!0-9]*) jobs=16 ;; esac
+  case "$jobs" in ''|*[!0-9]*) jobs=8 ;; esac
   [ "$jobs" -ge 1 ] || jobs=1
   local outdir meta running=0 status
   outdir=$(mktemp -d "${TMPDIR:-/tmp}/fm-snapshot.XXXXXX") || {
