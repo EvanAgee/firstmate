@@ -943,76 +943,135 @@ SH
 }
 
 test_concurrent_watcher_sees_only_complete_publication() {
-  local n dir direct_pid watcher_pid rc i
-  n=1
-  while [ "$n" -le 3 ]; do
-    dir=$(make_case "concurrent-$n")
-    write_task_meta "$dir"
-    cat > "$dir/fakebin/cp" <<SH
-#!/usr/bin/env bash
-'$REAL_CP' "\$@" || exit 1
-touch '$dir/copy-staged'
-while [ ! -e '$dir/release-copy' ]; do sleep 0.01; done
-SH
-    chmod +x "$dir/fakebin/cp"
+  local dir state holder_pid rc i watcher_pid
+  dir=$(make_case concurrent-inflight)
+  state="$dir/home/state"
+  write_task_meta "$dir"
 
-    FM_TEST_GH_HEAD=0123456789abcdef0123456789abcdef01234567 \
-      run_check_entry "$dir" task-a https://github.com/o/r/pull/1 > "$dir/direct.out" 2> "$dir/direct.err" &
-    direct_pid=$!
-    i=0
-    while [ "$i" -lt 100 ] && [ ! -e "$dir/copy-staged" ]; do
-      sleep 0.01
-      i=$((i + 1))
-    done
-    if [ ! -e "$dir/copy-staged" ]; then
-      touch "$dir/release-copy"
-      wait "$direct_pid" || true
-      fail "atomic publication did not reach staged copy"
-    fi
+  FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
+    > "$dir/watch.out" 2> "$dir/watch.err" &
+  watcher_pid=$!
 
-    FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
-      > "$dir/watch.out" 2> "$dir/watch.err" &
-    watcher_pid=$!
-    i=0
-    while [ "$i" -lt 100 ] && [ ! -e "$dir/home/state/.last-watcher-beat" ]; do
-      kill -0 "$watcher_pid" 2>/dev/null || break
-      sleep 0.01
-      i=$((i + 1))
-    done
-    if [ ! -e "$dir/home/state/.last-watcher-beat" ]; then
-      touch "$dir/release-copy"
-      wait "$direct_pid" || true
-      wait "$watcher_pid" || true
-      fail "concurrent watcher did not start before publication"
-    fi
-    touch "$dir/release-copy"
-    if ! wait "$direct_pid"; then
-      wait "$watcher_pid" || true
-      fail "concurrent direct arming failed"
-    fi
-    set +e
-    wait "$watcher_pid"
-    rc=$?
-    set -e
-    [ "$rc" -eq 0 ] || fail "concurrent watcher did not complete"
-    [ ! -s "$dir/watch.err" ] || fail "concurrent watcher observed a partial artifact error"
-    # The watcher may finish its current check scan before publication.
-    # Either it retires the merged poll, or publication leaves a complete poll
-    # for the next scan; the artifact assertions below accept only those states.
-    if [ -e "$dir/home/state/task-a.check.sh" ]; then
-      cmp -s "$POLL" "$dir/home/state/task-a.check.sh" || fail "concurrent publication check bytes changed"
-      [ "$(file_mode "$dir/home/state/task-a.check.sh")" = 600 ] || fail "concurrent check mode was not private"
-      [ "$(file_mode "$dir/home/state/task-a.pr-poll")" = 600 ] || fail "concurrent sidecar mode was not private"
-      [ "$(file_mode "$dir/home/state/task-a.pr-poll-registration")" = 600 ] \
-        || fail "concurrent registration mode was not private"
-      fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
-        || fail "concurrent publication did not leave canonical provenance"
-    else
-      assert_poll_absent "$dir/home/state" task-a
-    fi
-    n=$((n + 1))
+  # Let the watcher finish the startup migration and one ordinary scan first, so
+  # the synchronization below measures the concurrent check scan rather than the
+  # one-time migration pass.
+  i=0
+  while [ "$i" -lt 300 ] && [ ! -e "$state/.last-check" ] && kill -0 "$watcher_pid" 2>/dev/null; do
+    sleep 0.01
+    i=$((i + 1))
   done
-  pass "concurrent watchers never observe partial private poll publications"
+  if [ ! -e "$state/.last-check" ]; then
+    kill "$watcher_pid" 2>/dev/null || true
+    wait "$watcher_pid" 2>/dev/null || true
+    fail "concurrent watcher never completed its startup scan"
+  fi
+
+  # A live publication transaction owns the task metadata lock through its whole
+  # files-plus-metadata commit. Hold that real lock from a separate process, then
+  # stage the three private poll artifacts underneath it so the watcher can
+  # observe the files without the canonical pr= marker that authenticates them.
+  cat > "$dir/hold-meta-lock" <<'SH'
+#!/usr/bin/env bash
+. "$FM_TEST_ROOT/bin/fm-wake-lib.sh"
+lock=$(fm_meta_lock_path "$FM_TEST_META") || exit 1
+fm_lock_acquire_wait "$lock"
+: > "$FM_TEST_LOCK_READY"
+while [ ! -e "$FM_TEST_LOCK_RELEASE" ]; do sleep 0.02; done
+printf 'pr=%s\n' "$FM_TEST_PR_URL" >> "$FM_TEST_META"
+fm_lock_release "$lock"
+SH
+  chmod +x "$dir/hold-meta-lock"
+  FM_ROOT_OVERRIDE="$dir/root" FM_STATE_OVERRIDE="$state" \
+    FM_TEST_ROOT="$ROOT" FM_TEST_META="$state/task-a.meta" \
+    FM_TEST_PR_URL=https://github.com/o/r/pull/1 \
+    FM_TEST_LOCK_READY="$dir/lock.ready" FM_TEST_LOCK_RELEASE="$dir/lock.release" \
+    "$dir/hold-meta-lock" &
+  holder_pid=$!
+  i=0
+  while [ "$i" -lt 300 ] && [ ! -e "$dir/lock.ready" ] && kill -0 "$holder_pid" 2>/dev/null; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  if [ ! -e "$dir/lock.ready" ]; then
+    kill "$holder_pid" "$watcher_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    wait "$watcher_pid" 2>/dev/null || true
+    fail "the in-flight publication never acquired the task metadata lock"
+  fi
+  if ! fm_pr_poll_prepare "$state" task-a github https://github.com/o/r/pull/1 github.com o/r 1 "$POLL"; then
+    kill "$holder_pid" "$watcher_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    wait "$watcher_pid" 2>/dev/null || true
+    fail "could not prepare the in-flight poll"
+  fi
+  if ! fm_pr_poll_publish_prepared files-only; then
+    kill "$holder_pid" "$watcher_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    wait "$watcher_pid" 2>/dev/null || true
+    fail "could not stage the in-flight poll"
+  fi
+
+  # Two completed scans are the explicit synchronization point: the second is
+  # guaranteed to have examined the staged poll while the transaction lock was
+  # still held, so no timing assumption is involved.
+  rm -f "$state/.last-check"
+  i=0
+  while [ "$i" -lt 300 ] && [ ! -e "$state/.last-check" ] && kill -0 "$watcher_pid" 2>/dev/null; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  rm -f "$state/.last-check"
+  i=0
+  while [ "$i" -lt 300 ] && [ ! -e "$state/.last-check" ] && kill -0 "$watcher_pid" 2>/dev/null; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+
+  if [ -s "$dir/watch.out" ]; then
+    kill "$holder_pid" "$watcher_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    wait "$watcher_pid" 2>/dev/null || true
+    fail "watcher acted on an in-flight poll publication: $(cat "$dir/watch.out")"
+  fi
+  kill -0 "$holder_pid" 2>/dev/null || fail "publication transaction ended before the in-flight scan"
+  [ -e "$state/task-a.check.sh" ] || fail "watcher removed the in-flight runnable poll"
+  cmp -s "$POLL" "$state/task-a.check.sh" || fail "watcher changed the in-flight poll bytes"
+  [ -e "$state/task-a.pr-poll" ] || fail "watcher removed the in-flight sidecar"
+  [ -e "$state/task-a.pr-poll-registration" ] || fail "watcher removed the in-flight registration"
+  [ ! -e "$state/task-a.pr-poll-retirement" ] || fail "watcher retired the in-flight poll"
+
+  # Commit the metadata and release the lock, then require the watcher to consume
+  # the now canonical poll; this proves the watcher was deferred, not blinded.
+  : > "$dir/lock.release"
+  wait "$holder_pid" || { kill "$watcher_pid" 2>/dev/null || true; wait "$watcher_pid" 2>/dev/null || true; fail "the publication transaction did not complete"; }
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "in-flight publication never became canonical after completing metadata"
+
+  set +e
+  wait "$watcher_pid"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "concurrent watcher did not complete after publication: $(cat "$dir/watch.err")"
+  [ "$(grep -c '^check: .*: merged$' "$dir/watch.out")" -eq 1 ] \
+    || fail "watcher did not convert the completed poll into exactly one merged wake"
+  if [ -e "$state/task-a.check.sh" ]; then
+    cmp -s "$POLL" "$state/task-a.check.sh" || fail "concurrent publication check bytes changed"
+    [ "$(file_mode "$state/task-a.check.sh")" = 600 ] || fail "concurrent check mode was not private"
+    [ "$(file_mode "$state/task-a.pr-poll")" = 600 ] || fail "concurrent sidecar mode was not private"
+    [ "$(file_mode "$state/task-a.pr-poll-registration")" = 600 ] \
+      || fail "concurrent registration mode was not private"
+    fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+      || fail "concurrent publication did not leave canonical provenance"
+  else
+    assert_poll_absent "$state" task-a
+  fi
+  # Bash itself can print a benign job-control warning when a fast machine wins
+  # the setpgid race for a check subshell; it is unrelated to the private poll
+  # property, so ignore exactly that line and reject every other diagnostic.
+  if grep -v -E ': child setpgid \([0-9]+ to [0-9]+\): Operation not permitted$' "$dir/watch.err" | grep -q .; then
+    fail "concurrent watcher emitted an unexpected diagnostic: $(cat "$dir/watch.err")"
+  fi
+  pass "concurrent watchers never act on an in-flight poll publication"
 }
 
 test_migration_excludes_older_watcher_before_scan() {
