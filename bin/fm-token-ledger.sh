@@ -47,15 +47,26 @@
 #     reasoning, and cost.total). compaction and branch_summary records carry
 #     the same usage shape at the top level. Their usage is billed but does not
 #     add an assistant turn.
-#   Both roots are overridable for tests: FM_CLAUDE_SESSIONS_ROOT and
-#   FM_PI_SESSIONS_ROOT.
+#   Codex        ~/.codex/sessions/<Y>/<M>/<D>/rollout-*.jsonl and
+#     ~/.codex/archived_sessions/rollout-*.jsonl. A session_meta record carries
+#     the opening cwd, a turn_context record carries cwd and model, and every
+#     token_count event carries info.last_token_usage (that response's own
+#     usage) and info.total_token_usage (cumulative for the thread). Twice the
+#     same cumulative total is one response written twice, so it counts once.
+#     The --since window is applied before that comparison, so a copy written
+#     outside the window never suppresses the copy inside it.
+#     input_tokens includes the cached and cache-write tokens, so input is the
+#     uncached remainder and the summed total matches total_tokens. Codex
+#     records no cost or branch, so cost_usd stays 0 and branch stays "-".
+#   All roots are overridable for tests: FM_CLAUDE_SESSIONS_ROOT,
+#   FM_PI_SESSIONS_ROOT, and FM_CODEX_SESSIONS_ROOT.
 #
 # ROW FIELDS (tab separated, one row per session, header line first)
 #   task        attributed task id, pipeline run id, "firstmate", or "-"
 #   kind        worker | scout | secondmate | pipeline | firstmate | -
-#   harness     claude | pi
+#   harness     claude | pi | codex
 #   worktree    the parent session's opening cwd
-#   branch      the parent session's opening gitBranch, "-" for Pi
+#   branch      the parent session's opening gitBranch, "-" for Pi and Codex
 #   model       last model the session used
 #   start,end   first and last counted usage record, ISO-8601 UTC, second precision
 #   turns       counted assistant turns
@@ -147,6 +158,9 @@ CLAUDE_ROOT = Path(
 )
 PI_ROOT = Path(
     os.environ.get("FM_PI_SESSIONS_ROOT") or Path.home() / ".pi" / "agent" / "sessions"
+)
+CODEX_ROOT = Path(
+    os.environ.get("FM_CODEX_SESSIONS_ROOT") or Path.home() / ".codex"
 )
 NO_MISTAKES_WORKTREES = Path(
     os.environ.get("FM_NO_MISTAKES_WORKTREES") or Path.home() / ".no-mistakes" / "worktrees"
@@ -461,6 +475,61 @@ def read_pi_session(path: Path, since: datetime) -> dict | None:
     return row if row["has_usage"] else None
 
 
+def read_codex_session(path: Path, since: datetime) -> dict | None:
+    row = blank_session("codex", path)
+    last_total = None
+    for record in read_records(path):
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        moment = parse_stamp(record.get("timestamp"))
+        record_type = record.get("type")
+        if record_type in ("session_meta", "turn_context"):
+            cwd = payload.get("cwd")
+            if isinstance(cwd, str) and cwd and not row["worktree"]:
+                row["worktree"] = cwd
+                row["worktree_time"] = moment
+            pipeline_task = pipeline_task_from_worktree(cwd)
+            if pipeline_task:
+                row["pipeline_tasks"].add(pipeline_task)
+            if record_type == "session_meta":
+                mark_turn(row, moment, "user")
+                continue
+            model = payload.get("model")
+            if model and moment is not None and (
+                row["model_time"] is None or moment > row["model_time"]
+            ):
+                row["model"] = model
+                row["model_time"] = moment
+            continue
+        if record_type != "event_msg" or payload.get("type") != "token_count":
+            continue
+        info = payload.get("info")
+        usage = info.get("last_token_usage") if isinstance(info, dict) else None
+        total = info.get("total_token_usage") if isinstance(info, dict) else None
+        if not isinstance(usage, dict) or not isinstance(total, dict):
+            continue
+        if moment is None or moment < since:
+            continue
+        total_key = tuple(sorted((key, str(value)) for key, value in total.items()))
+        if total_key == last_total:
+            continue
+        last_total = total_key
+        if not mark_usage(row, moment, since, True):
+            continue
+        cache_read = as_int(usage.get("cached_input_tokens"))
+        cache_write = as_int(usage.get("cache_write_input_tokens"))
+        tokens = row["tokens"]
+        tokens["input"] += max(
+            0, as_int(usage.get("input_tokens")) - cache_read - cache_write
+        )
+        tokens["cache_write"] += cache_write
+        tokens["cache_read"] += cache_read
+        tokens["output"] += as_int(usage.get("output_tokens"))
+        tokens["thinking"] += as_int(usage.get("reasoning_output_tokens"))
+    return row if row["has_usage"] else None
+
+
 def read_sessions(since: datetime) -> list[dict]:
     rows = []
     for root, reader in (
@@ -469,6 +538,11 @@ def read_sessions(since: datetime) -> list[dict]:
     ):
         for path in sorted(root.glob("*/*.jsonl")):
             row = reader(path, since)
+            if row:
+                rows.append(row)
+    for pattern in ("sessions/**/*.jsonl", "archived_sessions/*.jsonl"):
+        for path in sorted(CODEX_ROOT.glob(pattern)):
+            row = read_codex_session(path, since)
             if row:
                 rows.append(row)
     return rows
