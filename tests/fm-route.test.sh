@@ -214,6 +214,12 @@ SH
 exit 1
 SH
   chmod +x "$fakebin/omp"
+  # claude and codex now read a pool reader before quota-axi, so shadow any
+  # real proxy on PATH with an unreadable stub: the pool falls back to the
+  # erroring quota-axi above, and the route still has to record unknown.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/teamclaude"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/teamcodex"
+  chmod +x "$fakebin/teamclaude" "$fakebin/teamcodex"
   PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" refresh >/dev/null \
     || fail "refresh failed against an erroring probe"
   out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route claude)
@@ -222,6 +228,178 @@ SH
     *) fail "a route with a real probe that errors must still record unknown, not eligible: $out" ;;
   esac
   pass "a route with a probe source that errors still records unknown, never eligible"
+}
+
+# ---------------------------------------------------------------------------
+# Pooled route admission (claude and codex): both services sit behind a local
+# proxy pool holding several accounts, so one blocked account must never
+# speak for the whole pool. Admission is eligible when ANY account is usable
+# (disabled false, unavailable absent or "none") and exhausted only when
+# every account is blocked. A pool command that is missing, fails, returns
+# unparseable JSON, reports zero accounts, or carries no usable probe
+# timestamp falls back to the existing quota-axi reader and says so, so a
+# broken pool is never worse than the pre-pool behavior.
+# ---------------------------------------------------------------------------
+POOLED_ONLY_POOL='{"rules":[{"class":"builder","use":[{"harness":"codex","model":"gpt-5","effort":"high"},{"harness":"claude","model":"opus","effort":"high"}]}]}'
+
+fake_pool_reader() {  # <fakebin> <name> <json-body>
+  local fakebin=$1 name=$2 body=$3
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf "cat <<'POOLJSON'\n"
+    printf '%s\n' "$body"
+    printf 'POOLJSON\n'
+  } > "$fakebin/$name"
+  chmod +x "$fakebin/$name"
+}
+
+fake_pool_reader_fails() {  # <fakebin> <name> <exit-code>
+  local fakebin=$1 name=$2 rc=$3
+  printf '#!/usr/bin/env bash\nexit %s\n' "$rc" > "$fakebin/$name"
+  chmod +x "$fakebin/$name"
+}
+
+# A fake quota-axi that reports the requested provider eligible at 50%, so a
+# fallback is observable and distinguishable from the pool reading.
+fake_quota_axi_eligible() {  # <fakebin>
+  local fakebin=$1
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+provider=claude
+case "$*" in *"--provider codex"*) provider=codex ;; *"--provider grok"*) provider=grok ;; esac
+scope=all_models
+[ "$provider" != grok ] || scope=all_products
+cat <<JSON
+{"schemaVersion":3,"providers":[{"provider":"$provider","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"$scope","status":"known","effectivePercentRemaining":50}]},"state":{"status":"fresh","stale":false,"refreshedAt":"2026-09-15T00:00:00.000Z"}}]}
+JSON
+SH
+  chmod +x "$fakebin/quota-axi"
+}
+
+pool_refresh() {  # <home> <fakebin>
+  PATH="$2:$PATH" FM_ROUTE_HOME_OVERRIDE="$1" "$ROUTE" refresh >/dev/null
+}
+
+test_pooled_codex_admits_on_one_usable_account_of_five() {
+  local home fakebin out expected
+  home=$(make_home pooled-codex-any "$POOLED_ONLY_POOL")
+  fakebin=$(fm_fakebin "$home")
+  fake_pool_reader "$fakebin" teamcodex '{
+    "probe":{"lastRunFinishedAt":1789742664900},
+    "accounts":[
+      {"disabled":false,"unavailable":"quota"},
+      {"disabled":true,"unavailable":"disabled"},
+      {"disabled":false,"unavailable":"quota"},
+      {"disabled":false,"unavailable":"quota"},
+      {"disabled":false,"unavailable":"none"}]}'
+  fake_pool_reader_fails "$fakebin" teamclaude 1
+  fake_quota_axi_eligible "$fakebin"
+  pool_refresh "$home" "$fakebin"
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route codex)
+  case "$out" in
+    *state=eligible*"teamcodex pool: 1 of 5 accounts usable"*) : ;;
+    *) fail "one usable account of five must admit the pooled route: $out" ;;
+  esac
+  expected=$(date -u -r "$((1789742664900 / 1000))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$((1789742664900 / 1000))" +%Y-%m-%dT%H:%M:%SZ)
+  case "$out" in
+    *"observed_at=$expected"*) : ;;
+    *) fail "a pooled probe's observed_at must come from the pool's own timestamp ($expected): $out" ;;
+  esac
+  pass "one usable account of five admits codex, with the usable count and the pool's own timestamp"
+}
+
+test_pooled_codex_all_accounts_blocked_is_exhausted() {
+  local home fakebin out
+  home=$(make_home pooled-codex-none "$POOLED_ONLY_POOL")
+  fakebin=$(fm_fakebin "$home")
+  fake_pool_reader "$fakebin" teamcodex '{
+    "probe":{"lastRunFinishedAt":1789742664900},
+    "accounts":[
+      {"disabled":false,"unavailable":"quota"},
+      {"disabled":true},
+      {"disabled":false,"unavailable":"quota"},
+      {"disabled":false,"unavailable":"quota"},
+      {"disabled":false,"unavailable":"quota"}]}'
+  fake_pool_reader_fails "$fakebin" teamclaude 1
+  fake_quota_axi_eligible "$fakebin"
+  pool_refresh "$home" "$fakebin"
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route codex)
+  case "$out" in
+    *state=exhausted*"teamcodex pool: 0 of 5 accounts usable"*) : ;;
+    *) fail "every account blocked must read exhausted with a zero count: $out" ;;
+  esac
+  pass "a pool with every account blocked reads exhausted with a zero usable count"
+}
+
+test_pooled_claude_reads_the_probe_accounts_location() {
+  local home fakebin out
+  home=$(make_home pooled-claude-probe-loc "$POOLED_ONLY_POOL")
+  fakebin=$(fm_fakebin "$home")
+  # teamclaude's shape in the wild can carry the account list at
+  # .probe.accounts rather than .accounts; both must be accepted.
+  fake_pool_reader "$fakebin" teamclaude '{
+    "probe":{"lastRunFinishedAt":1789742665000,"accounts":[
+      {"disabled":false,"unavailable":"none"},
+      {"disabled":false,"unavailable":"error"},
+      {"disabled":true,"unavailable":"disabled"}]}}'
+  fake_pool_reader_fails "$fakebin" teamcodex 1
+  fake_quota_axi_eligible "$fakebin"
+  pool_refresh "$home" "$fakebin"
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route claude)
+  case "$out" in
+    *state=eligible*"teamclaude pool: 1 of 3 accounts usable"*) : ;;
+    *) fail "the .probe.accounts location must be read the same as .accounts: $out" ;;
+  esac
+  pass "a claude pool whose accounts live at .probe.accounts is admitted on its one usable account"
+}
+
+test_pooled_missing_command_falls_back_to_quota_axi_and_says_so() {
+  local home fakebin out
+  home=$(make_home pooled-missing "$POOLED_ONLY_POOL")
+  fakebin=$(fm_fakebin "$home")
+  fake_quota_axi_eligible "$fakebin"
+  PATH="$fakebin:$PATH" FM_ROUTE_HOME_OVERRIDE="$home" \
+    FM_ROUTE_TEAMCODEX_BIN="fm-no-such-teamcodex" FM_ROUTE_TEAMCLAUDE_BIN="fm-no-such-teamclaude" \
+    "$ROUTE" refresh >/dev/null
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route codex)
+  case "$out" in
+    *state=eligible*"teamcodex unreadable"*"fell back to quota-axi"*"codex effective remaining 50%"*) : ;;
+    *) fail "a missing pool command must fall back to quota-axi and name the fallback: $out" ;;
+  esac
+  pass "a missing pool command falls back to quota-axi and reports the fallback in the reason"
+}
+
+test_pooled_reader_failures_fall_back_to_quota_axi() {
+  local home fakebin out label kind
+
+  while IFS=$'\t' read -r label kind; do
+    [ -n "$label" ] || continue
+    home=$(make_home "pooled-fallback-$kind" "$POOLED_ONLY_POOL")
+    fakebin=$(fm_fakebin "$home")
+    fake_quota_axi_eligible "$fakebin"
+    fake_pool_reader_fails "$fakebin" teamclaude 1
+    case "$kind" in
+      nonzero) fake_pool_reader_fails "$fakebin" teamcodex 3 ;;
+      malformed) fake_pool_reader "$fakebin" teamcodex 'this is not json' ;;
+      zero) fake_pool_reader "$fakebin" teamcodex '{"probe":{"lastRunFinishedAt":1789742664900},"accounts":[]}' ;;
+      nots) fake_pool_reader "$fakebin" teamcodex '{"accounts":[{"disabled":false,"unavailable":"none"}]}' ;;
+    esac
+    pool_refresh "$home" "$fakebin"
+    out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route codex)
+    case "$out" in
+      *state=eligible*"teamcodex $label"*"fell back to quota-axi"*"codex effective remaining 50%"*) : ;;
+      *) fail "a pool that $label must fall back to quota-axi and say so: $out" ;;
+    esac
+  done <<'EOF'
+unreadable (exit 3)	nonzero
+returned unparseable JSON	malformed
+reported no accounts	zero
+reported no usable probe timestamp	nots
+EOF
+
+  pass "a non-zero exit, unparseable JSON, zero accounts, or missing timestamp all fall back to quota-axi"
 }
 
 # ---------------------------------------------------------------------------
@@ -1113,6 +1291,11 @@ test_refresh_marks_no_probe_route_eligible_with_reason
 test_acquire_selects_a_no_probe_route
 test_no_probe_route_verified_failure_excludes_then_recovers
 test_route_with_erroring_probe_still_records_unknown
+test_pooled_codex_admits_on_one_usable_account_of_five
+test_pooled_codex_all_accounts_blocked_is_exhausted
+test_pooled_claude_reads_the_probe_accounts_location
+test_pooled_missing_command_falls_back_to_quota_axi_and_says_so
+test_pooled_reader_failures_fall_back_to_quota_axi
 test_verified_recovery_reenables_after_deferral
 test_manual_disable_wins_and_survives
 test_zero_prepaid_grok_credits_not_exhaustion

@@ -249,21 +249,30 @@ fm_route_is_known() {
 # state is one of: eligible exhausted outage auth-failed unknown
 # observed_at is the RFC3339 timestamp the probe's own source attributes to
 # the reading (never the probe's own wall-clock collection time). A probe
-# that cannot parse a usable observation timestamp reports unknown.
+# that cannot parse a usable observation timestamp reports unknown; a pooled
+# probe (claude, codex) instead falls back to quota-axi when its pool carries
+# no usable timestamp, since that path can still produce a real verdict (see
+# fm_route_probe_pool).
 #
-# Claude, Codex, and Grok all read through quota-axi (verified schemaVersion
-# 3: providers[].quotaSemantics.effectiveAvailability[] scoped by
-# all_models/all_products, providers[].state.{status,stale,refreshedAt}),
-# never an invented per-tool schema. Grok additionally carries
-# providers[].credits.remaining, which is PREPAID balance, never subscription
-# evidence, and is never read here. Gateway/DeepSeek reads through
-# `omp usage --provider vercel-ai-gateway --json` (verified live shape:
-# reports[].limits[].amount.{remaining,limit,used,unit}, plus an empty
-# reports:[] when the account has no usage yet). Probes shell out to the
-# existing proxy/CLI owners and never touch credentials directly; command
-# names are overridable so tests substitute fake readers on PATH.
+# Claude and Codex sit behind local proxy pools holding several accounts
+# each, so their probes read the pool's own JSON (`<pool> status --json`)
+# and admit the service when ANY account is usable, falling back to
+# quota-axi only when that pool reading is unusable. Grok reads through
+# quota-axi alone (verified schemaVersion 3: providers[].quotaSemantics
+# .effectiveAvailability[] scoped by all_models/all_products,
+# providers[].state.{status,stale,refreshedAt}), never an invented per-tool
+# schema. Grok additionally carries providers[].credits.remaining, which is
+# PREPAID balance, never subscription evidence, and is never read here.
+# Gateway/DeepSeek reads through `omp usage --provider vercel-ai-gateway
+# --json` (verified live shape: reports[].limits[].amount.{remaining,limit,
+# used,unit}, plus an empty reports:[] when the account has no usage yet).
+# Probes shell out to the existing proxy/CLI owners and never touch
+# credentials directly; command names are overridable so tests substitute
+# fake readers on PATH.
 : "${FM_ROUTE_QUOTA_AXI_BIN:=quota-axi}"
 : "${FM_ROUTE_OMP_BIN:=omp}"
+: "${FM_ROUTE_TEAMCODEX_BIN:=teamcodex}"
+: "${FM_ROUTE_TEAMCLAUDE_BIN:=teamclaude}"
 
 fm_route_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -320,8 +329,84 @@ fm_route_probe_quota_axi() {
   printf 'eligible\t%s effective remaining %s%% for scope %s\t%s\n' "$provider" "$pct" "$scope" "$ts"
 }
 
-fm_route_probe_claude() { fm_route_probe_quota_axi claude all_models; }
-fm_route_probe_codex() { fm_route_probe_quota_axi codex all_models; }
+# Claude and Codex each sit behind a local proxy pool holding several
+# accounts. One blocked account must not speak for the whole pool, so this
+# reads the pool's own JSON and admits the service when ANY account is
+# usable: disabled is false and unavailable is absent or "none". That is
+# exactly the rule the proxy applies when it switches accounts, so no
+# percentage math and no headroom threshold is duplicated here; the proxy
+# owns that judgment. Accounts live at .accounts or .probe.accounts
+# depending on the reader, so both are accepted. observed_at comes from the
+# pool's own probe.lastRunFinishedAt (epoch milliseconds, or an RFC3339
+# string on readers that already convert it), never the probe's wall clock.
+#
+# $1 pool command, $2 pool display name, $3 quota-axi fallback provider,
+# $4 that provider's effectiveAvailability scope. A pool command that is
+# missing, exits non-zero, returns unparseable JSON, reports zero accounts,
+# or carries no usable probe timestamp is NOT a verdict on the service: it
+# falls back to the existing quota-axi reader, so a broken pool command is
+# never worse than the pre-pool behavior, and says so in the reason rather
+# than hiding the fallback.
+fm_route_probe_pool() {
+  local bin=$1 pool=$2 provider=$3 scope=$4 json rc ts total usable
+  if json=$("$bin" status --json 2>/dev/null); then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    fm_route_pool_fallback "$pool" "$provider" "$scope" "unreadable (exit $rc)"
+    return 0
+  fi
+  total=$(printf '%s' "$json" | jq -r '
+    [(.accounts // []), (.probe.accounts // [])]
+    | map(select(type == "array" and length > 0)) | first // [] | length
+  ' 2>/dev/null) || total=
+  if [ -z "$total" ]; then
+    fm_route_pool_fallback "$pool" "$provider" "$scope" "returned unparseable JSON"
+    return 0
+  fi
+  if [ "$total" -le 0 ] 2>/dev/null; then
+    fm_route_pool_fallback "$pool" "$provider" "$scope" "reported no accounts"
+    return 0
+  fi
+  usable=$(printf '%s' "$json" | jq -r '
+    [(.accounts // []), (.probe.accounts // [])]
+    | map(select(type == "array" and length > 0)) | first // []
+    | map(select((.disabled // false) == false and ((.unavailable // "none") == "none")))
+    | length
+  ' 2>/dev/null) || usable=
+  if [ -z "$usable" ]; then
+    fm_route_pool_fallback "$pool" "$provider" "$scope" "returned unparseable JSON"
+    return 0
+  fi
+  ts=$(printf '%s' "$json" | jq -r '(.probe.lastRunFinishedAt // empty)' 2>/dev/null) || ts=
+  if [ -n "$ts" ] && [ "$ts" -gt 0 ] 2>/dev/null; then
+    ts=$(fm_route_ms_to_rfc3339 "$ts") || ts=
+  fi
+  [ -n "$ts" ] || {
+    fm_route_pool_fallback "$pool" "$provider" "$scope" "reported no usable probe timestamp"
+    return 0
+  }
+  if [ "$usable" -gt 0 ] 2>/dev/null; then
+    printf 'eligible\t%s pool: %s of %s accounts usable\t%s\n' "$pool" "$usable" "$total" "$ts"
+  else
+    printf 'exhausted\t%s pool: 0 of %s accounts usable\t%s\n' "$pool" "$total" "$ts"
+  fi
+}
+
+# A pool reading that yielded no verdict falls back to quota-axi. The
+# fallback keeps quota-axi's own state and timestamp and prefixes its reason
+# with the pool name and why the pool was unusable, so a silent fallback can
+# never recreate the blindness one level up.
+fm_route_pool_fallback() {  # <pool> <provider> <scope> <why>
+  local pool=$1 provider=$2 scope=$3 why=$4 state reason ts
+  IFS=$'\t' read -r state reason ts < <(fm_route_probe_quota_axi "$provider" "$scope")
+  printf '%s\t%s %s, fell back to quota-axi: %s\t%s\n' "$state" "$pool" "$why" "$reason" "$ts"
+}
+
+fm_route_probe_claude() { fm_route_probe_pool "$FM_ROUTE_TEAMCLAUDE_BIN" teamclaude claude all_models; }
+fm_route_probe_codex() { fm_route_probe_pool "$FM_ROUTE_TEAMCODEX_BIN" teamcodex codex all_models; }
 fm_route_probe_pi_grok() {
   # Grok's providers[].credits.remaining is prepaid balance; it is NEVER read
   # here. Only quotaSemantics.effectiveAvailability[scope=all_products]
