@@ -36,7 +36,9 @@ _FM_CLASSIFY_RAW_KEY=''
 _FM_CLASSIFY_KEY_CANDIDATE=''
 _FM_CLASSIFY_NOTE=''
 _FM_CLASSIFY_OPEN=''
+_FM_CLASSIFY_OPEN_RAW=''
 _FM_CLASSIFY_FOLD=''
+_FM_CLASSIFY_FOLD_RAW=''
 _FM_CLASSIFY_VERB=
 
 # The crew current-state reader used for the "provably working" decision.
@@ -501,13 +503,16 @@ _fm_decision_drop_into() {  # <open-set> <key>; sets _FM_CLASSIFY_OPEN
   done <<EOF
 $set
 EOF
-  # Match command-substitution capture: callers relied on the old
-  # `x=$(_fm_decision_drop ...)` stripping the trailing newline.
+  # _FM_CLASSIFY_OPEN matches command-substitution capture: the fold callers
+  # relied on the old `x=$(_fm_decision_drop ...)` stripping the trailing
+  # newline. _FM_CLASSIFY_OPEN_RAW keeps the bytes the printing wrapper owes its
+  # own stdout contract.
+  _FM_CLASSIFY_OPEN_RAW=$out
   _FM_CLASSIFY_OPEN=${out%$'\n'}
 }
 _fm_decision_drop() {  # <open-set> <key>
   _fm_decision_drop_into "$1" "$2"
-  printf '%s' "$_FM_CLASSIFY_OPEN"
+  printf '%s' "$_FM_CLASSIFY_OPEN_RAW"
 }
 # Fold ONE status line into an existing "<key>\t<verb>\t<note>\n"-per-line open
 # set, applying the same needs-decision/blocked-opens, resolved/captain-held-closes
@@ -559,20 +564,21 @@ _fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held
   # verdict without building a stripped copy.
   case "$line" in
     *[![:space:]]*) ;;
-    *) _FM_CLASSIFY_FOLD=$open; return 0 ;;
+    *) _FM_CLASSIFY_FOLD=$open; _FM_CLASSIFY_FOLD_RAW=$open; return 0 ;;
   esac
   # No command substitutions on this per-line path: each "$(...)" forks a
   # subshell, and the whole-file fold over a long status log paid tens of
   # thousands of them. The "_into" helpers compute the same values in-process.
   status_line_verb_into "$line"
   verb=$_FM_CLASSIFY_VERB
-  _fm_decision_key_candidate_into "$line" || { _FM_CLASSIFY_FOLD=$open; return 0; }
+  _fm_decision_key_candidate_into "$line" \
+    || { _FM_CLASSIFY_FOLD=$open; _FM_CLASSIFY_FOLD_RAW=$open; return 0; }
   key=${_FM_CLASSIFY_KEY_CANDIDATE#*$'\t'}
   key=${key%%$'\t'*}
   status_line_note_into "$line" "$_FM_CLASSIFY_KEY_CANDIDATE"
   note=$_FM_CLASSIFY_NOTE
   _fm_decision_key_transition_allowed "$key" "$note" \
-    || { _FM_CLASSIFY_FOLD=$open; return 0; }
+    || { _FM_CLASSIFY_FOLD=$open; _FM_CLASSIFY_FOLD_RAW=$open; return 0; }
   case "$verb" in
     needs-decision|blocked)
       _fm_decision_drop_into "$open" "$key"
@@ -586,11 +592,12 @@ _fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held
       [ -n "$open" ] && open="${open}"$'\n'
       ;;
   esac
+  _FM_CLASSIFY_FOLD_RAW=$open
   _FM_CLASSIFY_FOLD=${open%$'\n'}
 }
 _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb>
   _fm_decision_fold_line_into "$@"
-  printf '%s' "$_FM_CLASSIFY_FOLD"
+  printf '%s' "$_FM_CLASSIFY_FOLD_RAW"
 }
 
 # Fold the WHOLE status stream into the set of decisions still open. Prints one
