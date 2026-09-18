@@ -474,7 +474,10 @@ Two firstmate-specific rules layer on top of that guidance:
 For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
 Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path.
 A done without that section is not done; firstmate sends it back.
-After /no-mistakes reports CI green (the CI-ready return point), append \`done: PR {url} checks green\` and enter the PR watch below.
+After /no-mistakes reports CI green (the CI-ready return point), sync your local branch to the pipeline head before you report done.
+Run \`no-mistakes axi status\` and follow its \`branch_sync.next_action\`, running \`no-mistakes axi sync\` where that is what it names.
+Repeat until \`git rev-parse HEAD\` equals the pipeline head, so your local branch carries the validated head instead of a pre-rebase one that would make a later cleanup refuse already-landed work.
+Then append \`done: PR {url} checks green at {pipeline head}\` and enter the PR watch below.
 Do not wait for no-mistakes to keep monitoring in the background.
 $PR_WATCH
 Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.

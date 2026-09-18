@@ -253,7 +253,7 @@ test_pr_producing_modes_own_feedback_until_landing() {
     case "$mode" in
       no-mistakes)
         # shellcheck disable=SC2016
-        watch_entry='append `done: PR {url} checks green` and enter the PR watch below.'
+        watch_entry='append `done: PR {url} checks green at {pipeline head}` and enter the PR watch below.'
         expected_action='Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.'
         forbidden_action='fix and push on your `fm/'"$id"'` branch'
         ;;
@@ -611,6 +611,58 @@ test_no_mistakes_dod_self_drives_into_validation() {
   assert_no_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
     "no-mistakes DOD must not keep the old wait-for-firstmate round-trip line"
   pass "fm-brief.sh: no-mistakes DOD self-drives into validation"
+}
+
+# The pipeline can rebase and merge the branch while the worker's local head stays
+# at the pre-rebase commit. That stale head later makes teardown refuse already-landed
+# work as unlanded, costing the captain a discard decision he should never face.
+# The no-mistakes DOD must therefore require the worker to sync its local branch to
+# the pipeline head before reporting done, and to name that head in the done line.
+# direct-PR and local-only never run the pipeline, so the requirement must not leak
+# into their briefs.
+test_no_mistakes_dod_syncs_to_pipeline_head_before_done() {
+  local home id mode brief ci_line sync_line done_line
+  home="$TMP_ROOT/sync-home"
+  mkdir -p "$home/data"
+
+  id="brief-sync-no-mistakes"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "no-mistakes: ship brief failed to scaffold"
+  brief="$home/data/$id/brief.md"
+  assert_grep 'no-mistakes axi status' "$brief" \
+    "no-mistakes DOD must require reading structured axi status before done"
+  assert_grep 'branch_sync.next_action' "$brief" \
+    "no-mistakes DOD must require following the reported branch sync action"
+  assert_grep 'no-mistakes axi sync' "$brief" \
+    "no-mistakes DOD must name the guarded sync command"
+  assert_grep 'git rev-parse HEAD' "$brief" \
+    "no-mistakes DOD must require proving the local head matches the pipeline head"
+  assert_grep 'done: PR {url} checks green at {pipeline head}' "$brief" \
+    "no-mistakes DOD done line must state the pipeline head"
+
+  # The sync step must sit after the CI-green return point and before the done line.
+  ci_line=$(grep -n 'After /no-mistakes reports CI green' "$brief" | cut -d: -f1)
+  sync_line=$(grep -n 'no-mistakes axi status' "$brief" | cut -d: -f1)
+  done_line=$(grep -n 'done: PR {url} checks green at {pipeline head}' "$brief" | cut -d: -f1)
+  if [ -z "$ci_line" ] || [ -z "$sync_line" ] || [ -z "$done_line" ]; then
+    fail "sync-before-done: expected CI-green, sync, and done markers were not all present"
+  fi
+  [ "$ci_line" -lt "$sync_line" ] \
+    || fail "sync-before-done: the sync requirement must follow the CI-green return point"
+  [ "$sync_line" -lt "$done_line" ] \
+    || fail "sync-before-done: the sync requirement must precede the done line"
+
+  for mode in direct-PR local-only; do
+    id="brief-sync-${mode}"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_no_grep 'branch_sync.next_action' "$brief" \
+      "$mode: brief must not require the no-mistakes pipeline sync it never runs"
+    assert_no_grep 'no-mistakes axi status' "$brief" \
+      "$mode: brief must not require reading no-mistakes pipeline state"
+  done
+  pass "fm-brief.sh: no-mistakes DOD syncs to the pipeline head before done; other modes stay out"
 }
 
 test_ship_project_memory_wording() {
@@ -1136,6 +1188,7 @@ test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_self_drives_into_validation
+test_no_mistakes_dod_syncs_to_pipeline_head_before_done
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
