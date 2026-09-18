@@ -248,32 +248,37 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
-# codex_session <codex-root> <session-id> <cwd> <model> <epoch> <input> <cache_write> <cache_read> <output> <reasoning> [duplicate]
+# codex_session <codex-root> <session-id> <cwd> <model> <epoch> <input> <cache_write> <cache_read> <output> <reasoning> [duplicate] [duplicate-epoch]
 # One Codex rollout: session_meta, turn_context, and a token_count event.
 # input is the uncached count; Codex reports input_tokens as the cached and
 # cache-write tokens inside the whole input, so the fixture mirrors that.
 # duplicate=1 appends the same cumulative total a second time, as Codex does.
+# duplicate-epoch stamps that second copy later, the way a real rollout writes
+# the same cumulative total again on the next day.
 codex_session() {
   local root=$1 id=$2 cwd=$3 model=$4 epoch=$5
   local input=$6 cache_write=$7 cache_read=$8 output=$9 reasoning=${10} duplicate=${11:-0}
+  local duplicate_epoch=${12:-$epoch}
   local dir="$root/sessions/2026/09/04"
   mkdir -p "$dir"
   python3 - "$dir/$id.jsonl" "$cwd" "$model" "$(iso_at "$epoch")" \
-    "$input" "$cache_write" "$cache_read" "$output" "$reasoning" "$duplicate" <<'PY'
+    "$input" "$cache_write" "$cache_read" "$output" "$reasoning" "$duplicate" \
+    "$(iso_at "$duplicate_epoch")" <<'PY'
 import json, sys
 path, cwd, model, stamp = sys.argv[1:5]
 uncached, cache_write, cache_read, output, reasoning = [int(v) for v in sys.argv[5:10]]
 duplicate = sys.argv[10] == "1"
+duplicate_stamp = sys.argv[11]
 input_tokens = uncached + cache_write + cache_read
 total = input_tokens + output
 lines = [
     {"type": "session_meta", "timestamp": stamp, "payload": {"id": "thread", "cwd": cwd}},
     {"type": "turn_context", "timestamp": stamp, "payload": {"cwd": cwd, "model": model}},
 ]
-for _ in range(2 if duplicate else 1):
+for copy_stamp in ([stamp, duplicate_stamp] if duplicate else [stamp]):
     lines.append({
         "type": "event_msg",
-        "timestamp": stamp,
+        "timestamp": copy_stamp,
         "payload": {
             "type": "token_count",
             "info": {
@@ -639,6 +644,36 @@ test_codex_duplicate_cumulative_total_counts_once() {
   assert_contains "$out" "codex: sessions=1" \
     "a duplicated cumulative total produced more than one Codex session"
   pass "a repeated Codex cumulative total counts its usage once"
+}
+
+test_codex_duplicate_straddling_the_cutoff_still_counts() {
+  local home claude pi codex_root nm out slot
+  home=$(make_home codex-straddle)
+  claude=$TMP_ROOT/codex-straddle-claude
+  pi=$TMP_ROOT/codex-straddle-pi
+  codex_root=$TMP_ROOT/codex-straddle-logs
+  nm=$TMP_ROOT/codex-straddle-nm
+  slot=$TMP_ROOT/slot/13/eta
+  mkdir -p "$claude" "$pi" "$codex_root" "$nm"
+
+  fm_write_meta "$home/state/eta.meta" \
+    "worktree=$slot" \
+    "kind=ship" \
+    "spawn_gen=s$EARLY_SPAWN.113.213"
+  codex_session "$codex_root" sess-straddle "$slot" gpt-5.6-sol \
+    $((EARLY_SPAWN + 15)) 4 0 3 6 2 1 $((EARLY_SPAWN + 120))
+
+  out=$(run_ledger "$home" "$claude" "$pi" "$nm" snapshot \
+    --since "$(iso_at $((EARLY_SPAWN + 60)))" --stdout) \
+    || fail "snapshot failed on the straddling Codex duplicate fixture"
+
+  [ "$(field "$out" sess-straddle 9)" = 1 ] \
+    || fail "the in-window copy of a straddling Codex duplicate was not counted"
+  [ "$(field "$out" sess-straddle 10)" = 4 ] \
+    || fail "a pre-cutoff duplicate suppressed the in-window Codex input"
+  [ "$(field "$out" sess-straddle 13)" = 6 ] \
+    || fail "a pre-cutoff duplicate suppressed the in-window Codex output"
+  pass "a Codex duplicate written across the --since cutoff still counts once"
 }
 
 test_codex_pipeline_cwd_attribution() {
@@ -1535,6 +1570,7 @@ test_pi_summary_only_window_keeps_the_session_model
 test_pi_model_comes_from_the_latest_usage_message
 test_codex_columns_and_worker_attribution
 test_codex_duplicate_cumulative_total_counts_once
+test_codex_duplicate_straddling_the_cutoff_still_counts
 test_codex_pipeline_cwd_attribution
 test_codex_absent_logs_are_not_an_error
 test_codex_reader_leaves_claude_and_pi_totals_unchanged

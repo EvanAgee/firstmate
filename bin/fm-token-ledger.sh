@@ -507,11 +507,13 @@ def read_codex_session(path: Path, since: datetime) -> dict | None:
         total = info.get("total_token_usage") if isinstance(info, dict) else None
         if not isinstance(usage, dict) or not isinstance(total, dict):
             continue
+        if moment is None or moment < since:
+            continue
         total_key = tuple(sorted((key, str(value)) for key, value in total.items()))
         if total_key == last_total:
             continue
         last_total = total_key
-        if moment is None or not mark_usage(row, moment, since, True):
+        if not mark_usage(row, moment, since, True):
             continue
         cache_read = as_int(usage.get("cached_input_tokens"))
         cache_write = as_int(usage.get("cache_write_input_tokens"))
