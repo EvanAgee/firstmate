@@ -1,0 +1,8 @@
+Frozen fleet home: 12 tasks, one 2125-line status log, 214 scout reports
+Shell: GNU bash, version 3.2.57(1)-release (arm64-apple-darwin26)
+Pinned FM_SNAPSHOT_NOW=2026-09-18T12:00:00Z
+
+pair   before     after     
+1      43.93s     2.78s     
+2      40.41s     2.37s     
+3      38.00s     2.33s     

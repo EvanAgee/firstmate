@@ -1,0 +1,34 @@
+Raw stdout bytes (od -c) of the public printing wrappers, base vs target, /bin/bash 3.2
+
+RESULT: byte-identical on all 10 probes (trailing newline contract preserved)
+
+--- fold_line: needs-decision opens
+0000000 z \t n e e d s - d e c i s i o n
+0000020 \t h i \n 
+0000024
+--- fold_line: resolved closes
+--- fold_line: whitespace passthrough
+0000000 z \t n e e d s - d e c i s i o n
+0000020 \t h i \n 
+0000024
+--- fold_line: two open records
+0000000 a \t n e e d s - d e c i s i o n
+0000020 \t o n e \n b \t b l o c k e d \t t
+0000040 w o \n 
+0000043
+--- drop: removes key
+0000000 a \t v \t n \n 
+0000006
+--- drop: keeps others
+0000000 b \t v \t n \n 
+0000006
+--- drop: empty set
+--- status_line_note
+0000000 h e l l o t h e r e 
+0000013
+--- status_line_verb
+0000000 n e e d s - d e c i s i o n 
+0000016
+--- _fm_decision_key
+0000000 z 
+0000001

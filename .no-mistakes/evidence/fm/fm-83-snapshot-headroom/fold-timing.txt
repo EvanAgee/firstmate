@@ -1,0 +1,6 @@
+status_open_decisions over a real-shape 2125-line status log, /bin/bash 3.2
+
+before: 32.97s
+after:  1.55s
+
+folded open-decision set identical: YES (17 open decisions)

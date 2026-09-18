@@ -1,0 +1,2824 @@
+{
+  "schema": "fm-fleet-snapshot.v1",
+  "generated": "2026-09-18T12:00:00Z",
+  "fm_home": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY",
+  "roots": {
+    "fm_root": "/Users/evanagee/.no-mistakes/worktrees/b99440365b40/01M2TZPEDJQ41CJNVGMAT5JEQE",
+    "state": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state",
+    "data": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data",
+    "config": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/config",
+    "projects": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects"
+  },
+  "backlog": {
+    "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/backlog.md",
+    "present": true,
+    "records": [
+      {
+        "order": 1,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-01",
+        "checked": false,
+        "title": "Task 01",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-01 - Task 01 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 2,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-02",
+        "checked": false,
+        "title": "Task 02",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-02 - Task 02 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 3,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-03",
+        "checked": false,
+        "title": "Task 03",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-03 - Task 03 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 4,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-04",
+        "checked": false,
+        "title": "Task 04",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-04 - Task 04 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 5,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-05",
+        "checked": false,
+        "title": "Task 05",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-05 - Task 05 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 6,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-06",
+        "checked": false,
+        "title": "Task 06",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-06 - Task 06 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 7,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-07",
+        "checked": false,
+        "title": "Task 07",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-07 - Task 07 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 8,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-08",
+        "checked": false,
+        "title": "Task 08",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-08 - Task 08 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 9,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-09",
+        "checked": false,
+        "title": "Task 09",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-09 - Task 09 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 10,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-10",
+        "checked": false,
+        "title": "Task 10",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-10 - Task 10 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 11,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-11",
+        "checked": false,
+        "title": "Task 11",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-11 - Task 11 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      },
+      {
+        "order": 12,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-12",
+        "checked": false,
+        "title": "Task 12",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-12 - Task 12 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "task-01",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-01.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-01.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "done",
+            "note": "step 2124 of the run [corr=c2124]",
+            "raw": "done: step 2124 of the run [corr=c2124]"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-01",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-01/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-01",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "done: step 2124 of the run [corr=c2124]"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-01",
+        "steer": "bin/fm-send.sh fm-task-01 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 1,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-01",
+        "checked": false,
+        "title": "Task 01",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-01 - Task 01 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-02",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-02.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-02.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a02]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-02",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-02/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-02",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a02]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-02",
+        "steer": "bin/fm-send.sh fm-task-02 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 2,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-02",
+        "checked": false,
+        "title": "Task 02",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-02 - Task 02 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-03",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-03.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-03.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a03]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-03",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-03/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-03",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a03]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-03",
+        "steer": "bin/fm-send.sh fm-task-03 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 3,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-03",
+        "checked": false,
+        "title": "Task 03",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-03 - Task 03 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-04",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-04.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-04.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a04]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-04",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-04/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-04",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a04]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-04",
+        "steer": "bin/fm-send.sh fm-task-04 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 4,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-04",
+        "checked": false,
+        "title": "Task 04",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-04 - Task 04 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-05",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-05.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-05.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a05]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-05",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-05/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-05",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a05]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-05",
+        "steer": "bin/fm-send.sh fm-task-05 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 5,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-05",
+        "checked": false,
+        "title": "Task 05",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-05 - Task 05 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-06",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-06.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-06.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a06]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-06",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-06/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-06",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a06]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-06",
+        "steer": "bin/fm-send.sh fm-task-06 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 6,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-06",
+        "checked": false,
+        "title": "Task 06",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-06 - Task 06 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-07",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-07.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-07.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a07]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-07",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-07/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-07",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a07]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-07",
+        "steer": "bin/fm-send.sh fm-task-07 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 7,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-07",
+        "checked": false,
+        "title": "Task 07",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-07 - Task 07 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-08",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-08.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-08.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a08]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-08",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-08/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-08",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a08]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-08",
+        "steer": "bin/fm-send.sh fm-task-08 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 8,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-08",
+        "checked": false,
+        "title": "Task 08",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-08 - Task 08 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-09",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-09.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-09.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a09]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-09",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-09/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-09",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a09]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-09",
+        "steer": "bin/fm-send.sh fm-task-09 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 9,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-09",
+        "checked": false,
+        "title": "Task 09",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-09 - Task 09 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-10",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-10.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-10.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a10]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-10",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-10/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-10",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a10]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-10",
+        "steer": "bin/fm-send.sh fm-task-10 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 10,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-10",
+        "checked": false,
+        "title": "Task 10",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-10 - Task 10 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-11",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-11.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-11.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a11]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-11",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-11/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-11",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a11]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-11",
+        "steer": "bin/fm-send.sh fm-task-11 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 11,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-11",
+        "checked": false,
+        "title": "Task 11",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-11 - Task 11 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    },
+    {
+      "id": "task-12",
+      "kind": "ship",
+      "harness": "codex",
+      "mode": "ship",
+      "yolo": "off",
+      "project": "alpha",
+      "backend": "tmux",
+      "remote": null,
+      "paths": {
+        "meta": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-12.meta",
+          "present": true
+        },
+        "status_log": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/state/task-12.status",
+          "present": true,
+          "kind": "event_history",
+          "last_event": {
+            "state": "needs-decision",
+            "note": "pick one",
+            "raw": "needs-decision [key=a12]: pick one"
+          }
+        },
+        "worktree": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/projects/task-12",
+          "present": true
+        },
+        "home": {
+          "path": null,
+          "present": false
+        },
+        "report": {
+          "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/task-12/report.md",
+          "present": false
+        }
+      },
+      "secondmate_projects": [],
+      "current_state": {
+        "state": "unknown",
+        "source": "pane",
+        "detail": "harness state unavailable (unknown codex-unverified)",
+        "raw": "state: unknown · source: pane · harness state unavailable (unknown codex-unverified)",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "endpoint": {
+        "target": "firstmate:fm-task-12",
+        "exists": true,
+        "agent_alive": "not_checked",
+        "status": "unknown",
+        "observed_at": "2026-09-18T12:00:00Z",
+        "freshness": "fresh"
+      },
+      "pr": {
+        "url": null,
+        "source": "absent"
+      },
+      "hints": {
+        "pending_decision": false,
+        "blocked_event": false,
+        "open_decisions": [],
+        "scout_report_present": false,
+        "last_event_text": "needs-decision [key=a12]: pick one"
+      },
+      "actions": {
+        "watch": "bin/fm-peek.sh fm-task-12",
+        "steer": "bin/fm-send.sh fm-task-12 '<instruction>'",
+        "return_channel_note": null
+      },
+      "backlog": {
+        "order": 12,
+        "state": "in_flight",
+        "structured": true,
+        "id": "task-12",
+        "checked": false,
+        "title": "Task 12",
+        "repo": "alpha",
+        "kind": "ship",
+        "priority": null,
+        "hold_reason": null,
+        "hold_kind": null,
+        "blocked_by": null,
+        "blocked_by_ids": [],
+        "blocked_reason": null,
+        "since": "2026-07-07",
+        "merged": null,
+        "reported": null,
+        "done": null,
+        "completion": {
+          "verb": null,
+          "date": null
+        },
+        "links": [],
+        "pr_url": null,
+        "report_path": null,
+        "local_note": null,
+        "raw": "- [ ] task-12 - Task 12 (repo: alpha) (kind: ship) (since 2026-07-07)",
+        "body_lines": [],
+        "body_excerpt": null,
+        "unresolved_blocker_ids": [],
+        "current_role": "worker",
+        "requires_child_metadata": true,
+        "captain_actionable": false
+      }
+    }
+  ],
+  "main_inventory": {
+    "valid": true,
+    "reason": null,
+    "orphan_in_flight": [],
+    "unstructured_current_count": 0
+  },
+  "scout_reports": [
+    {
+      "id": "scout-001",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-001/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-002",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-002/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-003",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-003/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-004",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-004/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-005",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-005/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-006",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-006/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-007",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-007/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-008",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-008/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-009",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-009/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-010",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-010/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-011",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-011/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-012",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-012/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-013",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-013/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-014",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-014/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-015",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-015/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-016",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-016/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-017",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-017/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-018",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-018/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-019",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-019/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-020",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-020/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-021",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-021/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-022",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-022/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-023",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-023/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-024",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-024/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-025",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-025/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-026",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-026/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-027",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-027/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-028",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-028/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-029",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-029/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-030",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-030/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-031",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-031/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-032",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-032/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-033",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-033/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-034",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-034/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-035",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-035/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-036",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-036/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-037",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-037/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-038",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-038/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-039",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-039/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-040",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-040/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-041",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-041/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-042",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-042/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-043",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-043/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-044",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-044/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-045",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-045/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-046",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-046/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-047",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-047/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-048",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-048/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-049",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-049/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-050",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-050/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-051",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-051/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-052",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-052/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-053",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-053/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-054",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-054/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-055",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-055/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-056",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-056/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-057",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-057/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-058",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-058/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-059",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-059/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-060",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-060/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-061",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-061/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-062",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-062/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-063",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-063/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-064",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-064/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-065",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-065/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-066",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-066/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-067",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-067/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-068",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-068/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-069",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-069/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-070",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-070/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-071",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-071/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-072",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-072/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-073",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-073/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-074",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-074/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-075",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-075/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-076",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-076/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-077",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-077/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-078",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-078/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-079",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-079/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-080",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-080/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-081",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-081/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-082",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-082/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-083",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-083/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-084",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-084/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-085",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-085/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-086",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-086/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-087",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-087/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-088",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-088/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-089",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-089/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-090",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-090/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-091",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-091/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-092",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-092/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-093",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-093/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-094",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-094/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-095",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-095/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-096",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-096/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-097",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-097/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-098",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-098/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-099",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-099/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-100",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-100/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-101",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-101/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-102",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-102/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-103",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-103/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-104",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-104/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-105",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-105/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-106",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-106/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-107",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-107/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-108",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-108/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-109",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-109/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-110",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-110/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-111",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-111/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-112",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-112/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-113",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-113/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-114",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-114/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-115",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-115/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-116",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-116/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-117",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-117/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-118",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-118/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-119",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-119/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-120",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-120/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-121",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-121/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-122",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-122/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-123",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-123/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-124",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-124/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-125",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-125/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-126",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-126/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-127",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-127/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-128",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-128/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-129",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-129/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-130",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-130/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-131",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-131/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-132",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-132/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-133",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-133/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-134",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-134/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-135",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-135/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-136",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-136/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-137",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-137/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-138",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-138/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-139",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-139/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-140",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-140/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-141",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-141/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-142",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-142/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-143",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-143/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-144",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-144/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-145",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-145/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-146",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-146/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-147",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-147/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-148",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-148/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-149",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-149/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-150",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-150/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-151",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-151/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-152",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-152/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-153",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-153/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-154",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-154/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-155",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-155/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-156",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-156/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-157",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-157/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-158",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-158/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-159",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-159/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-160",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-160/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-161",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-161/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-162",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-162/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-163",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-163/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-164",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-164/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-165",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-165/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-166",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-166/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-167",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-167/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-168",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-168/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-169",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-169/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-170",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-170/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-171",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-171/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-172",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-172/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-173",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-173/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-174",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-174/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-175",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-175/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-176",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-176/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-177",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-177/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-178",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-178/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-179",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-179/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-180",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-180/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-181",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-181/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-182",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-182/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-183",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-183/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-184",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-184/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-185",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-185/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-186",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-186/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-187",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-187/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-188",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-188/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-189",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-189/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-190",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-190/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-191",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-191/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-192",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-192/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-193",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-193/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-194",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-194/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-195",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-195/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-196",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-196/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-197",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-197/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-198",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-198/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-199",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-199/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-200",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-200/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-201",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-201/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-202",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-202/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-203",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-203/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-204",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-204/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-205",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-205/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-206",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-206/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-207",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-207/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-208",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-208/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-209",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-209/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-210",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-210/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-211",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-211/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-212",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-212/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-213",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-213/report.md",
+      "kind": "scout"
+    },
+    {
+      "id": "scout-214",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/scout-214/report.md",
+      "kind": "scout"
+    }
+  ],
+  "secondmate_current": {
+    "registry": {
+      "present": false,
+      "available": true,
+      "complete": true,
+      "reason": null,
+      "provenance": "registered-table",
+      "path": "/var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//fm83-home.LUJ1QY/data/secondmates.md",
+      "freshness": {
+        "status": "fresh",
+        "observed_at": "2026-09-18T12:00:00Z"
+      },
+      "records": [],
+      "input_truncated": false,
+      "records_truncated": false,
+      "reasons": [],
+      "lines_in_window": 0,
+      "records_in_window": 0
+    },
+    "records": [],
+    "total_registered": 0,
+    "total": 0,
+    "shown": 0,
+    "truncated": 0
+  },
+  "secondmate_landed": {
+    "records": [],
+    "truncated": [],
+    "unreadable": [],
+    "partial": []
+  },
+  "secondmate_guidance": {
+    "note": "For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
+  }
+}

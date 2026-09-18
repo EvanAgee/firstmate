@@ -1,0 +1,20 @@
+endpoint.status per lane (base = FM_SNAPSHOT_JOBS 8, after = 16)
+
+lane           before     after     
+alive-sm-1     alive      alive     
+alive-sm-2     alive      alive     
+alive-sm-3     alive      alive     
+alive-sm-4     alive      alive     
+alive-sm-5     alive      alive     
+dead-sm-1      dead       dead      
+dead-sm-2      dead       dead      
+dead-sm-3      dead       dead      
+dead-sm-4      dead       dead      
+dead-sm-5      dead       dead      
+gone-sm-1      absent     absent    
+gone-sm-2      absent     absent    
+gone-sm-3      absent     absent    
+gone-sm-4      absent     absent    
+gone-sm-5      absent     absent    
+
+full JSON identical apart from fm_root: YES

@@ -1,0 +1,11 @@
+Real HTTP GET /fleet against bin/fm-api-server.mjs, same frozen home, alternating
+Dashboard cap: 10.000s
+
+pair   BEFORE (base commit)      AFTER (this change)     
+1      46.28s OVER CAP           1.78s under cap         
+2      43.08s OVER CAP           1.70s under cap         
+3      41.38s OVER CAP           1.64s under cap         
+
+GET /fleet response bodies identical: YES
+
+tasks=12  scout_reports=214  schema=fm-fleet-snapshot.v1  open_decisions_task01=0
