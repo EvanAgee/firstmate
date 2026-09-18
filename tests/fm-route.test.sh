@@ -1266,7 +1266,15 @@ esac
 SH
   chmod +x "$fakebin/launchctl"
 
-  out=$(PATH="$fakebin:$PATH" LAUNCH_AGENTS_DIR="$agents" FM_HOME="$home" \
+  # HOME is redirected into the sandbox so the installer's sweep compares the
+  # faked launchctl registry against this sandbox's own LaunchAgents
+  # directory. Without that the sweep refuses to run at all, precisely so a
+  # redirected LAUNCH_AGENTS_DIR can never make the real machine's jobs look
+  # orphaned and get unloaded.
+  mkdir -p "$home/fakehome/Library"
+  ln -sfn "$agents" "$home/fakehome/Library/LaunchAgents"
+  out=$(PATH="$fakebin:$PATH" HOME="$home/fakehome" \
+    LAUNCH_AGENTS_DIR="$home/fakehome/Library/LaunchAgents" FM_HOME="$home" \
     "$ROOT/bin/fm-route-refresh-install.sh" install --yes 2>&1) || status=$?
   status=${status:-0}
   [ "$status" -eq 0 ] || fail "install failed while sweeping an orphaned job: $out"
