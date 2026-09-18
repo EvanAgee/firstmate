@@ -28,6 +28,16 @@
 # Resolved at source time from BASH_SOURCE so it works whether sourced by a
 # bin/ script (which sets its own SCRIPT_DIR) or directly by a test.
 _FM_CLASSIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_CLASSIFY_LIB_DIR="."
+# Scratch cells for the no-fork "_into" parser forms below. A per-line fold that
+# reads these instead of forking a command substitution keeps the hot path free of
+# subshells; they are set before every read, and the empty defaults keep `set -u`
+# callers safe.
+_FM_CLASSIFY_RAW_KEY=''
+_FM_CLASSIFY_KEY_CANDIDATE=''
+_FM_CLASSIFY_NOTE=''
+_FM_CLASSIFY_OPEN=''
+_FM_CLASSIFY_FOLD=''
+_FM_CLASSIFY_VERB=
 
 # The crew current-state reader used for the "provably working" decision.
 # Overridable so tests can stub the run-step/pane verdict without a real worktree
@@ -201,24 +211,34 @@ status_is_paused_or_captain_held() {  # <status-line>
 # number of "[name=value]" tags before the colon, in any order, so verb parsing
 # ends at the first tag rather than special-casing "[key=...]".
 status_line_verb() {  # <status-line> -> leading verb word
+  status_line_verb_into "$1"
+  printf '%s' "$_FM_CLASSIFY_VERB"
+}
+status_line_verb_into() {  # <status-line>; sets _FM_CLASSIFY_VERB
   local v=${1%%:*}
   v=${v%%\[*}
   v=${v#"${v%%[![:space:]]*}"}
   v=${v%"${v##*[![:space:]]}"}
-  printf '%s' "$v"
+  _FM_CLASSIFY_VERB=$v
 }
 # Raw key-token slug before the line's first colon, or failure. A canonical
 # "[key=<slug>]" token anywhere in the pre-colon text wins; a bare "[<slug>]"
 # token counts only when it is the LAST token before the colon, so a trailing
 # metadata tag like "[corr=...]" (value shape, never a slug) is metadata, not
 # a key.
-_fm_key_raw_before() {  # <status-line> -> raw slug
+# Each raw-key probe has an "_into" form that writes its result to the shared
+# _FM_CLASSIFY_RAW_KEY cell instead of printing it, plus a thin printing wrapper
+# kept for existing callers. The fold uses the "_into" form because a per-line
+# producer that forks once per probe pays a subshell per status line: a 2125-line
+# status log cost tens of thousands of forks and dominated the fleet snapshot on
+# macOS bash 3.2. Same result, no fork.
+_fm_key_raw_before_into() {  # <status-line>; sets _FM_CLASSIFY_RAW_KEY
   local pre=${1%%:*} k
   case "$pre" in
     *\[key=*\]*)
       k=${pre#*\[key=}
       k=${k%%\]*}
-      [ -n "$k" ] && { printf '%s' "$k"; return 0; }
+      [ -n "$k" ] && { _FM_CLASSIFY_RAW_KEY=$k; return 0; }
       ;;
   esac
   case "$pre" in
@@ -230,11 +250,15 @@ _fm_key_raw_before() {  # <status-line> -> raw slug
   k=${k%\]}
   case "$k" in *\[*|*=*) return 1 ;; esac
   [ -n "$k" ] || return 1
-  printf '%s' "$k"
+  _FM_CLASSIFY_RAW_KEY=$k
+}
+_fm_key_raw_before() {  # <status-line> -> raw slug
+  _fm_key_raw_before_into "$1" || return 1
+  printf '%s' "$_FM_CLASSIFY_RAW_KEY"
 }
 # Raw key-token slug as the FIRST token of the note (either form), or failure.
 # A leading metadata tag (value shape, never a slug) is prose, not a key.
-_fm_key_raw_head() {  # <status-line> -> raw slug
+_fm_key_raw_head_into() {  # <status-line>; sets _FM_CLASSIFY_RAW_KEY
   local rest
   case "$1" in
     *:*) rest=${1#*:} ;;
@@ -253,11 +277,15 @@ _fm_key_raw_head() {  # <status-line> -> raw slug
   esac
   [ -n "$rest" ] || return 1
   case "$rest" in *\[*) return 1 ;; esac
-  printf '%s' "$rest"
+  _FM_CLASSIFY_RAW_KEY=$rest
+}
+_fm_key_raw_head() {  # <status-line> -> raw slug
+  _fm_key_raw_head_into "$1" || return 1
+  printf '%s' "$_FM_CLASSIFY_RAW_KEY"
 }
 # Raw key-token slug as the LAST token of the note (either form), or failure.
 # An interior bracket token is prose and never reaches this position.
-_fm_key_raw_tail() {  # <status-line> -> raw slug
+_fm_key_raw_tail_into() {  # <status-line>; sets _FM_CLASSIFY_RAW_KEY
   local note tail
   case "$1" in
     *:*) note=${1#*:} ;;
@@ -278,12 +306,16 @@ _fm_key_raw_tail() {  # <status-line> -> raw slug
   esac
   [ -n "$tail" ] || return 1
   case "$tail" in *\[*) return 1 ;; esac
-  printf '%s' "$tail"
+  _FM_CLASSIFY_RAW_KEY=$tail
+}
+_fm_key_raw_tail() {  # <status-line> -> raw slug
+  _fm_key_raw_tail_into "$1" || return 1
+  printf '%s' "$_FM_CLASSIFY_RAW_KEY"
 }
 # Raw slug and note offset from the only valid canonical key token inside the note.
 # Returns 2 for multiple valid tokens and 3 when every complete token is
 # malformed, so callers can distinguish ambiguity from rejection.
-_fm_key_raw_anywhere() {  # <status-line> -> "<slug>\t<note-offset>"
+_fm_key_raw_anywhere_into() {  # <status-line>; sets _FM_CLASSIFY_RAW_KEY
   local note scan rest k token before after token_offset consumed=0
   local valid='' valid_offset='' valid_count=0 invalid=''
   case "$1" in
@@ -317,12 +349,16 @@ _fm_key_raw_anywhere() {  # <status-line> -> "<slug>\t<note-offset>"
     fi
   done
   if [ "$valid_count" -eq 1 ]; then
-    printf '%s\t%s' "$valid" "$valid_offset"
+    _FM_CLASSIFY_RAW_KEY="$valid"$'\t'"$valid_offset"
     return 0
   fi
   [ "$valid_count" -gt 1 ] && return 2
   [ -n "$invalid" ] && return 3
   return 1
+}
+_fm_key_raw_anywhere() {  # <status-line> -> "<slug>\t<note-offset>"
+  _fm_key_raw_anywhere_into "$1" || return $?
+  printf '%s' "$_FM_CLASSIFY_RAW_KEY"
 }
 # 0 when a stated key slug is well-formed: nonempty, A-Za-z0-9._- only.
 _fm_decision_slug_ok() {  # <slug>
@@ -331,53 +367,66 @@ _fm_decision_slug_ok() {  # <slug>
     *) return 0 ;;
   esac
 }
-_fm_decision_key_candidate() {  # <status-line> -> "<position>\t<key>[\t<note-offset>]"
+_fm_decision_key_candidate_into() {  # <status-line>; sets _FM_CLASSIFY_KEY_CANDIDATE
   local line=$1 verb k rc invalid=0
-  if k=$(_fm_key_raw_before "$line"); then
+  if _fm_key_raw_before_into "$line"; then
+    k=$_FM_CLASSIFY_RAW_KEY
     if _fm_decision_slug_ok "$k"; then
-      printf 'before\t%s' "$k"
+      _FM_CLASSIFY_KEY_CANDIDATE="before"$'\t'"$k"
       return 0
     fi
     invalid=1
   fi
-  if k=$(_fm_key_raw_head "$line"); then
+  if _fm_key_raw_head_into "$line"; then
+    k=$_FM_CLASSIFY_RAW_KEY
     if _fm_decision_slug_ok "$k"; then
-      printf 'head\t%s' "$k"
+      _FM_CLASSIFY_KEY_CANDIDATE="head"$'\t'"$k"
       return 0
     fi
     invalid=1
   fi
-  if k=$(_fm_key_raw_tail "$line"); then
+  if _fm_key_raw_tail_into "$line"; then
+    k=$_FM_CLASSIFY_RAW_KEY
     if _fm_decision_slug_ok "$k"; then
-      printf 'tail\t%s' "$k"
+      _FM_CLASSIFY_KEY_CANDIDATE="tail"$'\t'"$k"
       return 0
     fi
     invalid=1
   fi
-  verb=$(status_line_verb "$line")
+  status_line_verb_into "$line"
+  verb=$_FM_CLASSIFY_VERB
   case "$verb" in
     needs-decision|blocked)
-      if k=$(_fm_key_raw_anywhere "$line"); then
-        printf 'interior\t%s' "$k"
+      if _fm_key_raw_anywhere_into "$line"; then
+        _FM_CLASSIFY_KEY_CANDIDATE="interior"$'\t'"$_FM_CLASSIFY_RAW_KEY"
         return 0
       else
         rc=$?
       fi
-      [ "$rc" -eq 2 ] && { printf 'default\tdefault'; return 0; }
+      [ "$rc" -eq 2 ] && { _FM_CLASSIFY_KEY_CANDIDATE="default"$'\t'"default"; return 0; }
       [ "$rc" -eq 3 ] && invalid=1
       ;;
   esac
   [ "$invalid" -eq 0 ] || return 1
-  printf 'default\tdefault'
+  _FM_CLASSIFY_KEY_CANDIDATE="default"$'\t'"default"
+}
+_fm_decision_key_candidate() {  # <status-line> -> "<position>\t<key>[\t<note-offset>]"
+  _fm_decision_key_candidate_into "$1" || return 1
+  printf '%s' "$_FM_CLASSIFY_KEY_CANDIDATE"
 }
 
-status_line_note() {  # <status-line> -> text after the first colon, trimmed
+status_line_note_into() {  # <status-line> [<precomputed-candidate>]; sets _FM_CLASSIFY_NOTE
   local n candidate position details offset after_offset tail token before after
-  case "$1" in
-    *:*) n=${1#*:}; n=${n#"${n%%[![:space:]]*}"} ;;
-    *) printf '%s' "$1"; return 0 ;;
+  local line=$1
+  case "$line" in
+    *:*) n=${line#*:}; n=${n#"${n%%[![:space:]]*}"} ;;
+    *) _FM_CLASSIFY_NOTE=$line; return 0 ;;
   esac
-  candidate=$(_fm_decision_key_candidate "$1") || { printf '%s' "$n"; return 0; }
+  if [ $# -ge 2 ]; then
+    candidate=$2
+  else
+    candidate=$(_fm_decision_key_candidate "$line") || { _FM_CLASSIFY_NOTE=$n; return 0; }
+  fi
   position=${candidate%%$'\t'*}
   case "$position" in
     before|default) ;;
@@ -422,17 +471,26 @@ status_line_note() {  # <status-line> -> text after the first colon, trimmed
       esac
       ;;
   esac
-  printf '%s' "$n"
+  _FM_CLASSIFY_NOTE=$n
+  return 0
 }
-_fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
+status_line_note() {  # <status-line> -> text after the first colon, trimmed
+  status_line_note_into "$@"
+  printf '%s' "$_FM_CLASSIFY_NOTE"
+}
+_fm_decision_key() {  # <status-line> [<precomputed-candidate>] -> key slug
   local candidate
-  candidate=$(_fm_decision_key_candidate "$1") || return 1
+  if [ $# -ge 2 ]; then
+    candidate=$2
+  else
+    candidate=$(_fm_decision_key_candidate "$1") || return 1
+  fi
   candidate=${candidate#*$'\t'}
   printf '%s' "${candidate%%$'\t'*}"
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
-_fm_decision_drop() {  # <open-set> <key>
+_fm_decision_drop_into() {  # <open-set> <key>; sets _FM_CLASSIFY_OPEN
   local set=$1 key=$2 line out=''
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -443,7 +501,13 @@ _fm_decision_drop() {  # <open-set> <key>
   done <<EOF
 $set
 EOF
-  printf '%s' "$out"
+  # Match command-substitution capture: callers relied on the old
+  # `x=$(_fm_decision_drop ...)` stripping the trailing newline.
+  _FM_CLASSIFY_OPEN=${out%$'\n'}
+}
+_fm_decision_drop() {  # <open-set> <key>
+  _fm_decision_drop_into "$1" "$2"
+  printf '%s' "$_FM_CLASSIFY_OPEN"
 }
 # Fold ONE status line into an existing "<key>\t<verb>\t<note>\n"-per-line open
 # set, applying the same needs-decision/blocked-opens, resolved/captain-held-closes
@@ -488,32 +552,45 @@ _fm_decision_key_transition_allowed() {  # <key> <note>
   return 0
 }
 
-_fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb>
+_fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held-verb>; sets _FM_CLASSIFY_FOLD
   local open=$1 line=$2 resolve=$3 held=$4 verb key note
   # Use a case glob so Bash 3.2 does not run its slow global bracket-class
   # substitution for every status line. This keeps the same whitespace-only
   # verdict without building a stripped copy.
   case "$line" in
     *[![:space:]]*) ;;
-    *) printf '%s' "$open"; return 0 ;;
+    *) _FM_CLASSIFY_FOLD=$open; return 0 ;;
   esac
-  verb=$(status_line_verb "$line")
-  key=$(_fm_decision_key "$line") || { printf '%s' "$open"; return 0; }
-  _fm_decision_key_transition_allowed "$key" "$(status_line_note "$line")" \
-    || { printf '%s' "$open"; return 0; }
+  # No command substitutions on this per-line path: each "$(...)" forks a
+  # subshell, and the whole-file fold over a long status log paid tens of
+  # thousands of them. The "_into" helpers compute the same values in-process.
+  status_line_verb_into "$line"
+  verb=$_FM_CLASSIFY_VERB
+  _fm_decision_key_candidate_into "$line" || { _FM_CLASSIFY_FOLD=$open; return 0; }
+  key=${_FM_CLASSIFY_KEY_CANDIDATE#*$'\t'}
+  key=${key%%$'\t'*}
+  status_line_note_into "$line" "$_FM_CLASSIFY_KEY_CANDIDATE"
+  note=$_FM_CLASSIFY_NOTE
+  _fm_decision_key_transition_allowed "$key" "$note" \
+    || { _FM_CLASSIFY_FOLD=$open; return 0; }
   case "$verb" in
     needs-decision|blocked)
-      note=$(status_line_note "$line")
-      open=$(_fm_decision_drop "$open" "$key")
+      _fm_decision_drop_into "$open" "$key"
+      open=$_FM_CLASSIFY_OPEN
       [ -n "$open" ] && open="${open}"$'\n'
       open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
       ;;
     "$resolve"|"$held")
-      open=$(_fm_decision_drop "$open" "$key")
+      _fm_decision_drop_into "$open" "$key"
+      open=$_FM_CLASSIFY_OPEN
       [ -n "$open" ] && open="${open}"$'\n'
       ;;
   esac
-  printf '%s' "$open"
+  _FM_CLASSIFY_FOLD=${open%$'\n'}
+}
+_fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb>
+  _fm_decision_fold_line_into "$@"
+  printf '%s' "$_FM_CLASSIFY_FOLD"
 }
 
 # Fold the WHOLE status stream into the set of decisions still open. Prints one
@@ -534,7 +611,8 @@ status_open_decisions() {  # <status-file>
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
-    open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held")
+    _fm_decision_fold_line_into "$open" "$line" "$resolve" "$held"
+    open=$_FM_CLASSIFY_FOLD
   done < "$f"
   printf '%s' "$open"
 }
@@ -760,7 +838,8 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
     resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
     held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
     while IFS= read -r line || [ -n "$line" ]; do
-      open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held")
+      _fm_decision_fold_line_into "$open" "$line" "$resolve" "$held"
+      open=$_FM_CLASSIFY_FOLD
     done < "$chunk_file"
     rm -f "$chunk_file"
     offset=$size
@@ -1129,7 +1208,8 @@ status_new_lines_since_cursor() {  # <status-file> [<captured-end-offset>]
 status_line_is_unread_surface() {  # <status-line>
   local line=$1 verb key note resolve held prefix
   [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
+  status_line_verb_into "$line"
+  verb=$_FM_CLASSIFY_VERB
   [ "$verb" = note ] && return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
@@ -1137,8 +1217,11 @@ status_line_is_unread_surface() {  # <status-line>
     "$resolve"|"$held") ;;
     *) return 1 ;;
   esac
-  key=$(_fm_decision_key "$line") || return 1
-  note=$(status_line_note "$line")
+  _fm_decision_key_candidate_into "$line" || return 1
+  key=${_FM_CLASSIFY_KEY_CANDIDATE#*$'\t'}
+  key=${key%%$'\t'*}
+  status_line_note_into "$line" "$_FM_CLASSIFY_KEY_CANDIDATE"
+  note=$_FM_CLASSIFY_NOTE
   for prefix in ${FM_CLASSIFY_RESERVED_KEY_PREFIXES:-$FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT}; do
     case "$key" in
       "$prefix"*)
@@ -1212,17 +1295,23 @@ _fm_status_open_activities_stream() {
       *[![:space:]]*) ;;
       *) continue ;;
     esac
-    verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
+    status_line_verb_into "$line"
+    verb=$_FM_CLASSIFY_VERB
+    _fm_decision_key_candidate_into "$line" || continue
+    key=${_FM_CLASSIFY_KEY_CANDIDATE#*$'\t'}
+    key=${key%%$'\t'*}
     case "$verb" in
       working|"$pause")
-        note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
+        status_line_note_into "$line" "$_FM_CLASSIFY_KEY_CANDIDATE"
+        note=$_FM_CLASSIFY_NOTE
+        _fm_decision_drop_into "$open" "$key"
+        open=$_FM_CLASSIFY_OPEN
         [ -n "$open" ] && open="${open}"$'\n'
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       done|failed|needs-decision|blocked|"$resolve"|"$held")
-        open=$(_fm_decision_drop "$open" "$key")
+        _fm_decision_drop_into "$open" "$key"
+        open=$_FM_CLASSIFY_OPEN
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
     esac
