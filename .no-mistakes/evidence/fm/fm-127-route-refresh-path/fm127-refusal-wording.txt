@@ -1,0 +1,43 @@
+================================================================
+ #127 criteria 2, 3 and 6 -- what the captain is told, and why
+ Both cases end in state=unknown and result=deferred.
+ Only the explanation differs, which is the whole point.
+================================================================
+
+----------------------------------------------------------------
+ CASE A: the probe tool is genuinely missing from PATH.
+         A broken check, NOT a provider verdict.
+----------------------------------------------------------------
+  $ env -i PATH=/usr/bin:/bin  fm-route.sh refresh
+    refreshed generation=1
+
+  $ fm-route.sh status --route claude
+    route=claude state=unknown manual_disabled=false reason="check-unavailable:quota-axi is not on PATH; the health check could not run" observed_at=2026-09-18T21:13:35Z
+
+  $ fm-route.sh acquire
+    {
+      "result": "deferred",
+      "reason": "no route proven eligible; the health check could not run for at least one candidate (a probe tool is missing from PATH, not a provider verdict)",
+      "generation": 1
+    }
+
+  -> state is still 'unknown'. Eligibility was NOT widened.
+  -> The reason names the real cause, so nobody hunts a healthy quota.
+
+----------------------------------------------------------------
+ CASE B: the tool RAN. The evidence was just inconclusive.
+         The safety property that must NOT change.
+----------------------------------------------------------------
+  (store seeded with real-but-inconclusive telemetry, no missing-tool tag)
+
+  $ fm-route.sh status --route claude
+    route=claude state=unknown manual_disabled=false reason="quota-axi returned no claude provider report" observed_at=2026-09-18T00:00:00Z
+
+  $ fm-route.sh acquire
+    {
+      "result": "deferred",
+      "reason": "no route proven eligible; at least one candidate has unknown telemetry",
+      "generation": 1
+    }
+
+  -> Original generic wording, verbatim. Still deferred, never eligible.

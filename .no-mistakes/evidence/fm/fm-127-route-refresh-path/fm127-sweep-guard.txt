@@ -1,0 +1,30 @@
+================================================================
+ Sweep safety guard: the sweep only runs when the directory it
+ checks really IS the launchd agents directory.
+ A registered job 'com.firstmate.route-refresh.livefleet01'
+ stands in for the live fleet. It must never be removed by a
+ mistargeted sweep.
+================================================================
+
+--- default spelling (the normal install) ---
+  LAUNCH_AGENTS_DIR = /tmp/fm127-demo/guard/fakehome/Library/LaunchAgents
+    route-refresh install: unloading orphaned job com.firstmate.route-refresh.livefleet01 (no plist at /tmp/fm127-demo/guard/fakehome/Library/LaunchAgents/com.firstmate.route-refresh.livefleet01.plist)
+    removed: com.firstmate.route-refresh.livefleet01 
+
+--- same directory, trailing slash ---
+  LAUNCH_AGENTS_DIR = /tmp/fm127-demo/guard/fakehome/Library/LaunchAgents/
+    route-refresh install: unloading orphaned job com.firstmate.route-refresh.livefleet01 (no plist at /tmp/fm127-demo/guard/fakehome/Library/LaunchAgents//com.firstmate.route-refresh.livefleet01.plist)
+    removed: com.firstmate.route-refresh.livefleet01 
+
+--- same directory, doubled separator ---
+  LAUNCH_AGENTS_DIR = /tmp/fm127-demo/guard/fakehome/Library//LaunchAgents
+    route-refresh install: unloading orphaned job com.firstmate.route-refresh.livefleet01 (no plist at /tmp/fm127-demo/guard/fakehome/Library//LaunchAgents/com.firstmate.route-refresh.livefleet01.plist)
+    removed: com.firstmate.route-refresh.livefleet01 
+
+--- a DIFFERENT directory (must refuse to sweep) ---
+  LAUNCH_AGENTS_DIR = /tmp/fm127-demo/guard/elsewhere
+    route-refresh install: skipping the orphaned-job sweep: /tmp/fm127-demo/guard/elsewhere is not the launchd agents directory (/tmp/fm127-demo/guard/fakehome/Library/LaunchAgents), so a registered job there cannot be judged orphaned
+    removed: (nothing)
+
+ -> Every spelling of the real directory sweeps the orphan.
+ -> A different directory refuses out loud and removes nothing.

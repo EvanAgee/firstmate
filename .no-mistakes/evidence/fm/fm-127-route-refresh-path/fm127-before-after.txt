@@ -1,0 +1,50 @@
+================================================================
+ firstmate issue #127 -- scheduled route refresh under launchd
+================================================================
+
+ Setup, identical on both sides:
+   * quota-axi is HEALTHY the whole time (reports 42% remaining).
+   * It is installed at /private/tmp/fm127-demo/nvm-like/bin,
+     standing in for a real ~/.nvm/versions/node/*/bin location.
+   * launchd runs the job with its own minimal built-in PATH,
+     which never includes that directory.
+   * launchctl is faked; the real machine's launchd is untouched.
+
+----------------------------------------------------------------
+ BEFORE   commit 719fa124  (the bug)
+----------------------------------------------------------------
+  plist EnvironmentVariables.PATH  -> <ABSENT: plist sets no PATH>
+  scheduled run uses PATH          -> /usr/bin:/bin:/usr/sbin:/sbin
+
+  $ fm-route.sh refresh      (as launchd runs it: env -i)
+    refreshed generation=1
+
+  $ fm-route.sh status --route claude
+    route=claude state=unknown manual_disabled=false reason="quota-axi --provider claude failed" observed_at=2026-09-18T21:12:55Z
+
+  $ fm-route.sh acquire   (what dispatch tells the captain)
+    {
+      "result": "deferred",
+      "reason": "no route proven eligible; at least one candidate has unknown telemetry",
+      "generation": 1
+    }
+
+----------------------------------------------------------------
+ AFTER    commit d0fd3b63  (the fix)
+----------------------------------------------------------------
+  plist EnvironmentVariables.PATH  -> /private/tmp/fm127-demo/nvm-like/bin:/usr/bin:/bin:/usr/sbin:/sbin
+  scheduled run uses PATH          -> /private/tmp/fm127-demo/nvm-like/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+  $ fm-route.sh refresh      (as launchd runs it: env -i)
+    refreshed generation=1
+
+  $ fm-route.sh status --route claude
+    route=claude state=eligible manual_disabled=false reason="claude effective remaining 42% for scope all_models" observed_at=2026-09-18T00:00:00.000Z
+
+  $ fm-route.sh acquire   (what dispatch tells the captain)
+    {
+      "result": "selected",
+      "route_id": "claude",
+      "reason": "fewest-pending",
+      "generation": 1
+    }

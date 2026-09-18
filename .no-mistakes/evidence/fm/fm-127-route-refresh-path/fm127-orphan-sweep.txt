@@ -1,0 +1,25 @@
+================================================================
+ #127 criterion 4 -- the orphaned launchd job is unloaded
+================================================================
+
+ launchd registry before install (from the faked launchctl):
+   com.firstmate.route-refresh.b76b13f6      <- NO plist on disk (orphan)
+   com.firstmate.route-refresh.healthy0001   <- plist present (healthy)
+   com.apple.somethingelse                   <- not ours, must be ignored
+
+ $ fm-route-refresh-install.sh install --yes
+   route-refresh install:
+     label:  com.firstmate.route-refresh.40e08ac4
+     plist:  /tmp/fm127-demo/orphan/fakehome/Library/LaunchAgents/com.firstmate.route-refresh.40e08ac4.plist
+     action: write /tmp/fm127-demo/orphan/fakehome/Library/LaunchAgents/com.firstmate.route-refresh.40e08ac4.plist and load it into launchd now (refresh every 300s; refresh only reads quota/health evidence and writes state/route.json, never launches or stops anything); also unload any orphaned route-refresh job from a relocated home whose plist no longer exists
+   route-refresh install: unloading orphaned job com.firstmate.route-refresh.b76b13f6 (no plist at /tmp/fm127-demo/orphan/fakehome/Library/LaunchAgents/com.firstmate.route-refresh.b76b13f6.plist)
+   route-refresh install: WARNING: could not resolve these probe tools on this run PATH: teamclaude teamcodex omp
+   route-refresh install: the scheduled refresh cannot run their health checks, so those routes will read unknown (firstmate issue #127).
+   route-refresh install: install again from a shell where each tool resolves to a real path.
+   installed: /tmp/fm127-demo/orphan/fakehome/Library/LaunchAgents/com.firstmate.route-refresh.40e08ac4.plist (every 300s; refresh-only: reads quota/health evidence and writes state/route.json)
+
+ Labels the installer actually passed to 'launchctl remove':
+   com.firstmate.route-refresh.b76b13f6
+
+ -> Only the orphan was removed.
+ -> The healthy job and the unrelated Apple job were left alone.
