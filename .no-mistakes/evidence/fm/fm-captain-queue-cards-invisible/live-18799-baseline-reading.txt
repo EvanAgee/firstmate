@@ -1,0 +1,9 @@
+=== the captain's real live API on port 18799 (read-only observation) ===
+note: that server process is running the code at /Users/evanagee/Sites/firstmate, which is a DIFFERENT checkout from this gate worktree.
+its running code predates this fix unless it was restarted, so treat it as the baseline reading only.
+
+stored open cards in /Users/evanagee/Sites/firstmate/data/captain-queue.json:
+10
+
+served by GET /captain-queue on 18799:
+9

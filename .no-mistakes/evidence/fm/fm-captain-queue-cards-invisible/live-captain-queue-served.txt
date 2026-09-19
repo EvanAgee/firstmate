@@ -1,0 +1,20 @@
+=== stored open cards in data/captain-queue.json ===
+path: /tmp/fm-live-proof.a8hS7E/home/data/captain-queue.json
+16
+
+=== GET /captain-queue (real HTTP, curl) ===
+{
+  "served_items": 14,
+  "first_option": "Take the new route (recommended: keeps the evidence safe)",
+  "recommended": "Take the new route (recommended: keeps the evidence safe)"
+}
+
+=== stored vs served ===
+stored open cards: 16
+served cards:      14
+
+=== state/.api.log: refused cards are named, not silent ===
+captain-queue: card not served: one-choice-card: card options must be at least two named choices
+captain-queue: card not served: no-choice-card: card options must be at least two named choices
+captain-queue: card not served: one-choice-card: card options must be at least two named choices
+captain-queue: card not served: no-choice-card: card options must be at least two named choices

@@ -1,0 +1,18 @@
+=== bin/fm-captain-queue.sh add: bare "(recommended)" still accepted ===
+added: bare-mark-card
+exit=0
+
+=== add: reason-carrying "(recommended: ...)" accepted ===
+added: reason-mark-card
+exit=0
+
+=== add: card with NO recommended mark is refused at add time, reason named ===
+fm-captain-queue: add refused the card: one option must be marked recommended
+exit=2  (2 = refused)
+
+=== add: card with only one named choice is refused at add time ===
+fm-captain-queue: add refused the card: card options must be at least two named choices
+exit=2  (2 = refused)
+
+=== stored queue: only the two servable cards got written ===
+[{"id":"bare-mark-card","options":["Push it live (recommended)","Let me look first"]},{"id":"reason-mark-card","options":["Adopt a vault","Stay with trim (recommended: keeps the evidence safe)"]}]

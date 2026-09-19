@@ -1,0 +1,2 @@
+captain-queue: card not served: no-choice-card: card options must be at least two named choices
+captain-queue: card not served: one-choice-card: card options must be at least two named choices

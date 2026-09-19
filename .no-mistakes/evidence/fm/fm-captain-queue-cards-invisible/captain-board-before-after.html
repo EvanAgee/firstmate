@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8"><title>Captain decision cards on the fleet board</title>
+<style>
+:root{color-scheme:light}
+body{margin:0;padding:32px;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#eef1f6;color:#16202e}
+h1{font-size:22px;margin:0 0 4px}
+.sub{margin:0 0 28px;color:#5b6879;max-width:120ch}
+.wrap{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+.board{background:#fff;border-radius:14px;padding:20px;box-shadow:0 1px 3px rgba(16,32,52,.12)}
+.board header{border-bottom:1px solid #e3e8ef;padding-bottom:12px;margin-bottom:16px}
+.board h2{font-size:15px;margin:0 0 6px;text-transform:uppercase;letter-spacing:.06em;color:#5b6879}
+.before h2{color:#b4232a}.after h2{color:#1a7f47}
+.count{margin:0;font-size:13px;color:#5b6879}
+.good{color:#1a7f47}.bad{color:#b4232a}
+.card{border:1px solid #e3e8ef;border-radius:10px;padding:14px;margin-bottom:12px}
+.card h3{font-size:14px;margin:0 0 2px}
+.cid{margin:0 0 10px;font:11px/1.4 ui-monospace,Menlo,monospace;color:#8593a6}
+.card ul{margin:0;padding:0;list-style:none}
+.card li{border:1px solid #e3e8ef;border-radius:7px;padding:7px 10px;margin-bottom:6px;font-size:13px}
+.card li.rec{border-color:#1a7f47;background:#eaf7f0;font-weight:600}
+.empty{border:2px dashed #e3b1b4;border-radius:10px;padding:44px 20px;text-align:center;color:#b4232a;font-size:14px}
+.empty span{display:block;margin-top:6px;font-size:12px;color:#8593a6}
+.log{margin-top:24px;background:#16202e;color:#d6e2f0;border-radius:12px;padding:18px}
+.log h2{font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.06em;color:#8fa6c4}
+.log pre{margin:0;font:12px/1.7 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+.note{margin:10px 0 0;font-size:12px;color:#8fa6c4}
+</style>
+<h1>Captain decision cards on the fleet board</h1>
+<p class="sub">Live <code>GET /captain-queue</code> responses from a real running firstmate API, with the same 16 stored cards in <code>data/captain-queue.json</code> both times. 14 carry a recommended mark with a trailing reason; 2 genuinely have fewer than two named choices.</p>
+<div class="wrap">
+<section class="board before"><header><h2>Before the fix &mdash; base commit 2b36faaf</h2>
+<p class="count">stored open cards: <b>16</b> &nbsp;|&nbsp; served on the board: <b class="bad">0</b></p></header>
+<div class="empty">No decisions waiting.<span>(and nothing said why)</span></div></section>
+<section class="board after"><header><h2>After the fix &mdash; commit a0949e99</h2>
+<p class="count">stored open cards: <b>16</b> &nbsp;|&nbsp; served on the board: <b class="good">14</b></p></header>
+<article class="card"><h3>Decision 1: which way should the fleet go?</h3><p class="cid">reason-card-1</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 2: which way should the fleet go?</h3><p class="cid">reason-card-2</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 3: which way should the fleet go?</h3><p class="cid">reason-card-3</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 4: which way should the fleet go?</h3><p class="cid">reason-card-4</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 5: which way should the fleet go?</h3><p class="cid">reason-card-5</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 6: which way should the fleet go?</h3><p class="cid">reason-card-6</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 7: which way should the fleet go?</h3><p class="cid">reason-card-7</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 8: which way should the fleet go?</h3><p class="cid">reason-card-8</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 9: which way should the fleet go?</h3><p class="cid">reason-card-9</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 10: which way should the fleet go?</h3><p class="cid">reason-card-10</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 11: which way should the fleet go?</h3><p class="cid">reason-card-11</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 12: which way should the fleet go?</h3><p class="cid">reason-card-12</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 13: which way should the fleet go?</h3><p class="cid">reason-card-13</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article><article class="card"><h3>Decision 14: which way should the fleet go?</h3><p class="cid">reason-card-14</p><ul><li class="rec">Take the new route (recommended: keeps the evidence safe)</li><li>Hold the line</li></ul></article></section>
+</div>
+<div class="log"><h2>After the fix: <code>state/.api.log</code> names every refused card</h2><pre>captain-queue: card not served: no-choice-card: card options must be at least two named choices
+captain-queue: card not served: one-choice-card: card options must be at least two named choices</pre>
+<p class="note">Before the fix this log had no such line: all 16 cards were dropped without a trace, so an empty board could not be told apart from a board with nothing on it.</p></div>

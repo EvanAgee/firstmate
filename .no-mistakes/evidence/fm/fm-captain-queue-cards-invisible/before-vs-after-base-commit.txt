@@ -1,0 +1,5 @@
+=== BEFORE the fix (base commit 2b36faaf), same 16 stored cards ===
+stored open cards: 16
+served cards:      0
+api log rejection lines: 0
+0   <- silence: the board showed nothing and said nothing

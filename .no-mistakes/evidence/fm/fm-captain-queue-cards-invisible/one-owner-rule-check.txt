@@ -1,0 +1,5 @@
+=== criterion 5: one owner. Break the rule in the reader module only; the writer must follow it. ===
+94:const RECOMMENDED_MARK = /\(\s*STRONGLY-RECOMMENDED\b[^)]*\)/i;
+fm-captain-queue: add refused the card: one option must be marked recommended
+writer exit=2
+RESULT: the writer changed behavior from the reader module alone, so it holds no separate copy of the rule.

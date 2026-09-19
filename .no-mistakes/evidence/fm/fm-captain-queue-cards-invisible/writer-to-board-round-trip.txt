@@ -1,0 +1,15 @@
+=== round trip: writer-added cards served by GET /captain-queue ===
+stored open: 2
+served:      2
+[
+  {
+    "id": "bare-mark-card",
+    "question": "Push the dashboard live?",
+    "recommended": "Push it live (recommended)"
+  },
+  {
+    "id": "reason-mark-card",
+    "question": "Keep the current memory plan?",
+    "recommended": "Stay with trim (recommended: keeps the evidence safe)"
+  }
+]

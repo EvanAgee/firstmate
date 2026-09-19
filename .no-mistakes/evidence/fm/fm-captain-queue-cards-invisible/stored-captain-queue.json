@@ -1,0 +1,192 @@
+{
+  "records": [
+    {
+      "id": "reason-card-1",
+      "num": 1,
+      "question": "Decision 1: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-2",
+      "num": 2,
+      "question": "Decision 2: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-3",
+      "num": 3,
+      "question": "Decision 3: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-4",
+      "num": 4,
+      "question": "Decision 4: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-5",
+      "num": 5,
+      "question": "Decision 5: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-6",
+      "num": 6,
+      "question": "Decision 6: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-7",
+      "num": 7,
+      "question": "Decision 7: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-8",
+      "num": 8,
+      "question": "Decision 8: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-9",
+      "num": 9,
+      "question": "Decision 9: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-10",
+      "num": 10,
+      "question": "Decision 10: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-11",
+      "num": 11,
+      "question": "Decision 11: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-12",
+      "num": 12,
+      "question": "Decision 12: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-13",
+      "num": 13,
+      "question": "Decision 13: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "reason-card-14",
+      "num": 14,
+      "question": "Decision 14: which way should the fleet go?",
+      "options": [
+        "Hold the line",
+        "Take the new route (recommended: keeps the evidence safe)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "one-choice-card",
+      "num": 15,
+      "question": "Ship it?",
+      "options": [
+        "Ship it (recommended)"
+      ],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    },
+    {
+      "id": "no-choice-card",
+      "num": 16,
+      "question": "Now what?",
+      "options": [],
+      "state": "open",
+      "asked_at": "2026-09-18T12:00:00Z",
+      "generation": 1
+    }
+  ]
+}
