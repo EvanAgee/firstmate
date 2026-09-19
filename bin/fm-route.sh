@@ -36,6 +36,8 @@
 #     | fm-route.sh acquire
 #   echo '{"assignment_id":"<id>","outcome":"success","profile":{"adapter":"codex","model":"gpt-5","effort":"high"}}' \
 #     | fm-route.sh finish
+#   echo '{"assignment_id":"<id>","owner":{"identity":"<id>"}}' \
+#     | fm-route.sh release
 #   fm-route.sh refresh
 #   fm-route.sh status [--route <id>]
 #   fm-route.sh disable --route <id>
@@ -102,6 +104,20 @@
 #
 # finish response: {"result":"closed","assignment_id":"<id>"}, idempotent (a
 # second finish on an already-closed assignment succeeds with no effect).
+#
+# release request fields (both required):
+#   assignment_id   the id to give back.
+#   owner.identity  must match the recorded owner; a foreign id is refused.
+# release DELETES a pending/running/deferred assignment record and leaves
+# every route untouched: it reports a refusal that happened BEFORE any
+# launch attempt, which is not evidence about the route the way a finish
+# outcome is (only a real launch attempt is evidence about a route). The
+# freed id's next acquire is simply a fresh attempt. A closed record is
+# history and is never released; a missing record is already released.
+# release response, one of:
+#   {"result":"released","assignment_id":"<id>"}      (record deleted, or already gone)
+#   {"result":"already-closed","assignment_id":"<id>"} (closed history is never released)
+#   {"result":"error","error":"..."}
 #
 # refresh re-reads non-inference health/quota evidence for every route in
 # the canonical catalog and atomically republishes state/route.json's routes
@@ -907,6 +923,46 @@ cmd_acquire() {
     '{result:"selected", route_id:$route, reason:"fewest-pending", generation:$gen}'
 }
 
+cmd_release() {
+  local req=$1
+  local assignment owner_identity doc existing
+  assignment=$(fm_route_req_string "$req" '.assignment_id') \
+    || { fm_route_json_error "assignment_id is required, as a non-empty string"; return 1; }
+  owner_identity=$(fm_route_req_string "$req" '.owner.identity') \
+    || { fm_route_json_error "owner.identity is required, as a non-empty string"; return 1; }
+
+  fm_lock_acquire_wait "$ROUTE_LOCK"
+  doc=$(fm_route_read) || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_json_error "$FM_ROUTE_CORRUPT_MESSAGE"
+    return 1
+  }
+  existing=$(jq -c --arg a "$assignment" '.assignments[$a] // empty' <<<"$doc")
+  if [ -z "$existing" ]; then
+    fm_lock_release "$ROUTE_LOCK"
+    jq -cn --arg a "$assignment" '{result:"released", assignment_id:$a}'
+    return 0
+  fi
+  if [ "$(jq -r '.owner' <<<"$existing")" != "$owner_identity" ]; then
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_json_error "assignment $assignment is owned by a different owner"
+    return 1
+  fi
+  if [ "$(jq -r '.status' <<<"$existing")" = closed ]; then
+    fm_lock_release "$ROUTE_LOCK"
+    jq -cn --arg a "$assignment" '{result:"already-closed", assignment_id:$a}'
+    return 0
+  fi
+  doc=$(jq -c --arg a "$assignment" 'del(.assignments[$a])' <<<"$doc")
+  fm_route_write "$doc" || {
+    fm_lock_release "$ROUTE_LOCK"
+    fm_route_json_error "$FM_ROUTE_CORRUPT_MESSAGE"
+    return 1
+  }
+  fm_lock_release "$ROUTE_LOCK"
+  jq -cn --arg a "$assignment" '{result:"released", assignment_id:$a}'
+}
+
 cmd_finish() {
   local req=$1
   local assignment outcome profile doc existing route
@@ -1064,6 +1120,12 @@ case "$SUBCOMMAND" in
     REQUEST_BODY=$(cat) || { echo "error: could not read finish request from stdin" >&2; exit 2; }
     REQUEST_JSON=$(jq -c '.' <<<"$REQUEST_BODY" 2>/dev/null) || { fm_route_json_error "request body is not valid JSON"; exit 1; }
     RESULT=$(cmd_finish "$REQUEST_JSON") || { printf '%s\n' "$RESULT"; exit 1; }
+    printf '%s\n' "$RESULT"
+    ;;
+  release)
+    REQUEST_BODY=$(cat) || { echo "error: could not read release request from stdin" >&2; exit 2; }
+    REQUEST_JSON=$(jq -c '.' <<<"$REQUEST_BODY" 2>/dev/null) || { fm_route_json_error "request body is not valid JSON"; exit 1; }
+    RESULT=$(cmd_release "$REQUEST_JSON") || { printf '%s\n' "$RESULT"; exit 1; }
     printf '%s\n' "$RESULT"
     ;;
   *)

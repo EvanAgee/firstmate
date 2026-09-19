@@ -835,6 +835,9 @@ ROUTE_ASSIGNMENT_ACTIVE=0
 ROUTE_ASSIGNMENT_ID=
 ROUTE_ACQUIRED=
 ROUTE_FINISHED=0
+# Set once the launch command has been sent to the endpoint for execution:
+# only a failure after that point is evidence about the route.
+AGENT_LAUNCH_SENT=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -1011,15 +1014,26 @@ spawn_abort_cleanup() {
   # Provider-availability: close the acquired assignment exactly once, on
   # every exit path (success or failure), so a failed launch releases its
   # slot instead of leaking it (report: "Failed launches release once").
+  # launch-failed is finish evidence against the route, so it is recorded
+  # only when the harness process was actually started. A failure before
+  # that point - a bad argument, a guard refusal, a local infra error - is
+  # evidence about the request, and the claim is RELEASED (fm-route.sh
+  # release owns that contract): the route keeps its recorded state and the
+  # task id is freed to retry immediately instead of being stuck behind a
+  # closed record. A deferral is left untouched (already re-evaluable).
   if [ "$ROUTE_ASSIGNMENT_ACTIVE" = 1 ] && [ "$ROUTE_FINISHED" = 0 ]; then
     ROUTE_FINISHED=1
     if [ "$status" -eq 0 ]; then
       jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" --arg adapter "$HARNESS" --arg model "${MODEL:-default}" --arg effort "${EFFORT:-default}" \
         '{assignment_id:$a, outcome:"success", profile:{adapter:$adapter, model:$model, effort:$effort}}' \
         | "$SCRIPT_DIR/fm-route.sh" finish >/dev/null 2>&1 || true
-    else
+    elif [ "$AGENT_LAUNCH_SENT" = 1 ]; then
       jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" '{assignment_id:$a, outcome:"launch-failed"}' \
         | "$SCRIPT_DIR/fm-route.sh" finish >/dev/null 2>&1 || true
+    else
+      jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" --arg owner "$ID" \
+        '{assignment_id:$a, owner:{identity:$owner}}' \
+        | "$SCRIPT_DIR/fm-route.sh" release >/dev/null 2>&1 || true
     fi
   fi
   return "$status"
@@ -1330,6 +1344,60 @@ else
   ARG3=${POS[2]:-}
 fi
 [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
+
+resolve_project_dir_arg() {
+  local path=$1
+  case "$path" in
+    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
+}
+
+delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
+  case "$1" in
+    no-mistakes) echo 3 ;;
+    direct-PR) echo 2 ;;
+    local-only) echo 1 ;;
+    *) echo 0 ;;
+  esac
+}
+
+# Validate every own-argument requirement of the spawn - the project
+# directory, the brief, and their delivery agreement - BEFORE any route is
+# claimed by the provider-availability admission below. A refusal here is
+# evidence about the request, and must not spend a route assignment on a
+# launch that never reaches a harness process.
+if [ "$KIND" != secondmate ]; then
+  PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  WT=""
+  BRIEF="$DATA/$ID/brief.md"
+  [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
+
+  # Brief/spawn delivery agreement, checked before any endpoint exists.
+  # fm-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
+  # line. A spawn that disagrees would launch a worker whose instructions and whose
+  # recorded task delivery differ, which is the exact drift this contract prevents.
+  if [ "$KIND" = ship ]; then
+    PROJ_NAME=$(basename "$PROJ_ABS")
+    BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+    if [ -z "$BRIEF_MODE" ]; then
+      echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
+    elif [ "$BRIEF_MODE" != "$MODE" ]; then
+      echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
+      exit 1
+    fi
+    # The registry holds the captain's standing posture, so dropping below it is
+    # allowed (a current explicit captain instruction wins) but never silent. An
+    # unregistered project resolves to the same no-mistakes standing default, which
+    # is why the notice names the standing posture rather than the registry line. A
+    # conditional policy is excluded: both of its legs are legitimate classifications.
+    STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
+    if [ -n "$STANDING_MODE" ] && [ "$STANDING_MODE" != no-mistakes-prod-only ] \
+       && [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
+      echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
+    fi
+  fi
+fi
 
 raw_launch_harness() {
   local launch=$1 word
@@ -2133,14 +2201,6 @@ resolved_existing_dir() {
   cd "$path" && pwd -P
 }
 
-resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-    *) printf '%s\n' "$path" ;;
-  esac
-}
-
 path_is_ancestor_of() {
   local ancestor=$1 path=$2
   [ -n "$ancestor" ] || return 1
@@ -2414,44 +2474,15 @@ if [ "$KIND" = secondmate ]; then
     BRIEF="$DATA/$ID/brief.md"
   fi
 else
-  PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
   WT=""
-  BRIEF="$DATA/$ID/brief.md"
 fi
-[ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
-
-delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
-  case "$1" in
-    no-mistakes) echo 3 ;;
-    direct-PR) echo 2 ;;
-    local-only) echo 1 ;;
-    *) echo 0 ;;
-  esac
-}
-
-# Brief/spawn delivery agreement, checked before any endpoint exists.
-# fm-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
-# line. A spawn that disagrees would launch a worker whose instructions and whose
-# recorded task delivery differ, which is the exact drift this contract prevents.
-if [ "$KIND" = ship ]; then
-  PROJ_NAME=$(basename "$PROJ_ABS")
-  BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  if [ -z "$BRIEF_MODE" ]; then
-    echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
-  elif [ "$BRIEF_MODE" != "$MODE" ]; then
-    echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
-    exit 1
-  fi
-  # The registry holds the captain's standing posture, so dropping below it is
-  # allowed (a current explicit captain instruction wins) but never silent. An
-  # unregistered project resolves to the same no-mistakes standing default, which
-  # is why the notice names the standing posture rather than the registry line. A
-  # conditional policy is excluded: both of its legs are legitimate classifications.
-  STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
-  if [ -n "$STANDING_MODE" ] && [ "$STANDING_MODE" != no-mistakes-prod-only ] \
-     && [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
-    echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
-  fi
+# A secondmate scoped its own brief above (its charter or its brief file);
+# ship/scout brief existence, project resolution, and the brief/spawn
+# delivery agreement all ran before the route claim near the top of the
+# script, so a request-level refusal can never spend or close a route
+# assignment.
+if [ "$KIND" = secondmate ]; then
+  [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
 fi
 
 # Duplicate-issue guardrail (bin/fm-issue-guard-lib.sh owns the mechanics).
@@ -3867,6 +3898,10 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$LAUNCH_TARGET" Enter
+# The launch command has been delivered to the endpoint for execution.
+# From here on a failure is evidence about the route itself, so the exit
+# trap records launch-failed instead of releasing the claim.
+AGENT_LAUNCH_SENT=1
 if [ "$HARNESS" = omp ]; then
   OMP_ACK_INTERVAL=${FM_OMP_LAUNCH_ACK_INTERVAL:-0.5}
   OMP_ACKED=0

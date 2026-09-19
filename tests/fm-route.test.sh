@@ -48,6 +48,13 @@ finish() {  # <home> <assignment> <outcome> [profile-json]
     | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" finish
 }
 
+release() {  # <home> <assignment> <owner>
+  local home=$1 assignment=$2 owner=$3
+  jq -cn --arg a "$assignment" --arg owner "$owner" \
+    '{assignment_id:$a, owner:{identity:$owner}}' \
+    | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" release
+}
+
 result_field() {  # <json> <field>
   jq -r --arg f "$2" '.[$f] // empty' <<<"$1"
 }
@@ -577,6 +584,94 @@ test_closed_assignment_never_reauthorizes() {
   [ -z "$(result_field "$out" route_id)" ] \
     || fail "a closed echo must never authorize a launch onto an exhausted route: $out"
   pass "a closed assignment answers already-closed with no route_id and never reauthorizes a launch"
+}
+
+# release is the pre-launch give-back: it deletes an open record outright -
+# no outcome, no route exclusion - so the freed id's next acquire is a fresh
+# attempt. closed history and foreign owners are out of its reach, and a
+# second release of the same id is an idempotent no-op.
+test_release_deletes_a_running_record_and_leaves_routes_untouched() {
+  local home out routes_before routes_after next
+  home=$(make_home release-running "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+  acquire "$home" a1 a1 g1 '["codex"]' >/dev/null
+  routes_before=$(jq -c '.routes' "$home/state/route.json")
+
+  out=$(release "$home" a1 a1)
+  [ "$(result_field "$out" result)" = released ] || fail "release did not release a running record: $out"
+  [ "$(jq --arg a a1 '.assignments | has($a)' "$home/state/route.json")" = false ] \
+    || fail "release did not delete the running record: $(cat "$home/state/route.json")"
+  routes_after=$(jq -c '.routes' "$home/state/route.json")
+  [ "$routes_before" = "$routes_after" ] \
+    || fail "release touched route state: $routes_before -> $routes_after"
+
+  out=$(release "$home" a1 a1)
+  [ "$(result_field "$out" result)" = released ] \
+    || fail "a second release of the same id must stay idempotent: $out"
+
+  next=$(acquire "$home" a1 a1 g2 '["codex"]')
+  [ "$(result_field "$next" result)" = selected ] \
+    || fail "a released id's next acquire must be a fresh attempt, never already-closed: $next"
+  pass "release deletes a running record, leaves routes untouched, and frees the id"
+}
+
+test_release_refuses_a_foreign_owner() {
+  local home out status
+  home=$(make_home release-foreign "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+  acquire "$home" a1 a1 g1 '["codex"]' >/dev/null
+
+  out=$(release "$home" a1 someone-else 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "release by a foreign owner must be refused: $out"
+  [ "$(result_field "$out" result)" = error ] || fail "foreign release did not answer error: $out"
+  [ "$(result_field "$out" error)" != "" ] || fail "foreign release gave no reason: $out"
+  [ "$(jq --arg a a1 '.assignments | has($a)' "$home/state/route.json")" = true ] \
+    || fail "a refused release must leave the record untouched: $(cat "$home/state/route.json")"
+  pass "release refuses a foreign owner and leaves the record untouched"
+}
+
+test_release_never_deletes_closed_history() {
+  local home out
+  home=$(make_home release-closed "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+  acquire "$home" a1 a1 g1 '["codex"]' >/dev/null
+  finish "$home" a1 success >/dev/null
+
+  out=$(release "$home" a1 a1)
+  [ "$(result_field "$out" result)" = already-closed ] \
+    || fail "release of a closed record must answer already-closed: $out"
+  [ "$(jq -r '.assignments.a1.status' "$home/state/route.json")" = closed ] \
+    || fail "release must never delete closed history: $(cat "$home/state/route.json")"
+
+  out=$(release "$home" never-existed a1)
+  [ "$(result_field "$out" result)" = released ] \
+    || fail "release of a missing id must be an idempotent no-op: $out"
+  [ "$(jq '.assignments | length' "$home/state/route.json")" = 1 ] \
+    || fail "a missing-id release must write nothing: $(cat "$home/state/route.json")"
+  pass "release never deletes closed history and is a no-op for a missing id"
+}
+
+test_release_refuses_malformed_requests_before_any_write() {
+  local home out status before after
+  home=$(make_home release-malformed "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}}'
+  before=$(cat "$home/state/route.json")
+
+  out=$(jq -cn '{assignment_id:null, owner:{identity:"a1"}}' \
+    | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" release 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a release with a null assignment_id must be refused: $out"
+  [ "$(result_field "$out" result)" = error ] || fail "malformed release did not answer error: $out"
+
+  out=$(jq -cn '{assignment_id:"a1"}' \
+    | FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" release 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a release with no owner must be refused: $out"
+
+  after=$(cat "$home/state/route.json")
+  [ "$before" = "$after" ] || fail "malformed releases must never write: $before -> $after"
+  pass "release refuses malformed requests before writing anything"
 }
 
 # state/route.json is this store's own persisted document. A corrupt one
@@ -1653,6 +1748,10 @@ test_zero_prepaid_grok_credits_not_exhaustion
 test_zero_prepaid_grok_credits_alone_is_unknown_not_exhausted
 test_idempotent_acquire_and_finish
 test_closed_assignment_never_reauthorizes
+test_release_deletes_a_running_record_and_leaves_routes_untouched
+test_release_refuses_a_foreign_owner
+test_release_never_deletes_closed_history
+test_release_refuses_malformed_requests_before_any_write
 test_corrupt_store_is_refused_and_left_intact
 test_wrongly_typed_store_is_refused_and_left_intact
 test_wrongly_typed_store_member_values_are_refused_by_every_reader

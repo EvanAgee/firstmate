@@ -125,6 +125,28 @@ Response:
 {"result":"closed","assignment_id":"aos-4213"}
 ```
 
+### `release`
+
+```sh
+echo '{
+  "assignment_id": "aos-4213",
+  "owner": {"identity": "aos-4213"}
+}' | fm-route.sh release
+```
+
+Request fields (both required): `assignment_id`, and `owner.identity` which must match the recorded owner or the call is refused with a JSON error object.
+`release` DELETES a `pending`/`running`/`deferred` assignment record and leaves every route untouched: the caller is reporting a refusal that happened before any launch attempt, which is not evidence about the route the way a `finish` outcome is (only a real launch attempt is evidence about a route, so a bad argument, a guard refusal, and a local infra failure never exclude a healthy route).
+The freed id's next `acquire` is simply a fresh attempt; `fm-spawn.sh`'s exit trap uses this so a pre-launch refusal can never permanently exclude a healthy provider, and the same task id can retry immediately instead of being stuck behind a closed record.
+An already-`closed` record is history and is never released, and a missing record is already released (idempotent).
+
+Response, one of:
+
+```json
+{"result":"released","assignment_id":"aos-4213"}
+{"result":"already-closed","assignment_id":"aos-4213"}
+{"result":"error","error":"..."}
+```
+
 ### `refresh` and `status`
 
 ```
