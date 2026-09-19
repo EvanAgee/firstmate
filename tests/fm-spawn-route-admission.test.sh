@@ -82,6 +82,28 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/pi"
+  # omp/bun fakes are the proven bytes from tests/fm-spawn-dispatch-profile.test.sh;
+  # fm-omp-capabilities.sh refuses a fake without this exact --help surface and
+  # bun-backed shebang.
+  cat > "$fakebin/omp" <<'SH'
+#!/usr/bin/env bun
+case "${1:-}" in
+  --help)
+    printf '%s\n' '--model=<value>' '--thinking=<value>' '--auto-approve' '--session-dir=<value>' '-e, --extension=<value>' '-r, --resume=<value>'
+    [ "${FM_FAKE_OMP_APPEND:-yes}" != yes ] || printf '%s\n' '--append-system-prompt=<path>'
+    ;;
+  --version) printf 'omp/17.1.8\n' ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/omp"
+  cat > "$fakebin/bun" <<'SH'
+#!/usr/bin/env bash
+script=$1
+shift
+exec bash "$script" "$@"
+SH
+  chmod +x "$fakebin/bun"
   printf '%s\n' "$fakebin"
 }
 
@@ -116,6 +138,15 @@ enable_dispatch_profile() {
   # (report: "Grok uses native Pi, not the separately billed Grok Build
   # adapter") and would resolve to an unrecognized route instead.
   printf '%s\n' '{"rules":[{"class":"builder","when":"builder work","use":[{"harness":"codex","model":"gpt-5","effort":"high"},{"harness":"pi","model":"xai/grok-4.6","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+    > "$home/config/crew-dispatch.json"
+}
+
+# omp-only pool, matching the harness whose pre-launch guards and
+# post-launch acknowledgement gate make both refusal classes observable.
+# (omp,gpt-5) maps to route id "omp" (fm_route_group_for's fallback rule).
+enable_omp_dispatch_profile() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"class":"builder","when":"builder work","use":[{"harness":"omp","model":"gpt-5","effort":"high"}],"pin":{"harness":"omp","model":"gpt-5","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
     > "$home/config/crew-dispatch.json"
 }
 
@@ -270,38 +301,200 @@ test_captain_override_bypasses_route_admission() {
   pass "a captain override bypasses provider-availability admission the same way it bypasses the enabled filter"
 }
 
-test_launch_failure_releases_route_assignment() {
-  local rec id out status route_home rec_json
-  id=$(profile_id profile-route-launchfail-z6)
-  rec=$(make_spawn_case profile-route-launchfail codex "$id")
+# A failure after the route claim but before the harness process starts is
+# not route evidence: the claim must be RELEASED (the assignment record is
+# deleted outright), so the route keeps its recorded state and the freed id
+# retries as a fresh acquire instead of hitting "already closed".
+test_post_acquire_prelaunch_failure_releases_route_claim_and_retries() {
+  local rec id out status route_home rec_json retry_out retry_status
+  id=$(profile_id profile-route-prelaunch-z6)
+  rec=$(make_spawn_case profile-route-prelaunch codex "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
-  route_home=$(make_route_home route-launchfail)
+  route_home=$(make_route_home route-prelaunch)
   cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
   seed_route_state "$route_home" \
     '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
-  # A real post-acquire launch failure fm-spawn.sh cannot see in advance:
-  # freshen_spawn_worktree_base's unconditional `git fetch origin` (called
-  # after dispatch/acquire, before any launch command is sent) fails once
-  # origin is broken, exercising the actual failure path rather than a
-  # simulated one.
-  rm -rf "$PROJ_DIR.origin.git"
 
+  mv "$PROJ_DIR.origin.git" "$PROJ_DIR.origin.git.bak"
   out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" --class builder)
   status=$?
+  mv "$PROJ_DIR.origin.git.bak" "$PROJ_DIR.origin.git"
   expect_code 1 "$status" "a broken origin fetch should fail the spawn after acquire ran"
   assert_contains "$out" "could not fetch origin for pooled worktree" \
     "spawn did not hit the expected post-acquire failure point"
 
   rec_json=$(cat "$route_home/state/route.json")
-  assert_contains "$rec_json" '"status":"closed"' "a failed launch must still close its acquired assignment"
+  assert_not_contains "$rec_json" "\"$id\"" \
+    "a pre-launch failure must release its claim, not close it"
+  assert_not_contains "$rec_json" '"launch-failed"' \
+    "a pre-launch failure must never record launch-failed"
+  assert_contains "$rec_json" '"codex":{"state":"eligible"' \
+    "a pre-launch failure must leave the route's recorded state untouched"
+
+  # The failed spawn leaked its endpoint before the harness process ever
+  # started (the window is created before the failing fetch); in the fleet
+  # the supervisor removes that dead endpoint before respawning, exactly as
+  # it always had to. What this change must guarantee is that the ROUTE
+  # layer adds no second blocker: no launch-failed exclusion and no closed
+  # record turning the same id into "already closed".
+  rm -f "$FAKEBIN_DIR/tmux.windows"
+  retry_out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  retry_status=$?
+  expect_code 0 "$retry_status" "the same task id must retry immediately after a released claim"$'\n'"$retry_out"
+  assert_contains "$retry_out" "spawned $id harness=codex" "retry did not launch"
+  rec_json=$(jq -c --arg a "$id" '.assignments[$a]' "$route_home/state/route.json")
+  assert_contains "$rec_json" '"status":"closed"' "retried spawn's assignment never closed"
+  assert_contains "$rec_json" '"outcome":"success"' "retried spawn did not record a success outcome"
+  pass "a post-acquire pre-launch failure releases its claim and the same task id retries immediately"
+}
+
+# A spawn that fails on its own arguments - a project directory that does
+# not resolve, or a --mode the brief disagrees with - must fail BEFORE any
+# route is claimed: the route store stays byte-identical, and the corrected
+# retry with the same task id launches normally.
+test_bare_project_name_refuses_before_route_claim_and_retries() {
+  local rec id out status route_home seed_copy rec_json retry_out retry_status
+  id=$(profile_id profile-route-barename-z10)
+  rec=$(make_spawn_case profile-route-barename codex "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  route_home=$(make_route_home route-barename)
+  cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+  seed_route_state "$route_home" \
+    '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
+  seed_copy="$CASE_DIR/route.seed.json"
+  cp "$route_home/state/route.json" "$seed_copy"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "not-a-project-$RUN_TOKEN" --class builder)
+  status=$?
+  expect_code 1 "$status" "a bare project name must fail the spawn"
+  assert_contains "$out" "No such file or directory" \
+    "bare-name spawn did not fail at project directory resolution"
+  cmp -s "$CASE_DIR/route.seed.json" "$route_home/state/route.json" \
+    || fail "route store changed for a spawn that failed before route admission:\n$(diff "$CASE_DIR/route.seed.json" "$route_home/state/route.json")"
+  assert_absent "$HOME_DIR/state/$id.meta" "refused spawn should not have written meta"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 0 "$status" "the corrected retry must launch under the same task id"$'\n'"$out"
+  assert_contains "$out" "spawned $id harness=codex" "corrected retry did not launch"
+  rec_json=$(jq -c --arg a "$id" '.assignments[$a]' "$route_home/state/route.json")
+  assert_contains "$rec_json" '"status":"closed"' "retried spawn's assignment never closed"
+  assert_contains "$rec_json" '"outcome":"success"' "retried spawn did not record a success outcome"
+  pass "a bare project name fails before any route claim, leaving route.json byte-identical, and the retry launches"
+}
+
+test_mode_mismatch_refuses_before_route_claim() {
+  local rec id out status route_home seed_copy rec_json
+  id=$(profile_id profile-route-modemis-z11)
+  rec=$(make_spawn_case profile-route-modemis codex "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  printf 'brief for %s\nDelivery contract: mode=direct-PR\n' "$id" > "$HOME_DIR/data/$id/brief.md"
+  route_home=$(make_route_home route-modemis)
+  cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+  seed_route_state "$route_home" \
+    '{"generation":1,"routes":{"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"pi-grok":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
+  seed_copy="$CASE_DIR/route.seed.json"
+  cp "$route_home/state/route.json" "$seed_copy"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 1 "$status" "a --mode that disagrees with the brief must fail the spawn"
+  assert_contains "$out" "delivery mismatch" "spawn did not name the brief/mode disagreement"
+  cmp -s "$CASE_DIR/route.seed.json" "$route_home/state/route.json" \
+    || fail "route store changed for a spawn that failed before route admission:\n$(diff "$CASE_DIR/route.seed.json" "$route_home/state/route.json")"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder --mode direct-PR --yolo off)
+  status=$?
+  expect_code 0 "$status" "the retry with the brief's own mode must launch"$'\n'"$out"
+  rec_json=$(jq -c --arg a "$id" '.assignments[$a]' "$route_home/state/route.json")
+  assert_contains "$rec_json" '"outcome":"success"' "the corrected retry did not record a success outcome"
+  pass "a brief/mode disagreement fails before any route claim, route.json byte-identical"
+}
+
+# A harness guard that refuses before launch (here: OMP's existing-task
+# artifact guard, issue #134's trigger) is evidence about the request, not
+# the route: the claim must be released, the route left untouched, and the
+# freed id acquirable again immediately.
+test_omp_guard_refusal_releases_route_claim() {
+  local rec id out status route_home rec_json retry_acquire
+  id=$(profile_id profile-route-ompguard-z12)
+  rec=$(make_spawn_case profile-route-ompguard codex "$id")
+  read_case_record "$rec"
+  enable_omp_dispatch_profile "$HOME_DIR"
+  printf '%s\n' 'stale record from a torn-down prior task' > "$HOME_DIR/state/$id.meta"
+  route_home=$(make_route_home route-ompguard)
+  cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+  seed_route_state "$route_home" \
+    '{"generation":1,"routes":{"omp":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 1 "$status" "the OMP artifact guard must refuse the spawn"
+  assert_contains "$out" "refusing OMP spawn because task $id already has artifacts" \
+    "spawn did not fail at the expected harness guard"
+
+  rec_json=$(cat "$route_home/state/route.json")
+  assert_contains "$rec_json" '"omp":{"state":"eligible"' \
+    "a pre-launch guard refusal must leave the route's recorded state untouched"
+  assert_not_contains "$rec_json" '"launch-failed"' \
+    "a pre-launch guard refusal must never record launch-failed"
+  [ "$(jq --arg a "$id" '.assignments | has($a)' "$route_home/state/route.json")" = false ] \
+    || fail "a released claim must delete its assignment record: $(cat "$route_home/state/route.json")"
+  retry_acquire=$(jq -cn --arg a "$id" --arg owner "$id" \
+    '{assignment_id:$a, owner:{identity:$owner, generation:"g-retry"}, routes:["omp"]}' \
+    | FM_ROUTE_HOME_OVERRIDE="$route_home" "$ROOT/bin/fm-route.sh" acquire)
+  assert_contains "$retry_acquire" '"result":"selected"' \
+    "the released task id must be acquirable again immediately, not refused as already-closed"
+  pass "a pre-launch harness guard refusal releases its claim and frees the task id"
+}
+
+# A genuine launch failure - the harness process was actually started and
+# failed (here: OMP never acknowledged its first turn) - is route evidence
+# and still records launch-failed exactly as before, excluding the route.
+test_genuine_launch_failure_records_launch_failed() {
+  local rec id out status route_home rec_json
+  id=$(profile_id profile-route-ackfail-z13)
+  rec=$(make_spawn_case profile-route-ackfail codex "$id")
+  read_case_record "$rec"
+  enable_omp_dispatch_profile "$HOME_DIR"
+  route_home=$(make_route_home route-ackfail)
+  cp "$HOME_DIR/config/crew-dispatch.json" "$route_home/config/crew-dispatch.json"
+  seed_route_state "$route_home" \
+    '{"generation":1,"routes":{"omp":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false},"codex":{"state":"eligible","reason":"ok","observedAt":"t","manualDisabled":false}},"assignments":{}}'
+
+  out=$(FM_OMP_LAUNCH_ACK_POLLS=2 FM_OMP_LAUNCH_ACK_INTERVAL=0 \
+    FM_ROUTE_HOME_OVERRIDE="$route_home" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --class builder)
+  status=$?
+  expect_code 1 "$status" "an OMP agent that never acknowledges its first turn must fail the spawn"
+  assert_contains "$out" "not acknowledged by a turn_start event" \
+    "spawn did not fail at the expected post-launch acknowledgement gate"
+
+  rec_json=$(jq -c --arg a "$id" '.assignments[$a]' "$route_home/state/route.json")
+  assert_contains "$rec_json" '"status":"closed"' "a genuine launch failure must close its assignment"
   assert_contains "$rec_json" '"outcome":"launch-failed"' \
-    "a failed launch must record launch-failed, releasing the slot for a retry"
-  assert_not_contains "$rec_json" '"outcome":"success"' \
-    "a failed launch must never record a success outcome"
-  pass "a real post-acquire launch failure releases its acquired route assignment exactly once"
+    "a genuine launch failure must still record launch-failed"
+  [ "$(jq -r '.routes.omp.state' "$route_home/state/route.json")" = "launch-failed" ] \
+    || fail "a genuine launch failure must still exclude its route: $(cat "$route_home/state/route.json")"
+  pass "a genuine launch failure after the harness process started still records launch-failed and excludes the route"
 }
 
 # These are the real pool shapes from this repo's own
@@ -451,7 +644,11 @@ test_class_spawn_acquires_and_finishes_route
 test_class_spawn_excludes_ineligible_route
 test_class_spawn_refuses_when_every_route_excluded
 test_captain_override_bypasses_route_admission
-test_launch_failure_releases_route_assignment
+test_post_acquire_prelaunch_failure_releases_route_claim_and_retries
+test_bare_project_name_refuses_before_route_claim_and_retries
+test_mode_mismatch_refuses_before_route_claim
+test_omp_guard_refusal_releases_route_claim
+test_genuine_launch_failure_records_launch_failed
 test_pinned_class_spawn_succeeds_on_every_rotation
 test_disabled_pool_member_never_wins_admission
 test_already_closed_assignment_refuses_launch

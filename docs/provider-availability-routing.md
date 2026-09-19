@@ -23,9 +23,9 @@ Multiple Claude models never multiply the `claude` route's slots: they all group
 
 ## CLI protocol
 
-`acquire` and `finish` take one bounded JSON object on stdin and print one JSON object to stdout: a request that fails validation returns `{"result":"error","error":"<message>"}` and exits nonzero rather than launching anything.
+`acquire`, `finish`, and `release` take one bounded JSON object on stdin and print one JSON object to stdout: a request that fails validation returns `{"result":"error","error":"<message>"}` and exits nonzero rather than launching anything.
 No field is ever evaluated as an executable string; every value is a plain string, a plain array of strings, or a plain object of the shapes shown below.
-Every other subcommand (`refresh`, `status`, `routes`, `group-for`, `disable`, `enable`) keeps ordinary flags: they carry no untrusted caller-supplied identity to bound the same way, and their existing shape stays stable across the JSON protocol change on `acquire`/`finish`.
+Every other subcommand (`refresh`, `status`, `routes`, `group-for`, `disable`, `enable`) keeps ordinary flags: they carry no untrusted caller-supplied identity to bound the same way, and their existing shape stays stable across the JSON protocol change on `acquire`/`finish`/`release`.
 
 ### `acquire`
 
@@ -125,6 +125,28 @@ Response:
 {"result":"closed","assignment_id":"aos-4213"}
 ```
 
+### `release`
+
+```sh
+echo '{
+  "assignment_id": "aos-4213",
+  "owner": {"identity": "aos-4213"}
+}' | fm-route.sh release
+```
+
+Request fields (both required): `assignment_id`, and `owner.identity` which must match the recorded owner or the call is refused with a JSON error object.
+`release` DELETES a `pending`/`running`/`deferred` assignment record and leaves every route untouched: the caller is reporting a refusal that happened before any launch attempt, which is not evidence about the route the way a `finish` outcome is (only a real launch attempt is evidence about a route, so a bad argument, a guard refusal, and a local infra failure never exclude a healthy route).
+The freed id's next `acquire` is simply a fresh attempt; `fm-spawn.sh`'s exit trap uses this so a pre-launch refusal can never permanently exclude a healthy provider, and the same task id can retry immediately instead of being stuck behind a closed record.
+An already-`closed` record is history and is never released, and a missing record is already released (idempotent).
+
+Response, one of:
+
+```json
+{"result":"released","assignment_id":"aos-4213"}
+{"result":"already-closed","assignment_id":"aos-4213"}
+{"result":"error","error":"..."}
+```
+
 ### `refresh` and `status`
 
 ```
@@ -195,7 +217,7 @@ This exists because a scheduled refresh under launchd's minimal built-in `PATH` 
 - A probe whose reader binary does not resolve on `PATH` also records `unknown`, but tags its `reason` with the `check-unavailable:` prefix so `acquire`'s refusal names a broken check instead of provider telemetry; see the missing reader rule under "Evidence sources".
 - A route with no probe source at all, and the Gateway while its `reports[]` is empty, are distinct cases from both of the above and are never `unknown`; see the no-probe rule under "Evidence sources".
 - Zero prepaid credits on a provider whose eligibility is subscription-scoped (Grok) is explicitly never read as subscription exhaustion (see "Evidence sources" above for the live-verified proof).
-- Every write (`refresh`, `acquire`, `finish`, `disable`, `enable`) takes `state/.route.lock` via `bin/fm-wake-lib.sh`'s `fm_lock_acquire_wait`/`fm_lock_release` before reading, and publishes with a tmp-file-plus-`mv -f` atomic replace, so concurrent callers never interleave a partial write; twenty concurrent `acquire` calls against a two-route eligible pool split the assignments evenly with no lost updates, including the rotating-tie case (see `tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates`, which drives `fm-route.sh`'s own `acquire` endpoint directly rather than going through `fm-spawn.sh`).
+- Every write (`refresh`, `acquire`, `finish`, `release`, `disable`, `enable`) takes `state/.route.lock` via `bin/fm-wake-lib.sh`'s `fm_lock_acquire_wait`/`fm_lock_release` before reading, and publishes with a tmp-file-plus-`mv -f` atomic replace, so concurrent callers never interleave a partial write; twenty concurrent `acquire` calls against a two-route eligible pool split the assignments evenly with no lost updates, including the rotating-tie case (see `tests/fm-route.test.sh`'s `test_real_concurrent_processes_split_evenly_no_lost_updates`, which drives `fm-route.sh`'s own `acquire` endpoint directly rather than going through `fm-spawn.sh`).
 - `acquire` never blocks on network I/O: all quota/health evidence it reads was already written by the most recent `refresh`, and it never holds `state/.route.lock` while probing a provider.
   A caller that needs fresher evidence runs `refresh` itself first.
 - `finish` never blocks on network I/O either; a failure outcome it records is applied to route state immediately under the same lock acquisition that closes the assignment, never deferred to a background probe.
@@ -208,7 +230,7 @@ Non-claude/codex harnesses (Pi/Grok, Gateway/DeepSeek) carry no named model-scop
 
 ## Callers today
 
-`bin/fm-dispatch-resolve.sh --exclude-routes <r1,r2,...>` marks matching pool members `enabled=false` for that one resolution call, without touching `config/crew-dispatch.json`; `bin/fm-spawn.sh` computes the caller's candidate routes with `fm-route.sh routes --class <class>`, pipes an `acquire` request as shown above, translates the non-selected routes into `--exclude-routes`, and pipes a `finish` request from its existing abort-cleanup trap so a failed launch releases its assignment exactly once.
+`bin/fm-dispatch-resolve.sh --exclude-routes <r1,r2,...>` marks matching pool members `enabled=false` for that one resolution call, without touching `config/crew-dispatch.json`; `bin/fm-spawn.sh` computes the caller's candidate routes with `fm-route.sh routes --class <class>`, pipes an `acquire` request as shown above, translates the non-selected routes into `--exclude-routes`, and pipes either a `finish` or a `release` request from its existing abort-cleanup trap, exactly once, so a failed launch never leaks its assignment: `finish` (with `launch-failed`) only once the launch command has actually been delivered to the endpoint for execution, and `release` for any earlier failure, so a bad argument, a delivery-mode disagreement, or a guard refusal leaves route state untouched and frees the same task id to retry immediately.
 A captain-supplied explicit `--harness` bypasses this route admission entirely; the spawn's own separate hard lock still refuses an exact tuple the file marks `enabled: false`, paused, or quarantined.
 `bin/fm-control.sh`'s `relaunch` verb runs the same `acquire`/`finish` JSON pair around an authorized relaunch's already-resolved profile, before `safe_checkpoint` and before anything is stopped, so a refusal never touches the live process; it stays inert when the resolved route is not part of the canonical catalog at all (no routing policy configured for that profile).
 Neither caller runs `refresh`; both assume a periodic timer (`bin/fm-route-refresh-install.sh`, following `bin/fm-watcher-beat-alarm-install.sh`'s pattern) keeps `state/route.json` current independent of any LLM turn.

@@ -11,7 +11,28 @@ TMP_ROOT=$(fm_test_tmproot fm-on)
 # and physicalize macOS's /var -> /private/var alias before transport validation.
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
-trap 'if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then kill "$(cat "$TMP_ROOT/remote-jobs/worker.pid")" 2>/dev/null || true; fi; rm -rf -- "$TMP_ROOT"' EXIT
+# A killed worker keeps writing inside its worker.lock directory while it
+# shuts down, so removing the tree before it exits races that shutdown and
+# leaves a non-empty lock directory behind. Wait for the process to go away
+# first, exactly like the other remote-worker fixtures do.
+cleanup() {
+  local worker_pid='' wait_attempt=0
+  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
+    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid" 2>/dev/null || true)
+    if [ -n "$worker_pid" ]; then
+      kill "$worker_pid" 2>/dev/null || true
+      while kill -0 "$worker_pid" 2>/dev/null && [ "$wait_attempt" -lt 200 ]; do
+        wait_attempt=$((wait_attempt + 1))
+        sleep 0.05
+      done
+      kill -9 "$worker_pid" 2>/dev/null || true
+    fi
+  fi
+  # Teardown is not an assertion, so a lost cleanup race must never turn a
+  # passing run into a failing exit status. Retry once, then give up quietly.
+  rm -rf -- "$TMP_ROOT" 2>/dev/null || rm -rf -- "$TMP_ROOT" 2>/dev/null || true
+}
+trap cleanup EXIT
 LOCAL_HOME="$TMP_ROOT/local-home"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
