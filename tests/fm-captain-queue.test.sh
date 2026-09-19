@@ -25,6 +25,26 @@ run_q() {  # <home> <args...>
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$NOW" "$Q" "$@"
 }
 
+# add_card <home> <args...>: add a fixture card. `add` refuses any card the
+# board reader would drop, and these tests care about what happens to a stored
+# card rather than about the option rule, so a caller that passes no --option
+# gets the recommended pair every real card carries. A caller that passes its
+# own options keeps them, which is how the option-rule tests exercise refusal.
+add_card() {  # <home> <args...>
+  local home=$1
+  shift
+  local -a args=("$@") pass=()
+  local arg has_option=0
+  for arg in "${args[@]}"; do
+    [ "$arg" = "--option" ] && has_option=1
+  done
+  pass=("${args[@]}")
+  if [ "$has_option" = 0 ]; then
+    pass+=(--option "Go ahead (recommended)" --option "Not yet")
+  fi
+  FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$NOW" "$Q" add "${pass[@]}"
+}
+
 append_reply() {  # <home> <id> <answer> [generation]
   local home=$1 generation=${4:-}
   if [ -z "$generation" ]; then
@@ -78,10 +98,10 @@ cursor_value() {  # <home>
 test_add_uses_the_supplied_id() {
   local home out
   home=$(make_home add-id)
-  out=$(run_q "$home" add \
+  out=$(add_card "$home" \
     --id sample-origin-decision-prod-gate \
     --question "Ship on merge?" \
-    --option "Yes" --option "No" \
+    --option "Yes (recommended)" --option "No" \
     --project sample)
   assert_contains "$out" "added: sample-origin-decision-prod-gate" "add should echo the id"
   [ "$(jq -r '.records[0].id' "$home/data/captain-queue.json")" = \
@@ -94,11 +114,47 @@ test_add_uses_the_supplied_id() {
   pass "add writes a card under the supplied hold identity"
 }
 
+test_add_refuses_cards_the_board_would_drop() {
+  local home out rc
+  home=$(make_home add-refusal)
+  rc=0
+  out=$(run_q "$home" add --id no-options --question "Which path?" 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "add should refuse a card with no options, got $rc: $out"
+  assert_contains "$out" "card options must be at least two named choices" \
+    "refusal should name the missing choices"
+  [ ! -f "$home/data/captain-queue.json" ] \
+    || fail "a refused card still wrote the queue file"
+  rc=0
+  out=$(run_q "$home" add --id unmarked-options --question "Which path?" \
+    --option "Adopt a vault" --option "Stay with trim" 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "add should refuse options with no recommended mark, got $rc: $out"
+  assert_contains "$out" "one option must be marked recommended" \
+    "refusal should name the missing recommended mark"
+  [ ! -f "$home/data/captain-queue.json" ] \
+    || fail "a refused unmarked card still wrote the queue file"
+  pass "add refuses a card the board reader would drop and names the reason"
+}
+
+test_add_accepts_a_recommended_option_carrying_a_reason() {
+  local home out
+  home=$(make_home add-reason)
+  out=$(add_card "$home" \
+    --id reason-mark \
+    --question "Keep the current memory plan?" \
+    --option "Adopt a vault" \
+    --option "Stay with trim (recommended: keeps the evidence safe)")
+  assert_contains "$out" "added: reason-mark" "a reason-carrying mark should be accepted"
+  [ "$(jq -c '.records[0].options' "$home/data/captain-queue.json")" = \
+    '["Adopt a vault","Stay with trim (recommended: keeps the evidence safe)"]' ] \
+    || fail "the stored options should be the supplied ones in the supplied order"
+  pass "add accepts a recommended option whose mark carries a reason and is not first"
+}
+
 test_writer_persists_one_canonical_record_per_card() {
   local home
   home=$(make_home canonical-records)
-  run_q "$home" add --id canonical-card --question "Original question?" >/dev/null
-  run_q "$home" add --id canonical-card --question "Updated question?" >/dev/null
+  add_card "$home" --id canonical-card --question "Original question?" >/dev/null
+  add_card "$home" --id canonical-card --question "Updated question?" >/dev/null
   jq -e '
     has("records")
     and (has("items") | not)
@@ -117,7 +173,7 @@ test_writer_persists_one_canonical_record_per_card() {
 test_unbacked_card_expires_to_parked() {
   local home out
   home=$(make_home unbacked-expiry)
-  run_q "$home" add \
+  add_card "$home" \
     --id urgent-unbacked-question \
     --question "Approve the emergency change?" \
     --asked-at 2026-08-20T18:00:00Z >/dev/null
@@ -135,7 +191,7 @@ test_unbacked_card_expires_to_parked() {
 test_unbacked_card_stays_active_before_expiry() {
   local home out
   home=$(make_home unbacked-before-expiry)
-  run_q "$home" add \
+  add_card "$home" \
     --id recent-unbacked-question \
     --question "Approve the recent change?" \
     --asked-at 2026-08-20T18:00:01Z >/dev/null
@@ -150,11 +206,11 @@ test_unbacked_card_stays_active_before_expiry() {
 test_reposting_preserves_the_expiry_anchor() {
   local home out
   home=$(make_home repost-expiry)
-  run_q "$home" add \
+  add_card "$home" \
     --id reposted-unbacked-question \
     --question "Original question" \
     --asked-at 2026-08-20T18:00:00Z >/dev/null
-  run_q "$home" add \
+  add_card "$home" \
     --id reposted-unbacked-question \
     --question "Updated question" >/dev/null
   jq -e '
@@ -172,7 +228,7 @@ test_reposting_preserves_the_expiry_anchor() {
 test_asked_at_is_normalized_or_rejected() {
   local home out rc
   home=$(make_home asked-at-validation)
-  run_q "$home" add \
+  add_card "$home" \
     --id offset-question \
     --question "Offset timestamp?" \
     --asked-at 2026-08-20T13:00:00-05:00 >/dev/null
@@ -182,7 +238,7 @@ test_asked_at_is_normalized_or_rejected() {
   assert_contains "$out" "parked: [id=offset-question] expired-unbacked" \
     "a normalized offset timestamp should expire at the same instant"
   rc=0
-  out=$(run_q "$home" add \
+  out=$(add_card "$home" \
     --id malformed-time-question \
     --question "Malformed timestamp?" \
     --asked-at 2026-02-30T18:00:00Z 2>&1) || rc=$?
@@ -191,7 +247,7 @@ test_asked_at_is_normalized_or_rejected() {
     "malformed asked_at should explain the accepted timestamp contract"
   [ -z "$(active_ids "$home")" ] || fail "malformed asked_at wrote an active card"
   rc=0
-  out=$(run_q "$home" add \
+  out=$(add_card "$home" \
     --id future-time-question \
     --question "Future timestamp?" \
     --asked-at 2026-08-27T18:00:01Z 2>&1) || rc=$?
@@ -266,13 +322,13 @@ test_fractional_legacy_asked_at_expires() {
 test_expiry_preserves_card_and_is_idempotent() {
   local home out
   home=$(make_home expiry-body)
-  run_q "$home" add \
+  add_card "$home" \
     --id full-unbacked-question \
     --question "Which release should ship?" \
     --context "Production is waiting." \
     --project sample \
     --asked-at 2026-08-20T17:59:59Z \
-    --option "Ship A" \
+    --option "Ship A (recommended)" \
     --option "Ship B" \
     --command "deploy-a" \
     --command "deploy-b" >/dev/null
@@ -284,7 +340,7 @@ test_expiry_preserves_card_and_is_idempotent() {
     and .records[0].context == "Production is waiting."
     and .records[0].project == "sample"
     and .records[0].asked_at == "2026-08-20T17:59:59Z"
-    and .records[0].options == ["Ship A", "Ship B"]
+    and .records[0].options == ["Ship A (recommended)", "Ship B"]
     and .records[0].commands == ["deploy-a", "deploy-b"]
     and .records[0].state == "parked"
     and .records[0].parked_reason == "expired-unbacked"
@@ -301,12 +357,12 @@ test_expiry_preserves_card_and_is_idempotent() {
 test_manual_park_defers_a_fresh_unbacked_card() {
   local home out rc
   home=$(make_home manual-park)
-  run_q "$home" add \
+  add_card "$home" \
     --id settled-existing-question \
     --question "Proceed with cutover?" \
     --context "The cutover has since completed." \
     --asked-at "$NOW" \
-    --option "Proceed" \
+    --option "Proceed (recommended)" \
     --option "Wait" >/dev/null
   out=$(run_q "$home" park \
     --id settled-existing-question \
@@ -321,7 +377,7 @@ test_manual_park_defers_a_fresh_unbacked_card() {
     and .records[0].question == "Proceed with cutover?"
     and .records[0].context == "The cutover has since completed."
     and .records[0].asked_at == $now
-    and .records[0].options == ["Proceed", "Wait"]
+    and .records[0].options == ["Proceed (recommended)", "Wait"]
     and .records[0].parked_reason == "manual"
     and .records[0].parked_note == "Verified settled on 2026-08-27"
   ' "$home/data/captain-queue.json" >/dev/null \
@@ -334,7 +390,7 @@ test_manual_park_defers_a_fresh_unbacked_card() {
   [ "$(jq '[.records[] | select(.state == "parked")] | length' "$home/data/captain-queue.json")" -eq 1 ] \
     || fail "repeating manual park duplicated the card"
   rc=0
-  run_q "$home" add \
+  add_card "$home" \
     --id settled-existing-question \
     --question "Ask this again" >/dev/null 2>&1 || rc=$?
   [ "$rc" -eq 1 ] || fail "add should refuse to resurrect a parked card, got $rc"
@@ -468,7 +524,7 @@ test_legacy_same_state_duplicate_compares_offset_timestamps() {
     ],
     parked: []
   }' > "$home/data/captain-queue.json"
-  run_q "$home" add --id migration-write --question "Write the migrated queue?" >/dev/null
+  add_card "$home" --id migration-write --question "Write the migrated queue?" >/dev/null
   jq -e '
     [.records[] | select(.id == "resolved-twice")] as $matches
     | ($matches | length) == 1
@@ -615,7 +671,7 @@ test_add_reconstructs_consumed_reply_history() {
     >> "$home/state/captain-replies.jsonl"
   printf '1\n' > "$home/state/captain-replies.cursor"
 
-  run_q "$home" add --id upgrade-card --question "New question?" >/dev/null
+  add_card "$home" --id upgrade-card --question "New question?" >/dev/null
   jq -e '
     .records[0].state == "open"
     and .records[0].generation == 2
@@ -850,7 +906,7 @@ test_backed_card_does_not_expire() {
   home=$(make_home backed-expiry)
   seed_backlog "$home"
   backlog_add "$home" long-running-choice "Keep waiting?"
-  run_q "$home" add \
+  add_card "$home" \
     --id long-running-choice \
     --question "Keep waiting?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
@@ -877,11 +933,11 @@ test_backlog_fallback_avoids_unknown_state() {
 EOF
   fakebin=$(fm_fakebin "$home")
   make_failing_tasks_axi "$fakebin"
-  PATH="$fakebin:$PATH" run_q "$home" add \
+  PATH="$fakebin:$PATH" add_card "$home" \
     --id fallback-backed-question \
     --question "Keep waiting?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
-  PATH="$fakebin:$PATH" run_q "$home" add \
+  PATH="$fakebin:$PATH" add_card "$home" \
     --id fallback-unbacked-question \
     --question "Urgent unbacked question?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
@@ -909,7 +965,7 @@ test_repost_preserves_unknown_add_time_backing() {
 exit 1
 SH
   chmod +x "$fakebin/awk"
-  PATH="$fakebin:$PATH" run_q "$home" add \
+  PATH="$fakebin:$PATH" add_card "$home" \
     --id unknown-backing-question \
     --question "Urgent question while backlog reads fail?" \
     --asked-at 2026-08-20T18:00:00Z >/dev/null \
@@ -925,7 +981,7 @@ SH
 - unknown-backing-question - Work filed after the captain card
 EOF
   rm -f "$fakebin/awk"
-  PATH="$fakebin:$PATH" run_q "$home" add \
+  PATH="$fakebin:$PATH" add_card "$home" \
     --id unknown-backing-question \
     --question "Updated urgent question after work appeared?" >/dev/null
   jq -e '
@@ -958,7 +1014,7 @@ test_later_done_item_does_not_resolve_an_unbacked_card() {
     return 0
   fi
   home=$(make_home unbacked-id-collision)
-  run_q "$home" add \
+  add_card "$home" \
     --id later-colliding-work \
     --question "Still unanswered?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
@@ -978,7 +1034,7 @@ test_later_done_item_does_not_resolve_an_unbacked_card() {
 test_matched_reply_removes_the_card_and_keeps_the_answer() {
   local home out
   home=$(make_home match)
-  run_q "$home" add \
+  add_card "$home" \
     --id sample-origin-decision-prod-gate \
     --question "Ship on merge?" >/dev/null
   append_reply "$home" sample-origin-decision-prod-gate "option 1"
@@ -1048,13 +1104,13 @@ test_resolved_card_id_reopens_without_parked_history() {
 EOF
   fakebin=$(fm_fakebin "$home")
   make_failing_tasks_axi "$fakebin"
-  PATH="$fakebin:$PATH" run_q "$home" add \
+  PATH="$fakebin:$PATH" add_card "$home" \
     --id resolved-card \
     --question "First question?" \
     --asked-at 2026-08-26T18:00:00Z >/dev/null
   append_reply "$home" resolved-card "First answer"
   PATH="$fakebin:$PATH" run_q "$home" reconcile >/dev/null
-  out=$(PATH="$fakebin:$PATH" run_q "$home" add \
+  out=$(PATH="$fakebin:$PATH" add_card "$home" \
     --id resolved-card \
     --question "Second question?" \
     --context "The same open work needs another decision.")
@@ -1079,7 +1135,7 @@ EOF
 test_orphan_reply_does_not_advance_or_drop() {
   local home out rc
   home=$(make_home orphan)
-  run_q "$home" add \
+  add_card "$home" \
     --id sample-origin-decision-prod-gate \
     --question "Ship on merge?" >/dev/null
   append_reply "$home" some-old-scheme-id "option 1"
@@ -1098,8 +1154,8 @@ test_orphan_reply_does_not_advance_or_drop() {
 test_orphan_stops_before_a_later_match() {
   local home out rc
   home=$(make_home orphan-middle)
-  run_q "$home" add --id card-a --question "A?" >/dev/null
-  run_q "$home" add --id card-c --question "C?" >/dev/null
+  add_card "$home" --id card-a --question "A?" >/dev/null
+  add_card "$home" --id card-c --question "C?" >/dev/null
   append_reply "$home" card-a "yes a"
   append_reply "$home" card-b "yes b"
   append_reply "$home" card-c "yes c"
@@ -1123,7 +1179,7 @@ test_orphan_stops_before_a_later_match() {
 test_conflict_ranking_sees_winner_after_orphan() {
   local home out rc
   home=$(make_home conflict-after-orphan)
-  run_q "$home" add --id card-a --question "A?" >/dev/null
+  add_card "$home" --id card-a --question "A?" >/dev/null
   jq -nc \
     --arg id card-a \
     --arg answer "older answer" \
@@ -1160,8 +1216,8 @@ test_conflict_ranking_sees_winner_after_orphan() {
 test_reply_behind_orphan_delivers_after_orphan_clears() {
   local home out rc
   home=$(make_home reply-behind-orphan)
-  run_q "$home" add --id card-a --question "A?" >/dev/null
-  run_q "$home" add --id card-b --question "B?" >/dev/null
+  add_card "$home" --id card-a --question "A?" >/dev/null
+  add_card "$home" --id card-b --question "B?" >/dev/null
   append_reply "$home" missing-card "orphan answer"
   append_reply "$home" card-b "later answer"
 
@@ -1196,7 +1252,7 @@ append_stamped_reply() {  # <home> <id> <answer> <at>
 test_older_receipt_cannot_supersede_a_delivered_answer() {
   local home out
   home=$(make_home older-receipt-conflict)
-  run_q "$home" add --id card-x --question "Which one?" >/dev/null
+  add_card "$home" --id card-x --question "Which one?" >/dev/null
   append_stamped_reply "$home" card-x "later answer" 2026-08-27T13:00:00Z
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=card-x] later answer" \
@@ -1223,7 +1279,7 @@ test_older_receipt_cannot_supersede_a_delivered_answer() {
 test_retry_of_a_superseded_reply_is_not_redelivered() {
   local home out
   home=$(make_home superseded-retry)
-  run_q "$home" add --id card-x --question "Which one?" >/dev/null
+  add_card "$home" --id card-x --question "Which one?" >/dev/null
   append_stamped_reply "$home" card-x "first answer" 2026-08-27T11:00:00Z
   append_stamped_reply "$home" card-x "winning answer" 2026-08-27T13:00:00Z
   out=$(run_q "$home" reconcile)
@@ -1242,7 +1298,7 @@ test_retry_of_a_superseded_reply_is_not_redelivered() {
 test_newer_receipt_still_supersedes_a_delivered_answer() {
   local home out
   home=$(make_home newer-receipt-conflict)
-  run_q "$home" add --id card-x --question "Which one?" >/dev/null
+  add_card "$home" --id card-x --question "Which one?" >/dev/null
   append_stamped_reply "$home" card-x "first answer" 2026-08-27T12:00:00Z
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=card-x] first answer" \
@@ -1262,9 +1318,9 @@ test_newer_receipt_still_supersedes_a_delivered_answer() {
 test_conflicting_replies_rank_timestamp_then_log_order() {
   local home out handled_count
   home=$(make_home conflicting-replies)
-  run_q "$home" add --id conflict-card --question "Choose one answer?" >/dev/null
-  run_q "$home" add --id interleaved-card --question "Unrelated answer?" >/dev/null
-  run_q "$home" add --id tied-card --question "Break the tie?" >/dev/null
+  add_card "$home" --id conflict-card --question "Choose one answer?" >/dev/null
+  add_card "$home" --id interleaved-card --question "Unrelated answer?" >/dev/null
+  add_card "$home" --id tied-card --question "Break the tie?" >/dev/null
   {
     jq -nc \
       --arg id conflict-card \
@@ -1325,7 +1381,7 @@ test_conflicting_replies_rank_timestamp_then_log_order() {
 test_conflicting_reply_crash_replay_delivers_only_the_winner() {
   local home out queue_file next_file
   home=$(make_home conflicting-reply-crash)
-  run_q "$home" add --id crash-conflict-card --question "Which persisted answer?" >/dev/null
+  add_card "$home" --id crash-conflict-card --question "Which persisted answer?" >/dev/null
   jq -nc \
     --arg id crash-conflict-card \
     --arg answer "superseded answer" \
@@ -1373,7 +1429,7 @@ test_conflicting_reply_crash_replay_delivers_only_the_winner() {
 test_historical_conflict_preserves_pending_delivery() {
   local home out queue_file next_file
   home=$(make_home stale-conflict-delivery)
-  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  add_card "$home" --id card-a --question "First question?" >/dev/null
   jq -nc \
     --arg id card-a \
     --arg answer "persisted answer" \
@@ -1397,7 +1453,7 @@ test_historical_conflict_preserves_pending_delivery() {
       }]
   ' "$queue_file" > "$next_file"
   mv "$next_file" "$queue_file"
-  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  add_card "$home" --id card-a --question "Second question?" >/dev/null
   jq -nc \
     --arg id card-a \
     --arg answer "later stale answer" \
@@ -1428,7 +1484,7 @@ test_historical_conflict_preserves_pending_delivery() {
 test_pending_group_winner_is_not_superseding() {
   local home out queue_file next_file
   home=$(make_home pending-group-winner)
-  run_q "$home" add --id card-a --question "Choose?" >/dev/null
+  add_card "$home" --id card-a --question "Choose?" >/dev/null
   jq -nc \
     --arg id card-a \
     --arg answer "persisted before delivery" \
@@ -1487,7 +1543,7 @@ test_pending_group_winner_is_not_superseding() {
 test_superseding_delivery_replay_keeps_marker() {
   local home out queue_file next_file
   home=$(make_home superseding-replay)
-  run_q "$home" add --id card-a --question "Choose?" >/dev/null
+  add_card "$home" --id card-a --question "Choose?" >/dev/null
   jq -nc \
     --arg id card-a \
     --arg answer "first answer" \
@@ -1535,7 +1591,7 @@ test_superseding_delivery_replay_keeps_marker() {
 test_repeat_answer_after_crash_advances_cursor() {
   local home out
   home=$(make_home crash-window)
-  run_q "$home" add --id card-a --question "A?" >/dev/null
+  add_card "$home" --id card-a --question "A?" >/dev/null
   append_reply "$home" card-a "yes a"
   run_q "$home" reconcile >/dev/null
   # Simulate the crash window: card already resolved, cursor rolled back.
@@ -1551,11 +1607,11 @@ test_repeat_answer_after_crash_advances_cursor() {
 test_reopened_card_skips_a_completed_reply_replay() {
   local home out
   home=$(make_home reopened-crash-replay)
-  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  add_card "$home" --id card-a --question "First question?" >/dev/null
   append_reply "$home" card-a "first answer"
   run_q "$home" reconcile >/dev/null
   printf '0\n' > "$home/state/captain-replies.cursor"
-  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  add_card "$home" --id card-a --question "Second question?" >/dev/null
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "stale: [id=card-a] [generation=1] first answer" \
     "the prior generation replay should be surfaced as stale"
@@ -1575,7 +1631,7 @@ test_reopened_card_skips_a_completed_reply_replay() {
 test_reopened_card_delivers_a_reply_persisted_before_crash() {
   local home out queue_file next_file
   home=$(make_home reopened-persisted-reply)
-  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  add_card "$home" --id card-a --question "First question?" >/dev/null
   append_reply "$home" card-a "first answer"
   queue_file="$home/data/captain-queue.json"
   next_file="$home/data/captain-queue.next"
@@ -1594,7 +1650,7 @@ test_reopened_card_delivers_a_reply_persisted_before_crash() {
   ' "$queue_file" > "$next_file"
   mv "$next_file" "$queue_file"
 
-  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  add_card "$home" --id card-a --question "Second question?" >/dev/null
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=card-a] first answer" \
     "the persisted prior-generation answer should still reach firstmate"
@@ -1616,10 +1672,10 @@ test_reopened_card_delivers_a_reply_persisted_before_crash() {
 test_reopened_card_surfaces_a_historical_supersession_without_blocking() {
   local home out
   home=$(make_home reopened-delayed-reply)
-  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  add_card "$home" --id card-a --question "First question?" >/dev/null
   append_reply "$home" card-a "first answer"
   run_q "$home" reconcile >/dev/null
-  run_q "$home" add --id card-a --question "Second question?" >/dev/null
+  add_card "$home" --id card-a --question "Second question?" >/dev/null
   append_reply "$home" card-a "late first answer" 1
   append_reply "$home" card-a "second answer" 2
   out=$(run_q "$home" reconcile)
@@ -1642,9 +1698,9 @@ test_reopened_card_surfaces_a_historical_supersession_without_blocking() {
 test_replacing_an_open_ask_rotates_its_generation() {
   local home out
   home=$(make_home replaced-open-ask)
-  run_q "$home" add --id card-a --question "First question?" >/dev/null
+  add_card "$home" --id card-a --question "First question?" >/dev/null
   append_reply "$home" card-a "answer from first render" 1
-  run_q "$home" add --id card-a --question "Replacement question?" >/dev/null
+  add_card "$home" --id card-a --question "Replacement question?" >/dev/null
   append_reply "$home" card-a "replacement answer" 2
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "stale: [id=card-a] [generation=1] answer from first render" \
@@ -1659,7 +1715,7 @@ test_replacing_an_open_ask_rotates_its_generation() {
 test_partial_last_line_without_newline_is_handled() {
   local home out json
   home=$(make_home partial-last)
-  run_q "$home" add --id hold-1 --question "A?" >/dev/null
+  add_card "$home" --id hold-1 --question "A?" >/dev/null
   json=$(jq -nc --arg id hold-1 --arg answer yes --arg at "$NOW" \
     '{id: $id, generation: 1, answer: $answer, at: $at}')
   printf '%s' "$json" > "$home/state/captain-replies.jsonl"
@@ -1678,9 +1734,9 @@ test_parallel_adds_keep_both_cards() {
   home=$(make_home parallel-add)
   for round in 1 2 3 4 5; do
     rm -f "$home/data/captain-queue.json"
-    run_q "$home" add --id "card-a-$round" --question "A$round?" >/dev/null &
+    add_card "$home" --id "card-a-$round" --question "A$round?" >/dev/null &
     pid_a=$!
-    run_q "$home" add --id "card-b-$round" --question "B$round?" >/dev/null &
+    add_card "$home" --id "card-b-$round" --question "B$round?" >/dev/null &
     pid_b=$!
     rc_a=0
     rc_b=0
@@ -1756,7 +1812,7 @@ test_legacy_repost_preserves_bounded_expiry() {
 EOF
   fakebin=$(fm_fakebin "$home")
   make_failing_tasks_axi "$fakebin"
-  PATH="$fakebin:$PATH" run_q "$home" add \
+  PATH="$fakebin:$PATH" add_card "$home" \
     --id legacy-live-question \
     --question "Updated legacy question" \
     --asked-at "$NOW" >/dev/null
@@ -1787,7 +1843,7 @@ test_done_backlog_item_clears_card_without_a_reply() {
   home=$(make_home done-item)
   seed_backlog "$home"
   backlog_add "$home" sample-origin-decision-prod-gate "Ship on merge?"
-  run_q "$home" add \
+  add_card "$home" \
     --id sample-origin-decision-prod-gate \
     --question "Ship on merge?" >/dev/null
   out=$(run_q "$home" reconcile)
@@ -1853,8 +1909,8 @@ test_only_done_cards_auto_clear() {
   seed_backlog "$home"
   backlog_add "$home" card-open "Still open?"
   backlog_add "$home" card-done "Already decided?"
-  run_q "$home" add --id card-open --question "Still open?" >/dev/null
-  run_q "$home" add --id card-done --question "Already decided?" >/dev/null
+  add_card "$home" --id card-open --question "Still open?" >/dev/null
+  add_card "$home" --id card-done --question "Already decided?" >/dev/null
   backlog_done "$home" card-done
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "cleared: [id=card-done] backlog-done" \
@@ -1882,7 +1938,7 @@ test_dashboard_reply_after_auto_clear_does_not_orphan() {
   home=$(make_home reply-after-clear)
   seed_backlog "$home"
   backlog_add "$home" card-c "Ship on merge?"
-  run_q "$home" add --id card-c --question "Ship on merge?" >/dev/null
+  add_card "$home" --id card-c --question "Ship on merge?" >/dev/null
   backlog_done "$home" card-c
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "cleared: [id=card-c] backlog-done" \
@@ -1890,7 +1946,7 @@ test_dashboard_reply_after_auto_clear_does_not_orphan() {
   [ "$(resolved_answer "$home" card-c)" = backlog-done ] \
     || fail "auto-clear did not store backlog-done"
   append_reply "$home" card-c "Done - command ran"
-  run_q "$home" add --id card-d --question "Later?" >/dev/null
+  add_card "$home" --id card-d --question "Later?" >/dev/null
   append_reply "$home" card-d "yes d"
   rc=0
   out=$(run_q "$home" reconcile) || rc=$?
@@ -1919,7 +1975,7 @@ test_dashboard_reply_after_auto_clear_does_not_orphan() {
 test_backlog_done_winner_after_orphan_supersedes_delivered_answer() {
   local home out rc queue_file next_file
   home=$(make_home backlog-done-orphan-conflict)
-  run_q "$home" add --id card-c --question "Ship?" >/dev/null
+  add_card "$home" --id card-c --question "Ship?" >/dev/null
   queue_file="$home/data/captain-queue.json"
   next_file="$home/data/captain-queue.next"
   jq --arg stamp "$NOW" '
@@ -1951,7 +2007,7 @@ test_backlog_done_winner_after_orphan_supersedes_delivered_answer() {
     "the reply before the orphan should be delivered in order"
   assert_not_contains "$out" "winner-line=3" \
     "the orphan must delimit the conflict group"
-  run_q "$home" add --id missing-card --question "Recovered orphan?" >/dev/null
+  add_card "$home" --id missing-card --question "Recovered orphan?" >/dev/null
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=missing-card] orphan answer" \
     "the recovered orphan should advance"
@@ -1973,7 +2029,7 @@ test_dashboard_reply_still_clears_when_backlog_item_is_open() {
   home=$(make_home reply-open)
   seed_backlog "$home"
   backlog_add "$home" card-a "Ship on merge?"
-  run_q "$home" add --id card-a --question "Ship on merge?" >/dev/null
+  add_card "$home" --id card-a --question "Ship on merge?" >/dev/null
   append_reply "$home" card-a "option 1"
   out=$(run_q "$home" reconcile)
   assert_contains "$out" "handled: [id=card-a] option 1" \
@@ -1988,12 +2044,12 @@ test_dashboard_reply_still_clears_when_backlog_item_is_open() {
 test_parked_reply_resolves_and_preserves_history() {
   local home out rc
   home=$(make_home parked-reply)
-  run_q "$home" add \
+  add_card "$home" \
     --id parked-card \
     --question "Old unanswered question?" \
     --asked-at 2026-08-01T18:00:00Z >/dev/null
   run_q "$home" reconcile >/dev/null
-  run_q "$home" add --id later-card --question "Later question?" >/dev/null
+  add_card "$home" --id later-card --question "Later question?" >/dev/null
   append_reply "$home" parked-card "Answer after parking"
   append_reply "$home" later-card "Later answer"
   rc=0
@@ -2018,7 +2074,7 @@ test_parked_reply_resolves_and_preserves_history() {
   assert_contains "$out" "parked: [id=parked-card] already-parked" \
     "repeating park after an answer should remain an idempotent no-op"
   rc=0
-  out=$(run_q "$home" add --id parked-card --question "Ask again" 2>&1) || rc=$?
+  out=$(add_card "$home" --id parked-card --question "Ask again" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "re-adding an answered parked card should exit 1, got $rc"
   assert_contains "$out" "card already parked: parked-card" \
     "answered parked history should block resurrection"
@@ -2029,6 +2085,8 @@ test_parked_reply_resolves_and_preserves_history() {
 }
 
 test_add_uses_the_supplied_id
+test_add_refuses_cards_the_board_would_drop
+test_add_accepts_a_recommended_option_carrying_a_reason
 test_writer_persists_one_canonical_record_per_card
 test_unbacked_card_expires_to_parked
 test_unbacked_card_stays_active_before_expiry

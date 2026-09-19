@@ -433,6 +433,73 @@ EOF
   pass "the recommended option is marked and comes first"
 }
 
+test_captain_queue_serves_a_recommended_mark_carrying_a_reason() {
+  local home port resp
+  home=$(fm_test_api_home api-queue-reason-mark)
+  write_queue "$home" <<'EOF'
+{
+  "items": [
+    {
+      "id": "reason-mark-card",
+      "question": "Keep the current memory plan?",
+      "options": ["Adopt a vault", "Stay with trim (recommended: keeps the evidence safe)"],
+      "status": "open"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "reason-mark status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] || \
+    fail "a recommended mark carrying a reason must be served: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].options[0]')" = \
+    "Stay with trim (recommended: keeps the evidence safe)" ] || \
+    fail "the reason-carrying recommended option should come first: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items[0].recommended')" = \
+    "Stay with trim (recommended: keeps the evidence safe)" ] || \
+    fail "recommended field: $HTTP_BODY"
+  fm_test_api_stop "$home"
+  pass "a recommended mark carrying a reason is served and moved first"
+}
+
+test_captain_queue_logs_rejected_cards() {
+  local home port resp log
+  home=$(fm_test_api_home api-queue-rejected-log)
+  write_queue "$home" <<'EOF'
+{
+  "items": [
+    {
+      "id": "unmarked-choice",
+      "question": "Keep the current memory plan?",
+      "options": ["Adopt a vault", "Stay with trim"],
+      "status": "open"
+    },
+    {
+      "id": "servable-card",
+      "question": "Push the dashboard live?",
+      "options": ["Push it live (recommended)", "Let me look first"],
+      "status": "open"
+    }
+  ]
+}
+EOF
+  port=$(fm_test_api_start "$home")
+  resp=$(fm_test_api_http "$port" /captain-queue)
+  split_http <<<"$resp"
+  [ "$HTTP_CODE" = 200 ] || fail "logged-rejection status $HTTP_CODE: $HTTP_BODY"
+  [ "$(fm_test_json "$HTTP_BODY" 'd.items.length')" = 1 ] || \
+    fail "only the servable card should be served: $HTTP_BODY"
+  log="$home/state/.api.log"
+  [ -f "$log" ] || fail "the API left no log to report a rejected card"
+  grep -qF 'unmarked-choice' "$log" || fail "the rejected card id was not logged: $(cat "$log")"
+  grep -qF 'one option must be marked recommended' "$log" || \
+    fail "the rejection reason was not logged: $(cat "$log")"
+  fm_test_api_stop "$home"
+  pass "a rejected card is logged with its id and reason instead of vanishing"
+}
+
 test_empty_home_blocked_is_empty() {
   local home port resp
   home=$(fm_test_api_home api-blocked-empty)
@@ -898,6 +965,8 @@ test_captain_queue_serves_parked_cards_separately
 test_captain_queue_keeps_parked_cards_without_active_options
 test_captain_queue_rejects_bad_options
 test_captain_queue_moves_recommended_first
+test_captain_queue_serves_a_recommended_mark_carrying_a_reason
+test_captain_queue_logs_rejected_cards
 test_captain_attention_hold_present_worker_absent
 test_empty_home_blocked_is_empty
 test_blocked_list_returns_blocked_tasks

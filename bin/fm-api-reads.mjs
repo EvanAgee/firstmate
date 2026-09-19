@@ -75,11 +75,15 @@ function asItem(row) {
 // --- captain-card options ---------------------------------------------------
 //
 // One owner of the board-card options contract. Writers of
-// data/captain-queue.json and GET /captain-queue both use these helpers.
+// data/captain-queue.json and GET /captain-queue both use these helpers, so a
+// stored card is always a servable card; bin/fm-captain-queue.sh asks through
+// the CLI mode at the end of this file instead of keeping a second copy.
 // An open card cannot ship with empty, generic-letter, or jargon options.
 // Each option is a short plain-English label naming the real choice.
-// The recommended option is marked and comes first. A plain "Something else"
-// may follow last. Generic "A" / "B" / "Option C" labels are refused.
+// The recommended option is marked "(recommended)" and comes first; the mark
+// may carry a trailing reason, as in "(recommended: keeps the evidence safe)".
+// A plain "Something else" may follow last. Generic "A" / "B" / "Option C"
+// labels are refused.
 // Parked cards preserve their historical option arrays without validation,
 // trimming, filtering, or reordering.
 
@@ -87,7 +91,7 @@ const GENERIC_LETTER = /^(option\s+)?[A-Z]$/i;
 const GENERIC_LETTER_PREFIX = /^(option\s+)?[A-Z]\s*[-.:)]\s*/i;
 const JARGON = /\[key=|\bbin\/|\bneeds-decision\b|\.status\b|\.sh\b|\.mjs\b/i;
 const SOMETHING_ELSE = /^something else$/i;
-const RECOMMENDED_MARK = /\(\s*recommended\s*\)/i;
+const RECOMMENDED_MARK = /\(\s*recommended\b[^)]*\)/i;
 
 function textField(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -216,6 +220,14 @@ export function captainCardOptionsError(options) {
   return null;
 }
 
+// The rule GET /captain-queue applies to an open card's stored options, and the
+// only rule the writer applies at add time: normalize first (recommended option
+// first, "Something else" last), then validate. Returns null when the card is
+// servable, else the reason it is not.
+export function openCaptainCardOptionsError(options) {
+  return captainCardOptionsError(normalizeCaptainCardOptions(options));
+}
+
 function captainQueueRecords(data) {
   const states = new Set(["open", "parked", "resolved"]);
   const normalize = (raw, fallbackState = "") => {
@@ -263,13 +275,25 @@ function captainQueueRecords(data) {
   });
 }
 
+// An open card the board cannot serve is never dropped in silence: the card id
+// and the reason go to the API's own log, so an empty board is distinguishable
+// from a board whose cards were refused. The line lands in state/.api.log.
+function logRejectedCaptainCard(id, reason) {
+  console.error(`captain-queue: card not served: ${id || "(no id)"}: ${reason}`);
+}
+
 function asCaptainCard(raw, expectedState = "open") {
   if (!raw || typeof raw !== "object") return null;
-  const id = textField(raw.id);
-  const question = textField(raw.question);
-  if (!id || !question) return null;
   const state = textField(raw.state).toLowerCase();
   if (state !== expectedState) return null;
+  const id = textField(raw.id);
+  const question = textField(raw.question);
+  if (!id || !question) {
+    if (expectedState === "open") {
+      logRejectedCaptainCard(id, "card needs both an id and a question");
+    }
+    return null;
+  }
   const options =
     expectedState === "open"
       ? normalizeCaptainCardOptions(raw.options)
@@ -278,7 +302,13 @@ function asCaptainCard(raw, expectedState = "open") {
         : [];
   const recommended =
     options.find((label) => typeof label === "string" && RECOMMENDED_MARK.test(label)) || "";
-  if (expectedState === "open" && captainCardOptionsError(options)) return null;
+  if (expectedState === "open") {
+    const optionsError = openCaptainCardOptionsError(raw.options);
+    if (optionsError) {
+      logRejectedCaptainCard(id, optionsError);
+      return null;
+    }
+  }
   const num = typeof raw.num === "number" && Number.isFinite(raw.num) ? raw.num : 0;
   const generation =
     typeof raw.generation === "number" && Number.isInteger(raw.generation) && raw.generation > 0
@@ -751,4 +781,48 @@ export async function captainHoldsBody(home) {
       return a.createdAt.localeCompare(b.createdAt);
     });
   return { ok: true, holds };
+}
+
+// --- CLI ---------------------------------------------------------------------
+//
+// bin/fm-captain-queue.sh refuses a card at add time through this mode, so the
+// writer cannot store a card GET /captain-queue would drop:
+//   node bin/fm-api-reads.mjs validate-card-options '<options-json>'
+// Exit 0 when the options are servable, else print the reason to stderr and
+// exit 1. Exit 2 is a usage error. The path is read through realpath so a
+// symlinked checkout still runs the mode.
+
+function directlyInvoked() {
+  try {
+    if (!process.argv[1]) return false;
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (directlyInvoked()) {
+  const [mode, payload] = process.argv.slice(2);
+  if (mode !== "validate-card-options") {
+    process.stderr.write(`unknown mode: ${mode || "(none)"}\n`);
+    process.exitCode = 2;
+  } else {
+    let options = null;
+    try {
+      const parsed = JSON.parse(payload || "");
+      if (Array.isArray(parsed)) options = parsed;
+    } catch {
+      options = null;
+    }
+    if (!options) {
+      process.stderr.write("card options must be a JSON array\n");
+      process.exitCode = 2;
+    } else {
+      const error = openCaptainCardOptionsError(options);
+      if (error) {
+        process.stderr.write(`${error}\n`);
+        process.exitCode = 1;
+      }
+    }
+  }
 }

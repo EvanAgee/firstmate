@@ -684,9 +684,11 @@ test_captain_reply_validates_card_and_generation_before_append() {
   home=$(fm_test_api_home api-captain-reply-target)
   now=2026-08-31T18:00:00Z
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
-    --id current-card --question "First question?" >/dev/null
+    --id current-card --question "First question?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
-    --id current-card --question "Current question?" >/dev/null
+    --id current-card --question "Current question?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
 
@@ -786,9 +788,11 @@ test_captain_reply_appends_after_newline_less_record_and_reconciles() {
   home=$(fm_test_api_home api-captain-reply-newline)
   now=2026-08-31T18:00:00Z
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
-    --id first-newline-less-reply --question "First answer?" >/dev/null
+    --id first-newline-less-reply --question "First answer?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
-    --id second-api-reply --question "Second answer?" >/dev/null
+    --id second-api-reply --question "Second answer?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   printf '%s' \
     '{"id":"first-newline-less-reply","generation":1,"answer":"first","at":"2026-08-31T18:00:00Z"}' \
     > "$home/state/captain-replies.jsonl"
@@ -826,7 +830,8 @@ test_captain_reply_retry_after_wake_failure_appends_once() {
   home=$(fm_test_api_home api-captain-reply-retry)
   now=2026-08-31T18:00:00Z
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
-    --id retry-card --question "Retry answer?" >/dev/null
+    --id retry-card --question "Retry answer?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   mkdir "$home/state/.wake-queue"
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
@@ -867,7 +872,8 @@ test_captain_reply_refuses_a_malformed_existing_log() {
   home=$(fm_test_api_home api-captain-reply-malformed-log)
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-08-31T18:00:00Z \
     "$ROOT/bin/fm-captain-queue.sh" add \
-    --id malformed-log-card --question "Can this answer append?" >/dev/null
+    --id malformed-log-card --question "Can this answer append?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   printf '{not-json}\n' > "$home/state/captain-replies.jsonl"
   before=$(cat "$home/state/captain-replies.jsonl")
   port=$(fm_test_api_start "$home")
@@ -895,7 +901,8 @@ test_captain_reply_accepts_only_consumed_legacy_records() {
   home=$(fm_test_api_home api-captain-reply-consumed-legacy)
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW=2026-09-01T18:00:00Z \
     "$ROOT/bin/fm-captain-queue.sh" add \
-    --id consumed-legacy-card --question "Can this answer append?" >/dev/null
+    --id consumed-legacy-card --question "Can this answer append?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   printf '%s\n' \
     '{"id":"old-generation","answer":"old","generation":"one","extra":true}' \
     '{"id":"old-offset","answer":"old","at":"2026-08-20T12:59:59.500-05:00","extra":true}' \
@@ -938,7 +945,8 @@ test_conflicting_api_replies_deliver_only_the_latest_receipt() {
   home=$(fm_test_api_home api-captain-reply-conflict)
   now=2026-08-31T18:00:00Z
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
-    --id conflicting-card --question "Which answer wins?" >/dev/null
+    --id conflicting-card --question "Which answer wins?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
 
@@ -979,7 +987,8 @@ test_later_conflicting_reply_explicitly_supersedes_a_handled_answer() {
   home=$(fm_test_api_home api-captain-reply-late-conflict)
   now=2026-08-31T18:00:00Z
   FM_HOME="$home" FM_CAPTAIN_QUEUE_NOW="$now" "$ROOT/bin/fm-captain-queue.sh" add \
-    --id late-conflict-card --question "Can this answer change?" >/dev/null
+    --id late-conflict-card --question "Can this answer change?" \
+    --option "Proceed (recommended)" --option "Not yet" >/dev/null
   port=$(fm_test_api_start "$home")
   token=$(fm_test_api_token "$home")
 
