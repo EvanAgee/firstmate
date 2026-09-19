@@ -228,6 +228,15 @@ export function openCaptainCardOptionsError(options) {
   return captainCardOptionsError(normalizeCaptainCardOptions(options));
 }
 
+// The whole rule an open card must pass before the board can serve it: a
+// question the captain can read and options the board can present. The writer
+// refuses a card through this same rule at add time, so a stored card is always
+// a servable card. Returns null when the card is servable, else the reason.
+export function openCaptainCardError(card) {
+  if (!textField(card?.question)) return "card needs a question";
+  return openCaptainCardOptionsError(card?.options);
+}
+
 function captainQueueRecords(data) {
   const states = new Set(["open", "parked", "resolved"]);
   const normalize = (raw, fallbackState = "") => {
@@ -288,10 +297,17 @@ function asCaptainCard(raw, expectedState = "open") {
   if (state !== expectedState) return null;
   const id = textField(raw.id);
   const question = textField(raw.question);
-  if (!id || !question) {
-    if (expectedState === "open") {
-      logRejectedCaptainCard(id, "card needs both an id and a question");
+  if (!id) {
+    if (expectedState === "open") logRejectedCaptainCard(id, "card needs an id");
+    return null;
+  }
+  if (expectedState === "open") {
+    const cardError = openCaptainCardError(raw);
+    if (cardError) {
+      logRejectedCaptainCard(id, cardError);
+      return null;
     }
+  } else if (!question) {
     return null;
   }
   const options =
@@ -787,10 +803,10 @@ export async function captainHoldsBody(home) {
 //
 // bin/fm-captain-queue.sh refuses a card at add time through this mode, so the
 // writer cannot store a card GET /captain-queue would drop:
-//   node bin/fm-api-reads.mjs validate-card-options '<options-json>'
-// Exit 0 when the options are servable, else print the reason to stderr and
-// exit 1. Exit 2 is a usage error. The path is read through realpath so a
-// symlinked checkout still runs the mode.
+//   node bin/fm-api-reads.mjs validate-card '{"question":"...","options":[...]}'
+// Exit 0 when the card is servable, else print the reason to stderr and exit 1.
+// Exit 2 is a usage error. The path is read through realpath so a symlinked
+// checkout still runs the mode.
 
 function directlyInvoked() {
   try {
@@ -803,22 +819,22 @@ function directlyInvoked() {
 
 if (directlyInvoked()) {
   const [mode, payload] = process.argv.slice(2);
-  if (mode !== "validate-card-options") {
+  if (mode !== "validate-card") {
     process.stderr.write(`unknown mode: ${mode || "(none)"}\n`);
     process.exitCode = 2;
   } else {
-    let options = null;
+    let card = null;
     try {
       const parsed = JSON.parse(payload || "");
-      if (Array.isArray(parsed)) options = parsed;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) card = parsed;
     } catch {
-      options = null;
+      card = null;
     }
-    if (!options) {
-      process.stderr.write("card options must be a JSON array\n");
+    if (!card) {
+      process.stderr.write("card must be a JSON object\n");
       process.exitCode = 2;
     } else {
-      const error = openCaptainCardOptionsError(options);
+      const error = openCaptainCardError(card);
       if (error) {
         process.stderr.write(`${error}\n`);
         process.exitCode = 1;

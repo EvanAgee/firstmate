@@ -132,6 +132,14 @@ test_add_refuses_cards_the_board_would_drop() {
     "refusal should name the missing recommended mark"
   [ ! -f "$home/data/captain-queue.json" ] \
     || fail "a refused unmarked card still wrote the queue file"
+  rc=0
+  out=$(run_q "$home" add --id blank-question --question "   " \
+    --option "Adopt a vault (recommended)" --option "Stay with trim" 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "add should refuse a question the reader would drop, got $rc: $out"
+  assert_contains "$out" "card needs a question" \
+    "refusal should name the missing question"
+  [ ! -f "$home/data/captain-queue.json" ] \
+    || fail "a refused blank-question card still wrote the queue file"
   pass "add refuses a card the board reader would drop and names the reason"
 }
 

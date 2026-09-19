@@ -24,9 +24,9 @@
 # backing classification, including the missing classification on legacy
 # records. Reopening a resolved card also increments its generation.
 # `add` refuses any card the board reader would drop, asking that reader's own
-# option rule through `bin/fm-api-reads.mjs validate-card-options` rather than
-# keeping a second copy of it, and names the reason on stderr. A stored card is
-# therefore always a card GET /captain-queue can serve.
+# question and option rule through `bin/fm-api-reads.mjs validate-card` rather
+# than keeping a second copy of it, and names the reason on stderr. A stored card
+# is therefore always a card GET /captain-queue can serve.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
 # It reads every new reply line past the cursor and groups conflicts by id and
 # generation. The latest server receipt time wins, with later log order breaking
@@ -263,11 +263,14 @@ json_array() {
 
 # Refuse a card the board reader would drop, so a stored card is always a
 # servable card. bin/fm-api-reads.mjs owns the rule; this asks it through its
-# validate-card-options mode rather than keeping a second copy of the pattern.
-validate_card_options() {  # <options-json>
-  local reason
+# validate-card mode rather than keeping a second copy of the checks.
+validate_card() {  # <question> <options-json>
+  local reason payload
   command -v node >/dev/null 2>&1 || die 2 "add requires node to check the card against the board"
-  reason=$(node "$SCRIPT_DIR/fm-api-reads.mjs" validate-card-options "$1" 2>&1) && return 0
+  payload=$(jq -nc --arg question "$1" --argjson options "$2" \
+    '{question: $question, options: $options}') \
+    || die 2 "add could not read the card options"
+  reason=$(node "$SCRIPT_DIR/fm-api-reads.mjs" validate-card "$payload" 2>&1) && return 0
   die 2 "add refused the card: $reason"
 }
 
@@ -590,7 +593,7 @@ cmd_add() {
   else
     options_json=$(json_array)
   fi
-  validate_card_options "$options_json"
+  validate_card "$question" "$options_json"
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
   cursor=$(read_cursor)
