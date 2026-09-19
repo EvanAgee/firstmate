@@ -1338,6 +1338,280 @@ SH
   pass "a failed route-refresh install leaves no temp plist behind"
 }
 
+# firstmate issue #127: a scheduled refresh under launchd's minimal built-in
+# PATH could not find quota-axi at all, so a genuinely healthy pooled route
+# came back state=unknown with an exit-127 "command not found" reason that
+# read exactly like inconclusive provider telemetry. The installer must give
+# the plist an explicit PATH covering quota-axi's real location, resolved at
+# install time rather than assumed. This drives the real installer and the
+# real refresh script; only launchctl itself is faked, so the real machine's
+# launchd namespace is never touched.
+test_scheduled_refresh_resolves_probe_tools_under_minimal_path() {
+  local home agents fakebin toolbin out plist_path plist_path_value status
+
+  if [ "$(uname)" != Darwin ]; then
+    pass "scheduled refresh PATH resolution (skipped: launchd agents are macOS-only)"
+    return 0
+  fi
+
+  home="$TMP_ROOT/minimal-path-refresh"
+  agents="$home/agents"
+  toolbin="$home/toolbin"
+  mkdir -p "$home/state" "$home/config" "$agents" "$toolbin"
+  printf '%s' "$FOUR_ROUTE_POOL" > "$home/config/crew-dispatch.json"
+  toolbin=$(cd "$toolbin" && pwd -P)
+
+  # A healthy pooled quota-axi, installed at a location NOT on the system
+  # default PATH, standing in for ~/.nvm/versions/node/*/bin/quota-axi.
+  cat > "$toolbin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+provider=claude
+case "$*" in *"--provider codex"*) provider=codex ;; esac
+cat <<JSON
+{"generatedAt":"2026-09-18T00:00:00.000Z","schemaVersion":3,"providers":[{"provider":"$provider","label":"$provider","source":"oauth","windows":[],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":42}]},"state":{"status":"fresh","stale":false,"refreshedAt":"2026-09-18T00:00:00.000Z","sourcesTried":["oauth"]}}]}
+JSON
+SH
+  chmod +x "$toolbin/quota-axi"
+
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/launchctl" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  list) exit 1 ;;   # nothing registered yet: no output, exit nonzero like the real thing
+  load|unload|remove) exit 0 ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/launchctl"
+
+  # The installer resolves each probe tool's real directory with `command -v`
+  # under ITS OWN run-time PATH (the interactive/install-time PATH), so
+  # toolbin must be on PATH here, exactly as it would be on the captain's
+  # real login shell where quota-axi already works. The real ambient PATH is
+  # deliberately excluded: this machine has a real quota-axi installed too,
+  # and it must never win over the fixture the test controls.
+  out=$(PATH="$toolbin:$fakebin:/usr/bin:/bin" LAUNCH_AGENTS_DIR="$agents" FM_HOME="$home" \
+    "$ROOT/bin/fm-route-refresh-install.sh" install --yes 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -eq 0 ] || fail "route-refresh install failed: $out"
+
+  plist_path=$(find "$agents" -maxdepth 1 -name '*.plist' | head -n1)
+  [ -n "$plist_path" ] || fail "install did not publish a plist in $agents: $out"
+
+  plist_path_value=$(plutil -extract EnvironmentVariables.PATH raw "$plist_path" 2>/dev/null) \
+    || fail "installed plist has no EnvironmentVariables.PATH: $(cat "$plist_path")"
+  case "$plist_path_value" in
+    *"$toolbin"*) : ;;
+    *) fail "installed plist PATH does not cover quota-axi's real directory $toolbin: $plist_path_value" ;;
+  esac
+
+  # Simulate launchd's own minimal PATH (env -i, no login-shell dirs) plus
+  # ONLY the PATH the plist itself now provides -- the same shape as the
+  # reproduction in issue #127, but with the fixed plist's PATH applied.
+  out=$(env -i PATH="$plist_path_value:/usr/bin:/bin" HOME="$HOME" \
+    FM_ROUTE_HOME_OVERRIDE="$home" /bin/bash "$ROOT/bin/fm-route.sh" refresh 2>&1)
+  case "$out" in
+    refreshed\ generation=*) : ;;
+    *) fail "refresh under the installed plist's PATH did not run: $out" ;;
+  esac
+
+  out=$(env -i PATH="$plist_path_value:/usr/bin:/bin" HOME="$HOME" \
+    FM_ROUTE_HOME_OVERRIDE="$home" /bin/bash "$ROOT/bin/fm-route.sh" status --route claude)
+  case "$out" in
+    *state=eligible*) : ;;
+    *state=unknown*) fail "a healthy pooled route still read unknown under the plist's own PATH (the #127 bug): $out" ;;
+    *) fail "unexpected status after refresh under the installed plist's PATH: $out" ;;
+  esac
+  pass "a scheduled refresh under the installed plist's own minimal PATH resolves quota-axi and reads a healthy route as eligible"
+}
+
+# The plist is XML that launchd parses, so every interpolated value is part of
+# that contract. A path carrying an XML metacharacter (a checkout under "R&D",
+# a homebrew prefix the operator never chose) must still produce a plist the
+# real parser accepts, with the original path readable back out. plutil is
+# launchd's own parser, so it is the real consumer, not a substring check.
+test_installed_plist_is_valid_xml_for_paths_with_metacharacters() {
+  local home agents fakebin toolbin out status plist_path got_path got_home got_log
+
+  if [ "$(uname)" != Darwin ]; then
+    pass "plist XML escaping (skipped: launchd agents are macOS-only)"
+    return 0
+  fi
+
+  # Every XML metacharacter the escaper handles, in both a tool directory
+  # (reached through PATH) and the home path (reached through FM_HOME and the
+  # derived log path), because each lands in a different <string> element.
+  home="$TMP_ROOT/plist-xml-escape/a & b <c> d"
+  agents="$home/agents"
+  toolbin="$home/x&y/bin"
+  mkdir -p "$home/state" "$home/config" "$agents" "$toolbin"
+  printf '%s' "$FOUR_ROUTE_POOL" > "$home/config/crew-dispatch.json"
+  home=$(cd "$home" && pwd -P)
+  toolbin=$(cd "$toolbin" && pwd -P)
+
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$toolbin/quota-axi"
+  chmod +x "$toolbin/quota-axi"
+
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/launchctl" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  list) exit 1 ;;
+  load|unload|remove) exit 0 ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/launchctl"
+
+  out=$(PATH="$toolbin:$fakebin:/usr/bin:/bin" LAUNCH_AGENTS_DIR="$agents" \
+    FM_ROUTE_HOME_OVERRIDE="$home" \
+    "$ROOT/bin/fm-route-refresh-install.sh" install --yes 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -eq 0 ] || fail "install failed for a home containing XML metacharacters: $out"
+
+  plist_path=$(find "$agents" -maxdepth 1 -name '*.plist' | head -n1)
+  [ -n "$plist_path" ] || fail "install published no plist in $agents: $out"
+
+  plutil -lint "$plist_path" >/dev/null 2>&1 \
+    || fail "installed plist is not valid XML: $(plutil -lint "$plist_path" 2>&1)"
+
+  # Escaping is only correct if the parser hands back the ORIGINAL path; a
+  # plist that merely lints but yields "a &amp; b" would still break launchd.
+  got_path=$(plutil -extract EnvironmentVariables.PATH raw "$plist_path" 2>/dev/null) \
+    || fail "installed plist has no EnvironmentVariables.PATH"
+  case "$got_path" in
+    *"$toolbin"*) : ;;
+    *) fail "parsed plist PATH lost or mangled the metacharacter directory $toolbin: $got_path" ;;
+  esac
+
+  got_home=$(plutil -extract EnvironmentVariables.FM_ROUTE_HOME_OVERRIDE raw "$plist_path" 2>/dev/null) \
+    || fail "installed plist has no FM_ROUTE_HOME_OVERRIDE"
+  [ "$got_home" = "$home" ] \
+    || fail "parsed plist FM_ROUTE_HOME_OVERRIDE does not round-trip: want [$home] got [$got_home]"
+
+  got_log=$(plutil -extract StandardOutPath raw "$plist_path" 2>/dev/null) \
+    || fail "installed plist has no StandardOutPath"
+  [ "$got_log" = "$home/state/.route-refresh.launchd.log" ] \
+    || fail "parsed plist StandardOutPath does not round-trip: got [$got_log]"
+
+  pass "an install whose paths contain XML metacharacters writes a plist the real parser accepts and round-trips"
+}
+
+# firstmate issue #127 acceptance criteria 2 and 3: a probe tool missing from
+# PATH is a broken check, never provider telemetry, and the dispatch refusal
+# must say so rather than naming "unknown telemetry" (which sends a human
+# to check quotas that are fine).
+test_missing_probe_tool_reads_as_broken_check_not_provider_telemetry() {
+  local home out reason
+
+  home=$(make_home missing-probe-tool "$FOUR_ROUTE_POOL")
+  env -i PATH=/usr/bin:/bin HOME="$HOME" FM_ROUTE_HOME_OVERRIDE="$home" \
+    /bin/bash "$ROOT/bin/fm-route.sh" refresh >/dev/null \
+    || fail "refresh must still succeed (and record unknown) when a probe tool is missing"
+
+  out=$(FM_ROUTE_HOME_OVERRIDE="$home" "$ROUTE" status --route claude)
+  case "$out" in
+    *state=unknown*) : ;;
+    *) fail "a missing probe tool must still record unknown, never eligible: $out" ;;
+  esac
+  case "$out" in
+    *"not on PATH"*"health check could not run"*) : ;;
+    *) fail "the recorded reason does not distinguish a missing tool from provider telemetry: $out" ;;
+  esac
+
+  out=$(acquire "$home" a1 a1 g1 '["claude","codex"]')
+  [ "$(result_field "$out" result)" = deferred ] \
+    || fail "a route whose check could not run must still defer, never be selected: $out"
+  reason=$(result_field "$out" reason)
+  case "$reason" in
+    *"health check could not run"*) : ;;
+    *"unknown telemetry"*) fail "dispatch refusal named generic unknown telemetry instead of the real missing-tool cause: $reason" ;;
+    *) fail "dispatch refusal did not name the real cause: $reason" ;;
+  esac
+  pass "a probe tool missing from PATH records a distinguishable broken-check reason and the dispatch refusal names it, never reading as provider telemetry"
+}
+
+# The safety property issue #127 explicitly protects: a route that is
+# genuinely unknown (the tool ran, the evidence was inconclusive or stale)
+# must keep deferring with the original generic wording, never the new
+# missing-tool wording and never eligible. This is what stops the fix from
+# widening eligibility.
+test_genuinely_unknown_route_keeps_generic_refusal_and_still_defers() {
+  local home out reason
+
+  home=$(make_home genuine-unknown "$FOUR_ROUTE_POOL")
+  seed_routes "$home" '{
+    "claude":{"state":"unknown","reason":"quota-axi returned no claude provider report","observedAt":"t","manualDisabled":false},
+    "codex":{"state":"unknown","reason":"quota-axi returned no codex provider report","observedAt":"t","manualDisabled":false}
+  }'
+  out=$(acquire "$home" a1 a1 g1 '["claude","codex"]')
+  [ "$(result_field "$out" result)" = deferred ] \
+    || fail "a genuinely unknown route must still defer, never be selected: $out"
+  reason=$(result_field "$out" reason)
+  case "$reason" in
+    *"unknown telemetry"*) : ;;
+    *"health check could not run"*) fail "a genuinely unknown route (real evidence, just inconclusive) was wrongly reported as a broken check: $reason" ;;
+    *) fail "unexpected refusal reason for a genuinely unknown route: $reason" ;;
+  esac
+  pass "a genuinely unknown route keeps the original generic refusal wording and still defers"
+}
+
+# firstmate issue #127, "second, separate problem": the installer's home_key
+# is derived from FM_HOME's real path, so installing from a relocated home
+# (a worktree, a renamed checkout) mints a new label with its own plist,
+# and a torn-down worktree can leave its old label registered in launchd
+# forever with no backing plist. install must sweep and unload those.
+test_install_unloads_orphaned_job_with_no_backing_plist() {
+  local home agents fakebin out status removed_label
+
+  if [ "$(uname)" != Darwin ]; then
+    pass "orphaned route-refresh job sweep (skipped: launchd agents are macOS-only)"
+    return 0
+  fi
+
+  home="$TMP_ROOT/orphan-sweep"
+  agents="$home/agents"
+  mkdir -p "$home/state" "$home/config" "$agents"
+  printf '%s' "$FOUR_ROUTE_POOL" > "$home/config/crew-dispatch.json"
+
+  fakebin=$(fm_fakebin "$home")
+  removed_label="$home/removed-label"
+  cat > "$fakebin/launchctl" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  list)
+    if [ "\$#" -eq 0 ] || [ "\$2" = "" ]; then
+      printf -- '-\t0\tcom.firstmate.route-refresh.orphan12345678\n'
+      exit 0
+    fi
+    exit 1
+    ;;
+  remove) printf '%s\n' "\$2" >> "$removed_label"; exit 0 ;;
+  load|unload) exit 0 ;;
+  *) exit 0 ;;
+esac
+SH
+  chmod +x "$fakebin/launchctl"
+
+  # HOME is redirected into the sandbox so the installer's sweep compares the
+  # faked launchctl registry against this sandbox's own LaunchAgents
+  # directory. Without that the sweep refuses to run at all, precisely so a
+  # redirected LAUNCH_AGENTS_DIR can never make the real machine's jobs look
+  # orphaned and get unloaded.
+  mkdir -p "$home/fakehome/Library"
+  ln -sfn "$agents" "$home/fakehome/Library/LaunchAgents"
+  out=$(PATH="$fakebin:$PATH" HOME="$home/fakehome" \
+    LAUNCH_AGENTS_DIR="$home/fakehome/Library/LaunchAgents" FM_HOME="$home" \
+    "$ROOT/bin/fm-route-refresh-install.sh" install --yes 2>&1) || status=$?
+  status=${status:-0}
+  [ "$status" -eq 0 ] || fail "install failed while sweeping an orphaned job: $out"
+
+  [ -f "$removed_label" ] || fail "install never called launchctl remove for the orphaned label: $out"
+  grep -qxF com.firstmate.route-refresh.orphan12345678 "$removed_label" \
+    || fail "install removed the wrong label(s): $(cat "$removed_label" 2>/dev/null)"
+  pass "install unloads an orphaned route-refresh job whose plist no longer exists"
+}
+
 # ---------------------------------------------------------------------------
 # Real concurrent acquisition processes (not simulated sequential calls)
 # ---------------------------------------------------------------------------
@@ -1405,5 +1679,10 @@ test_gateway_probe_error_still_reads_unknown
 test_gateway_empty_reports_preserves_a_verified_failure
 test_a_glob_shaped_route_id_is_never_pathname_expanded
 test_real_concurrent_processes_split_evenly_no_lost_updates
+test_scheduled_refresh_resolves_probe_tools_under_minimal_path
+test_installed_plist_is_valid_xml_for_paths_with_metacharacters
+test_missing_probe_tool_reads_as_broken_check_not_provider_telemetry
+test_genuinely_unknown_route_keeps_generic_refusal_and_still_defers
+test_install_unloads_orphaned_job_with_no_backing_plist
 
 echo "# all fm-route tests passed"

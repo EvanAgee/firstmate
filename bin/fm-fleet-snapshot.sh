@@ -613,9 +613,14 @@ emit_one_task_json() {  # <meta>
 }
 
 # How many tasks to build at once. Each task's stage lookup shells out to
-# no-mistakes several times and takes about a second, so building them in
-# sequence is the whole cost of the snapshot. A bounded pool keeps a busy home
-# from spawning one process per task at once. Override with FM_SNAPSHOT_JOBS.
+# no-mistakes and the backend several times, so building them in sequence is a
+# real cost and a bounded pool helps. The pool stays at 8 deliberately: the
+# per-lane deep reads are bounded by a fixed wall clock, and raising the pool
+# raises peak contention for that clock, which can flip a dead lane's endpoint
+# to `unknown` rather than `dead` on a loaded machine. That guarantee is worth
+# more than the extra concurrency, and the no-fork fold below already cuts the
+# snapshot far enough under the API cap on its own. Override with
+# FM_SNAPSHOT_JOBS if a home is genuinely too large for 8.
 FM_SNAPSHOT_JOBS=${FM_SNAPSHOT_JOBS:-8}
 
 # Every task's JSON object, built concurrently, then sorted by id so the output
@@ -1384,18 +1389,21 @@ secondmate_landed_from_current_json() {  # <secondmate-current-json>
 }
 
 scout_report_lines() {
-  local report id
   if [ ! -d "$DATA" ]; then
     jq -n '[]'
     return 0
   fi
+  # One jq for the whole list rather than one per report: a home with hundreds
+  # of reports paid a shell + interpreter start per report, which dominated the
+  # snapshot on a loaded machine. Same objects, same order.
   LC_ALL=C find "$DATA" -mindepth 2 -maxdepth 2 -type f -name report.md -print \
-    | sort \
-    | while IFS= read -r report; do
-      id=$(basename "$(dirname "$report")")
-      jq -n --arg id "$id" --arg path "$report" '{id:$id,path:$path}'
-    done \
-    | jq -s 'sort_by(.id)'
+    | LC_ALL=C sort \
+    | jq -Rn '
+        [ inputs
+          | (capture("^(?<dir>.*)/report\\.md$")? // null)
+          | select(. != null)
+          | {id:(.dir | split("/") | .[-1]), path:(.dir + "/report.md")} ]
+        | sort_by(.id)'
 }
 
 BACKLOG_JSON=$(backlog_json) || { echo "fm-fleet-snapshot: backlog read failed" >&2; exit 1; }

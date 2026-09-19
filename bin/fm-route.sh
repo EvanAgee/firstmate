@@ -276,12 +276,36 @@ fm_route_is_known() {
 : "${FM_ROUTE_TEAMCODEX_BIN:=teamcodex}"
 : "${FM_ROUTE_TEAMCLAUDE_BIN:=teamclaude}"
 
+# A probe reader missing from PATH is a broken check, not provider telemetry
+# (firstmate issue #127): a scheduled refresh under launchd's minimal PATH
+# could not find quota-axi/omp at all and every route came back "unknown"
+# with an exit-127 reason that looked exactly like inconclusive provider
+# evidence. The state stays "unknown" (still never eligible, still never
+# selected -- the safety property is unchanged), but the reason is tagged
+# with this fixed prefix so cmd_acquire can tell "the check could not run"
+# apart from "the check ran and came back inconclusive" and say so in the
+# dispatch refusal message.
+FM_ROUTE_CHECK_UNAVAILABLE_TAG='check-unavailable:'
+
+# True (0) when $1 is a command name that command -v cannot resolve on the
+# current PATH, meaning a probe reader would fail with exit 127 before it
+# ever reached its own logic.
+fm_route_bin_missing() {
+  command -v "$1" >/dev/null 2>&1 && return 1
+  return 0
+}
+
 fm_route_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # Shared quota-axi reader for claude/codex/grok. $1 is the quota-axi provider
 # id, $2 is the effectiveAvailability scope to read (all_models/all_products).
 fm_route_probe_quota_axi() {
   local provider=$1 scope=$2 json state stale ts pct auth_status err
+  if fm_route_bin_missing "$FM_ROUTE_QUOTA_AXI_BIN"; then
+    printf 'unknown\t%s%s is not on PATH; the health check could not run\t%s\n' \
+      "$FM_ROUTE_CHECK_UNAVAILABLE_TAG" "$FM_ROUTE_QUOTA_AXI_BIN" "$(fm_route_now)"
+    return 0
+  fi
   json=$("$FM_ROUTE_QUOTA_AXI_BIN" --provider "$provider" --json 2>/dev/null) || {
     printf 'unknown\tquota-axi --provider %s failed\t%s\n' "$provider" "$(fm_route_now)"
     return 0
@@ -430,6 +454,11 @@ fm_route_probe_pi_deepseek() {
   # Gateway's real omp usage shape (live-verified): reports[].limits[].amount
   # .{used,limit,remaining,usedFraction,remainingFraction,unit}, generatedAt
   # as epoch milliseconds; an account with no usage yet returns reports:[].
+  if fm_route_bin_missing "$FM_ROUTE_OMP_BIN"; then
+    printf 'unknown\t%s%s is not on PATH; the health check could not run\t%s\n' \
+      "$FM_ROUTE_CHECK_UNAVAILABLE_TAG" "$FM_ROUTE_OMP_BIN" "$(fm_route_now)"
+    return 0
+  fi
   json=$("$FM_ROUTE_OMP_BIN" usage --provider vercel-ai-gateway --json 2>/dev/null) || {
     printf 'unknown\tomp usage --provider vercel-ai-gateway failed\t%s\n' "$(fm_route_now)"
     return 0
@@ -734,7 +763,7 @@ cmd_acquire() {
   local req=$1
   local assignment owner_identity owner_gen routes_json doc gen r best_count count
   local existing existing_owner existing_status state
-  local has_unknown=0 reasons="" abandoned
+  local has_unknown=0 has_check_unavailable=0 reasons="" abandoned route_reason
   local -a tied_routes best_route
 
   assignment=$(fm_route_req_string "$req" '.assignment_id') \
@@ -795,7 +824,20 @@ cmd_acquire() {
     # next refresh tick.
     if fm_route_manual_disabled "$r"; then continue; fi
     if [ "$state" != eligible ]; then
-      [ "$state" != unknown ] || has_unknown=1
+      if [ "$state" = unknown ]; then
+        has_unknown=1
+        route_reason=$(jq -r --arg r "$r" '.routes[$r].reason // ""' <<<"$doc")
+        # The tag is matched anywhere in the reason, not only at its start: a
+        # pooled route (claude, codex) whose pool reader is unreadable falls
+        # back to quota-axi and prefixes that fallback note, so a missing
+        # quota-axi leaves the tag mid-string. Anchoring to the start read
+        # those as generic "unknown telemetry" and sent a human to check
+        # quotas that were fine, which is the exact failure issue #127
+        # criteria 2 and 3 forbid.
+        case "$route_reason" in
+          *"$FM_ROUTE_CHECK_UNAVAILABLE_TAG"*) has_check_unavailable=1 ;;
+        esac
+      fi
       continue
     fi
     count=0
@@ -834,7 +876,9 @@ cmd_acquire() {
   fi
 
   if [ -z "$best_route" ]; then
-    if [ "$has_unknown" -eq 1 ]; then
+    if [ "$has_check_unavailable" -eq 1 ]; then
+      reasons="no route proven eligible; the health check could not run for at least one candidate (a probe tool is missing from PATH, not a provider verdict)"
+    elif [ "$has_unknown" -eq 1 ]; then
       reasons="no route proven eligible; at least one candidate has unknown telemetry"
     else
       reasons="every candidate route is excluded (exhausted, outage, auth-failed, or manually disabled)"
