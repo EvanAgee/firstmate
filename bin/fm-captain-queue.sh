@@ -23,6 +23,10 @@
 # changing an ask field increments it. Both preserve the original asked-at and
 # backing classification, including the missing classification on legacy
 # records. Reopening a resolved card also increments its generation.
+# `add` refuses any card the board reader would drop, asking that reader's own
+# question and option rule through `bin/fm-api-reads.mjs validate-card` rather
+# than keeping a second copy of it, and names the reason on stderr. A stored card
+# is therefore always a card GET /captain-queue can serve.
 # `reconcile` is the captain-reply wake action and the heartbeat board sweep.
 # It reads every new reply line past the cursor and groups conflicts by id and
 # generation. The latest server receipt time wins, with later log order breaking
@@ -72,10 +76,10 @@
 #   FM_HOME / FM_ROOT_OVERRIDE / FM_DATA_OVERRIDE / FM_STATE_OVERRIDE
 #   FM_CAPTAIN_QUEUE_NOW   optional ISO stamp for updated_at / asked_at / resolved_at / parked_at
 #
-# Requires jq.
+# Requires jq. `add` also requires node, for the board reader's own card rule.
 # Exit 0 on success (including an empty reconcile).
 # Exit 1 when reconcile stops on an orphan or a malformed reply.
-# Exit 2 on usage or missing jq.
+# Exit 2 on usage, missing jq, or a card the board reader would drop.
 set -eu
 export LC_ALL=C
 
@@ -255,6 +259,19 @@ json_array() {
   else
     jq -n --args '$ARGS.positional' -- "$@"
   fi
+}
+
+# Refuse a card the board reader would drop, so a stored card is always a
+# servable card. bin/fm-api-reads.mjs owns the rule; this asks it through its
+# validate-card mode rather than keeping a second copy of the checks.
+validate_card() {  # <question> <options-json>
+  local reason payload
+  command -v node >/dev/null 2>&1 || die 2 "add requires node to check the card against the board"
+  payload=$(jq -nc --arg question "$1" --argjson options "$2" \
+    '{question: $question, options: $options}') \
+    || die 2 "add could not read the card options"
+  reason=$(node "$SCRIPT_DIR/fm-api-reads.mjs" validate-card "$payload" 2>&1) && return 0
+  die 2 "add refused the card: $reason"
 }
 
 atomic_write() {  # <dest>  (stdin is the new contents)
@@ -571,6 +588,12 @@ cmd_add() {
     || die 2 "add --asked-at cannot be later than the add time"
 
   local queue options_json commands_json next_num item backlog_backed cursor
+  if [ "${#options[@]}" -gt 0 ]; then
+    options_json=$(json_array "${options[@]}")
+  else
+    options_json=$(json_array)
+  fi
+  validate_card "$question" "$options_json"
   acquire_queue_lock
   queue=$(read_queue) || die 1 "captain-queue.json is unreadable"
   cursor=$(read_cursor)
@@ -586,11 +609,6 @@ cmd_add() {
     die 1 "card already parked: $id"
   fi
   backlog_backed=$(add_time_backlog_backing_state "$id")
-  if [ "${#options[@]}" -gt 0 ]; then
-    options_json=$(json_array "${options[@]}")
-  else
-    options_json=$(json_array)
-  fi
   if [ "${#commands[@]}" -gt 0 ]; then
     commands_json=$(json_array "${commands[@]}")
   else

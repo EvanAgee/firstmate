@@ -536,6 +536,26 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/specs/aos-offline-runtime-to-blob.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/specs/availability-decides-the-pool.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/specs/flow-switch.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/specs/pooled-capacity-admission.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/specs/upstream-port-pool-sweep.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/subagent-guard.md",
       "audience": "maintainer-architecture"
     },
