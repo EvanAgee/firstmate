@@ -1,0 +1,70 @@
+==========================================================
+STEP 1  The captain adds a card. The recommended choice
+        carries a reason, the way a real card reads.
+==========================================================
+$ fm-captain-queue.sh add --id memory-plan \
+    --question "Keep the current memory plan?" \
+    --option "Adopt a vault" \
+    --option "Stay with trim (recommended: keeps the evidence safe)"
+added: memory-plan
+exit=0
+
+==========================================================
+STEP 2  A bad card is refused at add time, with a reason.
+==========================================================
+$ ... add --id no-mark --question "Ship it?" --option "Yes" --option "No"
+fm-captain-queue: add refused the card: one option must be marked recommended
+exit=2
+
+$ ... add --id blank-q --question "   " --option "Yes (recommended)" --option "No"
+fm-captain-queue: add refused the card: card needs a question
+exit=2
+
+==========================================================
+STEP 3  A legacy card, stored BEFORE the add-time check,
+        sits in the queue file unmarked. The board must
+        not drop it in silence.
+==========================================================
+   (appended into key 'records'; queue now has 2 cards)
+queue file now holds these card ids:
+  - memory-plan
+  - legacy-unmarked
+
+==========================================================
+STEP 4  The fleet board asks the API for its cards.
+==========================================================
+$ curl http://127.0.0.1:$PORT/captain-queue
+{
+    "ok": true,
+    "updatedAt": "2026-09-19T20:02:46Z",
+    "items": [
+        {
+            "id": "memory-plan",
+            "num": 1,
+            "generation": 1,
+            "question": "Keep the current memory plan?",
+            "context": "",
+            "commands": [],
+            "options": [
+                "Stay with trim (recommended: keeps the evidence safe)",
+                "Adopt a vault"
+            ],
+            "recommended": "Stay with trim (recommended: keeps the evidence safe)",
+            "askedAt": "2026-09-19T20:02:46Z",
+            "status": "open",
+            "project": ""
+        }
+    ],
+    "parked": []
+}
+
+==========================================================
+STEP 5  The refused card is named in the API log,
+        with its id and the reason. Not silence.
+==========================================================
+$ grep captain-queue /var/folders/k4/bmrhcryx7ld7c_w81zly9mh40000gn/T//demo-captain-board.ZCogfC/home/state/.api.log
+captain-queue: card not served: legacy-unmarked: one option must be marked recommended
+
+==========================================================
+DONE
+==========================================================
