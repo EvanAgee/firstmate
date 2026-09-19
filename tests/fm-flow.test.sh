@@ -279,7 +279,7 @@ test_status_drift_verdict() {
   assert_contains "$out" "verdict: fast" "registry fast + rulesets disabled is fast"
 
   # One side hand-edited back to full while the rulesets stay disabled: DRIFT.
-  sed -i '' 's/\[local-only +yolo\]/[no-mistakes-prod-only +yolo]/' "$home/data/projects.md"
+  sed -i.bak 's/\[local-only +yolo\]/[no-mistakes-prod-only +yolo]/' "$home/data/projects.md"
   out=$(run_flow "$home" "$fakebin" drift status)
   assert_contains "$out" "verdict: DRIFT" "registry full + rulesets disabled is DRIFT"
 
