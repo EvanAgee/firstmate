@@ -88,33 +88,158 @@ require_macos() {
   return 1
 }
 
+# home_key is derived from FM_HOME's real path (line above), so installing
+# from a different path for what is meant to be the same logical home (for
+# example a worktree checkout instead of the primary one) mints a distinct
+# label with its own plist. If that worktree is later torn down without
+# running `uninstall` first, its plist file disappears but the launchd job
+# stays registered forever -- an orphan stuck reporting its last exit code,
+# invisible to `status` because status only ever looks at THIS run's own
+# label (firstmate issue #127). Every install call sweeps every other
+# registered com.firstmate.route-refresh.* label and unloads any whose
+# plist file no longer exists, so the fleet self-heals instead of
+# accumulating one dead job per relocated home.
+#
+# The sweep decides an orphan by asking launchd what is registered and then
+# asking the filesystem whether that label's plist still exists, so both
+# answers must describe the same launchd domain. LAUNCH_AGENTS_DIR redirects
+# only the filesystem half; with it pointed anywhere but the real LaunchAgents
+# directory, every genuinely installed job looks plistless and the sweep
+# unloads the whole fleet. Only sweep when the two halves agree.
+#
+# Agreement is a question about directories, not about spelling, so both sides
+# resolve to a real path first: a trailing slash, a doubled separator or a
+# symlinked home all name the same directory and must still sweep. An
+# unresolvable path (the directory does not exist yet) falls back to its
+# literal form, which can only ever fail the comparison and suppress the
+# sweep -- the safe direction.
+real_dir() {
+  cd "$1" 2>/dev/null && pwd -P || printf '%s\n' "$1"
+}
+
+agents_dir_is_launchd_domain() {
+  [ "$(real_dir "$1")" = "$(real_dir "$HOME/Library/LaunchAgents")" ]
+}
+
+sweep_orphaned_jobs() {
+  local agents_dir="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}" label
+  command -v launchctl >/dev/null 2>&1 || return 0
+  if ! agents_dir_is_launchd_domain "$agents_dir"; then
+    printf 'route-refresh install: skipping the orphaned-job sweep: %s is not the launchd agents directory (%s), so a registered job there cannot be judged orphaned\n' \
+      "$agents_dir" "$HOME/Library/LaunchAgents" >&2
+    return 0
+  fi
+  while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    [ "$label" != "$LABEL" ] || continue
+    [ -f "$agents_dir/$label.plist" ] && continue
+    printf 'route-refresh install: unloading orphaned job %s (no plist at %s/%s.plist)\n' \
+      "$label" "$agents_dir" "$label" >&2
+    launchctl remove "$label" >/dev/null 2>&1 || true
+  done < <(launchctl list 2>/dev/null | awk '{print $3}' | grep '^com\.firstmate\.route-refresh\.')
+}
+
+# launchd runs an agent under a minimal built-in PATH with none of the four
+# probe tools fm-route.sh's refresh depends on (teamclaude, teamcodex,
+# quota-axi, omp): they live under per-tool install locations such as an nvm
+# node version, ~/.local/bin, or ~/.bun/bin, never the system default
+# (firstmate issue #127). Resolve each one's real directory with `command -v`
+# under THIS install run's own (interactive, login-shell-derived) PATH, so
+# the plist gets the real current locations instead of one machine's
+# hardcoded nvm version, and every probe tool refresh needs is covered even
+# if it moves to a different manager later.
+# Sets FM_ROUTE_PROBE_PATH (colon-joined directories) and
+# FM_ROUTE_UNRESOLVED_TOOLS (space-prefixed tool names) in the caller's shell
+# rather than printing, so the caller can warn about what it could not find.
+resolve_probe_path() {
+  local tool dir seen=" " out="" bin
+  FM_ROUTE_UNRESOLVED_TOOLS=
+  FM_ROUTE_PROBE_PATH=
+  for tool in teamclaude teamcodex quota-axi omp; do
+    bin=$(command -v "$tool" 2>/dev/null)
+    # `command -v` prints a bare name for a shell function or builtin and an
+    # `alias x='...'` string for an alias; only an absolute path names a real
+    # directory, and anything else would resolve to the installer's own cwd.
+    case "$bin" in
+      /*) ;;
+      *)
+        FM_ROUTE_UNRESOLVED_TOOLS="$FM_ROUTE_UNRESOLVED_TOOLS $tool"
+        continue
+        ;;
+    esac
+    dir=$(cd "$(dirname "$bin")" && pwd -P) || {
+      FM_ROUTE_UNRESOLVED_TOOLS="$FM_ROUTE_UNRESOLVED_TOOLS $tool"
+      continue
+    }
+    case "$seen" in *" $dir "*) continue ;; esac
+    seen="$seen$dir "
+    out="$out:$dir"
+  done
+  FM_ROUTE_PROBE_PATH=${out#:}
+}
+
+# A plist is XML, so every value interpolated into a <string> element has to
+# be escaped or the file is malformed and launchd refuses to load it. Real
+# paths carry these characters: a checkout under a directory named "R&D", or
+# a homebrew/nvm prefix the operator never chose. Ampersand goes first, so
+# the escapes this function itself introduces are not re-escaped.
+xml_escape() {
+  local s=$1
+  s=${s//&/&amp;}
+  s=${s//</&lt;}
+  s=${s//>/&gt;}
+  printf '%s' "$s"
+}
+
 write_plist() {
+  local probe_path unresolved
+  local x_label x_refresher x_home x_log x_path
+  resolve_probe_path
+  probe_path=$FM_ROUTE_PROBE_PATH
+  unresolved=${FM_ROUTE_UNRESOLVED_TOOLS# }
+  if [ -n "$unresolved" ]; then
+    printf 'route-refresh install: WARNING: could not resolve these probe tools on this run PATH:%s\n' \
+      "$FM_ROUTE_UNRESOLVED_TOOLS" >&2
+    printf 'route-refresh install: the scheduled refresh cannot run their health checks, so those routes will read unknown (firstmate issue #127).\n' >&2
+    printf 'route-refresh install: install again from a shell where each tool resolves to a real path.\n' >&2
+  fi
+  if [ -z "$probe_path" ]; then
+    printf 'route-refresh install: WARNING: no probe tool resolved at all; falling back to PATH /usr/local/bin, which is unlikely to contain any of them.\n' >&2
+    probe_path=/usr/local/bin
+  fi
+  x_label=$(xml_escape "$LABEL")
+  x_refresher=$(xml_escape "$REFRESHER")
+  x_home=$(xml_escape "$FM_HOME")
+  x_log=$(xml_escape "$LOG_PATH")
+  x_path=$(xml_escape "$probe_path:/usr/bin:/bin:/usr/sbin:/sbin")
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>$LABEL</string>
+  <string>$x_label</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>$REFRESHER</string>
+    <string>$x_refresher</string>
     <string>refresh</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>FM_ROUTE_HOME_OVERRIDE</key>
-    <string>$FM_HOME</string>
+    <string>$x_home</string>
+    <key>PATH</key>
+    <string>$x_path</string>
   </dict>
   <key>StartInterval</key>
   <integer>$INTERVAL</integer>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$LOG_PATH</string>
+  <string>$x_log</string>
   <key>StandardErrorPath</key>
-  <string>$LOG_PATH</string>
+  <string>$x_log</string>
 </dict>
 </plist>
 EOF
@@ -144,6 +269,18 @@ case "$ACTION" in
     else
       printf 'not installed: %s absent\n' "$PLIST"
     fi
+    agents_dir="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
+    # Same domain agreement the sweep needs: launchd's registry can only be
+    # compared against the directory launchd itself reads.
+    if agents_dir_is_launchd_domain "$agents_dir"; then
+      orphans=$(launchctl list 2>/dev/null | awk '{print $3}' | grep '^com\.firstmate\.route-refresh\.' | grep -v "^$LABEL\$") || orphans=
+      while IFS= read -r label; do
+        [ -n "$label" ] || continue
+        [ -f "$agents_dir/$label.plist" ] && continue
+        printf 'orphaned: %s is registered in launchd with no plist at %s/%s.plist (run install to clean it up)\n' \
+          "$label" "$agents_dir" "$label"
+      done <<< "$orphans"
+    fi
     exit 0
     ;;
   install)
@@ -151,7 +288,8 @@ case "$ACTION" in
     if [ ! -d "$FM_HOME/state" ]; then
       printf 'warning: %s/state does not exist yet; it will be created by the first refresh\n' "$FM_HOME" >&2
     fi
-    consent "install" "write $PLIST and load it into launchd now (refresh every ${INTERVAL}s; refresh only reads quota/health evidence and writes state/route.json, never launches or stops anything)" || exit 1
+    consent "install" "write $PLIST and load it into launchd now (refresh every ${INTERVAL}s; refresh only reads quota/health evidence and writes state/route.json, never launches or stops anything); also unload any orphaned route-refresh job from a relocated home whose plist no longer exists" || exit 1
+    sweep_orphaned_jobs
     mkdir -p "$(dirname "$PLIST")" "$FM_HOME/state"
     tmp=$(mktemp "$PLIST.tmp.XXXXXX") || exit 1
     trap 'rm -f "$tmp"' EXIT
