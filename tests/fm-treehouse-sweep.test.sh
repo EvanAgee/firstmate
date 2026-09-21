@@ -47,6 +47,15 @@ printf 'worktree=%s\n' "$(slot 4)" > "$HOME_DIR/state/other.meta"
 printf '{"worktrees":[{"path":"%s"},{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
   "$(slot 1)" "$(slot 2)" "$(slot 3)" "$(slot 4)" > "$POOL/treehouse-state.json"
 
+# Slot 7 lives under a home-dir pool so the status-table tests can feed its
+# real v2.0.1 display form ("~/tildepool/7/repo") and prove the classifier
+# expands the tilde before matching treehouse-state.json, which always records
+# the full absolute path.
+tilde_pool="$HOME_DIR/tildepool"
+mkdir -p "$tilde_pool"
+git -C "$REPO" worktree add --detach "$tilde_pool/7/repo" -q
+printf '{"worktrees":[{"path":"%s"}]}\n' "$tilde_pool/7/repo" > "$tilde_pool/treehouse-state.json"
+
 json_entries() {
   node - "$POOL" <<'NODE'
 const pool = process.argv[2];
@@ -65,6 +74,31 @@ process.stdout.write("[" + [
 NODE
 }
 
+# The plain status table of treehouse v2.0.1, matching the real v2.0.1 column
+# layout captured on macOS: the name left-padded in a field of 4, two spaces,
+# the status in a field of 11, two spaces, the display path with the home
+# prefix rendered as "~". A leased slot appends "  (held by X)", and a slot
+# with live processes gets a continuation line indented by 19 spaces. The
+# update banner chatter above the rows must be skipped, never parsed.
+table_entries() {
+  {
+    printf 'A new version of treehouse is available: v2.0.1 → v2.3.0\n'
+    printf 'Run "treehouse update" to update\n\n'
+    printf '%-4s  %-11s  %s\n' 1 available "$POOL/1/repo"
+    printf '%-4s  %-11s  %s\n' 2 dirty "$POOL/2/repo"
+    printf '%-4s  %-11s  %s\n' 3 available "$POOL/3/repo"
+    printf '%-4s  %-11s  %s\n' 4 available "$POOL/4/repo"
+    printf '%-4s  %-11s  %s\n' 5 damaged "$POOL/5/repo"
+    printf '%-4s  %-11s  %s  %s\n' 6 leased "$POOL/6/repo" "(held by fm-interactive-1)"
+    # shellcheck disable=SC2088 # The bare tilde is the point: treehouse's own display form.
+    printf '%-4s  %-11s  %s\n' 7 in-use "~/tildepool/7/repo"
+    printf '%19s%s\n' "" "bash (424242)"
+    printf '%-4s  %-11s  %s\n\n' 8 "you're here" "$REPO"
+  }
+}
+
+
+
 # Fake treehouse: records every invocation, serves canned status, never deletes.
 FAKEBIN=$(fm_fakebin "$TMP_ROOT")
 CALLS="$TMP_ROOT/treehouse-calls"
@@ -73,11 +107,19 @@ cat > "$FAKEBIN/treehouse" <<'SH'
 printf '%s\n' "$*" >> "$FM_SWEEP_CALLS"
 case "$1" in
   status)
-    if [ -n "${FM_SWEEP_STATUS_FAIL:-}" ]; then
-      echo "unknown flag: --json" >&2
-      exit 1
+    if [ " $* " = " status --json " ]; then
+      if [ -n "${FM_SWEEP_STATUS_FAIL:-}" ]; then
+        echo "unknown flag: --json" >&2
+        exit 1
+      fi
+      cat "$FM_SWEEP_STATUS_JSON"
+    else
+      if [ -n "${FM_SWEEP_TABLE_FAIL:-}" ]; then
+        echo "failed to load config: no such pool" >&2
+        exit 1
+      fi
+      cat "$FM_SWEEP_STATUS_TABLE"
     fi
-    cat "$FM_SWEEP_STATUS_JSON"
     ;;
   prune) echo "would prune 1 stale worktree" ;;
   destroy)
@@ -95,10 +137,14 @@ export FM_SWEEP_CALLS="$CALLS"
 FM_SWEEP_STATUS_JSON="$TMP_ROOT/status.json"
 export FM_SWEEP_STATUS_JSON
 json_entries > "$FM_SWEEP_STATUS_JSON"
+FM_SWEEP_STATUS_TABLE="$TMP_ROOT/status.table"
+export FM_SWEEP_STATUS_TABLE
+table_entries > "$FM_SWEEP_STATUS_TABLE"
 
 SWEEP_ENV=(
   FM_ROOT_OVERRIDE="$REPO"
   FM_HOME="$HOME_DIR"
+  HOME="$HOME_DIR"
   FM_STATE_OVERRIDE="$HOME_DIR/state"
   FM_CONFIG_OVERRIDE="$HOME_DIR/config"
   FM_PROJECTS_OVERRIDE="$HOME_DIR/no-projects"
@@ -140,23 +186,46 @@ assert_contains "$out" "unregistered or orphaned worktree" "empty state did not 
 printf '%s\n' "$state_json" > "$POOL/treehouse-state.json"
 pass "empty state keeps unregistered slots inspect-only"
 
-# --- an unsupported status --json fails honestly ------------------------------
-
-# treehouse v2.0.1 has no --json flag; the sweep must say it cannot classify
-# instead of reporting an empty or clean pool.
+# --- an unsupported status --json falls back to the plain status table -------
+#
+# treehouse v2.0.1 has no --json flag and exits "unknown flag: --json"; the
+# sweep must still classify by parsing the plain status table. The fixture
+# table here copies the real v2.0.1 column layout captured on macOS: the
+# update banner chatter above the rows, the in-use slot's process continuation
+# line, the leased slot's held-by annotation, and a tilde-abbreviated home
+# path exactly as treehouse prints it.
 : > "$CALLS"
-if out=$(env "${SWEEP_ENV[@]}" FM_SWEEP_STATUS_FAIL=1 "$ROOT/bin/fm-treehouse-sweep.sh" --pool "$REPO" 2>&1); then
-  fail "the sweep reported success when treehouse status --json is unsupported"
+out=$(env "${SWEEP_ENV[@]}" FM_SWEEP_STATUS_FAIL=1 "$ROOT/bin/fm-treehouse-sweep.sh" --pool "$REPO") \
+  || fail "the sweep failed when the plain status table was available: $out"
+assert_contains "$out" "slot 1      clean" "the clean slot was not classified clean via the status table"
+assert_contains "$out" "slot 2      dirty" "the dirty slot was not classified dirty via the status table"
+assert_contains "$out" "slot 3      skipped" "the claimed slot was not skipped via the status table"
+assert_contains "$out" "claimed by task other-task" "the claim reason is missing in table mode"
+assert_contains "$out" "slot 4      skipped" "the meta-named slot was not skipped via the status table"
+assert_contains "$out" "task other's record names this slot" "the meta-record reason is missing in table mode"
+assert_contains "$out" "slot 5      damaged" "the damaged slot was not classified damaged via the status table"
+assert_contains "$out" "slot 6      skipped" "the leased slot was not skipped via the status table"
+assert_contains "$out" "leased to fm-interactive-1" "the held-by annotation was not parsed"
+assert_contains "$out" "slot 7      skipped" "the tilde-path slot was not matched via the status table"
+assert_contains "$out" "1 live processes" "the process continuation line was not counted"
+assert_contains "$out" "slot 8      damaged" "the you're-here row did not parse"
+if grep -q 'slot' "$CALLS" 2>/dev/null && ! grep -q '^status --json$' "$CALLS"; then
+  fail "table mode never tried treehouse status --json first: $(cat "$CALLS")"
 fi
-assert_contains "$out" "treehouse status --json failed" "the unsupported-status diagnostic is missing"
-assert_contains "$out" "nothing classified" "the sweep did not say it classified nothing"
+grep -Fqx 'status --json' "$CALLS" || fail "the sweep did not try status --json first: $(cat "$CALLS")"
+grep -Fqx 'status' "$CALLS" || fail "the sweep did not fall back to the plain status: $(cat "$CALLS")"
+pass "an unsupported status --json falls back to the plain status table"
+
+# The refusal names the real version requirement only when neither surface parses.
+if out=$(env "${SWEEP_ENV[@]}" FM_SWEEP_STATUS_FAIL=1 FM_SWEEP_TABLE_FAIL=1 "$ROOT/bin/fm-treehouse-sweep.sh" --pool "$REPO" 2>&1); then
+  fail "the sweep reported success when no status surface was readable"
+fi
+assert_contains "$out" "v2.3.0 or newer" "the refusal does not name the minimum treehouse version"
+assert_contains "$out" "nothing classified" "the both-failed refusal did not say it classified nothing"
 if printf '%s\n' "$out" | grep -Eq 'slot [0-9]+ +(clean|dirty|skipped|damaged|refused)'; then
   fail "the sweep reported tier classifications despite failing to read pool status: $out"
 fi
-if grep -Eq 'destroy .*--yes|prune .*--yes' "$CALLS" 2>/dev/null; then
-  fail "the unsupported-status pass executed a destructive treehouse verb: $(cat "$CALLS")"
-fi
-pass "an unsupported status --json fails honestly instead of reporting an empty or clean pool"
+pass "an unreadable status refuses naming the minimum treehouse version"
 
 # --- --apply-clean requires the config flag -----------------------------------
 

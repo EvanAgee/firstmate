@@ -42,24 +42,29 @@ Checked 2026-09-14 against the live pools documented in the `treehouse-hygiene-a
 Slot 21 is foreign-administered through a dead home's gitdir; slots 3 and 5 are damaged directories with no `.git` marker.
 Bootstrap renders each record as `TREEHOUSE_POOL: orphaned slot <slot> at <path> - no registered worktree; inspect before cleanup; no changes made` and takes no action.
 
-## Pool sweep status --json prerequisite
+## Pool sweep status surfaces
 
-Checked 2026-09-18 on macOS with the fork's pinned treehouse v2.0.1 and a scratch treehouse v2.3.0.
+Checked 2026-09-21 on macOS with treehouse v2.0.1 (the fork's pinned install).
 
-`bin/fm-treehouse-sweep.sh` reads the pool through `treehouse status --json`.
-Treehouse v2.0.1 does not implement that flag, so the sweep cannot classify a pool with it.
-Run `bin/fm-treehouse-sweep.sh` against the live pool with v2.0.1 and it prints, per pool:
+`bin/fm-treehouse-sweep.sh` reads the pool through `treehouse status --json` on treehouse v2.3.0 or newer, and falls back to the plain status table on v2.0.x.
+The table parse is strict: non-entry chatter lines are skipped, entry rows are validated, live-process continuation lines and `  (held by X)` annotations are read, and display paths with a `~` home prefix are expanded against `$HOME`, matching treehouse-state.json paths, which are absolute.
+When neither surface reads or parses, the sweep refuses naming the real requirement instead of misclassifying: `treehouse status could not be read at all (machine-readable status needs treehouse v2.3.0 or newer; the older plain status table is also supported when it parses); nothing classified`.
+
+On 2026-09-21 the pre-fix sweep ran the issue's exact command against a scratch treehouse v2.0.1 pool with one clean and one dirty slot:
 
 ```
-sweep: pool /Users/evanagee/Sites/firstmate: treehouse status --json failed (treehouse v2.3.0 or newer is required for --json); nothing classified
+sweep: pool /Users/evanagee/.treehouse/firstmate-df5ff1/4/firstmate/.walk5176/repo: treehouse status --json failed (treehouse v2.3.0 or newer is required for --json); nothing classified
+REFUSED: pool /Users/evanagee/.treehouse/firstmate-df5ff1/4/firstmate/.walk5176/repo could not be classified; nothing was changed
 ```
 
-The command exits nonzero and reports no tier counts, so it never presents an unreadable pool as empty or clean.
-The portable regression is `an unsupported status --json fails honestly instead of reporting an empty or clean pool` in `tests/fm-treehouse-sweep.test.sh`.
-Run: `bin/fm-test-run.sh tests/fm-treehouse-sweep.test.sh` -> `exit=0` on 2026-09-18.
+With the fix the same pool classifies through the plain table (`slot 1 clean`, `slot 2 dirty`), `--apply-clean` destroyed slot 1 alone, and `--apply-slot <dirty slot 2> --captain-approved` destroyed slot 2 with `--include-unlanded --yes`, leaving the pool empty.
+The scratch pool lived entirely under a disposable task worktree of this repo and was removed after the walk.
 
-With treehouse v2.3.0 the same command classifies the pool.
+The portable regressions are `an unsupported status --json falls back to the plain status table` and `an unreadable status refuses naming the minimum treehouse version` in `tests/fm-treehouse-sweep.test.sh`.
+Run: `bin/fm-test-run.sh tests/fm-treehouse-sweep.test.sh` -> `exit=0` on 2026-09-21.
+
+With treehouse v2.3.0 the sweep classifies through `--json`.
 Run: `FM_ROOT_OVERRIDE=/Users/evanagee/Sites/firstmate FM_HOME=/Users/evanagee/Sites/firstmate bin/fm-treehouse-sweep.sh` -> 15 pools, clean 40, dirty 9, damaged 1, skipped 7 on 2026-09-18, with every prune a dry run.
 
-The fork pins treehouse v2.0.1 in `bin/fm-install-treehouse.sh` for the real-Herdr CI lane.
-Updating the fleet to v2.3.0 is a fleet-wide tool change that touches every live worktree, so it is tracked as its own lane rather than folded into this port.
+The fork pins treehouse v2.0.1 in `bin/fm-install-treehouse.sh` for the real-Herdr CI lane, and the sweep works under that pin through the table fallback above.
+Updating the fleet to v2.3.0 is a fleet-wide tool change that touches every live worktree, so it remains its own lane.

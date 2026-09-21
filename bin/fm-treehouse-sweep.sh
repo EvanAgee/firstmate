@@ -259,11 +259,70 @@ EOF
 
 # Emit one "class|name|path|reason" line per managed entry via node so tab and
 # newline edge cases in paths stay exact.
-sweep_pool_entries() {  # <repo> <status-json>
-  node - "$1" "$2" <<'NODE'
+# Status arrives as "json" (treehouse v2.3.0+) or "table" (v2.0.x plain
+# status table: name in a field of 4, status in a field of 11, then the
+# display path with the home prefix rendered as "~"; leased rows append
+# "  (held by X)" and live processes follow on a continuation line indented
+# by 19 spaces). Chatter lines that cannot be an entry are skipped; a line
+# with an entry's shape is validated strictly, and anything that fails
+# refuses the parse rather than misclassifying a slot.
+sweep_pool_entries() {  # <repo> <status-format> <status-raw>
+  node - "$1" "$2" "$3" <<'NODE'
 const fs = require("fs");
 const path = require("path");
-const status = JSON.parse(process.argv[3]);
+const format = process.argv[3];
+const raw = process.argv[4];
+const parseTable = (raw) => {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const known = new Set([
+    "available", "in-use", "dirty", "leased", "damaged", "missing", "destroying", "you're here",
+  ]);
+  const items = [];
+  let current = null;
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    if (/^\s{2,}\S/.test(line)) {
+      // Live-process continuation of the previous entry: "name (pid), ...".
+      if (!current) continue;
+      const count = (line.match(/\(\d+\)/g) || []).length;
+      current.processes = Array.from({ length: count }, () => ({}));
+      continue;
+    }
+    // Chatter lines (update banners and the like) never match an entry's
+    // shape: a bare name, at least two spaces, then the rest of the row.
+    if (!/^\S\s{2,}\S/.test(line)) continue;
+    const parts = line.split(/\s{2,}/).filter((part) => part.length > 0);
+    if (parts.length < 3) {
+      console.error(`malformed status table line: ${line}`);
+      process.exit(6);
+    }
+    const [name, status] = parts;
+    if (!known.has(status)) {
+      console.error(`unknown status in status table line: ${line}`);
+      process.exit(6);
+    }
+    let path = parts[2];
+    if (path === "~") {
+      path = home;
+    } else if (path.startsWith("~/")) {
+      path = home + path.slice(1);
+    }
+    if (!path.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(path) && !path.startsWith("\\\\")) {
+      console.error(`status table path is not absolute: ${parts[2]}`);
+      process.exit(6);
+    }
+    let holder = "";
+    for (const extra of parts.slice(3)) {
+      const heldBy = /^\(held by (.*)\)$/.exec(extra);
+      if (heldBy) holder = heldBy[1];
+    }
+    current = { name, path, status, processes: [], lease_holder: holder };
+    items.push(current);
+  }
+  return items;
+};
+const status = format === "table" ? parseTable(raw) : JSON.parse(raw);
+
 const out = [];
 const seen = new Set();
 const stateEntries = new Map();
@@ -344,23 +403,33 @@ SWEEP_UNSAFE_CLAIM=0
 SWEEP_UNPROVABLE=0
 
 sweep_classify_pool() {  # <repo> — fills the SWEEP_* arrays
-  local repo=$1 status_rc entries parsed_entries parsed_rc line name path status nprocs leased destroying holder
+  local repo=$1 status_format entries parsed_entries parsed_rc line name path status nprocs leased destroying holder
   local canon reason class default_ref porcelain_head
   SWEEP_CLASSES=(); SWEEP_NAMES=(); SWEEP_PATHS=(); SWEEP_REASONS=()
   SWEEP_UNSAFE_CLAIM=0; SWEEP_UNPROVABLE=0
+  # Primary surface: `treehouse status --json` (treehouse v2.3.0 or newer).
+  # treehouse v2.0.x answers that flag with "unknown flag: --json", so fall
+  # back to the plain status table, parsed strictly; when neither surface
+  # reads, refuse naming the real requirement rather than misclassifying.
+  status_format=json
   entries=$(
     cd "$repo" 2>/dev/null && treehouse status --json 2>/dev/null
-  )
-  status_rc=$?
-  [ "$status_rc" -eq 0 ] && [ -n "$entries" ] || {
-    warn "pool $repo: treehouse status --json failed (treehouse v2.3.0 or newer is required for --json); nothing classified"
-    return 1
+  ) && [ -n "$entries" ] || {
+    entries=$(
+      cd "$repo" 2>/dev/null && NO_COLOR=1 CLICOLOR=0 treehouse status 2>/dev/null
+    ) || {
+      warn "pool $repo: treehouse status could not be read at all (machine-readable status needs treehouse v2.3.0 or newer; the older plain status table is also supported when it parses); nothing classified"
+      return 1
+    }
+    status_format=table
+    # An empty pool prints no rows; that is a valid empty classification.
+    [ -n "$entries" ] || return 0
   }
   default_ref=$(sweep_pool_default_ref "$repo" || true)
-  parsed_entries=$(sweep_pool_entries "$repo" "$entries")
+  parsed_entries=$(sweep_pool_entries "$repo" "$status_format" "$entries")
   parsed_rc=$?
   [ "$parsed_rc" -eq 0 ] || {
-    warn "pool $repo: treehouse status --json contained invalid data; nothing classified"
+    warn "pool $repo: treehouse status output could not be parsed (machine-readable status needs treehouse v2.3.0 or newer; the older plain status table is also supported when it parses); nothing classified"
     return 1
   }
   [ -n "$parsed_entries" ] || return 0
