@@ -438,9 +438,17 @@ status_event_recorded() {  # <status-file> <new-status-line>
 # Both positions state the same key and yield the same note (a consumed
 # note-head token is key metadata, stripped from the note); when both positions
 # carry a token, the documented before-colon one wins and the note-head token
-# stays note text. A token deeper inside the note is prose, never a stated key,
-# so a summary merely MENTIONING "[key=x]" cannot open or close that decision.
-# A line with no token in either position uses the key "default", preserving
+# stays note text.
+# A needs-decision or blocked line has a THIRD accepted position: the single
+# complete canonical token inside its note, because review tools often put a
+# finding count before the key and the question after it
+#   needs-decision: fix-review found 2 findings [key=labels]: choose the labels
+# That interior token states the key and is stripped from the note like a
+# note-head one. A bare "[<slug>]" strictly inside the note stays prose, and two
+# or more canonical tokens inside one note are ambiguous, so they stay prose and
+# the line folds to "default" rather than guess. A canonical token inside the
+# note of any other verb is prose too.
+# A line with no token in an allowed position uses the key "default", preserving
 # the historical one-open-decision-per-task behavior (a bare "resolved:" closes
 # "default"). A stated key whose slug fails the charset below is rejected (the
 # folds skip the line), never rewritten to "default".
@@ -539,6 +547,16 @@ _fm_key_before_colon() {  # <status-line>
     *) return 1 ;;
   esac
 }
+# Raw slug of the before-colon token, when one exists; the slug's charset is the
+# caller's check via _fm_decision_slug_ok. Companion to _fm_key_before_colon for
+# the candidate reader below, which needs the slug and not only a yes/no.
+_fm_key_raw_before() {  # <status-line> -> raw slug
+  local head
+  _fm_key_before_colon "$1" || return 1
+  head=${1%%:*}
+  head=${head#*\[key=}
+  printf '%s' "${head%%\]*}"
+}
 # Raw slug of a complete "[key=<slug>]" token at the head of the note (the
 # first thing after the line's first colon, ignoring whitespace). Fails when
 # the line has no colon or no complete token there; slug charset validity is
@@ -563,39 +581,162 @@ _fm_decision_slug_ok() {  # <slug>
     *) return 0 ;;
   esac
 }
+# Raw slug and note offset of the only complete canonical "[key=<slug>]" token
+# strictly inside the note of a needs-decision/blocked line. A token is interior
+# when the text before it ends at the start of the note, whitespace, or a colon,
+# and the text after it begins with whitespace or punctuation or ends the note,
+# so "[key=x]" embedded in a longer word or followed directly by a letter is
+# prose. Prints "<slug>\t<note-offset>" and returns 0 for exactly one valid
+# token; returns 2 when several valid tokens make the line ambiguous, 3 when
+# every complete token is malformed, and 1 when the note holds no complete
+# canonical token at all.
+_fm_key_raw_interior() {  # <status-line> -> "<slug>\t<note-offset>"
+  local note scan rest k token before after token_offset consumed=0
+  local valid='' valid_offset='' valid_count=0 invalid=''
+  case "$1" in
+    *:*) note=${1#*:} ;;
+    *) return 1 ;;
+  esac
+  note=${note#"${note%%[![:space:]]*}"}
+  case "$note" in
+    *\[key=*\]*) ;;
+    *) return 1 ;;
+  esac
+  scan=$note
+  while :; do
+    case "$scan" in *\[key=*\]*) ;; *) break ;; esac
+    rest=${scan#*\[key=}
+    k=${rest%%\]*}
+    token="[key=$k]"
+    before=${scan%%"$token"*}
+    after=${scan#*"$token"}
+    token_offset=$((consumed + ${#before}))
+    consumed=$((token_offset + ${#token}))
+    scan=$after
+    case "$before" in ''|*[[:space:]]|*:) ;; *) continue ;; esac
+    case "$after" in ''|[[:space:]]*|[[:punct:]]*) ;; *) continue ;; esac
+    if _fm_decision_slug_ok "$k"; then
+      valid=$k
+      valid_offset=$token_offset
+      valid_count=$((valid_count + 1))
+    elif [ -n "$k" ] && [ -z "$invalid" ]; then
+      invalid=$k
+    fi
+  done
+  if [ "$valid_count" -eq 1 ]; then
+    printf '%s\t%s' "$valid" "$valid_offset"
+    return 0
+  fi
+  [ "$valid_count" -gt 1 ] && return 2
+  [ -n "$invalid" ] && return 3
+  return 1
+}
+# The position and raw slug of the token that states this line's decision, in
+# precedence order: before the first colon, at the head of the note, then - for
+# needs-decision/blocked lines only - the single complete canonical token inside
+# the note. Prints "<position>\t<key>", and for the interior position also
+# "\t<note-offset>" so the note reader can strip exactly the accepted token.
+# Prints "default\tdefault" when no stated key applies, and fails when every
+# stated candidate is malformed, so a line whose only key token is invalid is
+# skipped by the fold rather than silently bound to "default".
+_fm_decision_key_candidate() {  # <status-line> -> "<position>\t<key>[\t<offset>]"
+  local line=$1 k verb rc invalid=0
+  if _fm_key_before_colon "$line"; then
+    k=$(_fm_key_raw_before "$line")
+    if _fm_decision_slug_ok "$k"; then
+      printf 'before\t%s' "$k"
+      return 0
+    fi
+    invalid=1
+  fi
+  if k=$(_fm_key_at_note_head "$line"); then
+    if _fm_decision_slug_ok "$k"; then
+      printf 'head\t%s' "$k"
+      return 0
+    fi
+    invalid=1
+  fi
+  status_line_verb "$line" verb
+  case "$verb" in
+    needs-decision|blocked)
+      if k=$(_fm_key_raw_interior "$line"); then
+        printf 'interior\t%s' "$k"
+        return 0
+      else
+        rc=$?
+      fi
+      [ "$rc" -eq 2 ] && { printf 'default\tdefault'; return 0; }
+      [ "$rc" -eq 3 ] && invalid=1
+      ;;
+  esac
+  [ "$invalid" -eq 0 ] || return 1
+  printf 'default\tdefault'
+}
 # Both readers below locate the head/note separator on an unstamped copy, so a
 # worker-written stamp cannot move it: a readable time like [at=10:30] carries
 # colons that would otherwise end the head mid-tag and hand the caller a note
 # and a key sliced out of the timestamp. The line's own bytes are never altered.
 status_line_note() {  # <status-line> -> text after the first colon, trimmed
-  local n k unstamped
+  local n candidate position details offset after_offset token before after unstamped
   _fm_status_unstamped "$1" unstamped
   case "$unstamped" in
     *:*) n=${unstamped#*:}; n=${n#"${n%%[![:space:]]*}"} ;;
     *) printf '%s' "$unstamped"; return 0 ;;
   esac
-  # A note-head token that states this line's key (no before-colon token, valid
-  # slug) is key metadata, not note text: strip it so both stated-key positions
-  # yield the same note.
-  if ! _fm_key_before_colon "$unstamped" && k=$(_fm_key_at_note_head "$unstamped") \
-    && _fm_decision_slug_ok "$k"; then
-    n=${n#"[key=$k]"}
-    n=${n#"${n%%[![:space:]]*}"}
-  fi
+  # A token that states this line's key is key metadata, not note text, so strip
+  # it and every stated-key position yields the same note: a note-head token from
+  # the front, and the accepted interior token from wherever it sits.
+  candidate=$(_fm_decision_key_candidate "$unstamped") || { printf '%s' "$n"; return 0; }
+  position=${candidate%%$'\t'*}
+  case "$position" in
+    before|default) ;;
+    head)
+      n=${n#*\]}
+      n=${n#"${n%%[![:space:]]*}"}
+      ;;
+    interior)
+      details=${candidate#*$'\t'}
+      token="[key=${details%%$'\t'*}]";
+      offset=${details#*$'\t'}
+      after_offset=$((offset + ${#token}))
+      before=${n:0:offset}
+      after=${n:after_offset}
+      before=${before%"${before##*[![:space:]]}"}
+      after=${after#"${after%%[![:space:]]*}"}
+      case "$after" in
+        :*)
+          after=${after#:}
+          after=${after#"${after%%[![:space:]]*}"}
+          if [ -n "$before" ] && [ -n "$after" ]; then
+            n="$before: $after"
+          else
+            n="$before$after"
+          fi
+          ;;
+        [[:punct:]]*)
+          n="$before$after"
+          ;;
+        *)
+          if [ -n "$before" ] && [ -n "$after" ]; then
+            n="$before $after"
+          else
+            n="$before$after"
+          fi
+          ;;
+      esac
+      ;;
+  esac
   printf '%s' "$n"
 }
 _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
-  local k unstamped
+  local candidate position key unstamped
   _fm_status_unstamped "$1" unstamped
-  if _fm_key_before_colon "$unstamped"; then
-    k=${unstamped%%:*}
-    k=${k#*\[key=}
-    k=${k%%\]*}
-  else
-    k=$(_fm_key_at_note_head "$unstamped") || { printf 'default'; return 0; }
-  fi
-  _fm_decision_slug_ok "$k" || return 1
-  printf '%s' "$k"
+  candidate=$(_fm_decision_key_candidate "$unstamped") || return 1
+  position=${candidate%%$'\t'*}
+  [ "$position" != default ] || { printf 'default'; return 0; }
+  key=${candidate#*$'\t'}
+  key=${key%%$'\t'*}
+  printf '%s' "$key"
 }
 # Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
@@ -991,10 +1132,13 @@ _fm_open_decisions_cursor_path() {  # <status-file>
 # malformed worker stamp whose colons used to pose as the head/note separator
 # no longer opens or closes anything; cursors folded under that reading are
 # discarded.
+# 10: a needs-decision or blocked line now accepts the single canonical
+# "[key=...]" token inside its note as a stated key, so a cursor that folded such
+# a line to "default" is discarded and rebuilt.
 # Version 4 was already spent on the bracketed-tag parser change above, and a
 # cursor persisted under that reading predates this one, so it must still be
 # discarded and rebuilt from byte 0 under the new reading.
-FM_OPEN_DECISIONS_FOLD_VERSION=9
+FM_OPEN_DECISIONS_FOLD_VERSION=10
 
 # Portable device:inode identity for the rotation/recreation check below.
 _fm_open_decisions_file_ident() {  # <file> -> strongest available identity
