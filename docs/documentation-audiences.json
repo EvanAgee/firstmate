@@ -121,6 +121,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/backlog-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/bearings/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -129,7 +133,15 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/captain-communication/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/captain-hold-lifecycle/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/crewmate-briefing/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -138,6 +150,10 @@
     },
     {
       "path": ".agents/skills/diagnostic-reasoning/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/dispatch-reference/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -225,6 +241,14 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/home-layout-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/knowledge-routing/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/process-event-sources/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -241,7 +265,15 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/relay-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/secondmate-provisioning/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/session-start-reference/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -250,6 +282,14 @@
     },
     {
       "path": ".agents/skills/stuck-crewmate-recovery/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/supervision-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/task-lifecycle-reference/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -377,6 +417,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/proof/5175.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
@@ -391,6 +435,10 @@
     {
       "path": "docs/sessionstart-nudge.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/specs/upstream-rebase.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/subagent-guard.md",

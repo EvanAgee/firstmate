@@ -4053,7 +4053,7 @@ test_verify_tolerates_an_answered_hold_archived_from_the_backlog() {
     || fail "answer could not close the captain-held task"
   assert_grep "answered_keys=$hold" "$home/state/$id.meta" \
     "the close did not record the answered key durably in the origin metadata"
-  tasks_in "$home" done "$hold" --keep 0 >/dev/null 2>&1 \
+  tasks_in "$home" "done" "$hold" --keep 0 >/dev/null 2>&1 \
     || fail "could not archive the answered captain-held row"
   if tasks_in "$home" show "$hold" >/dev/null 2>&1; then
     fail "the answered captain-held row survived Done-history retention"
@@ -4086,7 +4086,7 @@ test_verify_still_refuses_a_hold_archived_without_an_answer() {
     || fail "could not register the unanswered captain-held task"
   run_captain "$home" complete "$id" "$hold" >/dev/null \
     || fail "completion failed for the unanswered held inventory"
-  tasks_in "$home" done "$hold" --keep 0 >/dev/null 2>&1 \
+  tasks_in "$home" "done" "$hold" --keep 0 >/dev/null 2>&1 \
     || fail "could not archive the unanswered captain-held row"
   if tasks_in "$home" show "$hold" >/dev/null 2>&1; then
     fail "the unanswered captain-held row survived Done-history retention"
