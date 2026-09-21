@@ -4027,6 +4027,76 @@ test_retained_body_keeps_its_utf8_bytes() {
   pass "cleanup preserves every byte of a retained body's non-ASCII characters"
 }
 
+# An answered captain call can be dropped from the backlog by Done-history
+# retention. The completion gate must still clear for its origin on the durable
+# answered-key record alone, and must keep refusing a call that was never
+# answered or whose decision re-opened afterwards.
+test_verify_tolerates_an_answered_hold_archived_from_the_backlog() {
+  local home id hold
+  home=$(make_home answered-archival)
+  id=sample-archival-review
+  hold=sample-archival-call
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review the archival path" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the archival investigation"
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Archival review\n\nOne captain choice remains.\n' > "$home/data/$id/report.md"
+  run_captain "$home" hold "$hold" \
+    --title "Choose the archival option" --reason "captain archival choice pending" \
+    --repo sample --origin "$id" >/dev/null \
+    || fail "could not register the captain-held task"
+  run_captain "$home" complete "$id" "$hold" >/dev/null \
+    || fail "completion failed for the held inventory"
+  printf 'Captain chose the archival option.\n' > "$home/archival-decision.txt"
+  run_captain "$home" answer "$hold" --decision-file "$home/archival-decision.txt" >/dev/null \
+    || fail "answer could not close the captain-held task"
+  assert_grep "answered_keys=$hold" "$home/state/$id.meta" \
+    "the close did not record the answered key durably in the origin metadata"
+  tasks_in "$home" done "$hold" --keep 0 >/dev/null 2>&1 \
+    || fail "could not archive the answered captain-held row"
+  if tasks_in "$home" show "$hold" >/dev/null 2>&1; then
+    fail "the answered captain-held row survived Done-history retention"
+  fi
+  run_captain "$home" verify "$id" >/dev/null \
+    || fail "an answered and archived captain call no longer cleared the completion gate"
+  # The durable record tolerates an absent row; it must never wave a re-opened
+  # decision through. The open-decision check is independent of the tolerance.
+  printf 'needs-decision [key=archival-round-two]: a fresh choice\n' >> "$home/state/$id.status"
+  if run_captain "$home" verify "$id" >/dev/null 2>&1; then
+    fail "an older answered record waived a re-opened decision"
+  fi
+  pass "verify clears for an answered captain call archived out of the backlog"
+}
+
+test_verify_still_refuses_a_hold_archived_without_an_answer() {
+  local home id hold
+  home=$(make_home unanswered-archival)
+  id=sample-unanswered-review
+  hold=sample-unanswered-call
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review the unanswered archival path" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the unanswered investigation"
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Unanswered review\n\nOne captain choice remains.\n' > "$home/data/$id/report.md"
+  run_captain "$home" hold "$hold" \
+    --title "Choose the unanswered option" --reason "captain unanswered choice pending" \
+    --repo sample --origin "$id" >/dev/null \
+    || fail "could not register the unanswered captain-held task"
+  run_captain "$home" complete "$id" "$hold" >/dev/null \
+    || fail "completion failed for the unanswered held inventory"
+  tasks_in "$home" done "$hold" --keep 0 >/dev/null 2>&1 \
+    || fail "could not archive the unanswered captain-held row"
+  if tasks_in "$home" show "$hold" >/dev/null 2>&1; then
+    fail "the unanswered captain-held row survived Done-history retention"
+  fi
+  if run_captain "$home" verify "$id" >/dev/null 2>&1; then
+    fail "verify waived a captain call that was archived without an answer"
+  fi
+  pass "verify still refuses a captain call archived without an answer"
+}
+
 test_uninventoried_report_decision_refuses_completion
 test_hold_decodes_a_bare_scalar_body_without_the_nonref_default
 test_retained_body_keeps_its_utf8_bytes
@@ -4080,3 +4150,5 @@ test_verify_names_the_unresolvable_legacy_id_once
 test_verify_resolves_a_pre_collapse_key_through_its_derived_marker
 test_captain_hold_mutations_address_the_beads_backend
 test_hold_creates_a_captain_row_when_beads_requires_due_without_custom_type
+test_verify_tolerates_an_answered_hold_archived_from_the_backlog
+test_verify_still_refuses_a_hold_archived_without_an_answer

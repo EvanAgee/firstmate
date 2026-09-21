@@ -792,20 +792,81 @@ write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existin
   rm -f -- "$tmp"
 }
 
+# The origin task a closing captain-held row belongs to: the origin whose
+# recorded inventory (its metadata's decision_keys) names this hold id. Empty
+# when no origin records it, which is the normal case for a hold answered
+# without a completed inventory.
+hold_origin() {  # <hold-id> -> origin id, or nothing
+  local id=$1 meta keys
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    keys=$(meta_value "$meta" decision_keys)
+    [ -n "$keys" ] || continue
+    if list_has_key "$keys" "$id"; then
+      basename "$meta" .meta
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Record <entry> as durably answered in <origin>'s metadata, under the same lock
+# command_complete uses. verify reads this only when the hold row itself is
+# absent, so the record is what tells an answered-and-archived call apart from
+# one that simply vanished. It is idempotent and best-effort: a key already
+# listed is a no-op, and a write failure never fails the close it follows.
+record_answered_key() {  # <origin-id> <entry-id>
+  local origin=$1 entry=$2 meta previous merged lock
+  meta="$STATE/$origin.meta"
+  [ -f "$meta" ] || return 0
+  lock=$(fm_meta_lock_path "$meta") || return 0
+  fm_lock_acquire_wait "$lock" || return 0
+  previous=$(meta_value "$meta" answered_keys)
+  if ! list_has_key "$previous" "$entry"; then
+    merged=$(sorted_key_union "$previous" "$entry")
+    printf 'answered_keys=%s\n' "$merged" >> "$meta" \
+      || { fm_lock_release "$lock"; return 0; }
+  fi
+  fm_lock_release "$lock"
+  return 0
+}
+
+# 0 when <entry> is recorded as answered in <origin>'s metadata.
+key_was_answered() {  # <origin-id> <entry-id>
+  list_has_key "$(meta_value "$STATE/$1.meta" answered_keys)" "$2"
+}
+
 # Resolve one entry and verify the row it names is durably captain-held. A
 # resolution failure that is not the read bound keeps resolve_entry's own
 # status - its stderr already named the entry; 124 means the backend never
 # answered, which is not the same as an unknown entry and must not be spent
 # as absence. On success prints "<id> <how>" so the caller can keep the
 # attestation evidence.
+# A not-found entry (status 1) is tolerated only when the origin durably records
+# this exact entry as answered: an answered captain-held task later dropped from
+# the backlog by Done-history retention must not wedge the completion gate.
+# An unreadable backend (status 2) and a read-bound overrun (124) still fail, and
+# a re-opened status decision is caught separately by command_verify's open-set
+# check, so the tolerance never waves an unresolved call through.
 verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how>"
-  local origin=$1 entry=$2 resolved resolve_status=0
-  resolved=$(resolve_entry "$origin" "$entry") || resolve_status=$?
+  local origin=$1 entry=$2 resolved resolve_status=0 err
+  err=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-verify.XXXXXX") \
+    || fail "cannot stage the verify diagnostics for $entry"
+  resolved=$(resolve_entry "$origin" "$entry" 2>"$err") || resolve_status=$?
   if [ "$resolve_status" -ne 0 ]; then
     [ "$resolve_status" -ne 124 ] \
-      || fail "the backlog backend exceeded its read bound resolving $entry"
+      || { rm -f "$err"; fail "the backlog backend exceeded its read bound resolving $entry"; }
+    if [ "$resolve_status" -eq 1 ] && [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ] \
+      && key_was_answered "$origin" "$entry"; then
+      rm -f "$err"
+      printf '%s archived-answered\n' "$entry"
+      return 0
+    fi
+    cat "$err" >&2
+    rm -f "$err"
     exit "$resolve_status"
   fi
+  rm -f "$err"
   printf '%s\n' "$resolved"
   verify_hold_durable "${resolved%% *}"
 }
@@ -1400,8 +1461,13 @@ reconcile_request_retire() {  # <task-id>
 }
 
 publish_parent_resolution_then_retire() {  # <task-id> <occurrence> <note>
-  local id=$1 occurrence=$2 note=$3 request
+  local id=$1 occurrence=$2 note=$3 request origin
   request=$(reconcile_request_path "$id")
+  # Record the durable answer proof before the parent publication, so an
+  # answered row later dropped by retention still clears the completion gate.
+  if origin=$(hold_origin "$id"); then
+    record_answered_key "$origin" "$id"
+  fi
   publish_parent_hold "$id" "$occurrence" resolved "$note"
   if [ -e "$request" ] && [ "$PARENT_HOLD_PUBLISHED" != 1 ]; then
     fail "could not publish the answered captain-held task $id to its parent"
