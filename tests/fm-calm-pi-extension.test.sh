@@ -3388,7 +3388,7 @@ SH
 }
 
 test_interactive_terminal_e2e() {
-  local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot export_settled_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_report active_wait active_screen_wait boat_frame_one boat_frame_two boat_resized_snapshot boat_focus_snapshot boat_cleared_snapshot boat_hull_line boat_sail_line boat_column_one boat_column_two boat_line boat_color_snapshot boat_color_line boat_water_snapshot boat_water_line boat_water_first boat_water_changed boat_narrow_snapshot boat_freeze_snapshot boat_resume_snapshot boat_freeze_column boat_freeze_sail boat_resume_column boat_resume_sail
+  local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot export_settled_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_report active_wait active_screen_wait boat_frame_one boat_frame_two boat_resized_snapshot boat_focus_snapshot boat_cleared_snapshot boat_hull_line boat_sail_line boat_column_one boat_column_two boat_line boat_color_snapshot boat_color_line boat_water_snapshot boat_water_line boat_water_first boat_water_changed boat_narrow_snapshot boat_freeze_snapshot boat_resume_snapshot boat_freeze_column boat_freeze_sail boat_resume_column boat_resume_sail control_html control_dom dom_rendered
   if ! command -v pi >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
     echo "skip: pi or tmux not found for Pi calm interactive E2E"
     return 0
@@ -3837,11 +3837,34 @@ if (!serialized.includes("firstmate-synthetic-input") || !serialized.includes("/
 const synthetic = entries.find((entry) => entry.type === "custom_message" && entry.customType === "firstmate-synthetic-input");
 if (!synthetic || synthetic.display) process.exit(1);
 JS
-  chrome=$(find_chrome) \
-    || fail "Chrome or Chromium is required for rendered export DOM assertions; set FM_CHROME_BIN to one"
-  chrome_report=$(render_export_dom "$chrome" "$export_file" "$export_dom" "$version") \
-    || fail "could not render calm-mode HTML export DOM: $chrome_report"
-  node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
+  # The rendered-export DOM assertion needs a working headless browser. Treat a
+  # missing browser and a browser that cannot render here the same way: an
+  # unavailable DOM capability that skips only this one assertion loudly while the
+  # rest of the end-to-end test still runs. Only when the browser CAN render is a
+  # broken export a real failure.
+  dom_rendered=1
+  if ! chrome=$(find_chrome); then
+    echo "skip: no Chrome or Chromium found; the rendered-export DOM assertion requires a browser, the rest of the E2E still runs"
+    dom_rendered=0
+  else
+    # Probe a minimal control page FIRST, before touching the heavy export, so a
+    # browser that cannot render here is told apart from a stalled or broken
+    # export. A machine with a broken wrapper or no usable display fails only the
+    # control; a working browser renders the control, so the real export must
+    # render too and a failure there is a genuine regression.
+    control_html="$TMP_ROOT/chrome-control.html"
+    control_dom="$TMP_ROOT/chrome-control-dom.html"
+    printf '%s\n' '<!DOCTYPE html><html><head></head><body>CALM_CHROME_CONTROL</body></html>' >"$control_html"
+    if ! render_export_dom "$chrome" "$control_html" "$control_dom" "$version" >/dev/null; then
+      echo "skip: headless Chrome cannot render even a minimal control page in this environment; the rendered-export DOM assertion requires a working browser, the rest of the E2E still runs"
+      dom_rendered=0
+    else
+      chrome_report=$(render_export_dom "$chrome" "$export_file" "$export_dom" "$version") \
+        || fail "could not render calm-mode HTML export DOM: $chrome_report"
+    fi
+  fi
+  if [ "$dom_rendered" -eq 1 ]; then
+    node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
 const dom = require("node:fs").readFileSync(process.argv[2], "utf8");
 const messages = dom.match(/<div id="messages">([\s\S]*?)<\/main>/)?.[1];
 const tree = dom.match(/<div[^>]*id="tree-container"[^>]*>([\s\S]*?)<div[^>]*id="tree-status"/)?.[1];
@@ -3855,6 +3878,7 @@ for (const current of ["CURRENT_WATCHER_E2E", "CURRENT_TURN_END_E2E", "CURRENT_A
 }
 if (!tree.includes("firstmate-synthetic-input") || !tree.includes("/tmp/probe.status")) process.exit(1);
 JS
+  fi
   # Calm returns the transcript to its own presentation once the export has been
   # rendered. That repaint runs on the macrotask right after Pi prints the export
   # confirmation, so it must not overwrite it: the captain has to keep seeing where
