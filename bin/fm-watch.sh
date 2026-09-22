@@ -2324,15 +2324,24 @@ watcher_cleanup() {
   fm_active_check_stop || cleanup_status=1
   fm_check_output_cleanup
   fm_custom_check_snapshot_cleanup
-  if [ "$owns_lock" -eq 1 ] \
-    && ! fm_recovery_transition "$WATCHER_DOWNTIME_MARKER" "$transition" "$WATCH_LOCK" downtime; then
-    echo "watcher: recovery state could not be persisted; retaining stale lock evidence" >&2
-    cleanup_status=1
+  if [ "$owns_lock" -eq 1 ]; then
+    if [ "${WATCHER_BOUNDED_CHECKPOINT_EXIT:-0}" -eq 1 ]; then
+      fm_lock_release "$WATCH_LOCK" || cleanup_status=1
+    elif ! fm_recovery_transition "$WATCHER_DOWNTIME_MARKER" "$transition" "$WATCH_LOCK" downtime; then
+      echo "watcher: recovery state could not be persisted; retaining stale lock evidence" >&2
+      cleanup_status=1
+    fi
   fi
   return "$cleanup_status"
 }
 trap watcher_cleanup EXIT
-trap 'exit 1' HUP INT TERM
+WATCHER_BOUNDED_CHECKPOINT_EXIT=0
+trap 'exit 1' HUP INT
+if [ "${FM_WATCH_BOUNDED_CHECKPOINT:-0}" = 1 ]; then
+  trap 'WATCHER_BOUNDED_CHECKPOINT_EXIT=1; exit 124' TERM
+else
+  trap 'exit 1' TERM
+fi
 # This watcher's own pid, as recorded in the lock by fm_lock_claim (which writes
 # ${BASHPID:-$$} from this same main shell). Read directly, never via a command
 # substitution, so it matches the stored holder pid for the self-eviction check.

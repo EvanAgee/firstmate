@@ -232,10 +232,16 @@ test_drain_dedupes_obvious_duplicates() {
 # plain drain-and-handle turn that runs no other supervision script. It must warn
 # when work is in flight with no live watcher, and stay silent right after a
 # normal fire from a live watcher with a fresh beacon, so it never false-alarms.
+prime_secondmate_stall_fixture() {  # <state>
+  # These cases test the secondmate scan, not the network-backed GitHub health check.
+  touch "$1/.last-check"
+}
+
 test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once() {
   local dir state sub fakebin out row_before row_after stall_count real_date
   dir=$(make_case secondmate-foreign-stall)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   sub="$dir/secondmate"
   mkdir -p "$sub/state" "$sub/data" "$sub/bin"
   printf '# Firstmate\n' > "$sub/AGENTS.md"
@@ -338,6 +344,7 @@ test_secondmate_declared_pause_rows_do_not_feed_stall_escalation() {
   local dir state sub fakebin real_date
   dir=$(make_case secondmate-declared-pause-queue)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   sub="$dir/secondmate"
   mkdir -p "$sub/state"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
@@ -386,6 +393,7 @@ test_secondmate_reprovisioned_queue_starts_a_fresh_interval() {
   local dir state sub fakebin real_date
   dir=$(make_case secondmate-reprovisioned-queue)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   sub="$dir/secondmate"
   mkdir -p "$sub/state"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
@@ -448,6 +456,7 @@ test_secondmate_active_turn_defers_stall_until_the_turn_ends() {
   local dir state sub fakebin stall_count
   dir=$(make_case secondmate-active-turn)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   sub="$dir/secondmate"
   mkdir -p "$sub/state"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
@@ -515,6 +524,7 @@ test_secondmate_long_lived_mate_mid_turn_is_not_a_stall() {
   local dir state sub fakebin stall_count
   dir=$(make_case secondmate-long-lived-active-turn)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   sub="$dir/secondmate"
   mkdir -p "$sub/state"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
@@ -567,6 +577,7 @@ test_secondmate_stall_marker_rejects_symlink() {
   local dir state sub fakebin marker outside expected epoch
   dir=$(make_case secondmate-stall-marker-symlink)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   sub="$dir/secondmate"
   mkdir -p "$sub/state"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
@@ -606,6 +617,7 @@ test_acknowledged_stall_publication_survives_pre_marker_crash() {
   local dir state sub fakebin out epoch row_before
   dir=$(make_case secondmate-stall-crash)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   sub="$dir/secondmate"
   mkdir -p "$sub/state" "$sub/data"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
@@ -645,6 +657,7 @@ test_empty_prefix_mate_preserves_other_mate_receipt() {
   local dir state empty stalled fakebin epoch row_before round
   dir=$(make_case secondmate-prefix-receipt)
   state="$dir/state"
+  prime_secondmate_stall_fixture "$state"
   empty="$dir/ios"
   stalled="$dir/ios-ui"
   mkdir -p "$empty/state" "$stalled/state"

@@ -26,6 +26,8 @@ from urllib.parse import unquote, urlsplit
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 HTML_LINK_RE = re.compile(r"\b(?:href|src)=[\"']([^\"']+)[\"']", re.IGNORECASE)
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+INLINE_CODE_RE = re.compile(r"(`+).*?\1")
 REQUIRED_TRACKED_PATTERNS = ["*.md", "*.mdx", "*.rst", "*.txt", "docs/examples/*"]
 
 
@@ -101,7 +103,22 @@ def markdown_local_links(root: Path, source: Path) -> list[tuple[str, Path]]:
         text = source.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         fail(f"cannot read prose surface {source.relative_to(root)}: {exc}")
-    raw_links = MARKDOWN_LINK_RE.findall(text) + HTML_LINK_RE.findall(text)
+    prose_lines: list[str] = []
+    fence: tuple[str, int] | None = None
+    for line in text.splitlines():
+        if fence is not None:
+            char, length = fence
+            if re.match(rf"^ {{0,3}}{re.escape(char)}{{{length},}}[ \t]*$", line):
+                fence = None
+            continue
+        opening = FENCE_OPEN_RE.match(line)
+        if opening:
+            marker = opening.group(1)
+            fence = (marker[0], len(marker))
+            continue
+        prose_lines.append(INLINE_CODE_RE.sub("", line))
+    prose = "\n".join(prose_lines)
+    raw_links = MARKDOWN_LINK_RE.findall(prose) + HTML_LINK_RE.findall(prose)
     result: list[tuple[str, Path]] = []
     for raw in raw_links:
         target = resolve_local_target(root, source, raw)

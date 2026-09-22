@@ -81,6 +81,7 @@ run_with_perl_timeout() {
 }
 
 set +e
+export FM_WATCH_BOUNDED_CHECKPOINT=1
 if command -v timeout >/dev/null 2>&1; then
   timeout "$SECONDS_ARG" "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
   RC=$?

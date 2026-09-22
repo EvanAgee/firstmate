@@ -122,11 +122,17 @@ test_local_links_and_no_keyword_heuristic() {
 ```
 
 Observed version 1.2.3 on branch `fm/example`.
+
+`[Inline template](docs/inline-template.md)`
+
+```md
+[Fenced template](docs/fenced-template.md)
+```
 MD
   write_fixture_inventory "$repo"
   git -C "$repo" add README.md docs
   "$CHECK" --root "$repo" >/dev/null \
-    || fail "structural checker rejected legitimate maintainer evidence prose"
+    || fail "structural checker rejected legitimate maintainer evidence prose or code samples"
 
   printf '%s\n' '[Setup](docs/setup.md) [Policy](docs/policy.md) [Broken](docs/missing.bin)' \
     > "$repo/README.md"

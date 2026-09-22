@@ -235,7 +235,7 @@ case "$(cat "$VERIFY_OUT")" in
   *absent*) fail "a bound hit was reported as an absent task: $(cat "$VERIFY_OUT")" ;;
 esac
 case "$(cat "$VERIFY_OUT")" in
-  *wedged-entry*bound*) ;;
+  *'exceeded its read bound resolving wedged-entry') ;;
   *) fail "verify must name the entry it could not read and the bound it hit, got: $(cat "$VERIFY_OUT")" ;;
 esac
 pass "the teardown verify gate reports a bound hit by name instead of as an absent inventory entry"

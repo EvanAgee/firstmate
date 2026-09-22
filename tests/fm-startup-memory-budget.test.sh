@@ -7,6 +7,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
+export FM_CHROME_DEVTOOLS_AXI_SKIP_LIVE=1
 TMP_ROOT=$(fm_test_tmproot fm-startup-memory-budget)
 BUDGET="$ROOT/bin/fm-startup-memory-budget.sh"
 BOOTSTRAP="$ROOT/bin/fm-bootstrap.sh"
@@ -15,7 +16,8 @@ CONFIG_PUSH="$ROOT/bin/fm-config-push.sh"
 make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  fm_fake_exit0 "$fakebin" node chrome-devtools-axi
+  fm_fake_exit0 "$fakebin" node
+  fm_fake_version_tool "$fakebin" chrome-devtools-axi FM_FAKE_CHROME_DEVTOOLS_AXI_VERSION 0.1.30
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash

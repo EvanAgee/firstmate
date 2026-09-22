@@ -25,7 +25,13 @@ test_quiet_checkpoint_exits_124_cleanly() {
   expect_code 124 "$status" "quiet checkpoint exit"
   assert_contains "$(cat "$out")" "checkpoint: no actionable wake within 1s" "quiet checkpoint line missing"
   assert_absent "$home/state/.watch.lock/pid" "watch lock pid survived quiet checkpoint timeout"
-  pass "quiet checkpoint exits 124 with a clean checkpoint line and no live lock"
+  assert_absent "$home/state/.watcher-down" "quiet checkpoint timeout opened a downtime recovery episode"
+  status=0
+  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 "$CHECKPOINT" --seconds 1 >"$out" 2>"$err" || status=$?
+  expect_code 124 "$status" "second quiet checkpoint exit"
+  assert_absent "$home/state/.watcher-down" "second quiet checkpoint opened a downtime recovery episode"
+  assert_not_contains "$(cat "$out")" "rearm-resurface" "second quiet checkpoint resurfaced the first bounded timeout"
+  pass "quiet checkpoints exit 124 without leaving a lock or opening a downtime episode"
 }
 
 test_signal_passes_through_and_exits_zero() {

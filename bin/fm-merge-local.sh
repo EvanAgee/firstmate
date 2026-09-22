@@ -68,7 +68,7 @@ META="$STATE/$ID.meta"
 
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
-"$FM_ROOT/bin/fm-guard.sh" || true
+"$SCRIPT_DIR/fm-guard.sh" || true
 # Role partition: landing local-only work is MAIN-owned; the Pi supervision
 # branch reports readiness and never lands (contract: bin/fm-lease-lib.sh;
 # no-op in homes without a branch actor). This action is deliberately NOT

@@ -739,9 +739,11 @@ test_watcher_hook_and_idle_secondmate_exemption() {
   grep -Fq 'check: inactive-outcome' "$out" || fail "watcher did not surface its reconciliation result"
 
   make_world idle-secondmate; bind_secondmate local; write_mate_meta; prime_seen "$MAIN/state" "$MAIN/state/mate.status"
+  touch "$MAIN/state/.last-check"
   PATH="$WORLD/fakebin:$PATH" FM_HOME="$MAIN" FM_STATE_OVERRIDE="$MAIN/state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$WORLD/idle.out" 2>&1 &
-  pid=$!; sleep 2; kill -0 "$pid" 2>/dev/null || fail "idle secondmate watcher exited unexpectedly"; reap "$pid"
+  pid=$!; sleep 2; kill -0 "$pid" 2>/dev/null \
+    || fail "idle secondmate watcher exited unexpectedly: $(cat "$WORLD/idle.out")"; reap "$pid"
   grep -F 'stale:' "$WORLD/idle.out" >/dev/null && fail "idle secondmate was treated as a wedge"
   [ ! -s "$MAIN/state/.wake-queue" ] || fail "idle secondmate emitted a false wake"
   pass "watcher hook wakes for terminal loss and preserves idle secondmate exemption"

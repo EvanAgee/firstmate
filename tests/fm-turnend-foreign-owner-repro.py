@@ -119,11 +119,11 @@ def guard(env, label, prefix=""):
     return process
 
 
-def autoarm(env, label):
+def coordinator(env, label):
     process = run(
         env,
-        "printf '%s\\n' '" + PAYLOAD + "' | \"$FM_ROOT_OVERRIDE/bin/fm-claude-stop-autoarm.sh\"; "
-        "rc=$?; printf 'autoarm_rc=%s\\n' \"$rc\"; true",
+        "printf '%s\\n' '" + PAYLOAD + "' | \"$FM_ROOT_OVERRIDE/bin/fm-claude-watch-coordinator.sh\"; "
+        "rc=$?; printf 'coordinator_rc=%s\\n' \"$rc\"; true",
     )
     print(label, "rc=" + str(process.returncode), "stdout=" + repr(process.stdout), "stderr=" + repr(process.stderr), flush=True)
     return process
@@ -177,9 +177,9 @@ try:
     require("lock_rc=1" in acquisition.stdout, "foreign session unexpectedly acquired the session lock")
     require("another live firstmate session holds the lock" in acquisition.stderr, "lock refusal lost its ownership diagnostic")
 
-    auto = autoarm(env, "nonowner autoarm")
-    require(auto.returncode == 0, "foreign-owner auto-arm must exit safely")
-    require(not (root / "state/.claude-autoarm-epoch").exists(), "foreign-owner auto-arm must not claim a generation")
+    coord = coordinator(env, "nonowner coordinator")
+    require(coord.returncode == 0, "foreign-owner coordinator must exit safely")
+    require(not (root / "state/.claude-coordinator-generation").exists(), "foreign-owner coordinator must not claim a generation")
 
     for number in range(1, 6):
         result = guard(env, f"nonowner stop {number}")
@@ -196,7 +196,7 @@ try:
     stop(owner)
     replacement = start(
         env,
-        'printf \'%s\\n\' \'{"session_id":"replacement","stop_hook_active":true}\' | "$FM_ROOT_OVERRIDE/bin/fm-claude-stop-autoarm.sh"; printf "replacement_rc=%s\\n" "$?"; sleep 1',
+        'printf \'%s\\n\' \'{"session_id":"replacement","stop_hook_active":true}\' | "$FM_ROOT_OVERRIDE/bin/fm-claude-watch-coordinator.sh"; printf "replacement_rc=%s\\n" "$?"; sleep 1',
         "replacement.txt",
     )
     until(
