@@ -186,6 +186,7 @@ fm_brief_intent_overlay() {  # <captain-intent>
 # Current no-mistakes intent contract
 This section supersedes every earlier brief instruction about constructing `--intent`, but not later clarifications actually supplied by the captain.
 Use everything under `## Captain intent authorized for --intent` through the end of this brief, including any nested subheadings but excluding that heading, plus any later words the captain actually supplied as `--intent`; never include Firstmate specification or other mixed Task content.
+The standing no-1Password rule in the brief is the one exception: carry it verbatim so every pipeline worker receives it.
 Preserve those words without adding speaker labels or direct address.
 Firstmate-authored constraints, acceptance criteria, implementation details, decisions, and tradeoffs are specification, not captain intent.
 The Definition of done's rule that `--intent` must be self-sufficient still governs the string you pass: resolve any report, decision, or PR the intent below refers to into its substance rather than passing the pointer.
@@ -249,7 +250,10 @@ fm_dod_block() {  # <mode> <task-id>
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
+For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path.
+A done without that section is not done; firstmate sends it back.
+When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done [at=<epoch>]: PR {url}\` to the status file and enter the PR watch below.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
       ;;
@@ -260,7 +264,10 @@ Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$id\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-When it is implemented and committed, append \`done [at=<epoch>]: ready in branch fm/$id\` to the status file and stop.
+For any change a user can see, walk it before reporting done: as a signed-in user on a local build, on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+Write what you saw, step by step, under a \`## What I walked\` section in the body of your final commit message on this branch, in plain text and with no screenshots.
+A done without that section is not done; firstmate sends it back.
+When it is implemented and committed, append \`done [at=<epoch>]: ready in branch fm/$id, walked {the path you walked}\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
       ;;
@@ -269,8 +276,8 @@ EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
+When you believe it is complete, run /no-mistakes to validate and ship a PR.
+Do not stop and wait for firstmate to instruct you; proceed directly to validation.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
@@ -282,7 +289,9 @@ Do not include \`## Firstmate spec\`, later Firstmate build constraints, or your
 The \`--intent\` string you pass must be self-sufficient: that string plus the codebase must let a reader reconstruct roughly the same specification, without depending on a separate report, a PR, or context that lives only in this conversation.
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
+The no-1Password rule in this brief is the standing captain safety rule, so carry it verbatim in \`--intent\` for the pipeline's review, test, document, and CI-fix agents.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
+While a validation gate is open, the turn is not finished: drive the gate and process every return until it reaches an outcome.
 
 One drive call blocks until the next gate or outcome, which routinely outlives what your harness lets a single command run: Claude Code kills a command at ten minutes maximum, while one fix round is capped around thirty minutes and up to three rounds chain.
 So background the drive call and poll \`no-mistakes axi status\` from a separate call instead of sitting in one blocking hold your harness will kill.
@@ -296,12 +305,49 @@ Two firstmate-specific rules layer on top of that guidance:
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
+- After every Review gate returns findings, load \`$FM_ROOT/.agents/skills/review-loop-stop/SKILL.md\` and follow it before another fix response.
+  Use \`$FM_ROOT/bin/fm-review-loop-stop.sh\` for every record and resolve call.
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
+For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
+Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path.
+A done without that section is not done; firstmate sends it back.
+After /no-mistakes reports CI green (the CI-ready return point), sync your local branch to the pipeline head before you report done.
+Run \`no-mistakes axi status\` and follow its \`branch_sync.next_action\`, running \`no-mistakes axi sync\` where that is what it names.
+Repeat until \`git rev-parse HEAD\` equals the pipeline head.
+Then append \`done [at=<epoch>]: PR {url} checks green at {pipeline head}\` to the status file and enter the PR watch below.
 EOF
       ;;
     *)
       echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
       return 1 ;;
+  esac
+  cat <<'EOF'
+After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid.
+Before reporting done for any PR with user-visible UI changes, upload viewport screenshots to Cloudflare and embed the returned public URLs in the PR body by running, from inside this task worktree, `node ~/Sites/agent-workflow-kit/scripts/upload-artifact.mjs --ref pr-<PR#> --pr <PR#> <screenshot-file>...`.
+The tool uploads each file, prints ready-to-paste markdown, writes the links into the PR body, and refuses a desktop or full-screen capture, so pass only viewport screenshots from your own lane's browser.
+Committed repo paths (for example `docs/reference/151/foo.png`) and local file paths do NOT render in a private-repo PR and do NOT count.
+The `pr-evidence` check only confirms that the PR body contains Markdown image syntax with an HTTPS URL; it does not fetch or inspect the image, so open the PR page and verify every image displays before reporting done instead of trusting the upload command's output.
+After embedding the URLs, push a commit (an empty one is fine) so push-triggered checks re-run against the current head; editing the PR body alone does not re-run them.
+Run `npx unslop` on every changed file and fix all findings before any PR.
+EOF
+  case "$mode" in
+    direct-PR)
+      cat <<EOF
+Reporting done does not end your ownership of this PR; it stays yours until the task lands, normally by merging, or by firstmate landing it locally if GitHub is down.
+Stay on watch after reporting done. After addressing new reviewer feedback, re-report status.
+Handle late reviewer feedback directly: fix and push on your \`fm/$id\` branch, resolve the threads, or reply with a concrete reason a finding is not valid.
+Never merge the PR and never arm auto-merge; the configured merge authority owns that.
+EOF
+      ;;
+    no-mistakes)
+      cat <<'EOF'
+Reporting done does not end your ownership of this PR; it stays yours until the task lands, normally by merging, or by firstmate landing it locally if GitHub is down.
+Stay on watch after reporting done. After addressing new reviewer feedback, re-report status.
+Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.
+If a gate is waiting, respond there and let the pipeline handle the finding.
+If the monitor has ended, rerun /no-mistakes.
+Never merge the PR and never arm auto-merge; the configured merge authority owns that.
+EOF
+      ;;
   esac
 }

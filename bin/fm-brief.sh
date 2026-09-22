@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab] [--matt-flow]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -38,6 +38,8 @@
 #   after scaffolding and the caller-supplied repo string cannot reliably
 #   identify this repo. Briefs made without it carry a loud declaration so an
 #   omitted contract cannot be silent.
+#   --matt-flow applies only to ship briefs. It enters at the installed tdd
+#   skill; the brief already supplies the spec and human-only phases.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -139,6 +141,7 @@ fi
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 KIND=ship
 HERDR_LAB=0
+MATT_FLOW=0
 NO_PROJECTS=0
 MODE=
 MODE_SET=0
@@ -160,6 +163,7 @@ for a in "$@"; do
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
     --herdr-lab) HERDR_LAB=1 ;;
+    --matt-flow) MATT_FLOW=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
@@ -188,6 +192,10 @@ if [ "$KIND" = ship ]; then
   esac
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
+  exit 1
+fi
+if [ "$MATT_FLOW" -eq 1 ] && [ "$KIND" != ship ]; then
+  echo "error: --matt-flow applies only to ship briefs" >&2
   exit 1
 fi
 ID=${POS[0]}
@@ -400,6 +408,33 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
+IFS= read -r -d '' WORKER_SKILLS_SECTION <<'EOF' || true
+# Session skills
+Every structured launch delivers caveman (`full`) and ponytail (`full`) when their installed skill files are available.
+On a raw launch, load caveman and ponytail yourself before starting.
+caveman keeps chat terse; every durable output stays normal prose, for example commits, PRs, issues, docs, scout reports, review comments, and plans.
+The examples are not an exhaustive list.
+Ponytail means building the simplest thing that works without dropping required validation, error handling, security, accessibility, or brief-required tests.
+This brief's test requirements win over ponytail's test rule.
+The skill files own the details: `~/.agents/skills/caveman/SKILL.md` and `~/.agents/skills/ponytail/SKILL.md`.
+For delivered skills, the skill-defined off phrases `stop caveman` and `stop ponytail` are available.
+EOF
+WORKER_SKILLS_SECTION=${WORKER_SKILLS_SECTION%$'\n'}
+
+IFS= read -r -d '' WORKDIR_SECTION <<'EOF' || true
+# Working directory
+Reach a target without changing your shell's working directory: put an absolute path on the command itself, or use `git -C <dir> ...`.
+Do not put `cd <dir>` in a compound command such as `cd <dir> && grep ...`.
+That shape can stall your session on a permission prompt when the `cd` leaves the command's directory unresolvable.
+If a command genuinely needs a different working directory, scope the change to a subshell: `(cd <dir> && ...)`.
+EOF
+WORKDIR_SECTION=${WORKDIR_SECTION%$'\n'}
+
+IFS= read -r -d '' NO_1PASSWORD_RULE <<'EOF' || true
+Never run the 1Password CLI (`op run`, `op read`, `op item`, `op environment`, or any other `op` subcommand) for anything. Secrets come from this worktree's `.env.local` or the app's equivalent local env file. If a variable you need is missing there, append `blocked [key=missing-env-<NAME>] [at=<epoch>]: <NAME> is missing from that local env file` and stop; never fetch it.
+EOF
+NO_1PASSWORD_RULE=${NO_1PASSWORD_RULE%$'\n'}
+
 if [ "$KIND" = scout ]; then
 if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
   LAVISH_LINE='If your deliverable is a visual artifact the captain will review and iterate on, use the lavish-axi rule: arm your board with bin/fm-procevent-lavish.sh arm <artifact.html> --for <task-id>; never run lavish-axi poll yourself. Re-arm with the reply after each nonterminal round to acknowledge it, route the board feedback through your steering inbox, write needs-decision [key=board-review] with the live board URL when the captain owes a decision, and stop at session_ended or an empty End without re-arming - acknowledge that final round with bin/fm-procevent.sh handled <source-id> <sequence> to conclude and retire your board.'
@@ -411,6 +446,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $TASK_SECTION
 
+$WORKER_SKILLS_SECTION
+
 $HERDR_SECTION
 
 # Setup
@@ -418,6 +455,8 @@ You are in a disposable git worktree of $REPO, at a detached HEAD on a clean def
 This is a SCOUT task: the deliverable is a written report, not a PR.
 The worktree is your laboratory - install, run, edit, and make scratch commits freely; all of it is discarded at teardown.
 The report is the only thing that survives, so anything worth keeping must be in it.
+
+$WORKDIR_SECTION
 
 # Rules
 1. Never push to any remote and never open a PR.
@@ -439,23 +478,31 @@ The report is the only thing that survives, so anything worth keeping must be in
    treating it as a possible wedge. When you know when the wait clears, say so in the line with
    \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) and firstmate rechecks at that time instead.
    Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
+5. If you hit the same obstacle twice, append \`blocked [key=<slug>] [at=<epoch>]: {why}\` and stop; firstmate will help.
+   A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
+   Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
+   Never write a real blocker as a \`working:\` line: that hides it from firstmate while nothing is waiting on firstmate either.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision [key=<slug>] [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   Every \`needs-decision:\` and \`blocked:\` line MUST carry \`[key=<slug>]\`, using a short slug you choose for that question.
+   An unkeyed line lands under the shared key \`default\`, so a second unkeyed decision silently overwrites the first and only the last one is ever seen.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+   Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself, reusing the exact key you opened it with, as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
    manages the daemon.
    Before you append \`blocked:\` about the pipeline, run \`no-mistakes daemon status\` and
    \`no-mistakes axi status\`. If the daemon socket refuses connections or is missing, append
-   \`blocked [at=<epoch>]: {the daemon error}\` and stop even when the local run record still says running or
+   \`blocked [key=no-mistakes-daemon] [at=<epoch>]: {the daemon error}\` and stop even when the local run record still says running or
    fixing, because that record can be stale after the daemon exits. A run record failed with a
    daemon error is also a real block.
    Only after ruling out socket refusal, if the run is still running or fixing, reattach and keep
    going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
    the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or
    timed-out call was only waiting for a read while the run kept working.
+8. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
+9. $NO_1PASSWORD_RULE
 
 $INBOX_SECTION
 
@@ -491,11 +538,36 @@ case "$MODE" in
 esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID") || exit 1
+DECISION_CASES='product choices, destructive actions'
+[ "$MODE" != no-mistakes ] || DECISION_CASES="$DECISION_CASES, ask-user findings"
+MATT_FLOW_SECTION=
+if [ "$MATT_FLOW" -eq 1 ]; then
+  IFS= read -r -d '' MATT_FLOW_SECTION <<'EOF' || true
+# Matt-flow
+This brief declares this task a Matt-flow task.
+This brief is the spec, so the `to-spec`, `to-tickets`, `triage`, `implement`, and `grill-with-docs` phases are already done or are human-only and must not be invoked.
+Enter at the installed `tdd` skill: write the failing test first, then make it pass.
+If `tdd` is not installed in this worktree, append `blocked [key=matt-flow-tdd-missing] [at=<epoch>]: tdd skill not installed in this worktree` and stop rather than improvising a flow.
+EOF
+  MATT_FLOW_SECTION=${MATT_FLOW_SECTION%$'\n'}
+  if [ "$MODE" = no-mistakes ]; then
+    MATT_FLOW_SECTION="$MATT_FLOW_SECTION
+Stop the flow after \`tdd\` and go straight to the validation in the Definition of done.
+The no-mistakes pipeline in the Definition of done owns review, so do not run \`code-review\`, any other review skill, a review sub-agent, or a hand review pass before validation.
+Leave the failing-test commit as the phase artifact and append one status line at the phase transition."
+  else
+    MATT_FLOW_SECTION="$MATT_FLOW_SECTION
+Continue from \`tdd\` to the installed \`code-review\` skill, which owns review because no pipeline follows.
+Leave the failing-test commit and the review notes as the phase artifacts and append one status line at every phase transition."
+  fi
+fi
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
 $TASK_SECTION
+
+$WORKER_SKILLS_SECTION
 
 $HERDR_SECTION
 
@@ -507,6 +579,10 @@ The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked [at=<epoch>]: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+
+$WORKDIR_SECTION
+
+$MATT_FLOW_SECTION
 
 # Rules
 $RULE1
@@ -529,24 +605,32 @@ $RULE1
    known external wait you expect to clear on its own ($CREWMATE_PAUSE_WAIT_EXAMPLES):
    firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
-6. If a decision belongs above the implementation worker (product choices, destructive actions),
-   append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+5. If you hit the same obstacle twice, append \`blocked [key=<slug>] [at=<epoch>]: {why}\` and stop; firstmate will help.
+   A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
+   Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
+   Never write a real blocker as a \`working:\` line: that hides it from firstmate while nothing is waiting on firstmate either.
+6. If a decision belongs above the implementation worker ($DECISION_CASES),
+   append \`needs-decision [key=<slug>] [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   Every \`needs-decision:\` and \`blocked:\` line MUST carry \`[key=<slug>]\`, using a short slug you choose for that question.
+   An unkeyed line lands under the shared key \`default\`, so a second unkeyed decision silently overwrites the first and only the last one is ever seen.
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+   Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>] [at=<epoch>]: {how it cleared}\` yourself, reusing the exact key you opened it with, as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
    manages the daemon.
    Before you append \`blocked:\` about the pipeline, run \`no-mistakes daemon status\` and
    \`no-mistakes axi status\`. If the daemon socket refuses connections or is missing, append
-   \`blocked [at=<epoch>]: {the daemon error}\` and stop even when the local run record still says running or
+   \`blocked [key=no-mistakes-daemon] [at=<epoch>]: {the daemon error}\` and stop even when the local run record still says running or
    fixing, because that record can be stale after the daemon exits. A run record failed with a
    daemon error is also a real block.
    Only after ruling out socket refusal, if the run is still running or fixing, reattach and keep
    going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
    the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or
    timed-out call was only waiting for a read while the run kept working.
+8. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
+9. $NO_1PASSWORD_RULE
 
 $INBOX_SECTION
 
