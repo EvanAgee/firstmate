@@ -24,6 +24,7 @@
 #   fm-test-run.sh --concurrent-safe-family-jobs-max <name>
 #   fm-test-run.sh --list-lanes
 #   fm-test-run.sh --check-coverage
+#   fm-test-run.sh --serial-shard-budget
 #
 # Aggregation (no suite execution):
 #   fm-test-run.sh --aggregate-json <out.json> <lane.json> [more lane.json...]
@@ -168,6 +169,7 @@ LIST_FAMILIES=0
 LIST_CONCURRENT_SAFE_FAMILIES=0
 LIST_LANES=0
 CHECK_COVERAGE=0
+SERIAL_SHARD_BUDGET=0
 AGGREGATE_OUT=
 FAMILY=
 LANE=
@@ -909,6 +911,29 @@ portable_serial_assignments() {
       printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
     done < <(list_portable_serial) | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
   )
+}
+
+# Print each portable serial shard's estimated milliseconds from the same
+# weights used for assignment, so the CI cap guard need not read this source.
+print_serial_shard_budget() {
+  local shard script ms i
+  local -a loads=()
+  i=1
+  while [ "$i" -le "$PORTABLE_SERIAL_SHARDS" ]; do
+    loads[i]=0
+    i=$((i + 1))
+  done
+  while IFS=$'\t' read -r shard script; do
+    [ -n "$script" ] || continue
+    ms=$(portable_serial_weight_for "$script")
+    loads[shard]=$((loads[shard] + ms))
+  done < <(portable_serial_assignments)
+  i=1
+  while [ "$i" -le "$PORTABLE_SERIAL_SHARDS" ]; do
+    printf 'FM_TEST_SERIAL_BUDGET shard=%dof%d estimated_ms=%d\n' \
+      "$i" "$PORTABLE_SERIAL_SHARDS" "${loads[i]}"
+    i=$((i + 1))
+  done
 }
 
 # Parse "<k>of<n>" from a portable-serial shard lane and echo <k>, refusing when
@@ -1963,6 +1988,10 @@ while [ "$#" -gt 0 ]; do
       CHECK_COVERAGE=1
       shift
       ;;
+    --serial-shard-budget)
+      SERIAL_SHARD_BUDGET=1
+      shift
+      ;;
     --aggregate-json)
       [ "$#" -gt 1 ] || die "--aggregate-json requires an output path"
       AGGREGATE_OUT=$2
@@ -2035,6 +2064,11 @@ fi
 if [ "$CHECK_COVERAGE" -eq 1 ]; then
   run_coverage_guard
   exit $?
+fi
+
+if [ "$SERIAL_SHARD_BUDGET" -eq 1 ]; then
+  print_serial_shard_budget
+  exit 0
 fi
 
 if [ "${MODE:-}" = "aggregate" ]; then

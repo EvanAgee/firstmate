@@ -74,6 +74,9 @@ The longest script, `tests/fm-watch-triage.test.sh`, legitimately occupies one w
 This is a packing estimate, not measured new-workflow execution or an end-to-end latency guarantee.
 Job timeouts remain hang tripwires under the policy in [Timeouts](#timeouts) below; they are not the desired healthy duration.
 `tests/fm-ci-workflow.test.sh` compares the parsed CI matrix to the executable runner lanes, and the runner rejects parallel `--jobs` on a serial lane even when that shard has only one member.
+`bin/fm-test-run.sh --serial-shard-budget` prints the estimated milliseconds carried by each shard from the same weights used for assignment.
+`tests/fm-test-run.test.sh` compares that report with the CI matrix and fails when the worst shard reaches two thirds of the 30-minute normal-job cap.
+The guard leaves room for runner setup and normal variance while catching stale hints before the job cap cancels a shard.
 
 Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
 
@@ -85,6 +88,7 @@ jq -r '.scripts[] | select(.exit == 0) | [.path, .duration_ms] | @tsv' /tmp/fm-s
   | awk -F'\t' '$2 > m[$1] { m[$1] = $2 } END { for (p in m) print p, m[p] }' \
   | LC_ALL=C sort
 bin/fm-test-run.sh --check-coverage
+bin/fm-test-run.sh --serial-shard-budget
 ```
 
 A timed-out shard may upload no artifact, so include a complete green run or the slowest scripts go unmeasured in exactly the shard that needs them most.

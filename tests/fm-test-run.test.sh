@@ -1215,6 +1215,64 @@ test_portable_serial_shard_lane_refusals() {
   pass "portable serial shard lanes refuse mismatched, out-of-range, and countless names"
 }
 
+test_portable_serial_shards_fit_their_ci_job_cap() {
+  command -v ruby >/dev/null 2>&1 \
+    || fail "ruby is required to parse .github/workflows/ci.yml as YAML"
+  local budget cap matrix_width shard_count worst lane ms headroom line i
+  budget=$("$RUNNER" --serial-shard-budget) \
+    || fail "--serial-shard-budget failed"
+  [ -n "$budget" ] || fail "--serial-shard-budget printed nothing"
+
+  cap=$(ruby -ryaml -e '
+doc = YAML.load_file(ARGV[0])
+job = doc.fetch("jobs").fetch("tests-portable-serial")
+puts job.fetch("timeout-minutes")
+' "$ROOT/.github/workflows/ci.yml") \
+    || fail "could not read the portable serial job cap from ci.yml"
+  matrix_width=$(ruby -ryaml -e '
+doc = YAML.load_file(ARGV[0])
+job = doc.fetch("jobs").fetch("tests-portable-serial")
+matrix = job.fetch("strategy").fetch("matrix")
+extra = matrix.keys - ["shard", "include", "exclude"]
+raise "unexpected serial matrix axes: #{extra.join(", ")}" unless extra.empty?
+raise "serial matrix uses include; budget guard cannot count shards" if matrix.key?("include")
+raise "serial matrix uses exclude; budget guard cannot count shards" if matrix.key?("exclude")
+puts matrix.fetch("shard").length
+' "$ROOT/.github/workflows/ci.yml") \
+    || fail "could not read the portable serial matrix width from ci.yml"
+
+  shard_count=$(printf '%s\n' "$budget" | grep -c '^FM_TEST_SERIAL_BUDGET ')
+  [ "$matrix_width" = "$shard_count" ] \
+    || fail "ci.yml runs $matrix_width serial shards but the runner packs $shard_count"
+
+  i=1
+  while [ "$i" -le "$shard_count" ]; do
+    printf '%s\n' "$budget" | grep -q "^FM_TEST_SERIAL_BUDGET shard=${i}of${shard_count} estimated_ms=[0-9][0-9]*\$" \
+      || fail "budget report is missing a well-formed line for shard ${i}of${shard_count}"
+    i=$((i + 1))
+  done
+
+  worst=0
+  lane=
+  while read -r line; do
+    ms=${line##*estimated_ms=}
+    case "$ms" in
+      ''|*[!0-9]*) fail "unparseable budget line: $line" ;;
+    esac
+    if [ "$ms" -gt "$worst" ]; then
+      worst=$ms
+      lane=${line#*shard=}
+      lane=${lane%% *}
+    fi
+  done < <(printf '%s\n' "$budget")
+
+  [ "$worst" -gt 0 ] || fail "budget report gave every shard a zero estimate"
+  headroom=$((cap * 60000 * 2 / 3))
+  [ "$worst" -lt "$headroom" ] \
+    || fail "portable serial shard $lane projects ${worst}ms against a ${cap}-minute cap; reshard or refresh hints"
+  pass "portable serial shards fit their CI job cap with headroom"
+}
+
 test_jobs_requires_proven_isolated() {
   local tmp rc shard_lane
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-jobs.XXXXXX")
@@ -1765,6 +1823,7 @@ test_portable_parallel_lanes_stay_duration_balanced
 test_portable_serial_shards_partition_the_serial_lane
 test_portable_serial_hint_coverage_is_reported_and_bounded
 test_portable_serial_shard_lane_refusals
+test_portable_serial_shards_fit_their_ci_job_cap
 test_jobs_requires_proven_isolated
 test_jobs_admits_a_concurrent_safe_family
 test_unmapped_new_test_never_inherits_family_concurrency

@@ -113,7 +113,11 @@ case "${1:-} ${2:-}" in
     ;;
   "pr merge") printf 'merged:\n  number: %s\n  status: ok\n' "${3:-}" ;;
   "api graphql")
-    printf '%s\n' 'state=MERGED' 'merged=true' 'queued=false' 'base=main'
+    if [[ "$*" == *reviewThreads* ]]; then
+      printf '%s\n' 'total=0' 'unresolved=0'
+    else
+      printf '%s\n' 'state=MERGED' 'merged=true' 'queued=false' 'base=main'
+    fi
     ;;
 esac
 SH
