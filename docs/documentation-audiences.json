@@ -556,6 +556,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/specs/upstream-rebase.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/subagent-guard.md",
       "audience": "maintainer-architecture"
     },
