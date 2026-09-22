@@ -57,13 +57,14 @@
 # never a wedged, un-endable session - while still nagging again on a later turn
 # if the problem persists.
 #
-# Loop-guard, --claude mode (Stop-owned auto-arm cooperation): Claude Code
+# Loop-guard, --claude mode (Stop-owned watcher-hook cooperation): Claude Code
 # marks EVERY stop after ANY stop-hook-driven continuation stop_hook_active=true,
-# including turns started by the asyncRewake auto-arm, so the one-shot allow
+# including turns started by the asyncRewake notifier, so the one-shot allow
 # would re-open the exact blind window this guard exists to close
 # (docs/turnend-guard.md records the 2026-07-21 incident). In --claude mode this
 # guard ignores stop_hook_active and instead cooperates with the Stop-owned
-# auto-arm (bin/fm-claude-stop-autoarm.sh), which fires on the same Stop event:
+# notifier (bin/fm-claude-watch-notifier.sh, the exit-2 wake hook that shares this
+# Stop event with the persistent coordinator bin/fm-claude-watch-coordinator.sh):
 #   1. a live identity-matched watcher with a fresh beacon - or, in away mode, a
 #      live identity-matched daemon with a fresh beacon - allows immediately;
 #   2. an unhealthy session with a verified live session-lock owner it does not
@@ -71,7 +72,7 @@
 #      diagnostic instead of blocking a session that cannot repair supervision
 #      without stealing ownership;
 #   3. otherwise wait briefly (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS, default 800ms)
-#      for the auto-arm to claim this home (a live OPEN generation claim in the
+#      for the notifier to claim this home (a live OPEN generation claim in the
 #      state/.claude-autoarm-epoch ledger - fm_autoarm_claim_open - or a legacy
 #      build's lock-holding claim under the legacy abandonment proof) or to
 #      record a fresh actionable exit-2 outcome
@@ -246,7 +247,7 @@ block_stop() {
       printf '●  X-mode relay polling needs supervision, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_BEACON_DESC"
     fi
     if [ "$CLAUDE_MODE" -eq 1 ]; then
-      printf '●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.\n'
+      printf '●  The Stop-owned watcher hooks did not claim this home either, so recovery is NOT already under way.\n'
     fi
     printf '●  %s\n' "$reason"
     printf '●%s\n' "$rule"
@@ -271,7 +272,7 @@ if [ "$CLAUDE_MODE" -eq 0 ]; then
 fi
 
 # --- --claude cooperative path -----------------------------------------------
-# The Stop-owned auto-arm fires on the same Stop event. Give it a brief bounded
+# The Stop-owned notifier fires on the same Stop event. Give it a brief bounded
 # window to prove it owns recovery for this event epoch before consuming one of
 # Claude's bounded continuations.
 #
@@ -504,7 +505,7 @@ if autoarm_owns_recovery; then
   exit 0
 fi
 
-# The auto-arm genuinely failed to establish: consume the bounded re-block
+# The notifier genuinely failed to establish: consume the bounded re-block
 # budget before considering the verified one-time attended fail-open.
 budget_account_current_epoch block || block_stop
 terminal_fail_open
@@ -519,7 +520,7 @@ if [ "$terminal_status" -eq 0 ]; then
   else
     NEED_DESC="X-mode relay polling active"
   fi
-  printf '{"systemMessage":"FIRSTMATE SUPERVISION IS GENUINELY DOWN: %s, the Stop-owned auto-arm exhausted its bounded retries and one failure notice, no watcher or automatic continuation exists, and the block budget is exhausted. Keep this session attended and diagnose the automatic Stop-hook and watcher startup before relying on unattended supervision."}\n' "$NEED_DESC"
+  printf '{"systemMessage":"FIRSTMATE SUPERVISION IS GENUINELY DOWN: %s, the Stop-owned watcher hooks exhausted their bounded retries and one failure notice, no watcher or automatic continuation exists, and the block budget is exhausted. Keep this session attended and diagnose the automatic Stop hooks and watcher startup before relying on unattended supervision."}\n' "$NEED_DESC"
   exit 0
 fi
 [ "$terminal_status" -eq 2 ] && exit 0

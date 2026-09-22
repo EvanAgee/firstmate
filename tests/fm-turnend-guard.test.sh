@@ -889,7 +889,8 @@ test_tracked_claude_entries_inert_under_grok() {
   command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
   dir="$TMP_ROOT/claude-entries-grok-inert"
   mkdir -p "$dir/bin"
-  for script in fm-turnend-guard.sh fm-claude-stop-autoarm.sh fm-sessionstart-run.sh \
+  for script in fm-turnend-guard.sh fm-claude-watch-coordinator.sh fm-claude-watch-notifier.sh \
+    fm-sessionstart-run.sh \
     fm-arm-pretool-check.sh fm-cd-pretool-check.sh fm-subagent-pretool-check.sh; do
     printf '#!/usr/bin/env bash\nprintf ran >> %q\n' "$dir/invoked" > "$dir/bin/$script"
     chmod +x "$dir/bin/$script"
@@ -931,7 +932,7 @@ test_tracked_claude_entries_inert_under_grok() {
       || fail "tracked entry for $target ran under a legacy GROK_AGENT environment"
   done < <(jq -r '.hooks[][].hooks[].command' "$ROOT/.claude/settings.json")
 
-  [ "$guarded" -eq 5 ] || fail "expected 5 grok-guarded tracked entries, saw $guarded"
+  [ "$guarded" -eq 6 ] || fail "expected 6 grok-guarded tracked entries, saw $guarded"
   [ "$unguarded" -eq 1 ] || fail "expected 1 documented unguarded tracked entry, saw $unguarded"
   pass "tracked .claude/settings.json entries: $guarded inert under grok, the documented subagent exception still armed, all live under Claude"
 }
@@ -1205,40 +1206,46 @@ record_autoarm_owner() {
   printf 'autoarm\n' > "$dir/state/.claude-autoarm.lock/role"
 }
 
-install_integrated_autoarm() {
+# The notifier is the exit-2 recovery owner the guard cooperates with. With no
+# coordinator present and no live watcher, it drives the same failure-episode
+# progression (failed -> notice -> failed-suppressed, with a positive-recovery
+# reset) the guard's monotonic block budget and attended fail-open read. A short
+# coordinator-wait makes each firing reach that failure quickly.
+install_integrated_notifier() {
   local dir=$1
-  cp "$ROOT/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-claude-stop-autoarm.sh"
+  cp "$ROOT/bin/fm-claude-watch-notifier.sh" "$dir/bin/fm-claude-watch-notifier.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
   cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
   cp "$ROOT/bin/fm-cursor-lib.sh" "$dir/bin/fm-cursor-lib.sh"
+  cp "$ROOT/bin/fm-watch.sh" "$dir/bin/fm-watch.sh"
   cp "$ROOT/bin/fm-lock.sh" "$dir/bin/fm-lock.sh"
-  chmod +x "$dir/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-lock.sh"
+  chmod +x "$dir/bin/fm-claude-watch-notifier.sh" "$dir/bin/fm-lock.sh" "$dir/bin/fm-watch.sh"
   ln -s /bin/bash "$dir/fake-claude"
 }
 
-run_integrated_autoarm() {
+run_integrated_notifier() {
   local dir=$1 home
   home=$(cd "$dir" && pwd)
   # shellcheck disable=SC2016 # the fake harness expands FM_HOME inside its child shell.
   printf '{"session_id":"sess-claude-mode","stop_hook_active":false}\n' \
-    | FM_HOME="$home" "$dir/fake-claude" -c '
+    | FM_HOME="$home" FM_CLAUDE_NOTIFIER_COORD_WAIT=0 "$dir/fake-claude" -c '
         printf "%s\n" "$$" > "$FM_HOME/state/.lock"
-        "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+        env FM_CLAUDE_NOTIFIER_COORD_WAIT=0 "$FM_HOME/bin/fm-claude-watch-notifier.sh"
       ' 2>&1
 }
 
 # The same real hook, fired from a harness-named process that does NOT write
 # state/.lock: whoever already holds that lock decides whether this firing is
 # the owning session's or a competing one.
-run_integrated_autoarm_unowned() {
+run_integrated_notifier_unowned() {
   local dir=$1 home
   home=$(cd "$dir" && pwd)
   # shellcheck disable=SC2016 # the fake harness expands FM_HOME inside its child shell.
   printf '{"session_id":"sess-claude-mode","stop_hook_active":false}\n' \
-    | FM_HOME="$home" "$dir/fake-claude" -c '"$FM_HOME/bin/fm-claude-stop-autoarm.sh"' 2>&1
+    | FM_HOME="$home" FM_CLAUDE_NOTIFIER_COORD_WAIT=0 "$dir/fake-claude" -c 'env FM_CLAUDE_NOTIFIER_COORD_WAIT=0 "$FM_HOME/bin/fm-claude-watch-notifier.sh"' 2>&1
 }
 
 write_integrated_failed_arm() {
@@ -1261,7 +1268,7 @@ test_hook_claude_mode_reblocks_stop_hook_active_when_unhealthy() {
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
   expect_code 2 "$status" "--claude mode must re-block a stop_hook_active=true stop while unhealthy with no auto-arm claim"
   assert_contains "$out" "TURN WOULD END BLIND" "--claude re-block must carry the blind-turn banner"
-  assert_contains "$out" "Stop-owned auto-arm did not claim" "--claude re-block must explain the missing auto-arm claim"
+  assert_contains "$out" "Stop-owned watcher hooks did not claim" "--claude re-block must explain the missing watcher-hook claim"
   pass "fm-turnend-guard --claude: re-blocks a loop-guarded stop while unhealthy and unclaimed (incident regression)"
 }
 
@@ -1343,7 +1350,7 @@ test_hook_claude_mode_terminal_boundary_excludes_starting_owner() {
   : > "$dir/state/.claude-autoarm-failure-notified"
   printf 'epoch=3 owner_pid=999 outcome=failed-suppressed updated_at=%s\n' "$(date +%s)" > "$dir/state/.claude-autoarm-epoch"
   seed_claude_budget "$dir" 4 3
-  install_integrated_autoarm "$dir"
+  install_integrated_notifier "$dir"
   write_integrated_failed_arm "$dir"
   fakebin="$dir/fakebin"
   ready="$dir/terminal-ready"
@@ -1377,7 +1384,7 @@ SH
   ) &
   guard_pid=$!
   IFS= read -r _ < "$ready"
-  auto_out=$(run_integrated_autoarm "$dir"); auto_status=$?
+  auto_out=$(run_integrated_notifier "$dir"); auto_status=$?
   printf 'release\n' > "$release"
   wait "$guard_pid"
   expect_code 0 "$auto_status" "an owner starting inside the terminal window must lose the existing owner boundary"
@@ -1574,19 +1581,19 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
   local dir out status guard_out guard_status i pid identity count
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-integrated-fail-open")
   : > "$dir/state/task1.meta"
-  install_integrated_autoarm "$dir"
+  install_integrated_notifier "$dir"
   write_integrated_failed_arm "$dir"
 
-  out=$(run_integrated_autoarm "$dir"); status=$?
+  out=$(run_integrated_notifier "$dir"); status=$?
   expect_code 2 "$status" "the first exhausted auto-arm cycle must emit its one failure notice"
-  assert_contains "$out" "automatic supervision mechanism is broken" "the first integrated failure notice is missing"
+  assert_contains "$out" "supervision DEGRADED" "the first integrated failure notice is missing"
   guard_out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); guard_status=$?
   expect_code 0 "$guard_status" "the first failed epoch must own its Stop handoff"
   count=$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")
   [ "$count" = 0 ] || fail "the first owned failure epoch must preserve a zero blocked-stop count, got $count"
 
   for i in 1 2 3 4; do
-    out=$(run_integrated_autoarm "$dir"); status=$?
+    out=$(run_integrated_notifier "$dir"); status=$?
     expect_code 2 "$status" "failed epoch $i must retain the automatic retry handoff"
     [ -z "$out" ] || fail "failed epoch $i repeated the operator notice: $out"
     guard_out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); guard_status=$?
@@ -1600,7 +1607,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
     fi
   done
 
-  out=$(run_integrated_autoarm "$dir"); status=$?
+  out=$(run_integrated_notifier "$dir"); status=$?
   expect_code 0 "$status" "the auto-arm must not re-trigger continuation after the final fail-open"
   [ -z "$out" ] || fail "post-fail-open auto-arm produced continuation output: $out"
   guard_out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); guard_status=$?
@@ -1616,7 +1623,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
   }
   record_watcher_lock "$dir" "$pid" "$identity"
   touch "$dir/state/.last-watcher-beat"
-  out=$(run_integrated_autoarm "$dir"); status=$?
+  out=$(run_integrated_notifier "$dir"); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   rm -rf "$dir/state/.watch.lock"
@@ -1629,9 +1636,9 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
   count=$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")
   [ "$count" = 1 ] || fail "the independent post-recovery failure must start at count 1, got $count"
 
-  out=$(run_integrated_autoarm "$dir"); status=$?
+  out=$(run_integrated_notifier "$dir"); status=$?
   expect_code 2 "$status" "a later failure after positive recovery must start a new episode"
-  assert_contains "$out" "automatic supervision mechanism is broken" "the new failure episode notice was suppressed"
+  assert_contains "$out" "supervision DEGRADED" "the new failure episode notice was suppressed"
   pass "fm-turnend-guard --claude: integrated fresh failures reach one bounded fail-open, stop continuation, and reset on recovery"
 }
 
@@ -1645,10 +1652,10 @@ test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open() {
   local dir out status guard_out guard_status i pid identity count epoch_line
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-frozen-epoch")
   : > "$dir/state/task1.meta"
-  install_integrated_autoarm "$dir"
+  install_integrated_notifier "$dir"
   write_integrated_failed_arm "$dir"
 
-  out=$(run_integrated_autoarm "$dir"); status=$?
+  out=$(run_integrated_notifier "$dir"); status=$?
   expect_code 2 "$status" "the exhausted auto-arm cycle must emit its one failure notice before going quiet"
   guard_out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); guard_status=$?
   expect_code 0 "$guard_status" "the first failed epoch must own its Stop handoff"
@@ -1658,7 +1665,7 @@ test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open() {
   # frozen-ledger accounting path rather than the live foreign-owner escape.
   rm -f "$dir/state/.lock"
   for i in 1 2 3 4; do
-    out=$(run_integrated_autoarm_unowned "$dir"); status=$?
+    out=$(run_integrated_notifier_unowned "$dir"); status=$?
     expect_code 0 "$status" "an auto-arm outside the lock owner's ancestry must stay inert at stop $i"
     [ -z "$out" ] || fail "inert auto-arm produced output at stop $i: $out"
     [ "$(sed -n '1p' "$dir/state/.claude-autoarm-epoch")" = "$epoch_line" ] \
@@ -1767,7 +1774,7 @@ test_hook_claude_mode_concurrent_recovery_resets_are_idempotent() {
   local dir pid identity auto_pid guard_pid auto_status guard_status
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-concurrent-recovery")
   : > "$dir/state/task1.meta"
-  install_integrated_autoarm "$dir"
+  install_integrated_notifier "$dir"
   write_integrated_failed_arm "$dir"
   seed_claude_budget "$dir" 3
   : > "$dir/state/.claude-autoarm-failure-notified"
@@ -1777,7 +1784,7 @@ test_hook_claude_mode_concurrent_recovery_resets_are_idempotent() {
   identity=$(watcher_identity "$dir" "$pid") || fail "could not identify concurrent recovery watcher"
   record_watcher_lock "$dir" "$pid" "$identity"
   touch "$dir/state/.last-watcher-beat"
-  (run_integrated_autoarm "$dir" > "$dir/auto.out"; printf '%s\n' "$?" > "$dir/auto.status") &
+  (run_integrated_notifier "$dir" > "$dir/auto.out"; printf '%s\n' "$?" > "$dir/auto.status") &
   auto_pid=$!
   (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false > "$dir/guard.out"; printf '%s\n' "$?" > "$dir/guard.status") &
   guard_pid=$!
@@ -1835,7 +1842,7 @@ test_hook_claude_mode_verified_failure_alarm_is_loud_and_once() {
   expect_code 0 "$status" "verified failure with exhausted budget must take the bounded attended fail-open"
   assert_contains "$out" 'FIRSTMATE SUPERVISION IS GENUINELY DOWN' "bounded fail-open alarm was not unmistakable"
   assert_contains "$out" 'Keep this session attended' "bounded fail-open alarm omitted the attended-session action"
-  assert_contains "$out" 'diagnose the automatic Stop-hook and watcher startup' "bounded fail-open alarm omitted automatic-mechanism diagnosis"
+  assert_contains "$out" 'diagnose the automatic Stop hooks and watcher startup' "bounded fail-open alarm omitted automatic-mechanism diagnosis"
   assert_not_contains "$out" 'fm-watch-arm.sh' "bounded fail-open alarm assigned a manual watcher launch"
   assert_present "$dir/state/.claude-autoarm-failure-alarmed" "bounded fail-open did not consume the episode alarm"
   out2=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status2=$?

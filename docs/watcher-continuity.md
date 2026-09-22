@@ -12,17 +12,17 @@ Pi same-process session replacement follows the generation-owner contract in `.p
 A main follow-up counts as delivered once Pi accepts it, never once the model reads it, because a follow-up queued while main is streaming joins the running run without a `before_agent_start`; the extension header owns how consumption is observed and why it only decides what a replacement replays.
 omp's replacement follows the same generation-owner contract in `.omp/extensions/fm-primary-omp-watch.ts`, whose header owns the one difference: omp reports no shutdown reason, so every shutdown with a pending actionable close persists the handoff for the next owning `session_start` to replay.
 Cursor's `.cursor/hooks.json` `stop` hook (`bin/fm-turnend-guard-cursor.sh`) owns routine tokenless re-arm for a Cursor primary by parking that awaited hook on `bin/fm-watch-arm.sh` and returning an actionable close as one follow-up; [`turnend-guard.md`](turnend-guard.md#harness-integrations) owns its Pi-host stand-down, loop bounds, and supersession baton.
-Claude's `.claude/settings.json` Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns routine tokenless re-arm.
-The hook fires on every Stop, and an eligible primary with supervision need admits one home-scoped owner that foregrounds `bin/fm-watch-arm.sh` inside the hook-owned process tree.
-A numeric session-lock owner that fails the shared `fm_harness_pid_alive` predicate is reclaimed through `bin/fm-lock.sh` before auto-arm state changes, while a live owner the session does not own, an absent lock, or a malformed lock keeps the competing hook inert.
-Whether the session owns that lock is the shared `fm_session_lock_owned_by_self` verdict in `bin/fm-session-lock-lib.sh`, which accepts a recorded pid inside the current harness ancestry or a live lock recorded under this same trusted Claude session id, so a background session keeps arming after its transient helper chain is recycled.
+Claude's `.claude/settings.json` Stop hooks own routine tokenless continuity through two cooperating hooks that fire on the same Stop event: a persistent `async` coordinator (`bin/fm-claude-watch-coordinator.sh`) and a parked `asyncRewake` notifier (`bin/fm-claude-watch-notifier.sh`, the former auto-arm).
+Splitting them is required: a single async hook cannot both keep a watcher child alive and exit 2 to wake the idle session, because exiting reaps the child.
+The coordinator keeps supervision alive; the notifier is the exit-2 wake path.
+Both apply the same scope, identity, AFK, supervision-need, single-flight, and stale-session-lock-recovery gates the auto-arm applied, so an idle, away, child, or foreign-host checkout stays inert, and a numeric session-lock owner that fails the shared `fm_harness_pid_alive` predicate is reclaimed through `bin/fm-lock.sh` only after the AFK and need gates pass.
+Whether the session owns that lock is the shared `fm_session_lock_owned_by_self` verdict in `bin/fm-session-lock-lib.sh`, which accepts a recorded pid inside the current harness ancestry or a live lock recorded under this same trusted Claude session id, so a background session keeps coordinating after its transient helper chain is recycled.
 [`turnend-guard.md`](turnend-guard.md#guard-predicates) owns the Claude guard's behavior when that live owner is genuinely another session.
-The stale-owner claim occurs only after the existing AFK and supervision-need gates pass.
-After each non-actionable arm close, the hook rechecks the identity-matched watcher lock and fresh beacon before retrying a bounded number of times.
-A cycle-end failure is benign when that live-watcher predicate is true, and the hook suppresses the arm output and continues silently.
-Only an exhausted failure with no verified watcher commits one last-resort notice for the continuous failure episode; a refused notice commit stays silent for a later retry, and after a successful notice later Stop cycles exit 2 without repeating it until the turn-end guard consumes the attended fail-open.
-The Claude turn-end guard owns that notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
-While supervision is still needed and away mode remains inactive, an actionable close wakes the idle session through exit 2.
+The coordinator admits one home-scoped owner per session generation (`state/.claude-coordinator.lock`, role `coordinator`) and keeps exactly one arm/watcher cycle alive by driving the real `bin/fm-watch-arm.sh` as a tracked background child; it never detaches to init, so Claude's session teardown, timeout, `/new`, `/resume`, `/fork`, and interrupt reap it with the session.
+The notifier admits one parked owner per event epoch through the shared `fm_autoarm_claim_*` generation contract (`state/.claude-autoarm.lock` micro-mutex plus the `state/.claude-autoarm-epoch` ledger, outcome `parked`), which the turn-end guard reads as an open claim, and it holds no mutex while it waits in case a parked hook blocks for hours.
+The Claude turn-end guard owns the notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
+A `coordinator`-role lock alone never satisfies the guard, because a coordinator cannot exit 2.
+While supervision is still needed and away mode remains inactive, an actionable close makes the coordinator publish a ready-to-notify record and the notifier wakes the idle session through exit 2.
 
 ## Actionable wake ordering
 
@@ -35,19 +35,28 @@ When that retained arm later closes, its actual close is classified as a new sup
 After the configured retry bound is exhausted, it delivers the original wake with a typed continuity-restoration failure even if every successor arm hung without reporting readiness.
 This is deliberate Option B ordering: the fleet is protected before the model handles the wake whenever restoration succeeds, but the model is never left blind when it does not.
 
-Claude's Stop hook starts the successor arm at the next Stop after the handling turn, rather than before notification as Pi, omp, and OpenCode do.
-The durable wake queue preserves actionable events during the residual active-turn window, and the bounded turn-end guard enforces recovery at Stop when no watcher is live and no open generation claim is still deciding, so a finished, hung, or identity-mismatched claim cannot suppress it ([`turnend-guard.md`](turnend-guard.md#harness-integrations) owns that boundary).
+Claude's coordinator establishes and verifies the successor before the notifier surfaces the wake, the same successor-first ordering Pi and OpenCode use, rather than the former next-Stop gap.
+After an actionable child close the coordinator reads the queue high-water mark, arms and verifies a fresh successor (a live watcher owning `state/.watch.lock` with a fresh beacon), and only then writes an atomic `state/.claude-ready-to-notify` record binding that high-water mark, the recovery generation, the predecessor arm pid, the verified successor pid and identity, the coordinator generation, and the session owner.
+A confirmed successor resets the coordinator's readiness-timeout streak.
+After `FM_CLAUDE_COORD_SUCCESSOR_TIMEOUT_STREAK` consecutive timeouts with no healthy watcher (default 3), the coordinator stands down: it stops retrying, releases `state/.claude-coordinator.lock`, removes its generation file, and exits so it is no longer alive.
+The notifier consumes that record by its monotonic `ready_seq` high-water mark, never by counting queue rows, so the watcher's deliberate double-scan (which appends duplicate rows for one event) never inflates the number of handling turns.
+It exits 2 only when that ready event still belongs to this session and coordinator generation and covers at least one durable unacked queue row, so a leftover `.wake-queue.seq` with an empty queue cannot open a handling turn.
+A first run with no surfaced-seq file baselines that leftover high-water instead of treating it as a new wake.
+It surfaces a typed coordinator-degraded failure rather than exiting 0 into a still-needed-but-unsurfaced state.
+Once the coordinator has stood down, the parked notifier's bound for an absent coordinator fires and drives that same typed failure plus the guard's failed-epoch progression.
+Because the coordinator keeps one live watcher across the whole handling turn, a turn longer than the beacon grace no longer leaves supervision genuinely absent, which was the false "watcher down" the former next-Stop design produced.
+The bounded turn-end guard still enforces recovery at Stop when no watcher is live and no open claim is still deciding, so a finished, hung, or identity-mismatched claim cannot suppress it ([`turnend-guard.md`](turnend-guard.md#harness-integrations) owns that boundary).
 The recovery-episode contract below owns once-per-generation announcement.
 A handling successor does not re-announce; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
 The model no longer re-arms after ordinary wakes.
 No PreToolUse hook denies fleet commands based on watcher status.
-A genuine auto-arm failure describes the automatic mechanism as broken and never directs a routine manual background arm.
+A genuine coordinator-degraded failure describes the automatic mechanism as broken and never directs a routine manual background arm.
 Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 Codex retains its bounded foreground checkpoint protocol.
 Grok retains its tracked background-task notification protocol.
 No adapter starts a replacement with shell `&`.
 
-The turn-end guard remains the final backstop rather than the normal continuity mechanism and cooperates with the auto-arm in its `--claude` mode.
+The turn-end guard remains the final backstop rather than the normal continuity mechanism and cooperates with the notifier in its `--claude` mode.
 
 ## Recovery episode acknowledgement
 
@@ -120,9 +129,10 @@ The same suite covers ordinary same-process session replacement for `/new`, `/re
 `tests/fm-watch-recovery-loop.test.sh` covers the once-per-generation announcement bound with the real Pi extension against a refused handling handshake, and a handling successor that must surface a real crew event instead of going blind.
 `tests/fm-watcher-lock.test.sh` covers verified-successor attach, recovery publication before stale-lock removal, the typed self-eviction failure, bounded and successor-linked lifecycle rows, and a SIGSTOP counterfactual that distinguishes a live PID from a stale beacon before classifying termination.
 `tests/fm-subagent-pretool-check.test.sh` proves Claude retains only the non-status Bash seatbelts.
-`tests/fm-claude-stop-autoarm.test.sh` covers the auto-arm's scope, stale and live session owners, unchanged AFK and need boundaries, single-flight, bounded failure retries, benign live-watcher cycle ends, one-notice failure episodes, exit-2 translation, and host-timeout HUP/TERM/INT translation into the same durable failure handoff.
+`tests/fm-claude-watch-coordinator.test.sh` covers the successor-first handshake over the real arm and watcher: a verified live successor owning `state/.watch.lock` before the ready record is published, one stable live watcher keeping the beacon fresh across a turn longer than grace with no new Stop, an actionable close re-arming a successor and re-publishing a higher `ready_seq`, exactly one rewake per monotonic high-water mark, single-flight among concurrent coordinators, a coordinator stand-down after a bounded successor-timeout streak, and a coordinator lock never satisfying the turn-end guard.
+`tests/fm-claude-watch-notifier.test.sh` covers the notifier's scope, stale and live session owners, unchanged AFK and need boundaries, single-flight, the parked/rewake/failed progression, the unacked-queue rewake gate, and host-timeout HUP/TERM/INT translation into the terminal `interrupted` outcome.
 It also covers generation-claim single-flight, stuck-claim supersession, superseded-owner silence, notice-marker refusal and retry, ownership-atomic episode reset, and the legacy upgrade shim; [`turnend-guard.md`](turnend-guard.md) owns those behavior contracts.
-`FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-stop-autoarm-live-e2e.test.sh` starts with the reproduced stale-lock state, runs session start first, completes two tokenless cycles, and checks the competing-live-owner negative control.
+`FM_CLAUDE_LIVE_E2E=1 tests/fm-claude-watch-coordinator-live-e2e.test.sh` starts with the reproduced stale-lock state, runs session start first, keeps a live watcher across a handling turn longer than grace, and checks the competing-live-owner negative control.
 `tests/fm-turnend-guard.test.sh` covers the cooperative `--claude` guard, including monotonic failed-epoch progression, the integrated bounded fail-open, post-alarm continuation suppression, and positive recovery reset; [`turnend-guard.md`](turnend-guard.md#regression-coverage) lists that suite's full generation and legacy claim coverage.
 
 ## Active limits and verification

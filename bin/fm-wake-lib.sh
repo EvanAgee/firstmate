@@ -175,21 +175,23 @@ fm_watcher_healthy() {
 
 # fm_watcher_healthy above is the PID-STRICT primitive: true only when a live,
 # identity-matched watcher PROCESS holds this home's lock with a fresh beacon. The
-# arm layer (bin/fm-watch-arm.sh, bin/fm-claude-stop-autoarm.sh) needs exactly
+# arm layer (bin/fm-watch-arm.sh, bin/fm-claude-watch-coordinator.sh) needs exactly
 # that - it decides whether to start, attach to, or replace a real watcher
 # process, so a leftover beacon must never satisfy it. bin/fm-turnend-guard.sh
-# also keeps this strict check because it fires at the turn boundary where the
-# auto-arm brings a fresh watcher up. The pull warning (bin/fm-guard.sh) fires
-# mid-turn, where the auto-arm model runs no watcher at all, so it wants a
-# different, model-aware question:
+# also keeps this strict check because it fires at the turn boundary and
+# cooperates with the parked notifier. The pull warning (bin/fm-guard.sh) fires
+# mid-turn and uses a different, model-aware question:
 
 # fm_supervision_model
 # Print the supervision model of this home's PRIMARY harness:
-#   autoarm     Claude's Stop-hook auto-arm and Cursor's stop-hook park: the
-#               watcher is armed at each turn end and exits on its wake, so it
-#               runs only BETWEEN turns. Mid-turn a fresh beacon with no live
-#               watcher process is healthy, and a stale beacon is still healthy
-#               while a Claude auto-arm generation explains the gap
+#   autoarm     Cursor's stop-hook park, and Claude's still-classified pull-guard
+#               model: Cursor arms at each turn end and exits on its wake, so it
+#               runs only BETWEEN turns, and a mid-turn fresh beacon with no live
+#               watcher process is its healthy state. Claude's Stop coordinator
+#               (bin/fm-claude-watch-coordinator.sh) now keeps a live watcher
+#               across the handling turn, but the pull guard keeps the autoarm
+#               class so a leftover rewake bound to the current session lock and
+#               recovery generation is still accepted
 #               (fm_autoarm_midturn_healthy).
 #   extension   Pi (and pi-signed): .pi/extensions/fm-primary-pi-watch.ts owns
 #               continuity. It tears the watcher down on every actionable wake and
@@ -359,8 +361,11 @@ fm_afk_mode() {
 #                                             the lock (the beacon is still fresh)
 #                              stale-beacon - the beacon is stale beyond grace or
 #                                             absent (a genuine supervision lapse)
-# autoarm: a fresh beacon within grace is healthy even with no live watcher,
-# because the watcher only runs between turns. A stale beacon is still healthy
+# autoarm: a fresh beacon within grace is healthy even with no live watcher;
+# only a stale beacon is a lapse. Cursor's between-turns park makes that its
+# ordinary mid-turn state, and Claude's coordinator keeps its beacon fresh, so
+# the stale-beacon exemption below now only covers the between-turns class. A
+# stale beacon is still healthy
 # while fm_autoarm_midturn_healthy proves a Claude auto-arm generation
 # explains the gap (a rewake bound to the current recovery generation and
 # live session lock), because turn-end re-arms.
@@ -429,7 +434,7 @@ fm_lock_clean_known_files() {
 fm_lock_set_role() {
   local lockdir=$1 role=$2 current pid back
   case "$role" in
-    autoarm|terminal-check) : ;;
+    autoarm|terminal-check|coordinator|notifier) : ;;
     *) return 1 ;;
   esac
   fm_current_pid current || return 1
@@ -1400,13 +1405,18 @@ fm_failure_episode_reset() {
 #     (continuity falls to the synchronous guard), and the identity is read
 #     from the ledger entry alone - never substituted from any lock - so a
 #     reused pid can never authenticate someone else's stale entry.
-#   - A claim is OPEN (fm_autoarm_claim_open) while its outcome is "arming",
-#     its owner pid is alive, its recorded identity successfully recomputes
+#   - A claim is OPEN (fm_autoarm_claim_open) while its outcome is "arming" or
+#     "parked", its owner pid is alive, its recorded identity successfully recomputes
 #     and matches that pid, and it is not STUCK - stuck meaning both the
 #     ledger entry and the watcher beacon (state/.last-watcher-beat) are older
 #     than the guard grace, which proves the owner hung mid-arm with nothing
 #     supervising (every legitimate arming phase with no watcher is bounded in
 #     seconds, while a healthy hours-long cycle keeps the beacon beating).
+#     "parked" is the Claude Stop notifier's long wait
+#     (bin/fm-claude-watch-notifier.sh) between turns: it owns the exit-2 wake
+#     path for this event epoch and holds no mutex while it waits, and its own
+#     bounded coordinator-absent wait keeps a parked claim from outliving the
+#     grace window with nothing supervising.
 #   - Every firing DEFERS (exits 0) to an open claim; anything else - a
 #     terminal outcome, a dead or identity-mismatched owner, a stuck owner, an
 #     identityless entry, or no claim at all - lets the next firing take
@@ -1516,7 +1526,10 @@ fm_autoarm_claim_open() {  # <state-dir> [grace]
     ''|*[!0-9]*|0) grace=300 ;;
   esac
   fm_autoarm_ledger_read "$state" || return 1
-  [ "$FM_AUTOARM_OUTCOME" = arming ] || return 1
+  case "$FM_AUTOARM_OUTCOME" in
+    arming|parked) : ;;
+    *) return 1 ;;
+  esac
   fm_pid_alive "$FM_AUTOARM_OWNER" || return 1
   [ -n "$FM_AUTOARM_IDENTITY" ] || return 1
   current=$(fm_pid_identity "$FM_AUTOARM_OWNER" 2>/dev/null) || return 1

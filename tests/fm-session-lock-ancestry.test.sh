@@ -75,7 +75,7 @@ case "$pid:$field:${FM_TEST_CLAUDE_SHAPE:-linux}" in
   700:args=:macos) printf '%s\n' '/Users/u/.local/share/claude/versions/2.1.220 --resume' ;;
   700:ppid=:*) printf '%s\n' 1 ;;
   *:comm=:*) printf '%s\n' bash ;;
-  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-claude-stop-autoarm.sh' ;;
+  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-claude-watch-notifier.sh' ;;
   *:ppid=:*) printf '%s\n' 700 ;;
 esac
 SH
@@ -306,7 +306,7 @@ case "$pid:$field:${FM_TEST_DAEMON_PRESENT:-0}" in
   710:args=:*) printf '%s\n' 'claude bg-spare /tmp/claim.sock' ;;
   710:ppid=:*) printf '%s\n' 720 ;;
   *:comm=:*) printf '%s\n' bash ;;
-  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-claude-stop-autoarm.sh' ;;
+  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-claude-watch-notifier.sh' ;;
   *:ppid=:*) printf '%s\n' 710 ;;
 esac
 SH
@@ -427,12 +427,18 @@ test_anchor_pid_is_the_model_loop_process_only_for_a_trusted_id() {
   pass "session-lock: a trusted id anchors the lock on the model-loop process, anything else on the outermost pid"
 }
 
-# --- end-to-end layer: the real Stop auto-arm in real process trees ----------
+# --- end-to-end layer: the real Claude Stop notifier in real process trees ----
 
-install_autoarm_scripts() {
+# The end-to-end layer exercises the SHARED session-lock ancestry identity path
+# through the Claude notifier hook, the exit-2 recovery owner that replaced the
+# between-turns auto-arm: when identity resolves to this session's own lock owner
+# and a fresh ready record covers a durable unacked wake, the notifier exits 2.
+# That makes the identity match observable (rc=2, epoch=rewake) without a live
+# coordinator or a long-lived watcher.
+install_notifier_scripts() {
   local dir=$1
   mkdir -p "$dir/bin"
-  cp "$ROOT/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-claude-stop-autoarm.sh"
+  cp "$ROOT/bin/fm-claude-watch-notifier.sh" "$dir/bin/fm-claude-watch-notifier.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
@@ -440,17 +446,47 @@ install_autoarm_scripts() {
   cp "$ROOT/bin/fm-cursor-lib.sh" "$dir/bin/fm-cursor-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
   cp "$ROOT/bin/fm-lock.sh" "$dir/bin/fm-lock.sh"
-  chmod +x "$dir/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-lock.sh"
-  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+  cp "$ROOT/bin/fm-watch.sh" "$dir/bin/fm-watch.sh"
+  chmod +x "$dir/bin/fm-claude-watch-notifier.sh" "$dir/bin/fm-lock.sh" "$dir/bin/fm-watch.sh"
+  install_ready_seeder "$dir"
+}
+
+# Seed a ready-to-notify record for the home's CURRENT session lock plus the
+# durable unacked wake row its rewake gate requires, because the coordinator that
+# publishes the record for real belongs to a different test. The ancestry layer
+# only needs the identity path, so the fixture installs this seeder as a script
+# the fixture processes call before firing the hook.
+install_ready_seeder() {  # <dir>
+  local dir=$1
+  cat > "$dir/seed-ready.sh" <<'SH'
 #!/usr/bin/env bash
-echo "$$" >> "$FM_HOME/state/arm-ran"
-printf 'pending:downtime:fixture-generation\n' > "$FM_HOME/state/.watcher-down"
-touch "$FM_HOME/state/.last-watcher-beat"
-printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
-printf 'stale: fixture-win actionable\n'
-exit 0
+# Usage: seed-ready.sh <home> <ready-seq> <firing-pid>
+# A live recorded lock owner stays the session owner; a demonstrably dead one is
+# reclaimed by the firing process (through fm-lock.sh) before the notifier reads
+# the lock, so the record must name that process instead.
+home=$1
+seq=$2
+firing=$3
+owner=$(sed -n '1p' "$home/state/.lock" 2>/dev/null | tr -d '[:space:]')
+if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+  owner=$firing
+fi
+[ -n "$owner" ] || exit 1
+{
+  printf 'ready_seq=%s\n' "$seq"
+  printf 'recovery_generation=none\n'
+  printf 'predecessor_arm_pid=none\n'
+  printf 'successor_watch_pid=%s\n' "$$"
+  printf 'successor_watch_identity=fixture\n'
+  printf 'coordinator_generation=coord-%s-1\n' "$owner"
+  printf 'session_owner=%s\n' "$owner"
+  printf 'published_at=%s\n' "$(date +%s)"
+} > "$home/state/.claude-ready-to-notify"
+printf '%s\t%s\tsignal\ttask.status\tblocked: needs a decision\n' "$(date +%s)" "$seq" \
+  > "$home/state/.wake-queue"
+printf '%s\n' "$seq" > "$home/state/.wake-queue.seq"
 SH
-  chmod +x "$dir/bin/fm-watch-arm.sh"
+  chmod +x "$dir/seed-ready.sh"
 }
 
 # A primary home with one task in flight, so the hook's scope and supervision-need
@@ -462,7 +498,7 @@ make_primary_home() {  # <dir>
   git -C "$dir" commit -q --allow-empty -m init
   : > "$dir/AGENTS.md"
   : > "$dir/state/task.meta"
-  install_autoarm_scripts "$dir"
+  install_notifier_scripts "$dir"
   # The process that fires the hook records its own pid as the session lock
   # owner, exactly as a real session does at session start.
   cat > "$dir/session.sh" <<'SH'
@@ -476,7 +512,10 @@ if [ "${FM_FIXTURE_ORPHAN_HERE:-0}" = 1 ]; then
 fi
 printf '%s\n' "$$" > "$FM_HOME/state/session-pid"
 printf '%s\n' "$$" > "$FM_HOME/state/.lock"
-"$FM_HOME/bin/fm-claude-stop-autoarm.sh" </dev/null > "$FM_HOME/state/hook.out" 2>&1
+# The coordinator normally publishes this record; the ancestry layer only needs
+# the identity path, so the fixture seeds one for whatever holds the lock now.
+"$FM_HOME/seed-ready.sh" "$FM_HOME" 7 "$$"
+FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" </dev/null > "$FM_HOME/state/hook.out" 2>&1
 printf '%s\n' "$?" > "$FM_HOME/state/hook.rc"
 SH
   cat > "$dir/daemon.sh" <<'SH'
@@ -530,9 +569,8 @@ test_e2e_version_named_session_claims_the_home() {
   make_primary_home "$dir"
   run_fixture_tree "$dir" "$VERSIONED_CLAUDE"
   expect_code 2 "$(hook_rc "$dir")" "a version-named session must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a version-named session"
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "no claim was recorded, got: $(epoch_outcome "$dir")"
-  pass "session-lock e2e: a version-named session claims the home and arms supervision"
+  pass "session-lock e2e: a version-named session claims the home and wakes on the ready record"
 }
 
 test_e2e_daemon_parented_session_claims_the_home() {
@@ -546,9 +584,8 @@ test_e2e_daemon_parented_session_claims_the_home() {
     || fail "fixture did not produce a distinct daemon and session: session=$session_pid daemon=$daemon_pid"
   lock_after=$(tr -d '[:space:]' < "$dir/state/.lock")
   expect_code 2 "$(hook_rc "$dir")" "a session parented by a harness-named daemon must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a daemon-parented session"
   [ "$lock_after" = "$session_pid" ] || fail "the session lock moved off the session: expected $session_pid, got $lock_after"
-  pass "session-lock e2e: a session parented by a harness-named daemon claims the home and arms supervision"
+  pass "session-lock e2e: a session parented by a harness-named daemon claims the home and wakes on the ready record"
 }
 
 test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
@@ -563,7 +600,6 @@ test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
     || fail "the live session's lock was reclaimed as stale and rewritten to the shared daemon pid $daemon_pid"
   [ "$lock_after" = "$session_pid" ] || fail "the session lock moved off the session: expected $session_pid, got $lock_after"
   expect_code 2 "$(hook_rc "$dir")" "a version-named session under a daemon must claim its home and rewake"
-  [ -e "$dir/state/arm-ran" ] || fail "supervision never armed for a version-named daemon-parented session"
   pass "session-lock e2e: a version-named session under a harness-named daemon keeps its own lock"
 }
 
@@ -599,7 +635,7 @@ make_background_session_home() {  # <dir>
   # The whole bin, because the real turn-end guard composes far more of it than
   # the auto-arm alone; only the arm is replaced by the recording stub above.
   cp -R "$ROOT/bin" "$dir/bin"
-  install_autoarm_scripts "$dir"
+  install_notifier_scripts "$dir"
   # Every fixture script ends in an explicit exit so bash can never tail-exec the
   # script under test in place of the fake claude, which would collapse the
   # chain the assertions depend on.
@@ -645,8 +681,9 @@ while [ ! -e "$FM_HOME/state/stop-spare" ]; do
     # shellcheck disable=SC1090
     . "$req"
     ( . "$FM_HOME/bin/fm-session-lock-lib.sh" && fm_harness_ancestry_pids ) > "$out/ancestry" 2>/dev/null
+    "$FM_HOME/seed-ready.sh" "$FM_HOME" "$n" "$$"
     printf '%s\n' '{"session_id":"fixture","stop_hook_active":true}' \
-      | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$out/hook.out" 2>&1
+      | env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" > "$out/hook.out" 2>&1
     printf '%s\n' "$?" > "$out/hook.rc"
     printf '%s\n' '{"session_id":"fixture","stop_hook_active":true}' \
       | "$FM_HOME/bin/fm-turnend-guard.sh" --claude > "$out/guard.out" 2>&1
@@ -691,18 +728,12 @@ phase_value() {  # <dir> <n> <file>
   tr -d '[:space:]' < "$1/state/phase-$2/$3"
 }
 
-arm_count() {  # <dir>
-  [ -e "$1/state/arm-ran" ] || { printf '0'; return; }
-  wc -l < "$1/state/arm-ran" | tr -d ' '
-}
-
 # The recycled chain must still be treated as the owner: arm, no diagnostic,
 # lock accepted, line 1 untouched while the recorded pid lives, sidecar bytes
 # untouched.
-expect_phase_owned() {  # <dir> <n> <expected-arms> <expected-lock-pid> <label>
-  local dir=$1 n=$2 arms=$3 lock_pid=$4 label=$5
-  expect_code 2 "$(phase_value "$dir" "$n" hook.rc)" "$label: the Stop auto-arm did not rewake"
-  [ "$(arm_count "$dir")" = "$arms" ] || fail "$label: expected $arms arm(s), got $(arm_count "$dir")"
+expect_phase_owned() {  # <dir> <n> <expected-lock-pid> <label>
+  local dir=$1 n=$2 lock_pid=$3 label=$4
+  expect_code 2 "$(phase_value "$dir" "$n" hook.rc)" "$label: the Stop notifier did not rewake"
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "$label: no rewake claim was recorded, got: $(epoch_outcome "$dir")"
   expect_code 0 "$(phase_value "$dir" "$n" guard.rc)" "$label: the turn-end guard did not allow the stop"
   if grep -q 'OWNED BY ANOTHER LIVE SESSION' "$dir/state/phase-$n/guard.out"; then
@@ -717,10 +748,9 @@ expect_phase_owned() {  # <dir> <n> <expected-arms> <expected-lock-pid> <label>
 
 # Not the owner: no arm, the guard's foreign-owner diagnostic naming the live
 # owner, and the lock refusal naming both the owner pid and its recorded id.
-expect_phase_foreign() {  # <dir> <n> <expected-arms> <owner-pid> <label>
-  local dir=$1 n=$2 arms=$3 owner=$4 label=$5
-  expect_code 0 "$(phase_value "$dir" "$n" hook.rc)" "$label: the Stop auto-arm did not stand down"
-  [ "$(arm_count "$dir")" = "$arms" ] || fail "$label: a non-owner armed: $(arm_count "$dir") arm(s), expected $arms"
+expect_phase_foreign() {  # <dir> <n> <owner-pid> <label>
+  local dir=$1 n=$2 owner=$3 label=$4
+  expect_code 0 "$(phase_value "$dir" "$n" hook.rc)" "$label: the Stop notifier did not stand down"
   expect_code 0 "$(phase_value "$dir" "$n" guard.rc)" "$label: a non-owner Stop did not end safely"
   grep -q "OWNED BY ANOTHER LIVE SESSION.*lock owner pid $owner" "$dir/state/phase-$n/guard.out" \
     || fail "$label: the guard did not report the live owner $owner: $(cat "$dir/state/phase-$n/guard.out")"
@@ -755,7 +785,7 @@ test_e2e_background_session_keeps_its_lock_across_a_recycled_chain() {
   # Phase 1: the healthy contiguous chain, the session's own id.
   fire_phase "$dir" 1 'export CLAUDE_CODE_SESSION_ID=S1; export CLAUDE_PID=$$'
   grep -qx "$frontend" "$dir/state/phase-1/ancestry" || fail "the healthy chain did not reach the front-end"
-  expect_phase_owned "$dir" 1 1 "$frontend" "healthy chain"
+  expect_phase_owned "$dir" 1 "$frontend" "healthy chain"
 
   # Recycle the bridge: the daemon ends, the pty-host is reparented to init, and
   # the front-end that holds the lock stays alive.
@@ -774,16 +804,16 @@ test_e2e_background_session_keeps_its_lock_across_a_recycled_chain() {
     fail "the recycled chain still reached the front-end, so this phase proves nothing"
   fi
   grep -qx "$spare" "$dir/state/phase-2/ancestry" || fail "the hook's ancestry lost its own spare"
-  expect_phase_owned "$dir" 2 2 "$frontend" "recycled chain, same session"
+  expect_phase_owned "$dir" 2 "$frontend" "recycled chain, same session"
 
   # Phases 3-5: a different id, the right id from a CLAUDE_PID outside the run,
   # and no id at all are each a non-owner over the same broken chain.
   fire_phase "$dir" 3 'export CLAUDE_CODE_SESSION_ID=S2; export CLAUDE_PID=$$'
-  expect_phase_foreign "$dir" 3 2 "$frontend" "recycled chain, different session"
+  expect_phase_foreign "$dir" 3 "$frontend" "recycled chain, different session"
   fire_phase "$dir" 4 "export CLAUDE_CODE_SESSION_ID=S1; export CLAUDE_PID=$frontend"
-  expect_phase_foreign "$dir" 4 2 "$frontend" "recycled chain, untrusted id"
+  expect_phase_foreign "$dir" 4 "$frontend" "recycled chain, untrusted id"
   fire_phase "$dir" 5 ''
-  expect_phase_foreign "$dir" 5 2 "$frontend" "recycled chain, no id"
+  expect_phase_foreign "$dir" 5 "$frontend" "recycled chain, no id"
 
   # Phase 6: the front-end exits; the same session reclaims its dead anchor
   # onto the spare - the model-loop process - not onto the outermost pty-host.
@@ -795,7 +825,7 @@ test_e2e_background_session_keeps_its_lock_across_a_recycled_chain() {
   done
   kill -0 "$frontend" 2>/dev/null && fail "the front-end did not exit"
   fire_phase "$dir" 6 'export CLAUDE_CODE_SESSION_ID=S1; export CLAUDE_PID=$$'
-  expect_phase_owned "$dir" 6 3 "$spare" "dead front-end, same session"
+  expect_phase_owned "$dir" 6 "$spare" "dead front-end, same session"
   [ "$spare" != "$ptyhost" ] || fail "fixture collapsed the spare into the pty-host"
 
   : > "$dir/state/stop-spare"
