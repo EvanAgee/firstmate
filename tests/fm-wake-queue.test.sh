@@ -269,8 +269,11 @@ SH
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-first.out" 2> "$dir/watch-first.err" || true
-  [ ! -s "$state/.wake-queue" ] \
-    || fail "the first observation of an old foreign row produced an age-only alert"
+  if [ -s "$state/.wake-queue" ]; then
+    sed 's/^/unexpected queued row: /' "$state/.wake-queue" >&2
+    sed 's/^/parent wake source: /' "$dir/watch-first.out" >&2
+    fail "the first observation of an old foreign row produced an age-only alert"
+  fi
 
   # The oldest sequence advances after more than the threshold. This is healthy
   # drain progress even though the replacement row is itself very old.
