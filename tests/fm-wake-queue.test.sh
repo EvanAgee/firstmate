@@ -232,16 +232,18 @@ test_drain_dedupes_obvious_duplicates() {
 # plain drain-and-handle turn that runs no other supervision script. It must warn
 # when work is in flight with no live watcher, and stay silent right after a
 # normal fire from a live watcher with a fresh beacon, so it never false-alarms.
-prime_secondmate_stall_fixture() {  # <state>
-  # These cases test the secondmate scan, not the network-backed GitHub health check.
-  touch "$1/.last-check"
+prime_secondmate_stall_fixture() {  # <state> [fake-epoch]
+  # These cases test the secondmate scan, not the parent check or heartbeat cadence.
+  touch "$1/.last-check" "$1/.last-heartbeat"
+  # Fake-clock cases need cadence files in that same clock domain.
+  [ "$#" -lt 2 ] || fm_touch_epoch "$2" "$1/.last-check" "$1/.last-heartbeat"
 }
 
 test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once() {
   local dir state sub fakebin out row_before row_after stall_count real_date
   dir=$(make_case secondmate-foreign-stall)
   state="$dir/state"
-  prime_secondmate_stall_fixture "$state"
+  prime_secondmate_stall_fixture "$state" 0
   sub="$dir/secondmate"
   mkdir -p "$sub/state" "$sub/data" "$sub/bin"
   printf '# Firstmate\n' > "$sub/AGENTS.md"
@@ -347,7 +349,7 @@ test_secondmate_declared_pause_rows_do_not_feed_stall_escalation() {
   local dir state sub fakebin real_date
   dir=$(make_case secondmate-declared-pause-queue)
   state="$dir/state"
-  prime_secondmate_stall_fixture "$state"
+  prime_secondmate_stall_fixture "$state" 0
   sub="$dir/secondmate"
   mkdir -p "$sub/state"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
@@ -396,7 +398,7 @@ test_secondmate_reprovisioned_queue_starts_a_fresh_interval() {
   local dir state sub fakebin real_date
   dir=$(make_case secondmate-reprovisioned-queue)
   state="$dir/state"
-  prime_secondmate_stall_fixture "$state"
+  prime_secondmate_stall_fixture "$state" 0
   sub="$dir/secondmate"
   mkdir -p "$sub/state"
   printf 'mate\n' > "$sub/.fm-secondmate-home"
