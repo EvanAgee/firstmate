@@ -5935,6 +5935,42 @@ test_paused_until_that_passed_is_rechecked_before_the_cadence() {
   pass "a declared wait whose until time has passed is rechecked at once, then held to the cadence"
 }
 
+test_watcher_refreshes_task_pane_tail() {
+  local dir state fakebin out capture window pid i
+  dir=$(make_case pane-tail); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture="$dir/pane.txt"; window="test:fm-pane-tail"
+  printf 'building the task detail endpoint\n' > "$capture"
+  printf 'window=%s\nkind=secondmate\n' "$window" > "$state/pane-tail.meta"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_GH_HEALTH_PROBE_CMD=true FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 40 ]; do
+    grep -F "building the task detail endpoint" "$state/pane-tail.pane-tail" >/dev/null 2>&1 && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -F "building the task detail endpoint" "$state/pane-tail.pane-tail" >/dev/null 2>&1 || {
+    reap "$pid"
+    fail "watcher did not publish the first pane tail: $(cat "$out")"
+  }
+
+  printf 'running the API bash tests\n' > "$capture"
+  i=0
+  while [ "$i" -lt 40 ]; do
+    grep -F "running the API bash tests" "$state/pane-tail.pane-tail" >/dev/null 2>&1 && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  reap "$pid"
+  grep -F "running the API bash tests" "$state/pane-tail.pane-tail" >/dev/null 2>&1 || \
+    fail "watcher did not refresh the pane tail on the next cycle: $(cat "$out")"
+  pass "watcher refreshes the bounded pane snapshot each supervision cycle"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
@@ -6071,3 +6107,4 @@ test_afk_one_shot_never_hands_off_captain_held_under_away_record
 test_paused_until_near_future_is_quiet_before_the_cadence
 test_paused_until_wrong_year_is_bounded_by_the_cadence
 test_paused_until_that_passed_is_rechecked_before_the_cadence
+test_watcher_refreshes_task_pane_tail

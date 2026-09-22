@@ -127,6 +127,8 @@
 #                          rows do not feed this escalation, observation is
 #                          read-only, and one parent notification covers each
 #                          no-progress episode
+# Each successful recorded-window capture also replaces state/<id>.pane-tail
+# atomically with at most 40 lines and 65,536 characters for GET /tasks/<id>.
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
@@ -736,6 +738,25 @@ recorded_windows() {
     seen="$seen|$w|"
     printf '%s\n' "$w"
   done
+}
+
+persist_pane_tail() {  # <task-id> <captured-text>
+  local task=$1 captured=$2 start tmp old_umask
+  [ -n "$task" ] && fm_task_id_path_safe "$task" || return 0
+  if [ "${#captured}" -gt 65536 ]; then
+    start=$(( ${#captured} - 65536 ))
+    captured=${captured:$start}
+  fi
+  tmp="$STATE/.$task.pane-tail.${BASHPID:-$$}"
+  old_umask=$(umask)
+  umask 077
+  if printf '%s\n' "$captured" > "$tmp" && mv -f "$tmp" "$STATE/$task.pane-tail"; then
+    umask "$old_umask"
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  umask "$old_umask"
+  return 1
 }
 
 # Print the oldest structurally valid ACTIONABLE row in a local secondmate's
@@ -2748,10 +2769,12 @@ EOF
     # in the backlog while the mate still says `working:` or `done:` is outside
     # this guard: reaching it would require backlog reads for windows this gate
     # deliberately skips, putting that read on the ordinary poll hot path.
+    # The capture runs first so GET /tasks/<id> sees every live pane, mates included.
+    tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
+    persist_pane_tail "$task" "$tail40" || true
     if [ "$kind" = secondmate ] && ! status_is_paused_or_captain_held "$last"; then
       continue
     fi
-    tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
     h=$(printf '%s' "$tail40" | hash_pane)
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"

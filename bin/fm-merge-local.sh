@@ -16,6 +16,8 @@
 # docs/captain-hold-lifecycle.md owns the accepted merge-to-cleanup residual.
 # A PR-bound task may use the same gate while state/.github-down exists. Its
 # landing is recorded for bin/fm-outage-sync.sh to push after GitHub returns.
+# After the fast-forward, bin/fm-delivery-record.sh appends the task's timing to
+# the home-local data/delivery-log.jsonl without changing the merge result.
 # Usage: fm-merge-local.sh <task-id> [<lane-branch>] [--deferred-checks <list>] [--adversarial-review-passed <ref>]
 set -eu
 
@@ -199,6 +201,21 @@ MERGE_CONTROL_LOCK=
 [ "$merge_status" -eq 0 ] || exit "$merge_status"
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
+LANDED_AT=
+if ! LANDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ); then
+  echo "warning: could not determine the local landing timestamp for $ID" >&2
+  LANDED_AT=
+fi
+
+delivery_repo=$(basename "$PROJ")
+case "$delivery_repo" in ''|.|..|*/*) delivery_repo=project ;; esac
+if ! "$SCRIPT_DIR/fm-delivery-record.sh" "$ID" \
+  --repo "$delivery_repo" \
+  --project-path "$PROJ" \
+  --branch "$BRANCH" \
+  --merged-at "$LANDED_AT"; then
+  echo "warning: delivery timing was not recorded for $ID after the local landing" >&2
+fi
 
 if [ "$OUTAGE_LANDING" = yes ]; then
   after_full=$(git -C "$PROJ" rev-parse "$DEFAULT")
@@ -206,7 +223,7 @@ if [ "$OUTAGE_LANDING" = yes ]; then
   mkdir -p "$ledger_dir"
   project_name=$(basename "$PROJ")
   case "$project_name" in ''|.|..|*/*) project_name=project ;; esac
-  landed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf unknown)
+  landed_at=${LANDED_AT:-unknown}
   deferred_field=$(printf '%s' "$DEFERRED_CHECKS" | tr '\t\n' '  ')
   review_ref=$(printf '%s' "$ADVERSARIAL_REVIEW" | tr '\t\n' '  ')
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \

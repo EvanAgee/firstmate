@@ -27,6 +27,11 @@ Wake, watcher, away-mode, and Relay-specific state mechanics remain with their n
 `AGENTS.md` retains the run-once and read-once operator rules, lock-refusal safety, installation consent, and direct-report recovery boundaries because those facts apply at every session start.
 Ordinary dead-direct-report recovery is owned by `stuck-crewmate-recovery`, while persistent-secondmate recovery is owned by `secondmate-provisioning`.
 
+## Token ledger (data/token-ledger)
+
+Use `bin/fm-token-ledger.sh` to report and compare session token and cost use under the effective Firstmate home.
+Its header owns the commands, fields, source records, output paths, and attribution rules.
+
 ## Calm preference (config/calm)
 
 The Pi Calm extension and the Claude Code Calm mod share the captain's home-local presentation choice in gitignored `config/calm` under the effective Firstmate home, so one `/calm` choice applies on either harness.
@@ -1102,6 +1107,78 @@ Each account, model and voice file above is read as its first line that is not b
 The two read files are parsed differently: `config/voice-read-scope` must hold the bare word and nothing but blank space around it, so a comment header there refuses instead of being skipped, while every line of `config/voice-read-deny` that is not blank and not a `#` comment is one more substring.
 `FM_VOICE_RELAY` and `FM_VOICE_PYTHON` belong to the laptop rather than to a home, so they have no config file: `bin/fm-voice-client.py` requires the relay path as a flag or that variable and carries no default path.
 
+## Local API (config/api-port / config/api-token / FM_API_PORT)
+
+The localhost API binds `127.0.0.1` only and serves the resolved `FM_HOME`.
+Port comes from `FM_API_PORT`, else the first non-empty non-comment line of gitignored `config/api-port`, else `18787`.
+A `config/api-port` symlink is refused rather than treated as that default.
+Port `0` asks the kernel for an ephemeral port, which tests use.
+The file is per-home and is not inherited by secondmates, because two homes cannot share a port.
+On first start, `bin/fm-api.sh` writes a random write token to gitignored `config/api-token` if that file is absent.
+Later starts keep the existing token.
+A `config/api-token` symlink is refused.
+The token file is per-home and is not inherited by secondmates.
+Write endpoints require `Authorization: Bearer <token>`.
+A missing or wrong token is refused with 401.
+Reads and the event stream do not.
+`POST /captain-notes` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues a captain note for firstmate on the wake queue, encoded as operational input.
+The task may be a live task or a record in `data/backlog.md`.
+A task that is neither live nor in the backlog returns 404.
+A captain note never closes a durable captain decision.
+`POST /workers/relay` accepts JSON `{"task":"<id>","text":"<one line>"}` and queues `captain-relay to worker <task>: <text>` for firstmate on the same wake queue, encoded as operational input.
+An unknown task returns 404.
+A worker relay never closes a durable captain decision.
+`POST /decisions/answer` accepts JSON `{"task":"<id>","key":"<key>","text":"<one line>"}` and queues an answer for firstmate on the same wake queue, encoded as operational input.
+Firstmate closes an active durable captain decision with `bin/fm-send.sh --resolve-key` on its next supervision turn.
+`POST /rigs/rung` accepts JSON `{"rig":"<class or __default__>","rung":<index>,"enabled":<bool>}` and writes that rung's enabled state in `config/crew-dispatch.json`.
+It edits the static `enabled` switch only, never a `paused` or `quarantined` field, so a paused or quarantined rung is still out after a board toggle and must be edited in the file.
+`rig` is the rule's unique `class`, or `__default__` for the fallback ladder, matching the `class` value `GET /rigs` serves.
+`rung` is that ladder's index, because harness and model can repeat.
+A change that would turn off a ladder's last enabled rung is refused with 400.
+`GET /rigs/config` returns the exact `config/crew-dispatch.json` as `{"ok":true,"config":<object>}`, so an editor can read the whole file (every field `GET /rigs` drops, such as each rule's `why`), change it, and save it back.
+A missing or symlinked file answers `config: null`, and needs no token like the other reads.
+`POST /rigs/config` accepts a whole dispatch config object and writes it to `config/crew-dispatch.json`, creating the file if absent.
+It checks that every present ladder (each rule's `use`, and `default` when that key is an array or object) keeps at least one enabled rung before writing.
+A present `rules` that is not an array, a present `default` that is not an array or object, a broken ladder, or a non-object body is refused with 400.
+A config with only rules and no default is legal and is written as sent.
+This is the routing editor's save door, the counterpart to the single-rung `POST /rigs/rung`.
+`GET /health` reports API version `1` and the home this process serves.
+`GET /fleet` returns that home's fleet snapshot plus a per-task enrich window for board cards.
+The snapshot is `bin/fm-fleet-snapshot.sh --json`, whose header owns schema `fm-fleet-snapshot.v1`.
+`bin/fm-api-reads.mjs` owns the enrich fields.
+An empty home returns an empty fleet, not an error.
+`GET /tasks/<id>` returns one task's brief, status timeline with approximate observed times, current stage, harness, model, started_at, and worker activity.
+`bin/fm-api-task-detail.mjs` owns that JSON contract, including unavailable-source markers.
+An unknown task ID returns JSON 404.
+The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
+`GET /captain-queue` serves the `data/captain-queue.json` cards firstmate escalated to the captain, not worker `needs-decision` lines.
+It serves open cards in `items` and aged-out or manually deferred cards in a separate `parked` list, so a reader can tell an unanswered parked card from an answered resolved one.
+`bin/fm-api-reads.mjs` owns the one open-card rule, covering both the card's question and its options; a card that fails it is left out of `items` and reported on the API's stderr with its card id and the reason, which lands in `state/.api.log`.
+`bin/fm-captain-queue.sh add` refuses a card the same rule would drop, naming the reason, so a newly stored card is always a card this endpoint can serve; a card stored before that check existed can still be refused here, and the log line names it.
+`POST /captain-queue/reply` records the card generation with its answer and queues a captain-reply wake; `bin/fm-api-server.mjs` owns the exact request and stored record shapes.
+`GET /blocked` serves blocked tasks.
+`GET /rigs` serves each rig's class, pool, and pin plus the dispatch note and raw crew and secondmate pin lines.
+`GET /captain-holds` serves the open captain-kind decisions from this home's backlog, including deferred rows.
+Missing read sources stay empty or null rather than failing the request.
+`bin/fm-api-server.mjs` owns those JSON contracts.
+`GET /events` holds open a server-sent event stream of typed home changes.
+Each frame's event name and JSON `type` are one of `task-status`, `task-created`, `captain-queue`, `rig-config`, or `changed`.
+A task-scoped event includes JSON `task`.
+Every event includes an ISO-8601 `timestamp`.
+`state/<id>.status` maps to `task-status`, `state/<id>.meta` to `task-created`, `data/backlog.md` and `data/captain-queue.json` to `captain-queue`, and `config/crew-dispatch.json` to `rig-config`.
+Any other path under `state/`, `data/`, or `config/` maps to `changed`.
+Hidden bookkeeping files emit nothing.
+A hidden file is any watched path with a segment that starts with `.`.
+Writes of the same type and task coalesce behind a quiet window with a deadline.
+Heartbeat comments keep idle connections alive.
+`FM_API_EVENT_QUIET_MS`, `FM_API_EVENT_DEADLINE_MS`, and `FM_API_HEARTBEAT_MS` own that timing.
+Each value must be a positive integer, and the deadline cannot be shorter than the quiet window.
+The stream needs no auth.
+A locked primary session start starts or attaches the server unless `FM_API` is `0`, `off`, `false`, or `no`.
+Secondmate homes marked by `.fm-secondmate-home` skip API bring-up at session start.
+`bin/fm-api.sh` owns start, stop, status, token generation, and the `state/.api.*` records.
+A session-bound server stays up while `state/.lock` names a live holder and exits when there is no live holder.
+
 ## Environment variables
 
 Runtime tuning via environment variables (defaults shown):
@@ -1128,6 +1205,12 @@ FM_BACKLOG_ROW_TIMEOUT_SECS=10   # seconds bounding each backlog row read (bin/f
 FM_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording
 FM_BOOTSTRAP_NETWORK=all   # internal session-start phase split: all, skip (local steps only), or only (network steps only); see bin/fm-bootstrap.sh
 FM_STARTUP_NETWORK_TIMEOUT=120   # seconds bounding the deferred inactive-outcome scan plus network checks; hitting it prints an actionable NETWORK_CHECKS line
+FM_API=                 # optional session-start API bring-up override; 0/off/false/no skips, unset starts on the primary home only
+FM_API_PORT=            # optional localhost API port override; else config/api-port, else 18787; 0 is ephemeral
+FM_API_START_TIMEOUT=5  # seconds fm-api.sh start waits for /health
+FM_API_EVENT_QUIET_MS=100   # milliseconds of quiet before a coalesced /events flush
+FM_API_EVENT_DEADLINE_MS=1000  # maximum milliseconds a /events burst may wait before flush
+FM_API_HEARTBEAT_MS=15000   # milliseconds between /events heartbeat comments
 FM_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tasks-axi compatibility verdict (0 or 1); consumed when bin/fm-tasks-axi-lib.sh is sourced
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically

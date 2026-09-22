@@ -110,6 +110,9 @@
 # destination, normal-case deduplication, and at-least-once recovery.
 # A landed merge whose outcome cannot be written is reported loudly rather than
 # misreported as a failed merge.
+# After a confirmed merge, bin/fm-delivery-record.sh appends the task's timing,
+# with GitHub's opened and merged times when gh-axi can read them, to the
+# home-local data/delivery-log.jsonl; a lookup or ledger failure only warns.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1301,6 +1304,29 @@ case "$outcome_rc" in
     printf 'actionable: merged %s but could not record the outcome for supervision\n' "$URL" >&2
     ;;
 esac
+
+# Delivery timing is record-only: a lookup or ledger failure warns and never
+# changes the landed result. bin/fm-delivery-record.sh owns the record.
+project_path=$(sed -n 's/^project=//p' "$META" 2>/dev/null | head -1)
+delivery_args=("$ID" --repo "$(basename -- "${project_path:-project}")" --pr-url "$URL")
+[ -z "$project_path" ] || delivery_args+=(--project-path "$project_path")
+if [ "$PROVIDER" = github ]; then
+  if pr_facts=$(gh-axi api GET "/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" \
+    --jq '{merged:.merged,pr_opened_at:.created_at,merged_at:.merged_at}' 2>/dev/null); then
+    pr_opened_at=$(printf '%s\n' "$pr_facts" | sed -n 's/^pr_opened_at: "\([0-9-]*T[0-9:]*Z\)"$/\1/p')
+    pr_merged_at=$(printf '%s\n' "$pr_facts" | sed -n 's/^merged_at: "\([0-9-]*T[0-9:]*Z\)"$/\1/p')
+    if [ -n "$pr_opened_at" ] && [ -n "$pr_merged_at" ]; then
+      delivery_args+=(--pr-opened-at "$pr_opened_at" --merged-at "$pr_merged_at")
+    else
+      echo "warning: could not parse pull request timestamps for $URL" >&2
+    fi
+  else
+    echo "warning: could not read pull request timestamps for $URL" >&2
+  fi
+fi
+if ! "$SCRIPT_DIR/fm-delivery-record.sh" "${delivery_args[@]}"; then
+  echo "warning: delivery timing was not recorded for $ID after merging $URL" >&2
+fi
 
 if [ "$PROVIDER" = github ] \
   && ! "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$ID" "$URL"; then

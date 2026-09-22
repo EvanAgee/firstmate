@@ -46,6 +46,11 @@ umask 022
 # the boundary against the real hazard is unaffected. tests/fm-gate-refuse.test.sh
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
+# Locked primary session start brings up the localhost API. Unrelated tests
+# leave this off so they cannot bind a port or leak a node process. Tests that
+# need that bring-up set FM_API=1; tests that talk HTTP call bin/fm-api.sh
+# start themselves.
+export FM_API="${FM_API:-0}"
 
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
