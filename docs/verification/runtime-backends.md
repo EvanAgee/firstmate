@@ -2175,3 +2175,17 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --m
 6. `bin/fm-control.sh <id> exit` stopped the agent and `bin/fm-teardown.sh` returned the worktree and closed the item.
 
 `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.
+
+### Capability probe (2026-09-22)
+
+`bin/fm-omp-capabilities.sh` verified against the real installed omp 18.2.6 (`/Users/evanagee/.bun/bin/omp`, a Bun-compiled single binary at `/Users/evanagee/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js` with a `#!/usr/bin/env bun` entrypoint), replacing a bare `resolve_pi_executable omp` PATH lookup that carried no capability check.
+`--print-binary` printed the exact resolved executable path and `bin/fm-spawn.sh --harness omp` completed a full launch-line assembly through this probe in a scratch `FM_HOME`.
+`tests/fm-omp-capabilities.test.sh` pins the Bun-entrypoint refusal and every required-flag refusal against a fake OMP build; `--fix` is not applicable, and no fallback to another harness is ever offered on a failed probe.
+
+## chrome-devtools-axi (2026-09-22)
+
+`bin/fm-chrome-devtools-axi-lib.sh` and `bin/fm-chrome-devtools-mcp.js` verified against the real installed chrome-devtools-axi 0.1.33 on macOS, replacing a bare `COMMON_TOOLS` presence check that carried no version floor and no pinned MCP launcher.
+`FM_CHROME_DEVTOOLS_AXI_LIVE_E2E=1 tests/fm-chrome-devtools-axi-live-e2e.test.sh` opened a real named session through the pinned launcher and returned a snapshot of `https://example.com`.
+`bin/fm-bootstrap.sh` stayed silent (no `MISSING: chrome-devtools-axi` line) against the installed tool in a scratch `FM_HOME`, and `bin/fm-session-start.sh`'s digest printed `export CHROME_DEVTOOLS_AXI_MCP_PATH=...` pointing at the pinned launcher.
+A real `bin/fm-spawn.sh` launch in the same scratch home sent `export CHROME_DEVTOOLS_AXI_MCP_PATH=...` and `export CHROME_DEVTOOLS_AXI_SESSION=<task-id>` into the pane before the harness launch line, giving each task its own session.
+`tests/fm-chrome-devtools-axi.test.sh` pins the launcher spec, the version-floor comparator, the snapshot classifier, and both bootstrap outcomes through fake `chrome-devtools-axi` output.
