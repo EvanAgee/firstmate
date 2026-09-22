@@ -6,6 +6,10 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
+# When a UI task sends the worker to the frontend-design skill, {TASK} must
+# name the specific default patterns to avoid, because
+# a generic "avoid an AI look" only swaps one default for another;
+# the worker checks its first result for default styles and extends that list.
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab] [--matt-flow]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
@@ -350,6 +354,19 @@ If a command genuinely needs a different working directory, scope the change to 
 EOF
 WORKDIR_SECTION=${WORKDIR_SECTION%$'\n'}
 
+# Rule 5's allowed endings are the only turn stops; these lines name the four
+# early stops a worker is most likely to end on, because a named stop is
+# followed more reliably than a general "keep going".
+IFS= read -r -d '' EARLY_STOPS <<'EOF' || true
+   Never end a turn on any of these four early stops:
+   - a summary that closes by announcing the next step instead of making the tool call;
+   - an offer to carry on unless someone prefers otherwise;
+   - a list of decisions that, by your own account, block nothing;
+   - a report sent because the turn was long or a milestone landed.
+   A status note goes in the same message as your next tool call, never as the last word of a turn.
+EOF
+EARLY_STOPS=${EARLY_STOPS%$'\n'}
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -387,6 +404,7 @@ $WORKDIR_SECTION
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a \`done:\`, \`failed:\`, keyed \`blocked:\`, keyed \`needs-decision:\`, or \`paused:\` line. If you notice you have written "Next, I will", that is the signal to keep going.
+$EARLY_STOPS
 6. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
    Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
@@ -606,7 +624,8 @@ Never run the full suite, e2e gating, \`bin/fm-test-run.sh --all\`, or a full la
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a \`done:\`, \`failed:\`, keyed \`blocked:\`, keyed \`needs-decision:\`, or \`paused:\` line. If you notice you have written "Next, I will", that is the signal to keep going.$SHIP_SCOPE_RULE
+5. Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a \`done:\`, \`failed:\`, keyed \`blocked:\`, keyed \`needs-decision:\`, or \`paused:\` line. If you notice you have written "Next, I will", that is the signal to keep going.
+$EARLY_STOPS$SHIP_SCOPE_RULE
 $NEXT_SHIP_RULE. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
    Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.

@@ -282,6 +282,55 @@ test_worker_turn_and_scope_rules() {
   pass "fm-brief.sh: worker turns finish the work and ordinary ships defer unrelated findings"
 }
 
+# The turn-completion rule names the four specific early stops a worker must
+# not end a turn on, because a model follows a named stop better than a general
+# one. Every variant that carries the rule (every ship mode, Matt-flow, scout)
+# must name all four and keep the status-note placement right after them.
+EARLY_STOP_LINES=(
+  '   Never end a turn on any of these four early stops:'
+  '   - a summary that closes by announcing the next step instead of making the tool call;'
+  '   - an offer to carry on unless someone prefers otherwise;'
+  '   - a list of decisions that, by your own account, block nothing;'
+  '   - a report sent because the turn was long or a milestone landed.'
+  '   A status note goes in the same message as your next tool call, never as the last word of a turn.'
+)
+
+test_turn_rule_names_the_four_early_stops() {
+  local home brief variant id args expected
+  home="$TMP_ROOT/early-stops-home"
+  mkdir -p "$home/data"
+  expected="$TMP_ROOT/early-stops-expected"
+  printf '%s\n' "${EARLY_STOP_LINES[@]}" > "$expected"
+
+  for variant in "no-mistakes:--mode no-mistakes" "direct-PR:--mode direct-PR" "local-only:--mode local-only" \
+    "matt:--mode local-only --matt-flow" "scout:--scout"; do
+    id="early-stops-${variant%%:*}"
+    args=${variant#*:}
+    # shellcheck disable=SC2086 # args is a deliberate flag list.
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj $args >/dev/null 2>&1 \
+      || fail "$id: brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
+      || fail "$id: turn-completion rule lost its allowed-endings line"
+    grep -Fx -A "${#EARLY_STOP_LINES[@]}" "5. $TURN_COMPLETION_RULE" "$brief" | tail -n +2 \
+      | diff -u "$expected" - >/dev/null \
+      || fail "$id: turn-completion rule does not name the four early stops right after its allowed endings"
+  done
+  pass "fm-brief.sh: every rule-5 variant names the four early stops"
+}
+
+test_help_names_frontend_avoid_list() {
+  local help
+  help=$("$ROOT/bin/fm-brief.sh" --help)
+  assert_contains "$help" 'a generic "avoid an AI look" only swaps one default for another' \
+    "fm-brief.sh --help lost why a UI task must name the patterns to avoid"
+  assert_contains "$help" "name the specific default patterns to avoid" \
+    "fm-brief.sh --help lost the frontend-design avoid-list instruction"
+  assert_contains "$help" "checks its first result for default styles and extends that list" \
+    "fm-brief.sh --help lost the first-result avoid-list check"
+  pass "fm-brief.sh: --help tells firstmate to name a frontend avoid-list"
+}
+
 # The worker that opens a PR owns its review feedback until the task lands,
 # including feedback that arrives AFTER the done report (a late review-bot pass,
 # a human thread, a requested change). Both PR-producing modes share the watch
@@ -1348,6 +1397,8 @@ test_stock_bash_generates_worker_brief
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_worker_turn_and_scope_rules
+test_turn_rule_names_the_four_early_stops
+test_help_names_frontend_avoid_list
 test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
 test_brief_without_matt_flow_has_no_flow_section
