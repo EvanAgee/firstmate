@@ -345,6 +345,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/supervision.env",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/examples/watched-tools.json",
       "audience": "operator-example"
     },
