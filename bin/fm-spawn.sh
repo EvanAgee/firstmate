@@ -556,6 +556,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-chrome-devtools-axi-lib.sh
+. "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -2162,10 +2164,7 @@ cursor)
   fi
   ;;
 omp)
-  OMP_BIN=$(resolve_pi_executable omp) || {
-    echo "error: omp executable not found on PATH; install Oh My Pi or select a different verified harness" >&2
-    exit 1
-  }
+  OMP_BIN=$("$SCRIPT_DIR/fm-omp-capabilities.sh" --print-binary) || exit 1
   OMP_WORKER_CFG="$FM_ROOT/.omp/fm-worker-overlay.yml"
   [ -f "$OMP_WORKER_CFG" ] || {
     echo "error: omp worker posture overlay missing at $OMP_WORKER_CFG; a worker launched without it can park on the captain's own approval or plan-mode settings" >&2
@@ -4728,6 +4727,15 @@ spawn_send_text_line "$T" "export COMPACT_ADVISER_DISABLE=1"
 if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   spawn_send_text_line "$T" "export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST")"
 fi
+# Point chrome-devtools-axi at firstmate's pinned MCP launcher and give this
+# task its own session so workers do not share the default bridge or pick up
+# chrome-devtools-mcp@latest. Soft: a missing launcher does not block spawn;
+# bootstrap reports the incompatible tool instead.
+if CHROME_AXI_LAUNCHER=$(fm_chrome_devtools_mcp_launcher_path 2>/dev/null); then
+  spawn_send_text_line "$T" "export CHROME_DEVTOOLS_AXI_MCP_PATH=$(shell_quote "$CHROME_AXI_LAUNCHER")"
+  spawn_send_text_line "$T" "export CHROME_DEVTOOLS_AXI_SESSION=$(shell_quote "$ID")"
+fi
+unset CHROME_AXI_LAUNCHER
 # Mark the pane as a task worker so bin/fm-test-run.sh can refuse to run the
 # suite in the repository's primary checkout. Ship and scout workers are the
 # ones assigned an isolated worktree; a secondmate runs its own home instead.

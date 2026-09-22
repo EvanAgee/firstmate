@@ -195,6 +195,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-chrome-devtools-axi-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
 # fm-timing-lib.sh is inert unless FM_TIMING_LOG names a file, which only the
 # deferred network stage sets, so an ordinary bootstrap run records nothing.
 # shellcheck source=bin/fm-timing-lib.sh disable=SC1091
@@ -1481,6 +1483,9 @@ detect_local_tools() {
   fi
   if command -v gh-axi >/dev/null 2>&1 && ! tool_version_at_least gh-axi "$GH_AXI_MIN"; then
     echo "MISSING: gh-axi (install: $(install_cmd gh-axi))"
+  fi
+  if command -v chrome-devtools-axi >/dev/null 2>&1 && ! fm_chrome_devtools_axi_compatible; then
+    echo "MISSING: chrome-devtools-axi (install: $(install_cmd chrome-devtools-axi))"
   fi
   if ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
     echo "PRESENTATION_UNAVAILABLE: lavish-axi (requires >=$LAVISH_AXI_MIN; install: $(install_cmd lavish-axi)) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish"

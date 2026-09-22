@@ -336,6 +336,9 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-chrome-devtools-axi-lib.sh
+. "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
+fm_chrome_devtools_axi_export_mcp_path || true
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
@@ -700,6 +703,9 @@ if [ -n "$BOOT_OUT" ]; then
   printf '%s\n' "$BOOT_OUT"
 else
   printf '(silent - all good)\n'
+fi
+if CHROME_AXI_EXPORT=$(fm_chrome_devtools_axi_mcp_path_export 2>/dev/null); then
+  printf '%s\n' "$CHROME_AXI_EXPORT"
 fi
 
 # --- 3. wake-drain ---------------------------------------------------------

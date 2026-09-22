@@ -106,19 +106,41 @@ test_lock_identity_and_liveness_classification() {
 
 # --- 2. Launch ---------------------------------------------------------------
 
-# A fake omp that answers `models --json` with a two-provider catalog and exits
-# 0 for everything else (the launch itself is only recorded by the fake tmux).
+# A fake omp that answers `models --json` with a two-provider catalog, `--help`
+# with fm-omp-capabilities.sh's required flag surface, and exits 0 for
+# everything else (the launch itself is only recorded by the fake tmux). Its
+# Bun shebang resolves against a `bun` shim colocated in the same fakebin so
+# fm-omp-capabilities.sh's entrypoint check passes with no real Bun installed.
 make_fake_omp() {  # <fakebin>
   cat > "$1/omp" <<'SH'
-#!/usr/bin/env bash
+#!/usr/bin/env bun
 case "$1" in
   models)
     printf '%s\n' '{"models":[{"provider":"openai-codex","id":"gpt-6-astra","selector":"openai-codex/gpt-6-astra"},{"provider":"ollama","id":"qwen3:8b","selector":"ollama/qwen3:8b"}]}'
+    ;;
+  --help)
+    cat <<'EOF'
+--model=<value>
+--thinking=<value>
+--auto-approve
+--session-dir=<value>
+-e, --extension=<value>
+-r, --resume=<value>
+--config=<value>
+--cwd=<value>
+EOF
     ;;
 esac
 exit 0
 SH
   chmod +x "$1/omp"
+  cat > "$1/bun" <<'SH'
+#!/usr/bin/env bash
+script=$1
+shift
+exec bash "$script" "$@"
+SH
+  chmod +x "$1/bun"
 }
 
 make_spawn_case() {  # <name> <harness> <id>
