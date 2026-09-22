@@ -224,7 +224,7 @@ This family is the residual set that used to sit in `unclassified`, and it exist
 Two scripts left the residual set rather than joining it.
 `tests/fm-backend-herdr-focus-flash-e2e.test.sh` is a real-Herdr lab regression and is now `real-herdr-gated`, which also moves it out of the portable serial lane and into the required Herdr lane; it had been gate-skipping on Linux CI, so that real-Herdr regression was not running anywhere.
 Its current live-backend result is recorded under [workspace-removal focus safety](verification/runtime-backends.md#workspace-removal-focus-safety).
-`tests/fm-claude-stop-autoarm-live-e2e.test.sh` gate-skips on its opt-in variable and is now `live-harness-optin`, since a candidate that gate-skips cannot prove concurrency.
+`tests/fm-claude-watch-coordinator-live-e2e.test.sh` gate-skips on its opt-in variable and is now `live-harness-optin`, since a candidate that gate-skips cannot prove concurrency.
 
 One member needs a current Pi to pass at all.
 `tests/fm-pi-branch-extension.test.sh` compares firstmate's supervision-branch extension against the stock renderers of the installed `@earendil-works/pi-coding-agent`, and the proof host's global install was stale at 0.81.1 while the published release was 0.84.4.

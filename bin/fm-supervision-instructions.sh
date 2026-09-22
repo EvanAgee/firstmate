@@ -183,7 +183,7 @@ repair_line() {
 ordinary_wake_line() {
   case "$HARNESS" in
     claude)
-      printf '%s\n' '- Ordinary wake: the Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.'
+      printf '%s\n' '- Ordinary wake: the Stop-owned watcher coordinator (bin/fm-claude-watch-coordinator.sh) already keeps a verified successor supervising the fleet; drain and handle the wake, and do not arm another cycle yourself.'
       ;;
     codex)
       printf '%s\n' '- Ordinary wake: take the next foreground bin/fm-watch-checkpoint.sh checkpoint as directed below.'
@@ -239,6 +239,13 @@ else
   printf '%s\n' '- X mode: inactive; use the default watcher cadence.'
 fi
 ordinary_wake_line
+if [ "$READ_ONLY" -eq 0 ]; then
+  # Anti-drift duties for a long-lived session (2026-08-21): durable state, not
+  # conversation memory, is the only thing that survives context compaction, so
+  # the emitted protocol itself carries the standing duties.
+  printf '%s\n' '- Steer capture: before acknowledging any wake, record every new standing captain instruction given this session into data/captain.md (inspect-then-update); durable record, never conversation memory.'
+  printf '%s\n' '- Heartbeat cadence: a heartbeat wake re-reads the ANCHOR block via the drain; refresh the fleet status board and batch a captain update whenever anything captain-relevant changed.'
+fi
 printf '\n'
 render_snippet
 printf '\n'
