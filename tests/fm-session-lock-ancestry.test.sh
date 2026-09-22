@@ -472,6 +472,10 @@ if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
   owner=$firing
 fi
 [ -n "$owner" ] || exit 1
+mkdir -p "$home/state/.claude-coordinator.lock"
+printf '%s\n' "$owner" > "$home/state/.claude-coordinator.lock/pid"
+printf 'coordinator\n' > "$home/state/.claude-coordinator.lock/role"
+printf 'coord-%s-1\n' "$owner" > "$home/state/.claude-coordinator-generation"
 {
   printf 'ready_seq=%s\n' "$seq"
   printf 'recovery_generation=none\n'

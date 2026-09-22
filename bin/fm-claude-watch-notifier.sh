@@ -77,6 +77,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 OWNER_LOCK="$STATE/.claude-autoarm.lock"
 READY="$STATE/.claude-ready-to-notify"
 COORD_LOCK="$STATE/.claude-coordinator.lock"
+COORD_GEN="$STATE/.claude-coordinator-generation"
 SURFACED="$STATE/.claude-notifier-surfaced-seq"
 # The failure-episode markers the turn-end guard's monotonic progression and
 # one-time attended fail-open read (docs/turnend-guard.md). The notifier drives
@@ -312,7 +313,7 @@ coordinator_alive() {
 # at least one durable unacked wake. Sets READY_SEQ on success.
 READY_SEQ=
 ready_pending() {
-  local rs ro rg current_owner hw
+  local rs ro rg current_owner current_gen hw
   READY_SEQ=
   [ -f "$READY" ] || return 1
   rs=$(ready_field ready_seq)
@@ -329,6 +330,8 @@ ready_pending() {
     coord-*) : ;;
     *) return 1 ;;
   esac
+  current_gen=$(cat "$COORD_GEN" 2>/dev/null || true)
+  [ "$rg" = "$current_gen" ] || return 1
   if [ ! -f "$SURFACED" ]; then
     hw=$(queue_highwater)
     if ! has_unacked_wake_at_or_below "$hw"; then

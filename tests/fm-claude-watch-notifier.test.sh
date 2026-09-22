@@ -223,6 +223,8 @@ test_exits_two_on_fresh_ready_record() {
   local dir rc
   dir=$(make_primary_dir "$TMP_ROOT/ready-exit2")
   : > "$dir/state/task.meta"
+  # A coordinator killed after publication leaves its generation record. The
+  # notifier must still deliver that already verified wake.
   # The notifier's session owner is its own harness pid, written into .lock by the
   # runner. Point the ready record's session_owner at that pid by pre-writing the
   # record after the runner sets the lock: instead, use a wrapper that writes the
@@ -239,6 +241,7 @@ test_exits_two_on_fresh_ready_record() {
       printf "session_owner=$$\n"
       printf "published_at=$(date +%s)\n"
     } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "coord-$$-99\n" > "$FM_HOME/state/.claude-coordinator-generation"
     printf "%s\t5\tsignal\ttask.status\tblocked: needs a decision\n" "$(date +%s)" > "$FM_HOME/state/.wake-queue"
     printf "5\n" > "$FM_HOME/state/.wake-queue.seq"
     env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >"$FM_HOME/state/n.out" 2>"$FM_HOME/state/n.err" &
@@ -275,6 +278,7 @@ test_upgraded_home_leftover_seq_does_not_rewake() {
       printf "session_owner=$$\n"
       printf "published_at=$(date +%s)\n"
     } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "coord-$$-99\n" > "$FM_HOME/state/.claude-coordinator-generation"
     env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >"$FM_HOME/state/n.out" 2>"$FM_HOME/state/n.err" &
     np=$!
     i=0; while [ "$i" -lt 30 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
@@ -302,6 +306,32 @@ test_ignores_stale_session_ready_record() {
   [ "$rc" = PARKED ] || fail "notifier must keep parking (not exit 2) on a foreign-session ready record, got $rc"
   [ ! -e "$dir/state/.claude-notifier-surfaced-seq" ] || fail "notifier surfaced a foreign-session ready record"
   pass "notifier: a ready record from another session generation is never surfaced"
+}
+
+test_ignores_stale_coordinator_ready_record() {
+  local dir rc
+  dir=$(make_primary_dir "$TMP_ROOT/stale-coordinator-ready")
+  : > "$dir/state/task.meta"
+  start_fake_coordinator "$dir"
+  rc=$(FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+    printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+    printf "coord-$$-new\n" > "$FM_HOME/state/.claude-coordinator-generation"
+    {
+      printf "ready_seq=5\nrecovery_generation=none\npredecessor_arm_pid=none\n"
+      printf "successor_watch_pid=12345\nsuccessor_watch_identity=fixture\n"
+      printf "coordinator_generation=coord-$$-old\nsession_owner=$$\npublished_at=$(date +%s)\n"
+    } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "%s\t5\tsignal\ttask.status\tblocked: needs a decision\n" "$(date +%s)" > "$FM_HOME/state/.wake-queue"
+    printf "5\n" > "$FM_HOME/state/.wake-queue.seq"
+    env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >"$FM_HOME/state/n.out" 2>"$FM_HOME/state/n.err" &
+    np=$!
+    i=0; while [ "$i" -lt 30 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
+    if kill -0 "$np" 2>/dev/null; then kill "$np" 2>/dev/null; echo PARKED; else wait "$np"; echo "$?"; fi
+  ' </dev/null)
+  kill "$COORD_HOLDER" 2>/dev/null || true; wait "$COORD_HOLDER" 2>/dev/null || true
+  [ "$rc" = PARKED ] || fail "notifier surfaced a ready record from a previous coordinator generation, got $rc"
+  [ ! -e "$dir/state/.claude-notifier-surfaced-seq" ] || fail "notifier advanced the surfaced mark for a stale coordinator"
+  pass "notifier: a ready record from a previous coordinator generation is never surfaced"
 }
 
 test_typed_failure_when_coordinator_absent() {
@@ -340,6 +370,7 @@ test_ready_record_resets_failure_episode() {
   local dir rc
   dir=$(make_primary_dir "$TMP_ROOT/coord-recovery")
   : > "$dir/state/task.meta"
+  start_fake_coordinator "$dir"
   # Seed a prior failure episode; a fresh ready record (the coordinator verified a
   # live successor) is positive recovery, so the notifier must clear the episode
   # markers before exiting 2, matching the guard's fm_failure_episode_reset contract.
@@ -353,6 +384,7 @@ test_ready_record_resets_failure_episode() {
       printf "successor_watch_pid=1\nsuccessor_watch_identity=x\n"
       printf "coordinator_generation=coord-$$-1\nsession_owner=$$\npublished_at=$(date +%s)\n"
     } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "coord-$$-1\n" > "$FM_HOME/state/.claude-coordinator-generation"
     printf "%s\t5\tsignal\ttask.status\tblocked: needs a decision\n" "$(date +%s)" > "$FM_HOME/state/.wake-queue"
     printf "5\n" > "$FM_HOME/state/.wake-queue.seq"
     env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >/dev/null 2>&1 &
@@ -360,6 +392,7 @@ test_ready_record_resets_failure_episode() {
     i=0; while [ "$i" -lt 60 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
     if kill -0 "$np" 2>/dev/null; then kill "$np" 2>/dev/null; echo PARKED; else wait "$np"; echo "$?"; fi
   ' </dev/null)
+  kill "$COORD_HOLDER" 2>/dev/null || true; wait "$COORD_HOLDER" 2>/dev/null || true
   expect_code 2 "$rc" "a fresh ready record must still wake (exit 2) while clearing the failure episode"
   assert_absent "$dir/state/.claude-autoarm-failure-notified" "positive recovery must clear the failure notice"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "positive recovery must clear the attended alarm"
@@ -473,6 +506,7 @@ test_active_in_marked_secondmate_home() {
   local dir rc
   dir=$(make_secondmate_dir "$TMP_ROOT/secondmate")
   : > "$dir/state/task.meta"
+  start_fake_coordinator "$dir"
   # A fresh ready record for this session must exit 2 in a marked secondmate home too.
   rc=$(FM_HOME="$dir" "$FAKE_CLAUDE" -c '
     printf "%s\n" "$$" > "$FM_HOME/state/.lock"
@@ -481,6 +515,7 @@ test_active_in_marked_secondmate_home() {
       printf "successor_watch_pid=1\nsuccessor_watch_identity=x\n"
       printf "coordinator_generation=coord-$$-1\nsession_owner=$$\npublished_at=$(date +%s)\n"
     } > "$FM_HOME/state/.claude-ready-to-notify"
+    printf "coord-$$-1\n" > "$FM_HOME/state/.claude-coordinator-generation"
     printf "%s\t3\tsignal\ttask.status\tblocked: needs a decision\n" "$(date +%s)" > "$FM_HOME/state/.wake-queue"
     printf "3\n" > "$FM_HOME/state/.wake-queue.seq"
     env FM_CLAUDE_NOTIFIER_COORD_WAIT=60 "$FM_HOME/bin/fm-claude-watch-notifier.sh" >/dev/null 2>&1 &
@@ -488,6 +523,7 @@ test_active_in_marked_secondmate_home() {
     i=0; while [ "$i" -lt 60 ] && kill -0 "$np" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
     if kill -0 "$np" 2>/dev/null; then kill "$np" 2>/dev/null; echo PARKED; else wait "$np"; echo "$?"; fi
   ' </dev/null)
+  kill "$COORD_HOLDER" 2>/dev/null || true; wait "$COORD_HOLDER" 2>/dev/null || true
   expect_code 2 "$rc" "a marked secondmate home must get the same active notifier as the main primary"
   pass "notifier: active in a marked secondmate home"
 }
@@ -603,6 +639,7 @@ test_foreign_host_stands_down
 test_exits_two_on_fresh_ready_record
 test_upgraded_home_leftover_seq_does_not_rewake
 test_ignores_stale_session_ready_record
+test_ignores_stale_coordinator_ready_record
 test_typed_failure_when_coordinator_absent
 test_repeated_coordinator_failure_notifies_once
 test_ready_record_resets_failure_episode
