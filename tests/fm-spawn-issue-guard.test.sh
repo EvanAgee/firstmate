@@ -13,6 +13,7 @@ set -u
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-issue-guard)
+export FM_FAKE_TMUX_SOCKET="$TMP_ROOT/tmux.sock" FM_FAKE_TMUX_SERVER_PID=$$
 
 make_guard_fakebin() {
   local dir=$1 fakebin
@@ -25,6 +26,8 @@ for a in "$@"; do
     *pane_current_path*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
     *pane_tty*) exit 0 ;;
     *pane_current_command*) printf '%s\n' "${FM_FAKE_PANE_COMMAND:-}"; exit 0 ;;
+    '#{socket_path}') printf '%s\n' "$FM_FAKE_TMUX_SOCKET"; exit 0 ;;
+    '#{pid}') printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
   esac
 done
 case "${1:-}" in

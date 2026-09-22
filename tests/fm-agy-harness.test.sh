@@ -55,6 +55,7 @@ HARNESS="$ROOT/bin/fm-harness.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TRUST="$ROOT/bin/fm-agy-trust.sh"
 TMP_ROOT=$(fm_test_tmproot fm-agy-harness)
+export FM_FAKE_TMUX_SOCKET="$TMP_ROOT/tmux.sock" FM_FAKE_TMUX_SERVER_PID=$$
 
 # The store is agy's own persisted settings JSON, so trust is asserted against
 # the parsed trustedWorkspaces array and preservation against parsed values.
@@ -481,6 +482,8 @@ fake_path_trusted() {
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "$FM_FAKE_PANE_PATH"; exit 0 ;;
   *"#{cursor_y}"*) printf '1\n'; exit 0 ;;
+  *'#{socket_path}'*) printf '%s\n' "$FM_FAKE_TMUX_SOCKET"; exit 0 ;;
+  *'#{pid}'*) printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;

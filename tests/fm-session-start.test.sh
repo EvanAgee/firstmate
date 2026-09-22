@@ -37,6 +37,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
 SESSION_START="$ROOT/bin/fm-session-start.sh"
+export FM_FAKE_TMUX_SERVER_PID=${FM_FAKE_TMUX_SERVER_PID:-$$}
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(fm_test_tmproot fm-session-start-tests)
 SESSION_START_TEST_HARNESS_PID=$$
@@ -246,6 +247,7 @@ for argument in "$@"; do
   previous=$argument
 done
 case "$*" in
+  *"lstart="*) exec /bin/ps "$@" ;;
   *"comm="*)
     if [ -z "${FM_FAKE_HARNESS_PID:-}" ] || [ "$pid" = "$FM_FAKE_HARNESS_PID" ] \
       || [ "$pid" = "${FM_FAKE_LIVE_HOLDER_PID:-}" ]; then
@@ -361,6 +363,10 @@ case "${1:-}" in
       prev=$arg
       case "$arg" in '#{'*) format=$arg ;; esac
     done
+    case "$format" in
+      *socket_path*) printf '%s\n' "${FM_HOME:?}/tmux.sock"; exit 0 ;;
+      '#{pid}') printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
+    esac
     if [ "${target#%}" != "$target" ]; then
       case "$format" in
         *pane_current_path*) printf '%s\n' "$mate_home" ;;

@@ -31,6 +31,7 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+export FM_FAKE_TMUX_SERVER_PID=${FM_FAKE_TMUX_SERVER_PID:-$$}
 fm_git_identity fmtest fmtest@example.invalid
 
 # shellcheck source=/dev/null
@@ -748,6 +749,10 @@ make_peek_fakebin() {  # <dir> <capture-output> -> echoes fakebin dir
 #!/usr/bin/env bash
 set -u
 { printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
+case "\$*" in
+  *'#{socket_path}'*) printf '%s\\n' "\${FM_HOME:-/tmp}/tmux.sock"; exit 0 ;;
+  *'#{pid}'*) printf '%s\\n' "\${FM_FAKE_TMUX_SERVER_PID:-\$PPID}"; exit 0 ;;
+esac
 case "\${1:-}" in
   capture-pane) cat "$dir/capture.out" ;;
 esac
@@ -795,6 +800,10 @@ make_spawn_fakebin() {  # <dir> <fake-worktree-path> -> echoes fakebin dir
 #!/usr/bin/env bash
 set -u
 { printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
+case "\$*" in
+  *'#{socket_path}'*) printf '%s\\n' "\${FM_HOME:-/tmp}/tmux.sock"; exit 0 ;;
+  *'#{pid}'*) printf '%s\\n' "\${FM_FAKE_TMUX_SERVER_PID:-\$PPID}"; exit 0 ;;
+esac
 case "\${1:-}" in
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
@@ -809,10 +818,11 @@ SH
 }
 
 run_spawn_case() {  # <bin-root> <fakebin> <log> <state> <data> <config> <proj> -- <spawn args...>
-  local bin=$1 fb=$2 log=$3 state=$4 data=$5 config=$6 proj=$7; shift 7
+  local bin=$1 fb=$2 log=$3 state=$4 data=$5 config=$6 proj=$7 home="$TMP_ROOT/spawn-home"; shift 7
   [ "${1:-}" = -- ] && shift
+  mkdir -p "$home/state"
   : > "$log"
-  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$bin" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
+  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$bin" FM_HOME="$home" HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_TMUX_LOG="$log" \
@@ -857,6 +867,10 @@ make_spawn_symlink_fakebin() {  # <dir> <initial-project-path> <worktree-path> -
 #!/usr/bin/env bash
 set -u
 { printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
+case "\$*" in
+  *'#{socket_path}'*) printf '%s\\n' "\${FM_HOME:-/tmp}/tmux.sock"; exit 0 ;;
+  *'#{pid}'*) printf '%s\\n' "\$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
+esac
 case "\${1:-}" in
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*)

@@ -11,6 +11,7 @@ set -u
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-trace-context-spawn)
+export FM_FAKE_TMUX_SOCKET="$TMP_ROOT/tmux.sock" FM_FAKE_TMUX_SERVER_PID=$$
 
 write_ship_brief() {  # <file> <id>
   cat > "$1" <<EOF
@@ -34,6 +35,8 @@ make_spawn_fakebin() {
 set -u
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *'#{socket_path}'*) printf '%s\n' "$FM_FAKE_TMUX_SOCKET"; exit 0 ;;
+  *'#{pid}'*) printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;

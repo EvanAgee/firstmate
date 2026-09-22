@@ -18,6 +18,7 @@ unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_IN
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-rovo-harness)
+export FM_FAKE_TMUX_SOCKET="$TMP_ROOT/tmux.sock" FM_FAKE_TMUX_SERVER_PID=$$
 
 # A stateful fake tmux for rovo's launch-then-send shape (the same shape kimi
 # uses): a positional brief is dead-on-arrival, so rovo launches BARE and only
@@ -60,6 +61,8 @@ fake_cursor_y() {
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "$FM_FAKE_PANE_PATH"; exit 0 ;;
   *"#{cursor_y}"*) fake_cursor_y; exit 0 ;;
+  *'#{socket_path}'*) printf '%s\n' "$FM_FAKE_TMUX_SOCKET"; exit 0 ;;
+  *'#{pid}'*) printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;

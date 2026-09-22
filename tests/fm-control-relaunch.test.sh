@@ -102,6 +102,8 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
+        '#{socket_path}') printf '%s\n' "${FM_FAKE_SOCKET_OVERRIDE:-$D/socket}"; exit 0 ;;
+        '#{pid}') printf '%s\n' "$FM_FAKE_SERVER_PID"; exit 0 ;;
         *cursor_y*) printf '1\n'; exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*)
@@ -138,9 +140,10 @@ case "${1:-}" in
       exit 1
     fi
     [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
+  has-session)
+    [ ! -f "$D/server-dead" ]; exit $? ;;
   new-session)
-    # Nothing in the relaunch path may ever create a session; recording the
-    # call is how a refusal test proves that.
+    rm -f "$D/server-dead"
     shift
     ses=
     while [ $# -gt 0 ]; do
@@ -245,6 +248,8 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_PREPARE="${FM_FAKE_TRACE_PREPARE:-}" \
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
+    FM_FAKE_SERVER_PID="$$" \
+    FM_FAKE_SOCKET_OVERRIDE="${FM_FAKE_SOCKET_OVERRIDE:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
     "$CONTROL" "$@" 2>&1
 }
@@ -260,6 +265,8 @@ run_spawn() {  # <case-dir> <args...>
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
+    FM_FAKE_SERVER_PID="$$" \
+    FM_FAKE_SOCKET_OVERRIDE="${FM_FAKE_SOCKET_OVERRIDE:-}" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -1781,6 +1788,95 @@ test_tmux_refuses_when_the_server_is_gone() {
   pass "tmux: a dead server on this socket refuses both verbs rather than proving absence"
 }
 
+test_tmux_reclaims_a_bound_missing_window() {
+  local dir out rc identity
+  dir=$(new_case tmux-bound-gone rl76)
+  add_ship_task "$dir" rl76 claude
+  identity=$(fm_test_pid_identity "$$") || fail 'could not read the test server identity'
+  {
+    printf 'tmux_socket=%s/socket\n' "$dir/fake"
+    printf 'tmux_server_pid=%s\n' "$$"
+    printf 'tmux_server_identity=%s\n' "$identity"
+  } >> "$dir/home/state/rl76.meta"
+  strand_endpoint "$dir" rl76
+  out=$(run_control "$dir" rl76 relaunch --note 'continue the preserved task'); rc=$?
+  expect_code 0 "$rc" "a bound missing tmux window should relaunch: $out"
+  [ "$(meta_field "$dir" rl76 tmux_socket)" = "$dir/fake/socket" ] \
+    || fail 'relaunch lost the recorded socket binding'
+  [ "$(cat "$dir/fake/created-windows")" = fm-rl76 ] \
+    || fail 'relaunch did not recreate exactly the recorded window'
+  pass 'tmux: a bound missing window relaunches in its recorded socket'
+}
+
+# shellcheck disable=SC2031
+test_tmux_reclaims_a_bound_missing_server() {
+  local dir out rc old_pid old_identity
+  dir=$(new_case tmux-bound-server-gone rl80)
+  add_ship_task "$dir" rl80 claude
+  sleep 30 & old_pid=$!
+  old_identity=$(fm_test_pid_identity "$old_pid") || fail 'could not read the old server identity'
+  kill "$old_pid"
+  wait "$old_pid" 2>/dev/null || true
+  {
+    printf 'tmux_socket=%s/socket\n' "$dir/fake"
+    printf 'tmux_server_pid=%s\n' "$old_pid"
+    printf 'tmux_server_identity=%s\n' "$old_identity"
+  } >> "$dir/home/state/rl80.meta"
+  : > "$dir/fake/server-dead"
+  strand_endpoint "$dir" rl80
+  out=$(run_control "$dir" rl80 relaunch --note 'continue after server loss'); rc=$?
+  expect_code 0 "$rc" "a bound missing tmux server should relaunch: $out"
+  [ "$(cat "$dir/fake/created-sessions")" = fmses ] || fail 'relaunch did not recreate the recorded session'
+  [ "$(cat "$dir/fake/created-windows")" = fm-rl80 ] || fail 'relaunch did not recreate the recorded window'
+  [ "$(meta_field "$dir" rl80 tmux_server_pid)" = "$$" ] || fail 'relaunch did not bind the replacement server'
+  pass 'tmux: a bound missing server relaunches and records the replacement'
+}
+
+test_tmux_relaunch_publishes_socket_identity() {
+  local dir out rc
+  dir=$(new_case tmux-binding rl77)
+  add_ship_task "$dir" rl77 claude
+  out=$(run_control "$dir" rl77 relaunch --note 'record the socket'); rc=$?
+  expect_code 0 "$rc" "a live tmux relaunch should complete: $out"
+  [ "$(meta_field "$dir" rl77 tmux_socket)" = "$dir/fake/socket" ] \
+    || fail 'relaunch did not bind the task to its tmux socket'
+  [ "$(meta_field "$dir" rl77 tmux_server_pid)" = "$$" ] \
+    || fail 'relaunch did not record the tmux server pid'
+  [ "$(meta_field "$dir" rl77 tmux_server_identity)" = "$(fm_test_pid_identity "$$")" ] \
+    || fail 'relaunch did not record the tmux server process identity'
+  pass 'tmux: a published task record carries its socket and server identity'
+}
+
+test_tmux_refuses_a_reassigned_socket() {
+  local dir out rc identity
+  dir=$(new_case tmux-reassigned rl78)
+  add_ship_task "$dir" rl78 claude
+  identity=$(fm_test_pid_identity "$$") || fail 'could not read the test server identity'
+  {
+    printf 'tmux_socket=%s/socket\n' "$dir/fake"
+    printf 'tmux_server_pid=%s\n' "$$"
+    printf 'tmux_server_identity=%s\n' "$identity"
+  } >> "$dir/home/state/rl78.meta"
+  strand_endpoint "$dir" rl78
+  out=$(FM_FAKE_SOCKET_OVERRIDE="$dir/fake/other" run_control "$dir" rl78 relaunch --note 'must refuse'); rc=$?
+  expect_code 1 "$rc" 'a live recorded server at a reassigned socket must refuse'
+  assert_absent "$dir/fake/created-windows" 'a reassigned socket must create no window'
+  pass 'tmux: a socket that answers for another server cannot prove absence'
+}
+
+test_tmux_refuses_a_partial_socket_binding() {
+  local dir out rc
+  dir=$(new_case tmux-partial rl79)
+  add_ship_task "$dir" rl79 claude
+  printf 'tmux_socket=%s/socket\n' "$dir/fake" >> "$dir/home/state/rl79.meta"
+  strand_endpoint "$dir" rl79
+  out=$(run_control "$dir" rl79 relaunch --note 'must refuse'); rc=$?
+  expect_code 1 "$rc" 'a partial socket binding must refuse'
+  assert_contains "$out" 'invalid recorded tmux socket' 'the partial record must be diagnosed'
+  assert_absent "$dir/fake/created-windows" 'a partial binding must create no window'
+  pass 'tmux: incomplete socket evidence cannot authorize a relaunch'
+}
+
 test_reclaim_refuses_an_unreadable_endpoint() {
   local dir out rc
   dir=$(new_case gone-unreadable rl63)
@@ -2197,6 +2293,17 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name" || exit $?
+  done
+  exit 0
+fi
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
@@ -2254,6 +2361,11 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone
+test_tmux_reclaims_a_bound_missing_window
+test_tmux_reclaims_a_bound_missing_server
+test_tmux_relaunch_publishes_socket_identity
+test_tmux_refuses_a_reassigned_socket
+test_tmux_refuses_a_partial_socket_binding
 test_reclaim_refuses_an_unreadable_endpoint
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server
 test_herdr_exit_reports_already_stopped_when_the_pane_outlived_its_server

@@ -34,6 +34,7 @@ SPAWN="$ROOT/bin/fm-spawn.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 BOOTSTRAP="$ROOT/bin/fm-bootstrap.sh"
 TMP_ROOT=$(fm_test_tmproot fm-backlog-atomicity)
+export FM_FAKE_TMUX_SOCKET="$TMP_ROOT/tmux.sock" FM_FAKE_TMUX_SERVER_PID=$$
 
 command -v tasks-axi >/dev/null 2>&1 || {
   printf 'ok - skipped (tasks-axi is not installed; the fused transitions are inert without it)\n'
@@ -90,7 +91,11 @@ EOF
 
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
-case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
+case "$*" in
+  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *'#{socket_path}'*) printf '%s\n' "$FM_FAKE_TMUX_SOCKET"; exit 0 ;;
+  *'#{pid}'*) printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
+esac
 case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
 exit 0
 SH

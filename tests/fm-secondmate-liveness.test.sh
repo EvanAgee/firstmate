@@ -39,6 +39,7 @@ BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
 
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-liveness)
+export FM_FAKE_TMUX_SERVER_PID=${FM_FAKE_TMUX_SERVER_PID:-$$}
 
 # --- unit level: fm_backend_tmux_agent_state --------------------------------
 
@@ -275,6 +276,8 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
+        *socket_path*) printf '%s\n' "${FM_HOME:?}/tmux.sock"; exit 0 ;;
+        '#{pid}') printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
         *pane_current_command*)
           case "$mode" in
             missing) printf '%s\n' node; exit 0 ;;

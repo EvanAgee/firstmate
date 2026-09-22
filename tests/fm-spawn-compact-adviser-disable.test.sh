@@ -202,6 +202,10 @@ make_relaunch_stub() {  # <case-dir>
 #!/usr/bin/env bash
 set -u
 D=$FM_FAKE_DIR
+case "$*" in
+  *'#{socket_path}'*) printf '%s\n' "${FM_HOME:-/tmp}/tmux.sock"; exit 0 ;;
+  *'#{pid}'*) printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
+esac
 case "${1:-}" in
   send-keys)
     shift

@@ -47,11 +47,9 @@
 #   ADOPTED as-is, while an endpoint PROVEN gone is RE-CREATED in the recorded
 #   worktree and the republished record rebinds the task to it. That proof is
 #   its own step, because a backend's `missing` also covers an endpoint that is
-#   merely unreachable from here - and it is only available on HERDR, which must
-#   still read the recorded pane as gone once that session's server is running
-#   again. A tmux `missing` always refuses: a task record carries no socket
-#   identity for its endpoint, so no read here can tell a destroyed window from
-#   one on a tmux server this process cannot address. An endpoint that turns out
+#   merely unreachable from here. Herdr reads its recorded session; tmux reads
+#   the socket and server identity bound into new task records. A legacy tmux
+#   record without that binding still refuses. An endpoint that turns out
 #   to have survived refuses too. The worktree is reused untouched either way; a
 #   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
 #   secondmate whose endpoint is gone is respawned by its own owner
@@ -1752,6 +1750,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fm_backend_validate_task_endpoint "$RELAUNCH_META" "$ID" || exit 1
   BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   RELAUNCH_TARGET=$FM_BACKEND_VALIDATED_TARGET
+  if [ "$BACKEND" = tmux ]; then
+    fm_control_tmux_bind_record "$RELAUNCH_META" || {
+      echo "error: task $ID has an invalid recorded tmux socket" >&2
+      exit 1
+    }
+  fi
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
   # A relaunch must PROVE the previous agent is gone before it launches another
@@ -1773,26 +1777,31 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # endpoint was DESTROYED" with "the endpoint is UNREACHABLE from here right
   # now", and an unreachable endpoint can still hold the live agent this
   # relaunch would duplicate. So absence is PROVEN before it may rebind, never
-  # inferred from a failed read - and only HERDR can prove it:
+  # inferred from a failed read:
   #   herdr - the recorded session's server is started, and the recorded pane is
   #           RE-READ through that session's own socket. `dead` means the pane
   #           survived the restart and is adopted after all; `alive` means the
   #           agent came back and refuses; only a second `missing` proves the
   #           pane itself did not survive.
-  #   tmux  - REFUSES, always. A task record carries no socket identity for its
-  #           endpoint, and a server-wide inventory describes only the server
-  #           this process addresses, so no read available here can tell "gone"
-  #           from "on a server I cannot see". A tmux `missing` therefore stays
-  #           as deadlocked as it was before this change - deliberately, and
-  #           with the reason stated rather than guessed past.
+  #   tmux  - a new record binds its socket and server process identity. Only
+  #           that server's exact session inventory can prove its window gone.
+  #           Legacy records without the binding still refuse.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
   # control plane - fm_control_endpoint_absence_verdict - so `exit` and
   # `relaunch` cannot reach two different answers about one endpoint.
-  RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
+  if [ "$BACKEND" = tmux ]; then
+    case "$(fm_control_tmux_record_server_state "$RELAUNCH_META")" in
+      gone) RELAUNCH_STATE=missing ;;
+      unknown) RELAUNCH_STATE=unreadable ;;
+      *) RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET") ;;
+    esac
+  else
+    RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
+  fi
   if [ "$RELAUNCH_STATE" = missing ]; then
-    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET")
+    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET" "$RELAUNCH_META")
     case "${RELAUNCH_ABSENCE%%$'\t'*}" in
       gone) RELAUNCH_STATE=missing ;;
       dead) RELAUNCH_STATE=dead ;;
@@ -3519,11 +3528,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Herdr is the ONLY backend that reaches here: the gate above rebinds only
-    # on a PROVEN-gone endpoint, and absence is provable only on herdr, whose
-    # every read is scoped to the session the record names
-    # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
-    # secondmate were already refused, so there is no dispatch left to make.
+    if [ "$BACKEND" = tmux ]; then
+      SES=${RELAUNCH_TARGET%%:*}
+      W=${RELAUNCH_TARGET#*:}
+      tmux has-session -t "=$SES" 2>/dev/null || tmux new-session -d -s "$SES" || exit 1
+      WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
+      T=$RELAUNCH_TARGET
+      WT_TARGET=$WID
+    else
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is
@@ -3583,6 +3595,7 @@ EOF
     T="$HERDR_SES:$HERDR_PANE_ID"
     SES=$HERDR_SES
     WT_TARGET=$T
+    fi
   fi
 else
   case "$BACKEND" in
@@ -4787,6 +4800,24 @@ else
   fi
 fi
 
+if [ "$BACKEND" = tmux ]; then
+  TMUX_SOCKET=$(tmux display-message -p -t "$WT_TARGET" '#{socket_path}' 2>/dev/null) || exit 1
+  TMUX_SERVER_PID=$(tmux display-message -p -t "$WT_TARGET" '#{pid}' 2>/dev/null) || exit 1
+  case "$TMUX_SOCKET" in /*) ;; *)
+    echo "error: tmux did not report its socket and server pid for task $ID" >&2
+    exit 1
+    ;;
+  esac
+  case "$TMUX_SERVER_PID" in ''|*[!0-9]*)
+    echo "error: tmux did not report its socket and server pid for task $ID" >&2
+    exit 1
+    ;;
+  esac
+  TMUX_SERVER_IDENTITY=$(fm_pid_identity "$TMUX_SERVER_PID") || {
+    echo "error: tmux server identity could not be recorded for task $ID" >&2
+    exit 1
+  }
+fi
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 SPAWN_GEN="s$(date +%s).${BASHPID:-$$}.$RANDOM"
@@ -4806,7 +4837,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend tmux_socket tmux_server_pid tmux_server_identity herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4828,10 +4859,15 @@ preserve_relaunch_meta() {
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
-  # backend= is written only for a non-default (non-tmux) backend, so the
-  # default path's meta stays byte-identical (absent backend= means tmux;
-  # data/fm-backend-design-d7's P1 compatibility contract).
+  # backend= is written only for a non-default (non-tmux) backend.
+  # An absent backend= still means tmux (data/fm-backend-design-d7's P1
+  # compatibility contract); its socket binding is recorded separately.
   [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
+  if [ "$BACKEND" = tmux ]; then
+    echo "tmux_socket=$TMUX_SOCKET"
+    echo "tmux_server_pid=$TMUX_SERVER_PID"
+    echo "tmux_server_identity=$TMUX_SERVER_IDENTITY"
+  fi
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"

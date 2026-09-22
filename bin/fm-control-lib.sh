@@ -251,23 +251,83 @@ fm_control_backend_state_verified() {  # <backend>
 #     passes `--session <session>`, so the recheck starts and reads the session
 #     the RECORD names, through that session's own socket. The answer is about
 #     the task's endpoint and nothing else.
-#   tmux CANNOT. `list-windows -a` describes only the server the CURRENT
-#     process addresses (its TMUX_TMPDIR/socket), and a task's record does not
-#     carry the endpoint's socket identity - so a different but running server
-#     would answer "not anywhere" about a window it was never able to see.
-#     There is no read available here that closes that gap, so tmux always
-#     returns `unproven` and both verbs refuse. tmux is left exactly as
-#     deadlocked as it was before this change - no worse - but deliberately.
+#   tmux can prove it for records bound to a socket and server process identity.
+#     A live server is verified before its exact session inventory is read.
+#     Legacy records lack that proof and still refuse.
 #
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
-fm_control_endpoint_absence_verdict() {  # <backend> <target>
-  local backend=${1-} target=${2-}
+fm_control_tmux_bind_record() {  # <meta>
+  local socket pid identity
+  socket=$(fm_meta_get "$1" tmux_socket)
+  pid=$(fm_meta_get "$1" tmux_server_pid)
+  identity=$(fm_meta_get "$1" tmux_server_identity)
+  if [ -z "$socket" ] && [ -z "$pid" ] && [ -z "$identity" ]; then return 0; fi
+  [ -n "$socket" ] && [ -n "$pid" ] && [ -n "$identity" ] || return 1
+  case "$socket" in /*) ;; *) return 1 ;; esac
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  export TMUX="$socket,$pid,0"
+}
+
+fm_control_tmux_record_server_state() {  # <meta> -> legacy|same|gone|unknown
+  local socket pid identity current seen_pid seen_socket
+  socket=$(fm_meta_get "$1" tmux_socket)
+  pid=$(fm_meta_get "$1" tmux_server_pid)
+  identity=$(fm_meta_get "$1" tmux_server_identity)
+  if [ -z "$socket" ] && [ -z "$pid" ] && [ -z "$identity" ]; then
+    printf 'legacy'; return
+  fi
+  if [ -z "$socket" ] || [ -z "$pid" ] || [ -z "$identity" ]; then
+    printf 'unknown'; return
+  fi
+  if ! fm_pid_alive "$pid"; then printf 'gone'; return; fi
+  current=$(fm_pid_identity "$pid" 2>/dev/null) || { printf 'unknown'; return; }
+  if [ "$current" != "$identity" ]; then printf 'gone'; return; fi
+  seen_pid=$(tmux display-message -p '#{pid}' 2>/dev/null) || { printf 'unknown'; return; }
+  seen_socket=$(tmux display-message -p '#{socket_path}' 2>/dev/null) || { printf 'unknown'; return; }
+  if [ "$seen_pid" != "$pid" ] || [ "$seen_socket" != "$socket" ]; then
+    printf 'unknown'; return
+  fi
+  printf 'same'
+}
+
+fm_control_endpoint_absence_verdict() {  # <backend> <target> <meta>
+  local backend=${1-} target=${2-} meta=${3-} socket pid identity session window windows server_state
   fm_backend_source "$backend" \
     || { printf 'unproven\tbackend %s could not be loaded to prove anything about that endpoint' "'$backend'"; return 0; }
   case "$backend" in
     tmux)
-      printf 'unproven\ttmux absence cannot be proven from a task record: the record does not carry the endpoint'"'"'s socket identity, and a server-wide window inventory only describes the tmux server this process addresses, so a window absent from it may still be alive on another'
+      socket=$(fm_meta_get "$meta" tmux_socket)
+      pid=$(fm_meta_get "$meta" tmux_server_pid)
+      identity=$(fm_meta_get "$meta" tmux_server_identity)
+      if [ -z "$socket" ] || [ -z "$pid" ] || [ -z "$identity" ]; then
+        printf 'unproven\ttmux absence cannot be proven from a legacy task record without its socket and server identity'
+        return 0
+      fi
+      case "$socket" in /*) ;; *)
+        printf 'unproven\ttmux task record has an invalid socket or server identity'; return 0 ;;
+      esac
+      case "$pid" in ''|*[!0-9]*)
+        printf 'unproven\ttmux task record has an invalid socket or server identity'; return 0 ;;
+      esac
+      server_state=$(fm_control_tmux_record_server_state "$meta")
+      case "$server_state" in
+        gone) printf 'gone\t'; return 0 ;;
+        same) ;;
+        *) printf 'unproven\ttmux could not verify the recorded server at its socket'; return 0 ;;
+      esac
+      session=${target%%:*}
+      window=${target#*:}
+      if windows=$(TMUX="$socket,$pid,0" LC_ALL=C tmux list-windows -t "=$session" -F '#{window_name}' 2>&1); then
+        if printf '%s\n' "$windows" | grep -Fxq -- "$window"; then
+          printf 'unproven\ttmux endpoint returned to its recorded socket'; return 0
+        fi
+        printf 'gone\t'; return 0
+      fi
+      case "$windows" in
+        *"can't find session:"*) printf 'gone\t' ;;
+        *) printf 'unproven\ttmux could not read the recorded server socket' ;;
+      esac
       ;;
     herdr)
       # Start the RECORDED session's server (only the server - nothing is

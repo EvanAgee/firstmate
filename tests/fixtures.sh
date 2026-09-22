@@ -22,6 +22,7 @@ if [ -n "${FM_TEST_FIXTURES_SOURCED:-}" ]; then
   return 0
 fi
 FM_TEST_FIXTURES_SOURCED=1
+export FM_FAKE_TMUX_SERVER_PID=${FM_FAKE_TMUX_SERVER_PID:-$$}
 
 # Production floor lives in bin/fm-bootstrap.sh (NO_MISTAKES_MIN). Keep this
 # equal to that floor so a bump is one constant here plus that production pin.
@@ -109,6 +110,8 @@ fm_test_fake_tmux_spawn() {
 set -u
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *'#{socket_path}'*) printf '%s\n' "${FM_FAKE_TMUX_SOCKET:-${FM_HOME:-/tmp}/tmux.sock}"; exit 0 ;;
+  *'#{pid}'*) printf '%s\n' "$FM_FAKE_TMUX_SERVER_PID"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;

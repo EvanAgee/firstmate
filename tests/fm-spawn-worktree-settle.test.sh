@@ -38,6 +38,8 @@ make_settle_fakebin() {
 #!/usr/bin/env bash
 set -u
 case "$*" in
+  *"#{socket_path}"*) printf '%s\n' "$FM_FAKE_TMUX_SOCKET"; exit 0 ;;
+  *"#{pid}"*) printf '%s\n' "$FM_FAKE_SERVER_PID"; exit 0 ;;
   *"#{pane_current_path}"*)
     countfile="${FM_FAKE_PANE_COUNTFILE:?FM_FAKE_PANE_COUNTFILE unset}"
     n=0
@@ -110,6 +112,7 @@ run_settle_spawn() {
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$WT_DIR" FM_FAKE_PANE_STALE="$STALE_DIR" \
     FM_FAKE_PANE_STALE_READS="$STALE_READS" FM_FAKE_PANE_COUNTFILE="$COUNTFILE" \
+    FM_FAKE_TMUX_SOCKET="$HOME_DIR/tmux.sock" FM_FAKE_SERVER_PID="$$" \
     PATH="$FAKEBIN_DIR:$PATH" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
 }
@@ -131,6 +134,8 @@ test_single_stale_first_read_is_not_accepted() {
     "meta did not record the settled worktree"
   assert_no_grep "worktree=$STALE_DIR" "$HOME_DIR/state/$id.meta" \
     "meta wrongly recorded the transient stale path as the worktree"
+  assert_grep "tmux_socket=$HOME_DIR/tmux.sock" "$HOME_DIR/state/$id.meta" \
+    'spawn did not bind the task to its tmux socket'
   pass "a single transient stale pane_current_path read is not accepted as the worktree"
 }
 
