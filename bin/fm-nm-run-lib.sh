@@ -55,6 +55,79 @@ fm_nm_trim() {
   printf '%s' "$s"
 }
 
+# Parse the age vocabulary emitted by axi status. An unreadable age has no
+# numeric value, so callers cannot mistake it for a fresh step.
+fm_nm_age_secs() {  # <duration>
+  local rest=$1 number total=0 unit
+  [ -n "$rest" ] || return 1
+  while [ -n "$rest" ]; do
+    number=${rest%%[!0-9]*}
+    [ -n "$number" ] || return 1
+    rest=${rest#"$number"}
+    number=$((10#$number))
+    unit=${rest%"${rest#?}"}
+    rest=${rest#?}
+    case "$unit" in
+      d) total=$((total + number * 86400)) ;;
+      h) total=$((total + number * 3600)) ;;
+      m) total=$((total + number * 60)) ;;
+      s) total=$((total + number)) ;;
+      *) return 1 ;;
+    esac
+  done
+  printf '%s' "$total"
+}
+
+# Select a running or fixing row only from the active_steps table. Other TOON
+# tables can contain the same words but do not describe the current agent.
+fm_nm_active_step_row() {  # <toon-output>
+  printf '%s\n' "$1" | awk '
+    /^[[:space:]]*active_steps\[[0-9]+\]\{/ {
+      n = $0; sub(/^[^[]*\[/, "", n); sub(/\].*$/, "", n)
+      left = n + 0; intable = 1; next
+    }
+    intable && /^[[:space:]]*[A-Za-z_][A-Za-z_]*\[[0-9]+\]\{/ { intable = 0 }
+    intable {
+      if ($0 !~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*,/) next
+      if (left <= 0) { intable = 0; next }
+      left--
+      if ($0 ~ /^[[:space:]]*[a-z_]+,(running|fixing),/ && $0 !~ /^[[:space:]]*ci,/) { print; exit }
+    }
+  '
+}
+
+# The activity note may contain quoted commas and escaped quotes. Walk its
+# closing quote before reading the following agent_pid column.
+fm_nm_active_step_parse() {  # <row> -> step|seconds|pid|age
+  local row=$1 step rest activity='' age='' seconds='' pid='' char
+  step=$(fm_nm_trim "${row%%,*}")
+  case "$row" in *\"*) rest=${row#*\"} ;; *) return 1 ;; esac
+  while [ -n "$rest" ]; do
+    char=${rest%"${rest#?}"}
+    rest=${rest#?}
+    case "$char" in
+      \\)
+        activity="$activity$char"
+        if [ -n "$rest" ]; then
+          char=${rest%"${rest#?}"}
+          rest=${rest#?}
+          activity="$activity$char"
+        fi ;;
+      \") break ;;
+      *) activity="$activity$char" ;;
+    esac
+  done
+  case "$activity" in
+    *' ago'*)
+      age=${activity#quiet }
+      age=${age%% ago*}
+      seconds=$(fm_nm_age_secs "$age" 2>/dev/null || true) ;;
+  esac
+  case "$rest" in *\"*) pid=${rest#*\"}; pid=${pid%%\"*} ;; esac
+  [ -n "$pid" ] && [ "$pid" != - ] || pid=none
+  printf '%s|%s|%s|%s' "$step" "$seconds" "$pid" "$age"
+}
+
 fm_nm_strip_quotes() {
   local s
   s=$(fm_nm_trim "${1:-}")

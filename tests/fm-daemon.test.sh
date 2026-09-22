@@ -821,6 +821,22 @@ test_stale_paused_classifies_pause() {
   pass "paused reasons with captain phrases remain pause-classified"
 }
 
+test_stalled_validation_overrides_declared_pause() {
+  local dir state out win
+  dir=$(make_supercase stalled-over-pause)
+  state="$dir/state"
+  win=sess:fm-stalled
+  make_fake_crew_state "$dir/fakebin" >/dev/null
+  fm_write_meta "$state/stalled.meta" "window=$win" "backend=tmux" "mode=no-mistakes"
+  printf 'paused: waiting for review\n' > "$state/stalled.status"
+  out=$(FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none' \
+    classify_stale "$win" "$state")
+  [ "$out" = "escalate|stale: $win (pipeline stalled 25m at review, run 01RUN, agent none)" ] \
+    || fail "away supervision hid a stalled validation: $out"
+  pass 'away supervision escalates stalled validation before a declared pause'
+}
+
 # A verified captain-held transfer is the other declaration that leaves an idle pane
 # EXPECTED, so it earns the same pause action as paused: rather than being aged as a
 # wedge. The wait itself is already durable in the captain-held backlog task.
@@ -2781,6 +2797,18 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name" || exit $?
+  done
+  exit 0
+fi
+
+test_stalled_validation_overrides_declared_pause
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid

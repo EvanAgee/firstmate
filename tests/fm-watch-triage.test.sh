@@ -1984,6 +1984,63 @@ test_terminal_stale_surfaced() {
   pass "a stale pane sitting on a terminal status is surfaced (queue + exit)"
 }
 
+test_stalled_validation_wakes_with_diagnosis_once() {
+  local dir state fakebin out capture_file window key pane_hash sig pid reason
+  dir=$(make_case stalled-validation); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window=test:fm-stalled
+  reason="stale: $window (pipeline stalled 25m at review, run 01RUN, agent none)"
+  printf 'quiet validation' > "$capture_file"
+  printf 'window=%s\nkind=ship\nmode=no-mistakes\nharness=grok\n' "$window" > "$state/stalled.meta"
+  printf 'paused: waiting for review\n' > "$state/stalled.status"
+  sig=$(seen_sig "$state/stalled.status"); printf '%s' "$sig" > "$state/.seen-stalled_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text 'quiet validation')
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent none'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail 'stalled validation did not wake'
+  grep -Fx "$reason" "$out" >/dev/null || fail "stalled wake lost its diagnosis: $(cat "$out")"
+  grep -F "$reason" "$state/.wake-queue" >/dev/null || fail 'stalled diagnosis was not queued'
+  [ ! -e "$state/.stale-since-$key" ] || fail 'stalled validation started a wedge timer'
+  ack_stopped_cycle "$state" || fail 'could not acknowledge stalled wake'
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || fail 'watcher stopped on an unchanged stalled episode'
+  [ ! -s "$state/.wake-queue" ] || fail 'unchanged stalled episode queued another wake'
+  reap "$pid"
+  printf 'Ctrl+c:cancel\n' > "$capture_file"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || fail "watcher stopped while the recovered agent was busy: $(cat "$out")"
+  [ ! -e "$state/.pipeline-stall-$key" ] || fail 'busy recovery did not reset the stalled episode'
+  reap "$pid"
+  printf 'quiet validation' > "$capture_file"
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail 'a new stalled episode did not wake after busy recovery'
+  grep -Fx "$reason" "$out" >/dev/null || fail 'the new stalled episode lost its diagnosis'
+  unset FM_FAKE_CREW_STATE
+  pass 'stalled validation wakes once per episode and rearms after busy recovery'
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -5527,6 +5584,7 @@ test_heartbeat_no_change_absorbed() {
   dir=$(make_case heartbeat-absorb); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
   printf 'working: routine heartbeat history\n' > "$state/routine.status"
   sig=$(seen_sig "$state/routine.status"); printf '%s' "$sig" > "$state/.seen-routine_status"
+  touch "$state/.last-anchor"
   # A quiet fleet with a fast heartbeat cadence.
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
@@ -5978,10 +6036,22 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name" || exit $?
+  done
+  exit 0
+fi
+
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
 test_status_span_respects_decision_closure
 test_malformed_seen_signature_reads_the_whole_log
+test_stalled_validation_wakes_with_diagnosis_once
 test_stale_is_terminal_classifier
 test_classifier_primitives
 test_crew_is_provably_working_classifier

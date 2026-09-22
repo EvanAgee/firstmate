@@ -415,8 +415,17 @@ classify_signal() {  # <reason-after-colon> <state>
 # first sight of a non-terminal stale it returns "self" and the caller records a
 # timestamp marker; persistence is escalated by housekeeping's recheck, not here.
 classify_stale() {  # <window> <state> [<span-record> <span-status>]
-  local win=$1 state=$2 record=${3-} rc=${4-} task last event rest
+  local win=$1 state=$2 record=${3-} rc=${4-} task last event rest stalled_detail
   task=$(window_to_task "$win" "$state")
+  stalled_detail=
+  if [ -n "$task" ] && [ -f "$state/$task.meta" ] \
+     && [ "$(fm_meta_get "$state/$task.meta" mode)" = no-mistakes ]; then
+    stalled_detail=$(crew_state_stalled_detail "$(crew_state_line "$task")")
+  fi
+  if [ -n "$stalled_detail" ]; then
+    printf 'escalate|stale: %s (%s)' "$win" "$stalled_detail"
+    return
+  fi
   if [ -z "$rc" ]; then
     record=$(status_span_first_actionable_record "$state/$task.status" \
       "$(status_seen_offset "$state" "$task")")

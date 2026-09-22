@@ -22,7 +22,7 @@
 # Output is one stable, parseable, token-tight line firstmate can read every
 # heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
+#   state: <working|parked|stalled|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
@@ -151,6 +151,10 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
+# shellcheck source=bin/fm-supervision-env-lib.sh
+. "$SCRIPT_DIR/fm-supervision-env-lib.sh"
+fm_supervision_env_load
+
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$SCRIPT_DIR/fm-tmux-lib.sh"
 # shellcheck source=bin/fm-backend.sh
@@ -183,6 +187,8 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # entire history every call.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
+FM_PIPELINE_PARKED_MAX=${FM_PIPELINE_PARKED_MAX:-1200}
+case "$FM_PIPELINE_PARKED_MAX" in ''|*[!0-9]*) FM_PIPELINE_PARKED_MAX=1200 ;; esac
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
@@ -1018,7 +1024,7 @@ if [ "$HAVE_RUN" = 1 ]; then
         cancelled)     RUN_STATE=failed; RUN_DETAIL="run cancelled" ;;
         *)             RUN_STATE=unknown; RUN_DETAIL="outcome: $outcome" ;;
       esac
-    elif [ -n "$awaiting" ] || [ "$status" = awaiting_approval ] || [ "$status" = fix_review ] || [ -n "$gate_status" ] || [ "$has_gate" = 1 ]; then
+    elif [ "$status" = awaiting_approval ] || [ "$status" = fix_review ] || [ -n "$gate_status" ] || [ "$has_gate" = 1 ]; then
       if [ "$has_gate" = 1 ]; then
         gate=$(nm_gate_line_name)
       else
@@ -1035,6 +1041,28 @@ if [ "$HAVE_RUN" = 1 ]; then
       # later note happens to contain can mint it.
       if nm_gate_awaits_human_decision; then
         RUN_DETAIL="$RUN_DETAIL${SEP}$FM_GATE_HUMAN_DECISION"
+      fi
+    elif [ -n "$awaiting" ]; then
+      row=$(fm_nm_active_step_row "$RUN_OUT")
+      step=$status; pid=none
+      if [ -n "$row" ]; then
+        parsed=$(fm_nm_active_step_parse "$row")
+        step=${parsed%%|*}
+        parsed=${parsed#*|}; parsed=${parsed#*|}
+        pid=${parsed%%|*}
+      fi
+      case "$pid" in
+        ''|*[!0-9]*|0) pid=none ;;
+        *) kill -0 "$pid" 2>/dev/null || pid=none ;;
+      esac
+      if [ "$pid" = none ]; then
+        awaiting_dur=$(trim "${awaiting#*:}")
+        awaiting_dur=${awaiting_dur#parked }
+        RUN_STATE=stalled
+        RUN_DETAIL="pipeline stalled $awaiting_dur at $step, run $(strip_quotes "$(nm_field id)"), agent none"
+      else
+        RUN_STATE=working
+        RUN_DETAIL="validating ($status)"
       fi
     else
       case "$status" in
@@ -1063,6 +1091,23 @@ if [ "$HAVE_RUN" = 1 ]; then
             CI_LOG_STATE=not-ready
             ;;
         esac
+        if [ "$RUN_STATE" = working ] && [ "$status" != ci ]; then
+          row=$(fm_nm_active_step_row "$RUN_OUT")
+          if [ -n "$row" ]; then
+            parsed=$(fm_nm_active_step_parse "$row")
+            step=${parsed%%|*}; parsed=${parsed#*|}
+            secs=${parsed%%|*}; parsed=${parsed#*|}
+            pid=${parsed%%|*}; age_dur=${parsed#*|}
+            if [ -n "$secs" ] && [ "$secs" -ge "$FM_PIPELINE_PARKED_MAX" ]; then
+              case "$pid" in
+                ''|*[!0-9]*|0) pid=none ;;
+                *) kill -0 "$pid" 2>/dev/null || pid=none ;;
+              esac
+              RUN_STATE=stalled
+              RUN_DETAIL="pipeline stalled $age_dur at $step, run $(strip_quotes "$(nm_field id)"), agent $pid"
+            fi
+          fi
+        fi
       fi
     fi
   fi

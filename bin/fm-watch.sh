@@ -1262,6 +1262,29 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
   wake "$reason"
 }
 
+# A run can keep saying "running" after its agent stops. The diagnosis comes
+# from the same current-state reader used by signal triage. Keep one marker per
+# run episode so an unchanged quiet pane cannot ring on every poll.
+observe_stalled_pipeline() {  # <window> <state-line>
+  local win=$1 line=$2 detail identity key marker reason
+  key=$(window_key "$win")
+  marker="$STATE/.pipeline-stall-$key"
+  detail=$(crew_state_stalled_detail "$line")
+  if [ -z "$detail" ]; then
+    case "$line" in state:\ unknown*|'') ;; state:*) rm -f "$marker" ;; esac
+    return 1
+  fi
+  identity=${detail#* at }
+  if [ "$(cat "$marker" 2>/dev/null || true)" != "$identity" ]; then
+    reason="stale: $win ($detail)"
+    fm_wake_append stale "$win|pipeline-stall|$identity" "$reason" || exit 1
+    printf '%s' "$identity" > "$marker" || exit 1
+    clear_pause_tracking "$key"
+    wake "$reason"
+  fi
+  return 0
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -2789,10 +2812,18 @@ EOF
     # content cannot suppress stale detection. Read once per window per poll and
     # reused below so a busy verdict is consistent within one cycle.
     if window_is_busy "$w" "$tail40"; then busy_now=0; else busy_now=1; fi
+    if [ "$busy_now" -eq 0 ] && [ -e "$STATE/.pipeline-stall-$key" ]; then
+      rm -f "$STATE/.pipeline-stall-$key"
+    fi
     if [ "$h" = "$prev" ]; then
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
+        if [ -n "$task" ] && [ -f "$STATE/$task.meta" ] \
+           && [ "$(fm_meta_get "$STATE/$task.meta" mode)" = no-mistakes ]; then
+          crew_line=$(crew_state_line "$task")
+          observe_stalled_pipeline "$w" "$crew_line" && continue
+        fi
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
         if [ "$kind" = secondmate ]; then

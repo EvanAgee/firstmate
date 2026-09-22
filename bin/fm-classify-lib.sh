@@ -614,7 +614,7 @@ _fm_key_raw_interior() {  # <status-line> -> "<slug>\t<note-offset>"
     consumed=$((token_offset + ${#token}))
     scan=$after
     case "$before" in ''|*[[:space:]]|*:) ;; *) continue ;; esac
-    case "$after" in ''|[[:space:]]*|[[:punct:]]*) ;; *) continue ;; esac
+    case "$after" in '?'*) continue ;; ''|[[:space:]]*|[[:punct:]]*) ;; *) continue ;; esac
     if _fm_decision_slug_ok "$k"; then
       valid=$k
       valid_offset=$token_offset
@@ -2262,9 +2262,25 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
-  local id=$1 line state src
-  [ -n "$id" ] || { printf 'none'; return; }
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  crew_absorb_class_of_line "$(crew_state_line "$1")"
+}
+
+crew_state_line() {  # <id>
+  local line
+  [ -n "$1" ] || return 0
+  line=$("$FM_CREW_STATE_BIN" "$1" 2>/dev/null) || true
+  case "$line" in state:*) printf '%s' "$line" ;; esac
+}
+
+crew_state_stalled_detail() {  # <state-line>
+  local rest
+  case "$1" in 'state: stalled · source: run-step · '*) ;; *) return 0 ;; esac
+  rest=${1#*' · '}
+  printf '%s' "${rest#*' · '}"
+}
+
+crew_absorb_class_of_line() {  # <state-line>
+  local line=$1 state src
   case "$line" in state:*) ;; *) printf 'none'; return ;; esac
   state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi

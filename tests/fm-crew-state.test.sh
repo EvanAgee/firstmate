@@ -355,6 +355,156 @@ run:
 EOF
 }
 
+run_quiet_agent() {  # <branch> <age> <pid>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,fixing,$2,"quiet $2 ago: log: last activity","$3",fix 4
+EOF
+}
+
+run_awaiting_agent() {  # <branch> <age> <pid>
+  run_quiet_agent "$1" "$2" "$3" | sed "/  status: running/a\\
+  awaiting_agent: parked $2"
+}
+
+test_quiet_validation_stalls_after_threshold() {
+  reset_fakes
+  local d out
+  d=$(new_case quiet-validation)
+  make_repo_on_branch "$d/wt" fm/quiet-validation
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/quiet-validation.meta" "window=fm:fm-quiet-validation" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS=$(run_quiet_agent fm/quiet-validation 25m "$$")
+  out=$(run_crew_state "$d" quiet-validation)
+  assert_contains "$out" "state: stalled · source: run-step · pipeline stalled 25m at review, run 01RUN, agent $$" \
+    "a quiet validation must report its run and agent"
+  FM_FAKE_AXI_STATUS=$(run_quiet_agent fm/quiet-validation 5m "$$")
+  out=$(run_crew_state "$d" quiet-validation)
+  assert_contains "$out" 'state: working' 'recent activity must remain working'
+  FM_FAKE_AXI_STATUS=$(run_quiet_agent fm/quiet-validation 25m "$$")
+  out=$(FM_PIPELINE_PARKED_MAX=3600 run_crew_state "$d" quiet-validation)
+  assert_contains "$out" 'state: working' 'configured threshold must be honored'
+  pass 'quiet validation threshold and override'
+}
+
+test_awaiting_agent_requires_a_live_pid() {
+  reset_fakes
+  local d out
+  d=$(new_case awaiting-agent-stall)
+  make_repo_on_branch "$d/wt" fm/awaiting-agent-stall
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/awaiting-agent-stall.meta" "window=fm:fm-awaiting-agent-stall" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS=$(run_awaiting_agent fm/awaiting-agent-stall 13h -)
+  out=$(run_crew_state "$d" awaiting-agent-stall)
+  assert_contains "$out" 'state: stalled' 'an awaiting agent with no pid must stall'
+  FM_FAKE_AXI_STATUS=$(run_awaiting_agent fm/awaiting-agent-stall 13h "$$")
+  out=$(run_crew_state "$d" awaiting-agent-stall)
+  assert_contains "$out" 'state: working' 'an awaiting agent with a live pid must remain working'
+  pass 'awaiting agent pid liveness'
+}
+
+test_quiet_step_boundary_and_exited_pid() {
+  reset_fakes
+  local d out exited_pid age
+  d=$(new_case quiet-boundary)
+  make_repo_on_branch "$d/wt" fm/quiet-boundary
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/quiet-boundary.meta" "window=fm:fm-quiet-boundary" "worktree=$d/wt" "kind=ship"
+  bash -c 'exit 0' & exited_pid=$!
+  wait "$exited_pid"
+  for age in 19m59s 20m 25m; do
+    FM_FAKE_AXI_STATUS=$(run_quiet_agent fm/quiet-boundary "$age" "$exited_pid")
+    out=$(run_crew_state "$d" quiet-boundary)
+    if [ "$age" = 19m59s ]; then
+      assert_contains "$out" 'state: working' 'a quiet step under the threshold remains working'
+    else
+      assert_contains "$out" "pipeline stalled $age at review, run 01RUN, agent none" \
+        'an exited PID must be reported as none'
+    fi
+  done
+  pass 'quiet activity crosses the threshold and normalizes an exited PID'
+}
+
+test_awaiting_agent_uses_current_active_step() {
+  reset_fakes
+  local d out
+  d=$(new_case awaiting-current-step)
+  make_repo_on_branch "$d/wt" fm/awaiting-current-step
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/awaiting-current-step.meta" "window=fm:fm-awaiting-current-step" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS=$(cat <<EOF
+run:
+  id: "01RUN"
+  branch: fm/awaiting-current-step
+  status: running
+  awaiting_agent: parked 25m
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  active_steps[2]{step,status,active_for,last_activity,agent_pid,round}:
+    review,done,1m,"24m ago: finished","-",fix 1
+    test,fixing,25m,"quiet 25m ago: log: escaped \\"quote\\", comma","-",fix 2
+EOF
+)
+  out=$(run_crew_state "$d" awaiting-current-step)
+  assert_contains "$out" 'pipeline stalled 25m at test, run 01RUN, agent none' \
+    'the current active step must supply the stalled diagnosis'
+  pass 'awaiting-agent diagnosis selects the active step after a completed row'
+}
+
+test_home_parked_threshold_and_env_precedence() {
+  reset_fakes
+  local d out
+  d=$(new_case parked-config)
+  make_repo_on_branch "$d/wt" fm/parked-config
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/parked-config.meta" "window=fm:fm-parked-config" "worktree=$d/wt" "kind=ship"
+  mkdir -p "$d/config"
+  printf 'FM_PIPELINE_PARKED_MAX=3600\n' > "$d/config/supervision.env"
+  FM_FAKE_AXI_STATUS=$(run_quiet_agent fm/parked-config 25m "$$")
+  out=$(unset FM_PIPELINE_PARKED_MAX; FM_HOME="$d" run_crew_state "$d" parked-config)
+  assert_contains "$out" 'state: working' 'home supervision config raises the threshold'
+  out=$(FM_HOME="$d" FM_PIPELINE_PARKED_MAX=1200 run_crew_state "$d" parked-config)
+  assert_contains "$out" 'state: stalled' 'explicit environment wins over home config'
+  pass 'home threshold and explicit environment precedence'
+}
+
+test_escaped_activity_preserves_live_agent_pid() {
+  reset_fakes
+  local d out
+  d=$(new_case escaped-activity)
+  make_repo_on_branch "$d/wt" fm/escaped-activity
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/escaped-activity.meta" "window=fm:fm-escaped-activity" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS=$(cat <<EOF
+run:
+  id: "01RUN"
+  branch: fm/escaped-activity
+  status: running
+  awaiting_agent: parked 13h
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,fixing,13h,"quiet 13h ago: log: escaped \\"quote\\", comma","$$",fix 4
+EOF
+)
+  out=$(run_crew_state "$d" escaped-activity)
+  assert_contains "$out" 'state: working' 'an awaiting agent with escaped activity and a live PID remains working'
+  FM_FAKE_AXI_STATUS=${FM_FAKE_AXI_STATUS/  awaiting_agent: parked 13h/}
+  out=$(run_crew_state "$d" escaped-activity)
+  assert_contains "$out" "pipeline stalled 13h at review, run 01RUN, agent $$" \
+    'escaped activity must preserve the age and live PID'
+  pass 'escaped activity preserves the live PID and quiet duration'
+}
+
 run_fixing() {  # <branch>
   cat <<EOF
 run:
@@ -4814,6 +4964,17 @@ test_captured_completed_history() {
   pass 'captured completed status yields to synthetic subsequent development'
 }
 
+if [ "$#" -gt 0 ]; then
+  for test_name in "$@"; do
+    case "$test_name" in
+      test_*) declare -F "$test_name" >/dev/null || { printf 'unknown test: %s\n' "$test_name" >&2; exit 2; } ;;
+      *) printf 'unknown test: %s\n' "$test_name" >&2; exit 2 ;;
+    esac
+    "$test_name" || exit $?
+  done
+  exit 0
+fi
+
 test_captured_axi_status_shapes
 test_captured_inventory_replay
 test_captured_authority_transition
@@ -4907,6 +5068,12 @@ test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
 test_pipeline_owned_active_run_beats_superseded_failed_row
+test_quiet_validation_stalls_after_threshold
+test_awaiting_agent_requires_a_live_pid
+test_quiet_step_boundary_and_exited_pid
+test_awaiting_agent_uses_current_active_step
+test_home_parked_threshold_and_env_precedence
+test_escaped_activity_preserves_live_agent_pid
 test_failed_run_with_no_later_run_still_surfaces
 test_coarse_unresolvable_active_row_never_falls_to_older_row
 test_coarse_mismatched_anchor_falls_to_pane_not_older_row
