@@ -419,6 +419,64 @@ test_matt_flow_without_pipeline_keeps_code_review() {
   pass "fm-brief.sh: Matt-flow retains review when no pipeline follows"
 }
 
+test_ship_validation_runs_full_suites_on_github() {
+  local home id mode brief matt_brief scout_brief
+  home="$TMP_ROOT/github-validation-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-github-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "On this machine, run only the type check, lint, and tests for the files you touched." "$brief" \
+      "$mode: ship brief did not limit local validation"
+    assert_grep 'Never run the full suite, e2e gating, `bin/fm-test-run.sh --all`, or a full lane set on this machine.' "$brief" \
+      "$mode: ship brief still permits a local full test run"
+    assert_grep 'Push your branch to `origin` under its own name, never `main`, and never open a PR for this full run.' "$brief" \
+      "$mode: ship brief did not limit its validation push"
+    assert_grep 'gh workflow run ci.yml --ref <branch>' "$brief" \
+      "$mode: ship brief did not dispatch ci.yml"
+    assert_grep 'gh run list --workflow ci.yml --branch <branch> --limit 1 --json databaseId' "$brief" \
+      "$mode: ship brief did not retrieve the dispatched run id"
+    assert_grep 'gh run watch <id> --exit-status --interval 30' "$brief" \
+      "$mode: ship brief did not wait for the GitHub run"
+    assert_grep 'gh run view <id> --log-failed' "$brief" \
+      "$mode: ship brief did not give the failed-log command"
+    assert_grep 'fix the failure and repeat the GitHub Actions full run until it passes' "$brief" \
+      "$mode: ship brief did not require a green full run"
+    assert_grep 'green run URL' "$brief" \
+      "$mode: ship brief ready line did not name the green run URL"
+  done
+
+  brief="$home/data/brief-github-local-only/brief.md"
+  assert_grep '1. Push only your own `fm/brief-github-local-only` branch, never `main`, and never open a PR. Firstmate handles the merge into local `main`.' "$brief" \
+    "local-only: rule 1 did not permit only the worker branch push"
+  assert_no_grep 'Never push to any remote' "$brief" \
+    "local-only: brief retained the old no-remote rule"
+  assert_no_grep 'Do NOT push' "$brief" \
+    "local-only: Definition of done retained the old no-push instruction"
+
+  id="brief-github-matt"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --matt-flow >/dev/null 2>&1 \
+    || fail "local-only --matt-flow: ship brief failed to scaffold"
+  matt_brief="$home/data/$id/brief.md"
+  assert_grep 'Enter at the installed `tdd` skill: write the failing test first, then make it pass.' "$matt_brief" \
+    "Matt-flow brief lost its local test-first walk"
+  assert_grep 'For any change a user can see, walk it before reporting done: as a signed-in user on a local build' "$matt_brief" \
+    "Matt-flow brief lost its local live walk"
+  assert_grep 'gh workflow run ci.yml --ref <branch>' "$matt_brief" \
+    "Matt-flow brief did not send the full run to GitHub Actions"
+
+  id="brief-github-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 \
+    || fail "scout brief failed to scaffold"
+  scout_brief="$home/data/$id/brief.md"
+  assert_no_grep 'gh workflow run ci.yml' "$scout_brief" \
+    "scout brief gained the ship validation contract"
+  pass "fm-brief.sh: ship full suites run in GitHub Actions while local checks stay narrow"
+}
+
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
 # unusable value must stop the scaffold instead of silently defaulting. The
 # no-mistakes-prod-only row is the conditional registry policy: it is never a task
@@ -1280,6 +1338,7 @@ test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
 test_brief_without_matt_flow_has_no_flow_section
 test_matt_flow_without_pipeline_keeps_code_review
+test_ship_validation_runs_full_suites_on_github
 test_ship_modes_demand_a_walked_path_before_done
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
