@@ -76,15 +76,10 @@ Check and test the toolbelt before pushing:
 while IFS= read -r script; do /bin/bash -n "$script" || exit; done < <(bin/fm-lint.sh --list-files)   # syntax-check the shell surface fm-lint.sh will cover (changed files locally, full set in CI/on main)
 bin/fm-lint.sh   # lint that same surface; the single owner CI and the no-mistakes gate both run, full set in CI
 bin/fm-test-run.sh tests/<subject>.test.sh   # one script (primary local focus path, timed)
-bin/fm-test-run.sh --family pure-contract-unit   # ordinary family-scoped local path (serial, timed)
-bin/fm-test-run.sh --changed   # conservative changed-file-informed set (never silent full suite)
-bin/fm-test-run.sh --proven-isolated --jobs 4   # explicit local parallel of the proven set only (default is serial)
-bin/fm-test-run.sh --lane portable-serial   # portable serial remainder (watcher/AFK/tmux/stateful)
+bin/fm-test-run.sh --changed   # conservative changed-file-informed set for touched files
 bin/fm-test-run.sh --list-lanes   # discover exact lane names, including the current CI serial shards
 bin/fm-test-run.sh --check-coverage   # prove portable shards + serial + serial shards + Herdr equal the full inventory
-bin/fm-test-run.sh --all   # deliberate complete regression (optional local full walk; not no-mistakes Test)
 bin/fm-test-isolation-proof.sh --list   # proven parallel candidate set (Phase 2 owner)
-bin/fm-test-isolation-proof.sh --jobs 4 --json /tmp/fm-isolation-proof.json   # re-run concurrent isolation proof only
 [ ! -L CLAUDE.md ] && cmp -s CLAUDE.md - <<'EOF'
 <!-- Points Claude at AGENTS.md via import; edit AGENTS.md, not this file. -->
 @AGENTS.md
@@ -98,9 +93,9 @@ Its header and `--help` own the flags, family labels, lanes, and changed-file ma
 `bin/fm-test-isolation-proof.sh` remains the single owner of the Phase 2 concurrent isolation proof and the exact proven candidate set; see `docs/fm-test-isolation-proof.md`.
 Portable shard balance evidence lives in `docs/fm-test-portable-shards.md`.
 Local no-mistakes Test stays intent-targeted and must not wire `commands.test` to `--all` or a `tests/*.test.sh` walk.
-Family selection is the ordinary local path; `--all` is deliberate full regression only.
+Run local tests only for touched files, then dispatch every full suite through GitHub Actions as described in [`docs/configuration.md`](docs/configuration.md#where-tests-run).
 CI owns broad regression across required portable parallel shards, the portable serial lane's separate-runner shards, the Herdr lane, lint, invariants, the coverage guard, and stock macOS Bash compatibility in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-Use `bin/fm-test-run.sh --list-lanes` for exact lane names and `--help` for `--jobs` rules and required gate-skip flags when reproducing a lane locally.
+Use `bin/fm-test-run.sh --list-lanes` for exact lane names and `--help` for lane composition and required gate-skip flags.
 Discover tests by listing `tests/*.test.sh`: each is a self-contained bash script named `<subject>.test.sh`, and its header comment describes what it covers, so pass one to `bin/fm-test-run.sh` to focus on a subject with canonical timing output.
 Tests that need a real optional backend or an explicit opt-in (real herdr/zellij/cmux smoke tests, the live Pi regression) skip themselves and print the tool or environment gate needed to enable them, so the portable suite remains safe on machines without those tools.
 An assertion whose premise the ambient machine cannot supply skips the same loud way, on independent evidence rather than on the result under test: the calm suite's rendered-export DOM check skips when no browser is installed or when headless Chrome cannot render a minimal control page, and the OMP no-marker walk skips only when a separate ancestry witness confirms a harness process really launched the run.

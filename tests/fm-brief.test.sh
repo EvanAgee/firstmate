@@ -300,13 +300,13 @@ test_pr_producing_modes_own_feedback_until_landing() {
     case "$mode" in
       no-mistakes)
         # shellcheck disable=SC2016
-        watch_entry='append `done: PR {url} checks green at {pipeline head}` and enter the PR watch below.'
+        watch_entry='append `done: PR {url} checks green at {pipeline head}, full suite {green run URL}` and enter the PR watch below.'
         expected_action='Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.'
         forbidden_action='fix and push on your `fm/'"$id"'` branch'
         ;;
       direct-PR)
         # shellcheck disable=SC2016
-        watch_entry='append `done: PR {url}` to the status file and enter the PR watch below.'
+        watch_entry='append `done: PR {url}, GitHub Actions green at {green run URL}` to the status file and enter the PR watch below.'
         expected_action='Apply rule 8 directly to late reviewer feedback: fix and push on your `fm/'"$id"'` branch'
         forbidden_action='Drive late reviewer feedback back through no-mistakes'
         ;;
@@ -431,9 +431,9 @@ test_ship_validation_runs_full_suites_on_github() {
     brief="$home/data/$id/brief.md"
     assert_grep "On this machine, run only the type check, lint, and tests for the files you touched." "$brief" \
       "$mode: ship brief did not limit local validation"
-    assert_grep 'Never run the full suite, e2e gating, `bin/fm-test-run.sh --all`, or a full lane set on this machine.' "$brief" \
+    assert_grep "Never run the full suite, e2e gating, \`bin/fm-test-run.sh --all\`, or a full lane set on this machine." "$brief" \
       "$mode: ship brief still permits a local full test run"
-    assert_grep 'Push your branch to `origin` under its own name, never `main`, and never open a PR for this full run.' "$brief" \
+    assert_grep "Push your branch to \`origin\` under its own name, never \`main\`, and never open a PR for this full run." "$brief" \
       "$mode: ship brief did not limit its validation push"
     assert_grep 'gh workflow run ci.yml --ref <branch>' "$brief" \
       "$mode: ship brief did not dispatch ci.yml"
@@ -447,10 +447,24 @@ test_ship_validation_runs_full_suites_on_github() {
       "$mode: ship brief did not require a green full run"
     assert_grep 'green run URL' "$brief" \
       "$mode: ship brief ready line did not name the green run URL"
+    case "$mode" in
+      no-mistakes)
+        assert_grep 'done: PR {url} checks green at {pipeline head}, full suite {green run URL}' "$brief" \
+          "$mode: done line did not name the green full-suite run"
+        ;;
+      direct-PR)
+        assert_grep 'done: PR {url}, GitHub Actions green at {green run URL}' "$brief" \
+          "$mode: done line did not name the green full-suite run"
+        ;;
+      local-only)
+        assert_grep 'done: ready in branch fm/brief-github-local-only, GitHub Actions green at {green run URL}' "$brief" \
+          "$mode: ready line did not name the green full-suite run"
+        ;;
+    esac
   done
 
   brief="$home/data/brief-github-local-only/brief.md"
-  assert_grep '1. Push only your own `fm/brief-github-local-only` branch, never `main`, and never open a PR. Firstmate handles the merge into local `main`.' "$brief" \
+  assert_grep "1. Push only your own \`fm/brief-github-local-only\` branch, never \`main\`, and never open a PR. Firstmate handles the merge into local \`main\`." "$brief" \
     "local-only: rule 1 did not permit only the worker branch push"
   assert_no_grep 'Never push to any remote' "$brief" \
     "local-only: brief retained the old no-remote rule"
@@ -461,7 +475,7 @@ test_ship_validation_runs_full_suites_on_github() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --matt-flow >/dev/null 2>&1 \
     || fail "local-only --matt-flow: ship brief failed to scaffold"
   matt_brief="$home/data/$id/brief.md"
-  assert_grep 'Enter at the installed `tdd` skill: write the failing test first, then make it pass.' "$matt_brief" \
+  assert_grep "Enter at the installed \`tdd\` skill: write the failing test first, then make it pass." "$matt_brief" \
     "Matt-flow brief lost its local test-first walk"
   assert_grep 'For any change a user can see, walk it before reporting done: as a signed-in user on a local build' "$matt_brief" \
     "Matt-flow brief lost its local live walk"
@@ -511,7 +525,7 @@ test_ship_modes_demand_a_walked_path_before_done() {
         "$flow_label: ship brief did not demand the walk before done"
       assert_grep "on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to)" "$brief" \
         "$flow_label: ship brief did not require the neighbouring paths"
-      # local-only never pushes, so a preview deployment is unreachable and a one-line
+      # local-only never opens a PR, so a preview deployment is unavailable and a one-line
       # status file cannot carry a heading; its proof lands in the final commit message.
       case "$mode" in
         local-only)

@@ -194,6 +194,13 @@ There is no shared learnings file by captain decision.
 `bin/fm-flow.sh <project> fast|full|status` switches one project between the full PR flow and the fast local-only flow, flipping the project's GitHub rulesets and the registry posture together.
 The script's header owns the behavior table, the discovery rules, the guard-workflow requirement, and the stored-posture format in `state/.flow-<project>`; [`docs/specs/flow-switch.md`](specs/flow-switch.md) is the contract.
 
+## Where tests run
+
+Use the captain's Mac for type checks, lint, touched-file tests, and the live walk.
+Use GitHub Actions for every full suite, including e2e gating and full lane sets.
+The `aos` private repository uses metered Team plan minutes, with 3,000 free minutes each month.
+The public `firstmate` repository uses GitHub Actions for free.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.

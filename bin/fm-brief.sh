@@ -36,8 +36,8 @@
 # captain's standing posture as context, and this script never reads it:
 #   no-mistakes  implement -> /no-mistakes pipeline -> PR -> configured merge authority
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
-#   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
-#                the configured merge authority approves, firstmate merges to local main
+#   local-only   implement on branch, push it only to run CI, then report "ready in branch"
+#                without a PR; the configured merge authority approves and firstmate merges
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
 # the three concrete modes at intake before calling this script.
 # The generated ship brief records the chosen mode as a fixed machine-readable
@@ -50,7 +50,7 @@
 # The two PR modes walk the preview deployment and paste that section with screenshots
 # into the PR body; local-only walks a local build and writes the section, plain text
 # and no screenshots, into the body of its final commit message, because that mode
-# never pushes and has no PR to write to.
+# opens no PR and has no PR body to write to.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns approval decisions, so yolo is
@@ -430,6 +430,17 @@ After addressing new reviewer feedback, re-report status.
 EOF
 PR_WATCH=${PR_WATCH%$'\n'}
 PR_WATCH_GUARD='Never merge the PR and never arm auto-merge; the configured merge authority owns that.'
+IFS= read -r -d '' GITHUB_FULL_RUN <<'EOF' || true
+Run every full suite in GitHub Actions:
+1. Push your branch to `origin` under its own name, never `main`, and never open a PR for this full run.
+2. Run `gh workflow run ci.yml --ref <branch>`.
+3. Run `gh run list --workflow ci.yml --branch <branch> --limit 1 --json databaseId` to get the run id.
+4. Run `gh run watch <id> --exit-status --interval 30`.
+5. If the run fails, run `gh run view <id> --log-failed`, fix the failure and repeat the GitHub Actions full run until it passes.
+Get the green run URL with `gh run view <id> --json url --jq .url`.
+The ready line must name that green run URL.
+EOF
+GITHUB_FULL_RUN=${GITHUB_FULL_RUN%$'\n'}
 case "$MODE" in
   direct-PR)
     SETUP2=""
@@ -439,10 +450,11 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+$GITHUB_FULL_RUN
 For any change a user can see, walk it before reporting done: as a signed-in user on the preview deployment (or a local build when the project has no preview), on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
 Paste what you saw, step by step, under \`## What I walked\` in the PR body, with a viewport screenshot per path.
 A done without that section is not done; firstmate sends it back.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and enter the PR watch below.
+When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}, GitHub Actions green at {green run URL}\` to the status file and enter the PR watch below.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 $PR_WATCH
 Apply rule 8 directly to late reviewer feedback: fix and push on your \`fm/$ID\` branch, resolve the threads, or reply with a concrete reason a finding is not valid.
@@ -451,17 +463,18 @@ EOF
     ;;
   local-only)
     SETUP2=""
-    RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
+    RULE1="1. Push only your own \`fm/$ID\` branch, never \`main\`, and never open a PR. Firstmate handles the merge into local \`main\`."
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 Delivery contract: mode=local-only
-This task ships **local-only**: no remote, no PR, no pipeline.
-The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
+This task ships **local-only**: no PR and no merge by the worker.
+The task is complete only when committed on your branch \`fm/$ID\`. Do NOT open a PR and do NOT merge.
+$GITHUB_FULL_RUN
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
 For any change a user can see, walk it before reporting done: as a signed-in user on a local build, on the path the issue describes and the two paths beside it (the screen you arrive from and the one you leave to).
 Write what you saw, step by step, under a \`## What I walked\` section in the body of your final commit message on this branch, in plain text and with no screenshots.
 A done without that section is not done; firstmate sends it back.
-When it is implemented and committed, append \`done: ready in branch fm/$ID, walked {the path you walked}\` to the status file and stop.
+When it is implemented and committed, append \`done: ready in branch fm/$ID, GitHub Actions green at {green run URL}, walked {the path you walked}\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
     ;;
@@ -473,6 +486,7 @@ EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
+$GITHUB_FULL_RUN
 When you believe it is complete, run /no-mistakes to validate and ship a PR.
 Do not stop and wait for firstmate to instruct you - proceed directly to validation.
 
@@ -499,7 +513,7 @@ A done without that section is not done; firstmate sends it back.
 After /no-mistakes reports CI green (the CI-ready return point), sync your local branch to the pipeline head before you report done.
 Run \`no-mistakes axi status\` and follow its \`branch_sync.next_action\`, running \`no-mistakes axi sync\` where that is what it names.
 Repeat until \`git rev-parse HEAD\` equals the pipeline head, so your local branch carries the validated head instead of a pre-rebase one that would make a later cleanup refuse already-landed work.
-Then append \`done: PR {url} checks green at {pipeline head}\` and enter the PR watch below.
+Then append \`done: PR {url} checks green at {pipeline head}, full suite {green run URL}\` and enter the PR watch below.
 Do not wait for no-mistakes to keep monitoring in the background.
 $PR_WATCH
 Drive late reviewer feedback back through no-mistakes, never by hand-editing the branch.
@@ -574,6 +588,8 @@ $WORKDIR_SECTION
 $MATT_FLOW_SECTION
 # Rules
 $RULE1
+On this machine, run only the type check, lint, and tests for the files you touched.
+Never run the full suite, e2e gating, \`bin/fm-test-run.sh --all\`, or a full lane set on this machine.
 2. Stay inside this worktree; modify nothing outside it.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
    Set CHROME_DEVTOOLS_AXI_SESSION to this task id. Do not attach to the captain's Chrome or set a global bridge port unless the brief explicitly requires it.
