@@ -306,6 +306,15 @@ Its `remove` action excises only the marker-delimited Firstmate region and remov
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 For OMP secondmate launches, it explicitly loads that home's `.omp/extensions/fm-primary-omp.ts`, keeps exact resume state under `state/omp-sessions`, and publishes `state/.omp-session` only after the adapter binds the selected conversation.
 
+## Coding-safety pilot (config/aos-coding-pilot)
+
+`config/aos-coding-pilot` is a local, gitignored file whose first line is the absolute path of a trusted AOS checkout's `.claude/sandbox/coding-pilot.mjs`, never a task worktree's copy.
+An optional second line is the absolute path of the Node executable that checkout supports, because AOS pins its own Node major and a PATH `node` from another major fails to load the entry.
+It is read only by a crewmate or scout spawn that passes `--coding-safety-pilot`, which runs that claude task inside the AOS sandbox instead of on the host (aos #4024).
+The pilot also needs the local image `aos-sandbox-claude:2.1.280`; without it the spawn refuses as `runtime-unavailable` and starts nothing.
+The pilot's input set is every tracked file at the task's HEAD, and the pilot itself refuses symlinks, files over 5 MB, and totals over 200 MB.
+`bin/fm-spawn.sh`'s header owns the flags, refusals, staged files, and the task-metadata fields the path records.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file that maps machine-readable task classes to runtime pools.

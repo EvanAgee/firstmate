@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--class <class>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--captain-override <reason>] [--backend <name>] [--issue <ref>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--class <class>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--captain-override <reason>] [--backend <name>] [--issue <ref>] [--coding-safety-pilot --sensitivity <tier> --pilot-verify "<cmd>"]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--class <class>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--captain-override <reason>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -153,6 +153,26 @@
 #   secondmate receives the primary's read-only shared captain-preference file
 #   (fm-config-inherit-lib.sh). A successful launch clears pending inherited
 #   config reread generations because the new agent reads the converged files.
+#   --coding-safety-pilot --sensitivity <public|internal|confidential|restricted>
+#   --pilot-verify "<test command>" is the opt-in claude-only path that runs the
+#   task inside the AOS sandbox through the trusted pilot entry named by
+#   config/aos-coding-pilot (an absolute path to a trusted AOS checkout's
+#   .claude/sandbox/coding-pilot.mjs) instead of launching claude on the host.
+#   Both value flags are required with it, have no default, and are refused
+#   without it. Before any endpoint exists it refuses a raw launch command, any
+#   harness but claude, a secondmate, a model outside the pilot's admitted list
+#   (no --model means claude-opus-5-5), a task id too long or not lowercase
+#   enough to form the pilot's runId, a missing entry, an entry that does not
+#   load under its node (config line 2, else node from PATH; probed by running
+#   the entry bare, which must return the pilot's usage refusal, exit 2), and a
+#   missing aos-sandbox-claude:2.1.280 image (runtime-unavailable). After the
+#   worktree is fresh it stages the tracked files at HEAD and the encoded brief
+#   under state/<id>.pilot/, writes launch-<epoch>.json, and launches
+#   `<node> <entry> run --launch <launch> --receipt <receipt>`; the pane shell
+#   writes the pilot's exit code to <receipt>.exit when it returns. Meta records
+#   coding_safety_pilot=1, sensitivity=, pilot_launch=, pilot_receipt=, and
+#   pilot_exit_file=. --relaunch refuses a pilot task rather than resuming it as
+#   an ordinary host launch. Without the flag, every launch is unchanged.
 #   --issue <ref> records the GitHub issue this ship dispatch covers and arms
 #   the duplicate-issue spawn guardrail. Repeatable; a value may also carry
 #   several comma-separated refs. A <ref> is a GitHub issue identity:
@@ -380,6 +400,11 @@ BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
+CODING_SAFETY_PILOT=0
+PILOT_SENSITIVITY=
+PILOT_VERIFY=
+PILOT_SENSITIVITY_SET=0
+PILOT_VERIFY_SET=0
 RELAUNCH=0
 POS=()
 ISSUES_ARGS=()
@@ -401,6 +426,8 @@ for a in "$@"; do
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
       issue) ISSUES_ARGS+=("$a") ;;
+      sensitivity) PILOT_SENSITIVITY=$a; PILOT_SENSITIVITY_SET=1 ;;
+      pilot-verify) PILOT_VERIFY=$a; PILOT_VERIFY_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -430,6 +457,11 @@ for a in "$@"; do
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
     --issue) want_value=issue ;;
     --issue=*) ISSUES_ARGS+=("${a#--issue=}") ;;
+    --coding-safety-pilot) CODING_SAFETY_PILOT=1 ;;
+    --sensitivity) want_value=sensitivity ;;
+    --sensitivity=*) PILOT_SENSITIVITY=${a#--sensitivity=}; PILOT_SENSITIVITY_SET=1 ;;
+    --pilot-verify) want_value=pilot-verify ;;
+    --pilot-verify=*) PILOT_VERIFY=${a#--pilot-verify=}; PILOT_VERIFY_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -502,6 +534,21 @@ fi
   echo "error: --class applies only to crewmate and scout spawns; secondmates use config/secondmate-harness" >&2
   exit 1
 }
+# The coding-safety pilot's owner-supplied inputs. The runtime, model, image,
+# and launch-record checks follow once the harness and task id are resolved.
+if [ "$CODING_SAFETY_PILOT" -eq 1 ]; then
+  [ "$RELAUNCH" -eq 0 ] || { echo "error: --relaunch cannot start a coding-safety pilot task; pilot relaunch is not supported yet, so spawn a new task" >&2; exit 1; }
+  [ "$KIND" != secondmate ] || { echo "error: --coding-safety-pilot applies only to crewmate and scout spawns" >&2; exit 1; }
+  [ -n "$PILOT_SENSITIVITY" ] || { echo "error: --coding-safety-pilot requires --sensitivity <public|internal|confidential|restricted>" >&2; exit 1; }
+  case "$PILOT_SENSITIVITY" in
+    public|internal|confidential|restricted) ;;
+    *) echo "error: --sensitivity must be one of public, internal, confidential, restricted" >&2; exit 1 ;;
+  esac
+  [ -n "$PILOT_VERIFY" ] || { echo "error: --coding-safety-pilot requires --pilot-verify \"<test command>\"; there is no default" >&2; exit 1; }
+elif [ "$PILOT_SENSITIVITY_SET" -eq 1 ] || [ "$PILOT_VERIFY_SET" -eq 1 ]; then
+  echo "error: --sensitivity and --pilot-verify apply only with --coding-safety-pilot" >&2
+  exit 1
+fi
 
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
@@ -1125,6 +1172,9 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  [ "$CODING_SAFETY_PILOT" -eq 0 ] || shared_args+=(--coding-safety-pilot)
+  [ "$PILOT_SENSITIVITY_SET" -eq 0 ] || shared_args+=(--sensitivity "$PILOT_SENSITIVITY")
+  [ "$PILOT_VERIFY_SET" -eq 0 ] || shared_args+=(--pilot-verify "$PILOT_VERIFY")
   for raw_issue in "${ISSUES_ARGS[@]+${ISSUES_ARGS[@]}}"; do
     shared_args+=(--issue "$raw_issue")
   done
@@ -1248,6 +1298,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_META="$STATE/$ID.meta"
   [ -f "$RELAUNCH_META" ] || {
     echo "error: --relaunch needs an existing task record; no $RELAUNCH_META" >&2
+    exit 1
+  }
+  # A resumed pilot task must never fall back to an ordinary host launch.
+  [ "$(fm_meta_get "$RELAUNCH_META" coding_safety_pilot)" != 1 ] || {
+    echo "error: --relaunch cannot start a coding-safety pilot task; pilot relaunch is not supported yet, so spawn a new task" >&2
     exit 1
   }
   fm_backend_validate_task_endpoint "$RELAUNCH_META" "$ID" || exit 1
@@ -1801,6 +1856,60 @@ esac
 if [ "$KIND" = secondmate ] && [ "$HARNESS" = muse ]; then
   echo "error: muse is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1
+fi
+
+# --coding-safety-pilot runs one claude task inside the AOS sandbox through the
+# trusted pilot entry named by config/aos-coding-pilot (aos #4024). Everything
+# that can refuse without the worktree refuses here, before any endpoint exists.
+# The pilot owns its own admission; these checks keep a doomed launch from
+# starting at all.
+PILOT_IMAGE=aos-sandbox-claude:2.1.280
+if [ "$CODING_SAFETY_PILOT" -eq 1 ]; then
+  if [ "$RAW_LAUNCH" -eq 1 ] || [ "$HARNESS" != claude ]; then
+    echo "error: the coding-safety pilot runs only the claude harness (selected: $HARNESS)" >&2
+    exit 1
+  fi
+  PILOT_MODEL=${MODEL:-claude-opus-5-5}
+  case "$PILOT_MODEL" in
+    claude-opus-5-5|claude-sonnet-5|claude-fable-5-1|claude-haiku-4-5-20251001) ;;
+    *) echo "error: model '$PILOT_MODEL' is not admitted by the coding-safety pilot (admitted: claude-opus-5-5, claude-sonnet-5, claude-fable-5-1, claude-haiku-4-5-20251001)" >&2; exit 1 ;;
+  esac
+  # The pilot's runId is "<task-id>-<epoch seconds>" and must match
+  # ^[a-z0-9][a-z0-9-]{0,47}$, which leaves 37 characters for the task id.
+  [[ "$ID" =~ ^[a-z0-9][a-z0-9-]{0,36}$ ]] || {
+    echo "error: invalid launch record: task id '$ID' cannot form the pilot's runId; use at most 37 lowercase letters, digits, and dashes" >&2
+    exit 1
+  }
+  # Line 1 names the trusted entry; an optional line 2 names the node that
+  # checkout supports (AOS pins its own Node major), else node from PATH.
+  AOS_PILOT=$(sed -n 1p "$CONFIG/aos-coding-pilot" 2>/dev/null || true)
+  case "$AOS_PILOT" in
+    /*) [ -f "$AOS_PILOT" ] || AOS_PILOT= ;;
+    *) AOS_PILOT= ;;
+  esac
+  [ -n "$AOS_PILOT" ] || {
+    echo "error: the coding-safety pilot needs config/aos-coding-pilot to hold the absolute path of a trusted AOS checkout's .claude/sandbox/coding-pilot.mjs" >&2
+    exit 1
+  }
+  PILOT_NODE=$(sed -n 2p "$CONFIG/aos-coding-pilot" 2>/dev/null || true)
+  [ -n "$PILOT_NODE" ] || PILOT_NODE=$(command -v node 2>/dev/null || true)
+  case "$PILOT_NODE" in
+    /*) [ -x "$PILOT_NODE" ] || PILOT_NODE= ;;
+    *) PILOT_NODE= ;;
+  esac
+  [ -n "$PILOT_NODE" ] || { echo "error: the coding-safety pilot needs node on PATH or an absolute node path on line 2 of config/aos-coding-pilot" >&2; exit 1; }
+  # A bare entry path is the pilot's own usage refusal (exit 2), which proves
+  # the entry loads under this node without starting a container or a model.
+  PILOT_PROBE_STATUS=0
+  PILOT_PROBE=$("$PILOT_NODE" "$AOS_PILOT" 2>&1) || PILOT_PROBE_STATUS=$?
+  [ "$PILOT_PROBE_STATUS" -eq 2 ] || {
+    echo "error: runtime-unavailable: the pilot entry does not load under $PILOT_NODE (exit $PILOT_PROBE_STATUS): ${PILOT_PROBE##*$'\n'}; name the node the AOS checkout supports on line 2 of config/aos-coding-pilot" >&2
+    exit 1
+  }
+  docker image inspect "$PILOT_IMAGE" >/dev/null 2>&1 || {
+    echo "error: runtime-unavailable: the container runtime or the pinned image $PILOT_IMAGE is unavailable; build it once from the AOS checkout (docker build -f .claude/sandbox/Dockerfile --target claude-pilot --build-arg CLAUDE_CODE_VERSION=2.1.280 -t $PILOT_IMAGE .claude/sandbox)" >&2
+    exit 1
+  }
 fi
 
 # pi-signed is an explicitly selected executable identity, not an alias that may
@@ -3287,6 +3396,33 @@ fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
+# The pilot copies its input set and never touches the worktree, so it gets the
+# tracked files at HEAD and the encoded brief, staged under state/ where the
+# worker cannot reach them. Each attempt keeps its own launch record and receipt.
+if [ "$CODING_SAFETY_PILOT" -eq 1 ]; then
+  PILOT_DIR="$STATE/$ID.pilot"
+  PILOT_ATTEMPT=$(date +%s)
+  PILOT_LAUNCH_JSON="$PILOT_DIR/launch-$PILOT_ATTEMPT.json"
+  PILOT_RECEIPT="$PILOT_DIR/receipt-$PILOT_ATTEMPT.json"
+  if ! { { [ -d "$PILOT_DIR" ] || mkdir -m 700 "$PILOT_DIR"; } && rm -rf "$PILOT_DIR/input" && mkdir -m 700 "$PILOT_DIR/input" \
+      && git -C "$WT" archive HEAD | tar -x -C "$PILOT_DIR/input" \
+      && "$FM_ROOT/bin/fm-operational-input.sh" encode launch-brief < "$BRIEF" > "$PILOT_DIR/brief.md" \
+      && jq -n --arg runId "$ID-$PILOT_ATTEMPT" --arg taskId "$ID" \
+        --arg src "$(git -C "$WT" rev-parse HEAD)" --arg fm "$(git -C "$FM_ROOT" rev-parse HEAD 2>/dev/null || true)" \
+        --arg tier "$PILOT_SENSITIVITY" --arg input "$PILOT_DIR/input" --arg brief "$PILOT_DIR/brief.md" \
+        --arg model "$PILOT_MODEL" --arg verify "$PILOT_VERIFY" '{
+          schemaVersion: 1, runId: $runId, taskId: $taskId, sourceCommit: $src,
+          launcherCommit: (if $fm == "" then null else $fm end),
+          harness: "claude", routeId: "claude-subscription-interim", sensitivity: $tier,
+          inputSetHash: null, policyHash: null, routeEvidenceHash: null, imageDigest: null,
+          run: { inputDir: $input, briefPath: $brief, model: $model, mode: "interactive",
+                 maxTurns: 50, wallClockMs: 1800000,
+                 verifyCommand: [$verify | splits(" +") | select(length > 0)] } }' \
+        > "$PILOT_LAUNCH_JSON"; }; then
+    echo "error: invalid launch record: could not stage the coding-safety pilot input set or launch record under $PILOT_DIR" >&2
+    exit 1
+  fi
+fi
 if [ "$HARNESS" = omp ] && [ "$KIND" != secondmate ]; then
   OMP_ABORT_INITIAL_HEAD=$(git -C "$WT" rev-parse HEAD 2>/dev/null) || {
     echo "error: OMP spawn could not bind cleanup to the initial worktree HEAD" >&2
@@ -3736,6 +3872,13 @@ preserve_relaunch_meta() {
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
+  if [ "$CODING_SAFETY_PILOT" -eq 1 ]; then
+    echo "coding_safety_pilot=1"
+    echo "sensitivity=$PILOT_SENSITIVITY"
+    echo "pilot_launch=$PILOT_LAUNCH_JSON"
+    echo "pilot_receipt=$PILOT_RECEIPT"
+    echo "pilot_exit_file=$PILOT_RECEIPT.exit"
+  fi
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta
   fi
@@ -3813,6 +3956,11 @@ esac
 # an unset value is the single-store default and needs no prefix.
 if [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
+fi
+# A pilot task runs the pilot instead of claude; the pane shell records the
+# pilot's exit code beside the receipt once it returns.
+if [ "$CODING_SAFETY_PILOT" -eq 1 ]; then
+  LAUNCH="$(shell_quote "$PILOT_NODE") $(shell_quote "$AOS_PILOT") run --launch $(shell_quote "$PILOT_LAUNCH_JSON") --receipt $(shell_quote "$PILOT_RECEIPT"); printf '%s\n' \"\$?\" > $(shell_quote "$PILOT_RECEIPT.exit")"
 fi
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
