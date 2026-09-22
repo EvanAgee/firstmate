@@ -136,12 +136,22 @@ SH
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
+  "issue view")
+    printf '{"labels":[%s],"state":"%s"}\n' \
+      "$(printf '%s' "${FM_TEST_ISSUE_LABELS-agent-in-progress}" | awk -v RS=, 'NF{printf "%s\"%s\"", (n++?",":""), $0}')" \
+      "$(printf '%s' "${FM_TEST_ISSUE_STATE:-open}" | tr '[:lower:]' '[:upper:]')"
+    exit 0
+    ;;
   "api graphql")
-    printf '%s\n' \
-      "state=${FM_TEST_GH_GRAPHQL_STATE:-MERGED}" \
-      "merged=${FM_TEST_GH_GRAPHQL_MERGED:-true}" \
-      "queued=${FM_TEST_GH_GRAPHQL_QUEUED:-false}" \
-      'base=main'
+    if [[ "$*" == *reviewThreads* ]]; then
+      printf '%s\n' 'total=0' 'unresolved=0'
+    else
+      printf '%s\n' \
+        "state=${FM_TEST_GH_GRAPHQL_STATE:-MERGED}" \
+        "merged=${FM_TEST_GH_GRAPHQL_MERGED:-true}" \
+        "queued=${FM_TEST_GH_GRAPHQL_QUEUED:-false}" \
+        'base=main'
+    fi
     exit 0
     ;;
   "pr view")
@@ -191,7 +201,9 @@ SH
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 case "${1:-} ${2:-}" in
   "pr view")
-    [ "$#" -eq 5 ] && [ "${4:-}" = --repo ] || exit 2
+    [ "$#" -eq 5 ] || exit 2
+    case "${4:-}" in -R|--repo) ;; *) exit 2 ;; esac
+    [ "${FM_TEST_GH_AXI_PR_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_AXI_PR_SLEEP"
     printf 'pull_request:\n  number: %s\n  state: %s\n' "$3" "${FM_TEST_GH_MERGE_STATE:-merged}"
     ;;
 esac
@@ -234,6 +246,11 @@ write_poll_meta() {
     "window=fm-$id" \
     "$@" \
     "pr=$url"
+}
+
+write_issue_poll_meta() {
+  local state=$1 id=$2 url=$3 issues=$4
+  write_poll_meta "$state" "$id" "$url" "issues=$issues"
 }
 
 
@@ -654,7 +671,7 @@ run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   local check_timeout=${FM_TEST_CHECK_TIMEOUT:-1}
   shift 2
-  perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
+  perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 20; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
     env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT="$check_timeout" \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
@@ -1512,6 +1529,111 @@ test_merged_poll_retires_once() {
   ! grep "$(printf '\tcheck\ttask-a.check.sh\t')" "$state/.wake-queue" >/dev/null 2>&1 \
     || fail "handled merged notification remained queued after acknowledgement"
   pass "validated merged polls notify once and retire before the next watcher cycle"
+}
+
+test_merged_poll_closes_linked_issues() {
+  local dir state rc
+  dir=$(make_case merged-closes-issues)
+  state="$dir/home/state"
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 o/r#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+  FM_TEST_GH_STATE=MERGED FM_TEST_ISSUE_STATE=open \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "merged issue-close watcher failed: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "the merged notification was not preserved: $(cat "$dir/watch.out")" ;;
+  esac
+  assert_grep 'issue close 55 -R o/r --reason completed --comment Fixed by https://github.com/o/r/pull/1, merged to main.' \
+    "$dir/gh-axi.log" "a merged poll did not close the linked issue"
+  assert_grep 'issue edit 55 -R o/r --remove-label agent-in-progress' \
+    "$dir/gh-axi.log" "a merged poll did not remove the agent label"
+  assert_grep 'task-a issue close after https://github.com/o/r/pull/1 merged: closed: o/r#55 https://github.com/o/r/pull/1' \
+    "$state/.watch-triage.log" "the successful issue close left no receipt"
+  ack_watcher_cycle "$state" || fail "merged issue-close acknowledgement failed"
+  pass "a PR merged outside fm-pr-merge still closes linked issues"
+}
+
+test_merged_poll_issue_close_failure_keeps_the_merged_wake() {
+  local dir state rc
+  dir=$(make_case merged-issue-close-failure)
+  state="$dir/home/state"
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 other/repo#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+  FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "issue-close failure changed the watcher result: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "an issue-close failure suppressed the merged notification: $(cat "$dir/watch.out")" ;;
+  esac
+  assert_no_grep 'issue close' "$dir/gh-axi.log" "an issue outside the PR repository was closed"
+  assert_grep 'linked issues were not all closed for task-a after https://github.com/o/r/pull/1 merged' \
+    "$state/.watch-triage.log" "the failed issue close left no triage record"
+  assert_poll_absent "$state" task-a
+  ack_watcher_cycle "$state" || fail "merged wake acknowledgement failed after issue-close failure"
+  pass "an issue-close failure preserves the merged wake and poll retirement"
+}
+
+test_merged_poll_issue_close_timeout_keeps_the_merged_wake() {
+  local dir state rc
+  dir=$(make_case merged-issue-close-timeout)
+  state="$dir/home/state"
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 o/r#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+  FM_CHECK_FORCE_FALLBACK=1 FM_TEST_GH_STATE=MERGED FM_TEST_GH_AXI_PR_SLEEP=3 \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "issue-close timeout changed the watcher result: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "an issue-close timeout suppressed the merged notification: $(cat "$dir/watch.out")" ;;
+  esac
+  assert_grep 'pr view 1 -R o/r' "$dir/gh-axi.log" "the issue closer never reached the hanging forge"
+  assert_no_grep 'issue close' "$dir/gh-axi.log" "the timed-out closer mutated an issue"
+  assert_grep 'the issue close exceeded its 1s bound' "$state/.watch-triage.log" \
+    "the issue-close timeout lost its bound-expiry reason"
+  assert_poll_absent "$state" task-a
+  ack_watcher_cycle "$state" || fail "merged wake acknowledgement failed after issue-close timeout"
+  pass "an issue-close timeout preserves the merged wake and poll retirement"
+}
+
+test_merged_poll_logs_an_already_closed_receipt() {
+  local dir state rc
+  dir=$(make_case merged-already-closed-issue)
+  state="$dir/home/state"
+  write_issue_poll_meta "$state" task-a https://github.com/o/r/pull/1 o/r#55
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+
+  set +e
+  FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" \
+  FM_TEST_GH_STATE=MERGED FM_TEST_ISSUE_STATE=closed \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "already-closed issue watcher failed: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail "the merged notification was not preserved: $(cat "$dir/watch.out")" ;;
+  esac
+  assert_no_grep 'issue close' "$dir/gh-axi.log" "an already-closed issue was closed again"
+  assert_grep 'task-a issue close after https://github.com/o/r/pull/1 merged: already-closed: o/r#55' \
+    "$state/.watch-triage.log" "the already-closed issue left no receipt"
+  ack_watcher_cycle "$state" || fail "already-closed issue acknowledgement failed"
+  pass "a merged poll records an already-closed linked issue without mutation"
 }
 
 # A poll's own retirement state is scoped to ONE registration, so it cannot by
@@ -2756,6 +2878,10 @@ SH
 test_parser_matrix
 test_gitlab_merge_watch
 test_merged_poll_retires_once
+test_merged_poll_closes_linked_issues
+test_merged_poll_issue_close_failure_keeps_the_merged_wake
+test_merged_poll_issue_close_timeout_keeps_the_merged_wake
+test_merged_poll_logs_an_already_closed_receipt
 test_merged_poll_reregistration_after_notification_is_absorbed
 test_merged_poll_retries_a_failed_upward_report
 test_self_merge_and_poll_publish_one_outcome

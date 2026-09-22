@@ -14,7 +14,9 @@
 # merge, so a captain approval must be recorded as an `answer --release` before
 # this entrypoint is invoked. The lock ends when the fast-forward returns;
 # docs/captain-hold-lifecycle.md owns the accepted merge-to-cleanup residual.
-# Usage: fm-merge-local.sh <task-id>
+# A PR-bound task may use the same gate while state/.github-down exists. Its
+# landing is recorded for bin/fm-outage-sync.sh to push after GitHub returns.
+# Usage: fm-merge-local.sh <task-id> [<lane-branch>] [--deferred-checks <list>] [--adversarial-review-passed <ref>]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,11 +27,37 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
-if [ "$#" -ne 1 ] || ! fm_pr_task_id_valid "$1"; then
+if [ "$#" -lt 1 ] || ! fm_pr_task_id_valid "$1"; then
   echo "error: invalid local merge request" >&2
   exit 2
 fi
 ID=$1
+shift
+LANE_BRANCH=
+DEFERRED_CHECKS=
+ADVERSARIAL_REVIEW=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --deferred-checks|--adversarial-review-passed)
+      option=$1
+      [ "$#" -ge 2 ] || { echo "error: $option requires a value" >&2; exit 2; }
+      if [ "$option" = --deferred-checks ]; then
+        DEFERRED_CHECKS=$2
+      else
+        ADVERSARIAL_REVIEW=$2
+      fi
+      shift 2
+      ;;
+    --deferred-checks=*) DEFERRED_CHECKS=${1#*=}; shift ;;
+    --adversarial-review-passed=*) ADVERSARIAL_REVIEW=${1#*=}; shift ;;
+    --*) echo "error: unknown option '$1'" >&2; exit 2 ;;
+    *)
+      [ -z "$LANE_BRANCH" ] || { echo "error: unexpected extra argument '$1'" >&2; exit 2; }
+      LANE_BRANCH=$1
+      shift
+      ;;
+  esac
+done
 fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: local merge refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -75,7 +103,25 @@ fi
 
 PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
-[ "$MODE" = local-only ] || { echo "error: task $ID is mode=$MODE, not local-only; merge PR tasks with bin/fm-pr-merge.sh <id> <PR url> after approval" >&2; exit 1; }
+YOLO=$(grep '^yolo=' "$META" | cut -d= -f2- || true)
+WORKTREE=$(grep '^worktree=' "$META" | cut -d= -f2- || true)
+OUTAGE_LANDING=no
+case "$MODE" in
+  local-only) ;;
+  no-mistakes|direct-PR)
+    [ -e "$STATE/.github-down" ] || {
+      echo "error: task $ID is mode=$MODE; a PR-bound task lands locally only while GitHub is unreachable (state/.github-down present)" >&2
+      echo "merge its PR with bin/fm-pr-merge.sh after approval" >&2
+      exit 1
+    }
+    OUTAGE_LANDING=yes
+    ;;
+  *) echo "error: task $ID is mode=$MODE, which cannot land locally" >&2; exit 1 ;;
+esac
+if [ "$OUTAGE_LANDING" = yes ] && [ "$YOLO" = on ] && [ -z "$ADVERSARIAL_REVIEW" ]; then
+  echo "error: task $ID is an autonomous outage landing but no adversarial review was recorded" >&2
+  exit 1
+fi
 
 default_branch() {
   local ref branch
@@ -93,7 +139,23 @@ default_branch() {
   return 1
 }
 
-BRANCH="fm/$ID"
+resolve_lane_branch() {
+  local branch
+  if [ -n "$LANE_BRANCH" ]; then
+    printf '%s\n' "$LANE_BRANCH"
+    return
+  fi
+  if [ -n "$WORKTREE" ] && [ -d "$WORKTREE" ]; then
+    branch=$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    if [ -n "$branch" ]; then
+      printf '%s\n' "$branch"
+      return
+    fi
+  fi
+  printf 'fm/%s\n' "$ID"
+}
+
+BRANCH=$(resolve_lane_branch)
 git -C "$PROJ" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null || { echo "error: branch $BRANCH does not exist in $PROJ" >&2; exit 1; }
 
 DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
@@ -114,6 +176,7 @@ if ! git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BRANCH"; then
   exit 1
 fi
 
+before_full=$(git -C "$PROJ" rev-parse "$DEFAULT")
 before=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 hold_status=0
 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
@@ -136,3 +199,18 @@ MERGE_CONTROL_LOCK=
 [ "$merge_status" -eq 0 ] || exit "$merge_status"
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
+
+if [ "$OUTAGE_LANDING" = yes ]; then
+  after_full=$(git -C "$PROJ" rev-parse "$DEFAULT")
+  ledger_dir="$STATE/outage-landings"
+  mkdir -p "$ledger_dir"
+  project_name=$(basename "$PROJ")
+  case "$project_name" in ''|.|..|*/*) project_name=project ;; esac
+  landed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf unknown)
+  deferred_field=$(printf '%s' "$DEFERRED_CHECKS" | tr '\t\n' '  ')
+  review_ref=$(printf '%s' "$ADVERSARIAL_REVIEW" | tr '\t\n' '  ')
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$landed_at" "$ID" "$PROJ" "$BRANCH" "$before_full" "$after_full" \
+    "$deferred_field" "$review_ref" >> "$ledger_dir/$project_name.log"
+  echo "recorded outage landing for $project_name in $ledger_dir/$project_name.log"
+fi

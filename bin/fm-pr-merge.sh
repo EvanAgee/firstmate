@@ -100,7 +100,9 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
+# GitHub review threads must all be resolved. An attended
+# --allow-unresolved-threads bypass is logged and applies only to that gate.
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-unresolved-threads] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -148,6 +150,7 @@ PR_NUMBER=$FM_PR_NUMBER
 PROJECT_URL="https://$FM_PR_HOST/$FM_PR_PATH"
 shift 2
 ATTENDED_OVERRIDE=false
+ALLOW_UNRESOLVED_THREADS=false
 ALLOW_RED=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -167,6 +170,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --allow-red=*)
       echo "error: --allow-red requires a separate check name argument" >&2
+      exit 2
+      ;;
+    --allow-unresolved-threads)
+      ALLOW_UNRESOLVED_THREADS=true
+      shift
+      ;;
+    --allow-unresolved-threads=*)
+      echo "error: --allow-unresolved-threads takes no value" >&2
       exit 2
       ;;
     --) shift; break ;;
@@ -572,9 +583,10 @@ github_checks_not_green() {
 # Pre-merge conditions for a GitHub pull request, read from one live view.
 # Sets FM_PR_MERGE_HEAD to the verified head on success.
 github_verify_mergeable() {
-  local json fields line red name covered
+  local json fields line red name covered thread_fields thread_line
   local total=0 named=0 refusals=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
+  local thread_total='' unresolved_threads='' thread_named=0 thread_lines=0
 
   if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
     || [ -z "$json" ]; then
@@ -622,6 +634,48 @@ FIELDS
   if ! red=$(github_checks_not_green "$json"); then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
+  fi
+
+  # shellcheck disable=SC2016 # GraphQL variables are literal API syntax.
+  if [ "$ALLOW_UNRESOLVED_THREADS" = true ]; then
+    printf 'note: --allow-unresolved-threads set; skipping the review-thread gate for %s\n' "$URL" >&2
+  elif ! thread_fields=$(gh api graphql \
+      -f query='query($owner:String!,$repo:String!,$number:Int!,$pageSize:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:$pageSize){totalCount nodes{isResolved}}}}}' \
+      -F "owner=$PR_OWNER" -F "repo=$PR_REPO" -F "number=$PR_NUMBER" -F pageSize=100 \
+      --jq '.data.repository.pullRequest.reviewThreads | "total=" + (.totalCount|tostring), "unresolved=" + ([.nodes[]|select(.isResolved==false)]|length|tostring)' \
+      2>/dev/null) || [ -z "$thread_fields" ]; then
+    refusals="$refusals  - review threads could not be read
+"
+  else
+    while IFS= read -r thread_line; do
+      thread_lines=$((thread_lines + 1))
+      case "$thread_line" in
+        total=*) thread_total=${thread_line#total=} ;;
+        unresolved=*) unresolved_threads=${thread_line#unresolved=} ;;
+        *) continue ;;
+      esac
+      thread_named=$((thread_named + 1))
+    done <<EOF
+$thread_fields
+EOF
+    if [ "$thread_named" -ne 2 ] || [ "$thread_lines" -ne 2 ]; then
+      refusals="$refusals  - review threads could not be read
+"
+    else
+      case "$thread_total:$unresolved_threads" in
+        :*|*:|*[!0-9:]*) refusals="$refusals  - review threads could not be read
+" ;;
+        *)
+          if [ "$thread_total" -gt 100 ]; then
+            refusals="$refusals  - review thread count $thread_total exceeds the 100-thread read bound
+"
+          elif [ "$unresolved_threads" -gt 0 ]; then
+            refusals="$refusals  - $unresolved_threads unresolved review thread(s) remain
+"
+          fi
+          ;;
+      esac
+    fi
   fi
 
   case "$state" in
@@ -929,6 +983,10 @@ require_current_away_authority() {
     if [ "$PROVIDER" = gitlab ] \
       && { [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_CONFIGURED" = true ]; }; then
       echo "error: GitLab auto-merge is attended-only; while the away-posture record exists only an immediate merge may run under its authority lock" >&2
+      return 2
+    fi
+    if [ "$ALLOW_UNRESOLVED_THREADS" = true ]; then
+      echo "error: --allow-unresolved-threads is attended-only; while the away-posture record exists every review thread must be resolved" >&2
       return 2
     fi
   fi
@@ -1243,3 +1301,8 @@ case "$outcome_rc" in
     printf 'actionable: merged %s but could not record the outcome for supervision\n' "$URL" >&2
     ;;
 esac
+
+if [ "$PROVIDER" = github ] \
+  && ! "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$ID" "$URL"; then
+  printf 'warning: linked issues were not all closed for %s after %s merged\n' "$ID" "$URL" >&2
+fi

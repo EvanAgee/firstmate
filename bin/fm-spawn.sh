@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--issue <ref>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -143,6 +143,11 @@
 #   fm_firstmate_root_home resolves, so a home seeded from another machine anchors
 #   that lock itself rather than failing to resolve one;
 #   contention refuses rather than waits.
+#   Repeatable --issue refs record the GitHub issues a ship covers. Bare issue
+#   numbers resolve against the project's GitHub origin. A live task or open PR
+#   claiming the same issue refuses before worktree or endpoint creation.
+#   GitHub unreachability reports a skipped remote check and still enforces local
+#   claims. Scouts, secondmates, and relaunches refuse --issue.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
@@ -235,7 +240,7 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
+#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo/--issue
 #   applies to every pair. A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
@@ -558,6 +563,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-chrome-devtools-axi-lib.sh
 . "$SCRIPT_DIR/fm-chrome-devtools-axi-lib.sh"
+# shellcheck source=bin/fm-issue-guard-lib.sh
+. "$SCRIPT_DIR/fm-issue-guard-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -582,6 +589,8 @@ YOLO_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 POS=()
+ISSUES_ARGS=()
+ISSUES=
 want_value=
 for a in "$@"; do
   if [ -n "$want_value" ]; then
@@ -619,6 +628,9 @@ for a in "$@"; do
     traceparent)
       TRACEPARENT_ARG=$a
       TRACEPARENT_SET=1
+      ;;
+    issue)
+      ISSUES_ARGS+=("$a")
       ;;
     *)
       echo "error: internal parser state for --$want_value" >&2
@@ -673,6 +685,8 @@ for a in "$@"; do
     TRACEPARENT_ARG=${a#--traceparent=}
     TRACEPARENT_SET=1
     ;;
+  --issue) want_value=issue ;;
+  --issue=*) ISSUES_ARGS+=("${a#--issue=}") ;;
   *) POS+=("$a") ;;
   esac
 done
@@ -708,6 +722,25 @@ done
   echo "error: --traceparent requires a non-empty value" >&2
   exit 1
 }
+if [ "${#ISSUES_ARGS[@]}" -gt 0 ]; then
+  raw_issues=("${ISSUES_ARGS[@]}")
+  ISSUES_ARGS=()
+  for raw in "${raw_issues[@]}"; do
+    IFS=',' read -r -a split_issues <<< "$raw"
+    for split in "${split_issues[@]}"; do
+      [ -n "$split" ] || {
+        echo "error: --issue contains an empty ref (use owner/repo#123, #123, or 123)" >&2
+        exit 1
+      }
+      ISSUES_ARGS+=("$split")
+    done
+  done
+  unset raw_issues split_issues
+  [ "$KIND" = ship ] || {
+    echo "error: --issue applies only to ship spawns; a scout delivers a report and a secondmate has no project PR surface" >&2
+    exit 1
+  }
+fi
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -748,6 +781,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
   [ "$YOLO_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2
+    exit 1
+  }
+  [ "${#ISSUES_ARGS[@]}" -eq 0 ] || {
+    echo "error: --relaunch keeps the task's recorded issues; --issue cannot add a new claim" >&2
     exit 1
   }
 else
@@ -1354,6 +1391,9 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  for raw_issue in "${ISSUES_ARGS[@]+${ISSUES_ARGS[@]}}"; do
+    shared_args+=(--issue "$raw_issue")
+  done
   for pair in "${POS[@]}"; do
     case "$pair" in
     *=*) : ;;
@@ -2837,6 +2877,11 @@ if [ "$KIND" = ship ]; then
     [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
     echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
   fi
+fi
+
+if [ "$KIND" = ship ] && [ "${#ISSUES_ARGS[@]}" -gt 0 ]; then
+  fm_issue_guard_preflight "$STATE" "$PROJ_ABS" "$ID" "${ISSUES_ARGS[@]}" || exit 1
+  ISSUES=$FM_ISSUE_GUARD_NORMALIZED
 fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
@@ -4506,6 +4551,7 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  [ -z "$ISSUES" ] || echo "issues=$ISSUES"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.

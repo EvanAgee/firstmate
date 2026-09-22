@@ -5,7 +5,11 @@
 # live only in a private sidecar and are never interpolated into shell source.
 # A GitHub pull request URL and a GitLab merge request URL are both accepted,
 # including a merge request on a self-hosted GitLab instance.
-# Usage: fm-pr-check.sh <task-id> <pr-url>
+# A successful GitHub arm adds the agent-pr-watched label, creating it when needed.
+# Label failures warn without disabling the merge watch.
+# --only-if-unarmed preserves a different recorded PR, treats an exact valid
+# watch as a no-op, and repairs invalid poll files for the same PR.
+# Usage: fm-pr-check.sh [--only-if-unarmed] <task-id> <pr-url>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +24,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 
+ONLY_IF_UNARMED=0
+if [ "${1:-}" = --only-if-unarmed ]; then
+  ONLY_IF_UNARMED=1
+  shift
+fi
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
   exit 2
@@ -107,6 +116,19 @@ fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
 [ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
   || { echo "error: task metadata is unavailable" >&2; exit 1; }
+if [ "$ONLY_IF_UNARMED" -eq 1 ] && grep -q '^pr=' "$META"; then
+  if ! fm_pr_metadata_identity_parse "$META" \
+    || [ "$FM_PR_META_PROVIDER" != "$PROVIDER" ] \
+    || [ "$FM_PR_META_URL" != "$URL" ] \
+    || [ "$FM_PR_META_HOST" != "$HOST" ] \
+    || [ "$FM_PR_META_PATH" != "$PROJECT_PATH" ] \
+    || [ "$FM_PR_META_NUMBER" != "$NUMBER" ]; then
+    exit 0
+  fi
+  if fm_pr_poll_artifacts_valid "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh"; then
+    exit 0
+  fi
+fi
 META_DEVICE=$(fm_pr_file_device "$META") || exit 1
 STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
 [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
@@ -147,6 +169,26 @@ else
   PR_POLL_PUBLISH_LOCK_HELD=0
   echo "error: could not publish PR poll" >&2
   exit 1
+fi
+
+fm_pr_check_apply_watch_label() {
+  local repo="$PROJECT_PATH" number="$NUMBER"
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "warning: could not add agent-pr-watched to ${repo}#${number}" >&2
+    return 0
+  fi
+  if gh pr edit "$number" --repo "$repo" --add-label agent-pr-watched >/dev/null 2>&1; then
+    return 0
+  fi
+  gh label create agent-pr-watched --repo "$repo" --color 5319e7 \
+    --description "An agent merge watch is armed on this PR" >/dev/null 2>&1 || true
+  if gh pr edit "$number" --repo "$repo" --add-label agent-pr-watched >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "warning: could not add agent-pr-watched to ${repo}#${number}" >&2
+}
+if [ "$PROVIDER" = github ]; then
+  fm_pr_check_apply_watch_label
 fi
 # The contribution observer uses the same authenticated check mechanism and
 # owns verdict freshness, required actors and external feedback separately from

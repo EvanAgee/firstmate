@@ -341,6 +341,36 @@ fm_pr_metadata_identity_parse() {
   [ -n "$FM_PR_META_URL" ]
 }
 
+# Print the one canonical PR or MR URL announced in a free-text line.
+# No URL or more than one distinct URL is not an announcement.
+fm_pr_announced_url() {  # <line>
+  local line=$1 candidate remainder tail char urls='' count=0 url=''
+  remainder=$line
+  while [[ "$remainder" == *https://* ]]; do
+    tail=${remainder#*https://}
+    candidate=https://
+    while [ -n "$tail" ]; do
+      char=${tail:0:1}
+      case "$char" in
+        [A-Za-z0-9._/-])
+          candidate=$candidate$char
+          tail=${tail:1}
+          ;;
+        *) break ;;
+      esac
+    done
+    remainder=$tail
+    fm_pr_url_parse "$candidate" || continue
+    if ! printf '%s\n' "$urls" | grep -Fqx "$FM_PR_URL"; then
+      urls="${urls}${FM_PR_URL}"$'\n'
+      count=$((count + 1))
+      url=$FM_PR_URL
+    fi
+  done
+  [ "$count" -eq 1 ] || return 1
+  printf '%s' "$url"
+}
+
 # Sidecar layout: provider, url, host, path, number, one per line. A sidecar
 # written before the provider tag existed has a URL on its first line and one
 # line fewer, so it fails both the field count and the provider comparison and

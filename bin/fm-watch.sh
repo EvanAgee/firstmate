@@ -231,6 +231,9 @@ HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
+AUTOARM_ANNOUNCE_TIMEOUT=${FM_PR_AUTOARM_ANNOUNCE_TIMEOUT:-3}
+case "$AUTOARM_ANNOUNCE_TIMEOUT" in ''|*[!0-9]*|0) AUTOARM_ANNOUNCE_TIMEOUT=3 ;; esac
+[ "$AUTOARM_ANNOUNCE_TIMEOUT" -le 5 ] || AUTOARM_ANNOUNCE_TIMEOUT=5
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
   ''|*[!0-9]*|0) HOME_SUMMARY_INTERVAL=300 ;;
@@ -1729,6 +1732,55 @@ scan_signals() {
   return 0
 }
 
+autoarm_status_cursor_write() {  # <cursor> <identity> <offset>
+  local cursor=$1 identity=$2 offset=$3 tmp
+  tmp=$(umask 077; mktemp "$STATE/.pr-autoarm-status.XXXXXX") || return 1
+  if ! printf '%s %s\n' "$identity" "$offset" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! mv -f -- "$tmp" "$cursor"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+autoarm_status_announcements() {  # <status-file> ...
+  local file task size identity cursor cursor_identity offset extra line line_bytes deadline remaining
+  deadline=$((SECONDS + AUTOARM_ANNOUNCE_TIMEOUT))
+  for file in "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || break
+    case "$file" in "$STATE"/*.status) ;; *) continue ;; esac
+    task=$(basename "$file" .status)
+    fm_pr_task_id_valid "$task" || continue
+    size=$(_fm_status_file_size "$file") || continue
+    size=${size//[[:space:]]/}
+    case "$size" in ''|*[!0-9]*) continue ;; esac
+    identity=$(_fm_open_decisions_file_ident "$file") || continue
+    [ -n "$identity" ] || continue
+    identity=$(printf '%s' "$identity" | LC_ALL=C od -An -v -tx1 | tr -d ' \n')
+    cursor="$STATE/.pr-autoarm-status-$task.cursor"
+    cursor_identity=
+    offset=0
+    extra=
+    if [ -f "$cursor" ] && [ ! -L "$cursor" ]; then
+      read -r cursor_identity offset extra < "$cursor" || true
+      case "$offset" in ''|*[!0-9]*) offset=0 ;; esac
+      [ -z "$extra" ] && [ "$cursor_identity" = "$identity" ] && [ "$offset" -le "$size" ] \
+        || offset=0
+    fi
+    LC_ALL=C tail -c "+$((offset + 1))" "$file" 2>/dev/null | while IFS= read -r line; do
+      remaining=$((deadline - SECONDS))
+      [ "$remaining" -gt 0 ] || break
+      if ! (FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CHECK_RUN_TIMEOUT="$remaining" \
+        run_check_process "$SCRIPT_DIR/fm-pr-autoarm.sh" announce "$task" "$line" \
+        >/dev/null 2>&1); then
+        break
+      fi
+      line_bytes=$(LC_ALL=C printf '%s' "$line" | wc -c | tr -d ' ')
+      offset=$((offset + line_bytes + 1))
+      autoarm_status_cursor_write "$cursor" "$identity" "$offset" || break
+    done
+  done
+}
+
 # Deliver a durably queued process-event result to firstmate. Publication is
 # owned by bin/fm-procevent.sh - by the runner at capture time and by reconcile's
 # re-announcement - so this decides only whether a queued check record has been
@@ -1798,15 +1850,15 @@ procevent_surface_queued() {
 }
 
 run_check_process() {
-  local c=$1
+  local c=$1 check_timeout=${FM_CHECK_RUN_TIMEOUT:-$CHECK_TIMEOUT}
   shift
   if [ "${FM_CHECK_FORCE_FALLBACK:-0}" != 1 ] && command -v timeout >/dev/null 2>&1; then
-    exec timeout "$CHECK_TIMEOUT" bash "$c" "$@"
+    exec timeout "$check_timeout" bash "$c" "$@"
   elif [ "${FM_CHECK_FORCE_FALLBACK:-0}" != 1 ] && command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout "$CHECK_TIMEOUT" bash "$c" "$@"
+    exec gtimeout "$check_timeout" bash "$c" "$@"
   else
     # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$CHECK_TIMEOUT" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
+    exec perl -e 'my $t = shift; my $owned = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0) unless $owned; exec @ARGV } my $group = $owned ? getpgrp(0) : $pid; my $stop = sub { $SIG{HUP} = $SIG{INT} = $SIG{TERM} = "IGNORE"; kill "TERM", -$group; select undef, undef, undef, 0.2; kill "KILL", -$group; waitpid $pid, 0; exit 124 }; local $SIG{ALRM} = $stop; local $SIG{HUP} = $stop; local $SIG{INT} = $stop; local $SIG{TERM} = $stop; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$check_timeout" "${FM_CHECK_OWNED_GROUP:-0}" bash "$c" "$@"
   fi
 }
 
@@ -1818,6 +1870,7 @@ FM_ACTIVE_CHECK_PID=
 FM_ACTIVE_CHECK_PGID=
 FM_CHECK_OUTPUT=
 FM_CHECK_RESULT=
+FM_CHECK_STATUS=
 FM_CHECK_SIGNAL_PENDING=
 
 fm_check_output_cleanup() {
@@ -1854,12 +1907,17 @@ run_check_capture() {
   local pgid
   fm_check_output_cleanup
   FM_CHECK_RESULT=
+  FM_CHECK_STATUS=
   FM_CHECK_OUTPUT=$(mktemp "$STATE/.fm-check-output.XXXXXX") || return 1
   chmod 0600 "$FM_CHECK_OUTPUT" || { fm_check_output_cleanup; return 1; }
   FM_CHECK_SIGNAL_PENDING=
   trap 'FM_CHECK_SIGNAL_PENDING=1' HUP INT TERM
   set -m
-  ( FM_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  if [ "${FM_CHECK_KEEP_STDERR:-0}" = 1 ]; then
+    ( FM_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$FM_CHECK_OUTPUT" 2>&1 &
+  else
+    ( FM_CHECK_OWNED_GROUP=1 run_check_process "$@" ) > "$FM_CHECK_OUTPUT" 2>/dev/null &
+  fi
   FM_ACTIVE_CHECK_PID=$!
   FM_ACTIVE_CHECK_PGID=$FM_ACTIVE_CHECK_PID
   set +m
@@ -1871,7 +1929,8 @@ run_check_capture() {
     return 1
   fi
   [ -z "$FM_CHECK_SIGNAL_PENDING" ] || exit 1
-  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
+  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null
+  FM_CHECK_STATUS=$?
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || return 1
   FM_CHECK_RESULT=$(cat "$FM_CHECK_OUTPUT" 2>/dev/null || true)
@@ -2228,6 +2287,7 @@ FM_WATCH_DELIVERY_IDENTITY=$(fm_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
+[ -e "$STATE/.last-pr-autoarm" ] || touch "$STATE/.last-pr-autoarm"
 
 # A merged poll may have queued its terminal wake and then lost the process
 # between receipt publication and fixed-path removal.
@@ -2367,6 +2427,16 @@ while :; do
   # never run until the fleet went quiet. Checks are due only every
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
+    if [ -x "$SCRIPT_DIR/fm-github-health.sh" ]; then
+      gh_health_change=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        "$SCRIPT_DIR/fm-github-health.sh" transition 2>/dev/null || echo "")
+      if [ -n "$gh_health_change" ]; then
+        reason="check: github-health: $gh_health_change"
+        fm_wake_append check github-health "$reason" || exit 1
+        touch "$STATE/.last-check"
+        wake "$reason"
+      fi
+    fi
     rejected_checks=
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
@@ -2402,6 +2472,11 @@ while :; do
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
             "$provider" "$url" "$host" "$path" "$number" || exit 1
           out=$FM_CHECK_RESULT
+          if [ -z "$out" ] && [ "$provider" = github ]; then
+            run_check_capture "$SCRIPT_DIR/fm-pr-review-chase.sh" --validated \
+              "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" || exit 1
+            out=$FM_CHECK_RESULT
+          fi
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
           run_check_capture "$custom_snapshot" || exit 1
@@ -2455,6 +2530,32 @@ EOF
             triage_log "published merge outcome for $id but could not retire its authority record"
             exit 1
           fi
+          issue_close_rc=0
+          if FM_CHECK_KEEP_STDERR=1 run_check_capture \
+            "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" "$url"; then
+            issue_close_out=$FM_CHECK_RESULT
+            issue_close_rc=$FM_CHECK_STATUS
+          else
+            issue_close_out="the issue close could not be started under supervision"
+            issue_close_rc=1
+          fi
+          while IFS= read -r issue_close_line; do
+            case "$issue_close_line" in
+              'closed: '*|'already-closed: '*)
+                triage_log "$id issue close after $url merged: $issue_close_line"
+                ;;
+            esac
+          done <<EOF
+$issue_close_out
+EOF
+          if [ "$issue_close_rc" -ne 0 ]; then
+            case "$issue_close_rc" in
+              124|137|143) issue_close_out="the issue close exceeded its ${CHECK_TIMEOUT}s bound" ;;
+              *) [ -n "$issue_close_out" ] \
+                || issue_close_out="the issue close failed with status $issue_close_rc" ;;
+            esac
+            triage_log "linked issues were not all closed for $id after $url merged: $(printf '%s' "$issue_close_out" | tr '\n' ' ')"
+          fi
           retire_merged_pr_poll "$id"
           pr_poll_control_release || exit 1
           touch "$STATE/.last-check"
@@ -2505,6 +2606,8 @@ EOF
     done <<EOF
 $pending
 EOF
+    # shellcheck disable=SC2086 # Paths derive from validated task ids.
+    autoarm_status_announcements $files
     reason="signal:$files"
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
@@ -2829,6 +2932,20 @@ EOF
       fi
     fi
   done < <(recorded_windows)
+
+  autoarm_status_announcements "$STATE"/*.status
+
+  if [ "$(age_of "$STATE/.last-pr-autoarm")" -ge "$CHECK_INTERVAL" ] \
+    && [ -x "$SCRIPT_DIR/fm-pr-autoarm.sh" ]; then
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      run_check_capture "$SCRIPT_DIR/fm-pr-autoarm.sh" sweep || exit 1
+    out=$FM_CHECK_RESULT
+    touch "$STATE/.last-pr-autoarm"
+    if [ -n "$out" ]; then
+      reason="check: pr-autoarm: $(printf '%s' "$out" | tr '\n' ';')"
+      wake "$reason"
+    fi
+  fi
 
   # Heartbeat: the watcher runs a cheap fleet-scan at a regular cadence no matter
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive

@@ -50,6 +50,7 @@ make_case() {
     'merged=true' \
     'queued=false' \
     'base=main' > "$case_dir/github-outcome"
+  printf '%s\n' 'total=0' 'unresolved=0' > "$case_dir/github-threads"
   : > "$case_dir/github-rules"
   : > "$case_dir/gh.log"
   # No worktree/project on disk; fm-pr-check.sh tolerates a worktree it cannot
@@ -130,7 +131,8 @@ add_gh_mocks() {
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 case "${1:-} ${2:-}" in
   "pr view")
-    [ "$#" -eq 5 ] && [ "${4:-}" = --repo ] || exit 2
+    [ "$#" -eq 5 ] || exit 2
+    case "${4:-}" in -R|--repo) ;; *) exit 2 ;; esac
     printf 'pull_request:\n  number: %s\n  state: %s\n' "$3" "${FM_TEST_GH_MERGE_STATE:-merged}"
     ;;
 esac
@@ -185,7 +187,18 @@ case "${1:-} ${2:-}" in
     fi
     exit "$merge_rc"
     ;;
+  "issue view")
+    [ "${FM_TEST_ISSUE_VIEW_RC:-0}" -eq 0 ] || exit "$FM_TEST_ISSUE_VIEW_RC"
+    printf '{"labels":[{"name":"agent-in-progress"}],"state":"%s"}\n' \
+      "${FM_TEST_ISSUE_STATE:-CLOSED}"
+    exit 0
+    ;;
   "api graphql")
+    if [[ "$*" == *reviewThreads* ]]; then
+      [ ! -f "${FM_TEST_GH_THREADS_FAIL:-}" ] || exit 1
+      cat "$FM_TEST_GH_THREADS"
+      exit 0
+    fi
     if [ -f "${FM_TEST_GH_GRAPHQL_FAIL:-}" ]; then
       echo 'error: could not reach the GitHub API' >&2
       exit 1
@@ -388,6 +401,8 @@ run_pr_merge() {
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   FM_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
   FM_TEST_GH_GRAPHQL_FAIL="$case_dir/github-graphql-fail" \
+  FM_TEST_GH_THREADS="$case_dir/github-threads" \
+  FM_TEST_GH_THREADS_FAIL="$case_dir/github-threads-fail" \
   FM_TEST_GH_RULES_FAIL="$case_dir/github-rules-fail" \
   FM_TEST_GH_RULES_FAIL_BODY="$case_dir/github-rules-fail-body" \
   FM_TEST_META_AT_MERGE="$case_dir/meta-at-merge" \
@@ -397,6 +412,8 @@ run_pr_merge() {
   FM_TEST_AWAY_MUTATE_OUT="$case_dir/away-mutate-output" \
   FM_TEST_AWAY_MUTATE_RC="$case_dir/away-mutate-rc" \
   FM_TEST_AWAY_WORDS_AT_MERGE="$case_dir/away-words-at-merge" \
+  FM_TEST_ISSUE_STATE="${FM_TEST_ISSUE_STATE:-CLOSED}" \
+  FM_TEST_ISSUE_VIEW_RC="${FM_TEST_ISSUE_VIEW_RC:-0}" \
   FM_TEST_REAL_MV="$REAL_MV" \
   FM_TEST_GLAB_LOG="$case_dir/glab.log" \
   FM_TEST_GLAB_JSON="$case_dir/mr.json" \
@@ -3176,6 +3193,170 @@ test_allow_red_refused_on_gitlab() {
   pass "fm-pr-merge refuses --allow-red on GitLab"
 }
 
+test_unresolved_review_threads_refuse() {
+  local case_dir rc
+  case_dir=$(make_case unresolved-review-threads)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  printf '%s\n' 'total=4' 'unresolved=2' > "$case_dir/github-threads"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/81 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "unresolved-review-threads: merge must refuse"
+  assert_grep '2 unresolved review thread(s) remain' "$case_dir/stderr" \
+    "unresolved-review-threads: refusal omitted the count"
+  assert_no_grep '^pr merge ' "$case_dir/gh.log" \
+    "unresolved-review-threads: merge reached the forge"
+  pass "fm-pr-merge refuses unresolved review threads"
+}
+
+test_review_thread_query_fails_closed() {
+  local case_dir rc
+  case_dir=$(make_case unreadable-review-threads)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : > "$case_dir/github-threads-fail"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/82 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "unreadable-review-threads: merge must fail closed"
+  assert_grep 'review threads could not be read' "$case_dir/stderr" \
+    "unreadable-review-threads: refusal omitted the failed read"
+  assert_no_grep '^pr merge ' "$case_dir/gh.log" \
+    "unreadable-review-threads: merge reached the forge"
+  pass "fm-pr-merge fails closed when review threads cannot be read"
+}
+
+test_malformed_review_thread_reply_fails_closed() {
+  local case_dir rc
+  case_dir=$(make_case malformed-review-threads)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  printf '%s\n' 'total=many' 'unresolved=none' > "$case_dir/github-threads"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/82 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "malformed-review-threads: merge must fail closed"
+  assert_grep 'review threads could not be read' "$case_dir/stderr" \
+    "malformed-review-threads: refusal omitted the malformed reply"
+  assert_no_grep '^pr merge ' "$case_dir/gh.log" \
+    "malformed-review-threads: merge reached the forge"
+  pass "fm-pr-merge fails closed on malformed review thread data"
+}
+
+test_review_thread_page_bound_refuses() {
+  local case_dir rc
+  case_dir=$(make_case review-thread-page-bound)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" cccccccccccccccccccccccccccccccccccccccc
+  printf '%s\n' 'total=101' 'unresolved=0' > "$case_dir/github-threads"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/83 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "review-thread-page-bound: merge must refuse"
+  assert_grep 'exceeds the 100-thread read bound' "$case_dir/stderr" \
+    "review-thread-page-bound: refusal omitted the bound"
+  pass "fm-pr-merge refuses review thread counts beyond its bounded read"
+}
+
+test_attended_review_thread_bypass_merges_and_logs() {
+  local case_dir
+  case_dir=$(make_case attended-review-thread-bypass)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" dddddddddddddddddddddddddddddddddddddddd
+  printf '%s\n' 'total=5' 'unresolved=5' > "$case_dir/github-threads"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/84 \
+    --allow-unresolved-threads -- --merge \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "attended-review-thread-bypass: merge failed"
+  assert_grep '--allow-unresolved-threads set' "$case_dir/stderr" \
+    "attended-review-thread-bypass: bypass was not logged"
+  assert_logged_gh_merge "$case_dir" 84 example/repo --merge
+  pass "fm-pr-merge logs and applies the attended unresolved-thread bypass"
+}
+
+test_review_thread_bypass_after_separator_is_not_parsed() {
+  local case_dir rc
+  case_dir=$(make_case review-thread-bypass-after-separator)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" dddddddddddddddddddddddddddddddddddddddd
+  printf '%s\n' 'total=1' 'unresolved=1' > "$case_dir/github-threads"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/84 \
+    -- --allow-unresolved-threads > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "review-thread-bypass-after-separator: merge must refuse"
+  assert_grep '1 unresolved review thread(s) remain' "$case_dir/stderr" \
+    "review-thread-bypass-after-separator: forge argument bypassed the guard"
+  assert_no_grep '^pr merge ' "$case_dir/gh.log" \
+    "review-thread-bypass-after-separator: merge reached the forge"
+  pass "fm-pr-merge parses its review-thread bypass only before --"
+}
+
+test_review_thread_bypass_is_refused_while_away() {
+  local case_dir rc
+  case_dir=$(make_case away-review-thread-bypass)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/85 \
+    --allow-unresolved-threads > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "away-review-thread-bypass: attended bypass must refuse"
+  assert_grep '--allow-unresolved-threads is attended-only' "$case_dir/stderr" \
+    "away-review-thread-bypass: refusal omitted the posture"
+  assert_no_grep '^pr merge ' "$case_dir/gh.log" \
+    "away-review-thread-bypass: merge reached the forge"
+  pass "fm-pr-merge refuses the unresolved-thread bypass while away"
+}
+
+test_successful_merge_closes_linked_issues() {
+  local case_dir
+  case_dir=$(make_case closes-linked-issues)
+  mkdir -p "$case_dir/wt"
+  printf '%s\n' 'issues=example/repo#86' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" ffffffffffffffffffffffffffffffffffffffff
+  FM_TEST_ISSUE_STATE=OPEN \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/86 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "closes-linked-issues: merge failed"
+  assert_grep 'issue close 86 -R example/repo' "$case_dir/gh-axi.log" \
+    "closes-linked-issues: linked issue was not closed"
+  assert_grep 'closed: example/repo#86' "$case_dir/stdout" \
+    "closes-linked-issues: close receipt was not reported"
+  pass "fm-pr-merge closes linked issues after a confirmed merge"
+}
+
+test_issue_close_failure_does_not_change_merge_success() {
+  local case_dir rc
+  case_dir=$(make_case issue-close-failure)
+  mkdir -p "$case_dir/wt"
+  printf '%s\n' 'issues=example/repo#87' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" 9999999999999999999999999999999999999999
+  set +e
+  FM_TEST_ISSUE_VIEW_RC=1 \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/87 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "issue-close-failure: landed merge must stay successful"
+  assert_logged_gh_merge "$case_dir" 87 example/repo --squash
+  assert_grep 'warning: linked issues were not all closed' "$case_dir/stderr" \
+    "issue-close-failure: failure was not reported"
+  pass "fm-pr-merge reports issue-close failure without changing merge success"
+}
+
 test_gitlab_head_override_args_refuse_before_recording
 test_secondmate_merge_reports_upward_once
 test_secondmate_merge_reports_on_the_local_route
@@ -3218,3 +3399,12 @@ test_away_record_cannot_change_between_the_authority_read_and_the_merge
 test_a_record_made_unreadable_before_the_merge_refuses_it
 test_merge_refuses_when_the_away_record_cannot_be_locked
 test_allow_red_refused_on_gitlab
+test_unresolved_review_threads_refuse
+test_review_thread_query_fails_closed
+test_malformed_review_thread_reply_fails_closed
+test_review_thread_page_bound_refuses
+test_attended_review_thread_bypass_merges_and_logs
+test_review_thread_bypass_after_separator_is_not_parsed
+test_review_thread_bypass_is_refused_while_away
+test_successful_merge_closes_linked_issues
+test_issue_close_failure_does_not_change_merge_success
