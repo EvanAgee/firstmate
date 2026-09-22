@@ -11,6 +11,8 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-brief)
 BRIEF_HOME="$TMP_ROOT/home"
 mkdir -p "$BRIEF_HOME/data"
+# shellcheck disable=SC2016 # literal backticks are the brief text under test
+REVIEWER_CMD='`CLAUDE_CODE_NO_MODEL_FALLBACK=1 CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK=1 claude -p --model opus --effort xhigh --output-format json "<axis prompt>"`'
 
 test_script_parses() {
   local out rc
@@ -464,8 +466,35 @@ test_matt_flow_without_pipeline_keeps_code_review() {
       "$mode Matt-flow brief stopped before its required review"
     assert_no_grep "The no-mistakes pipeline in the Definition of done owns review" "$brief" \
       "$mode Matt-flow brief assigned review to a pipeline it does not run"
+    assert_grep "Run each of its review axes on Claude Opus 5.5 at xhigh, whatever runtime you are on, one call per axis: $REVIEWER_CMD." "$brief" \
+      "$mode Matt-flow brief did not pin its review axes to Opus 5.5 at xhigh"
+    assert_grep "Count a verdict only when that JSON's \`modelUsage\` names \`claude-opus-5-5\` and no other model." "$brief" \
+      "$mode Matt-flow brief did not require a model-identity check on the review"
+    assert_grep "If the review is refused or names another model, say so plainly in your status line and never substitute another reviewer." "$brief" \
+      "$mode Matt-flow brief did not forbid a substitute reviewer"
   done
   pass "fm-brief.sh: Matt-flow retains review when no pipeline follows"
+}
+
+# Only a worker's own review runs the pinned reviewer: the no-mistakes pipeline
+# owns review there, and ordinary ship briefs carry no self-review step.
+test_pinned_reviewer_only_where_worker_reviews() {
+  local home mode id brief
+  home="$TMP_ROOT/pinned-reviewer-home"
+  mkdir -p "$home/data"
+  id="brief-reviewer-matt-no-mistakes"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow >/dev/null 2>&1 \
+    || fail "no-mistakes Matt-flow brief failed to scaffold"
+  assert_no_grep "claude -p --model opus" "$home/data/$id/brief.md" \
+    "no-mistakes Matt-flow brief ran its own reviewer beside the pipeline"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-reviewer-plain-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode ship brief failed to scaffold"
+    assert_no_grep "claude -p --model opus" "$home/data/$id/brief.md" \
+      "$mode ordinary ship brief gained a self-review step"
+  done
+  pass "fm-brief.sh: the pinned reviewer appears only where the worker reviews"
 }
 
 test_ship_validation_runs_full_suites_on_github() {
@@ -1403,6 +1432,7 @@ test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
 test_brief_without_matt_flow_has_no_flow_section
 test_matt_flow_without_pipeline_keeps_code_review
+test_pinned_reviewer_only_where_worker_reviews
 test_ship_validation_runs_full_suites_on_github
 test_ship_modes_demand_a_walked_path_before_done
 test_ship_mode_is_required_and_closed_set

@@ -568,6 +568,9 @@ EOF
   *)
     IFS= read -r -d '' MATT_FLOW_MODE_SECTION <<'EOF' || true
 Continue from `tdd` to the installed `code-review` skill, which owns review because no pipeline follows.
+Run each of its review axes on Claude Opus 5.5 at xhigh, whatever runtime you are on, one call per axis: `CLAUDE_CODE_NO_MODEL_FALLBACK=1 CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK=1 claude -p --model opus --effort xhigh --output-format json "<axis prompt>"`.
+Count a verdict only when that JSON's `modelUsage` names `claude-opus-5-5` and no other model.
+If the review is refused or names another model, say so plainly in your status line and never substitute another reviewer.
 Leave the failing-test commit and the review notes as the phase artifacts and append one status line at every phase transition.
 EOF
     ;;
