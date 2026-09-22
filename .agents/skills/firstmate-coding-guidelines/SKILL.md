@@ -104,6 +104,12 @@ Every such check needs two tests, because they fail for different reasons:
 
 Record the dated per-harness result in `docs/verification/runtime-backends.md`, and point at the live guard as the command that refreshes it, rather than leaving a version-scoped observation to rot into a false claim.
 
+## Wording that trips the model's safeguards
+
+Ask "are there bugs in this program" rather than "does it compile without errors".
+Keep base64 blobs out of the context by writing them to a file and referencing the path.
+When a task involves a little-known language or binary format, put its documentation into the context first so the model does not probe the binary.
+
 ## Documentation change review
 
 For every changed maintained prose surface, identify its inventory audience, authoritative owner, current-behavior relevance, destination for supporting evidence, and any unique safety fact that removal could lose.

@@ -380,26 +380,29 @@ $WORKDIR_SECTION
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on and the needs-decision/blocked/paused/done/failed states. No step-by-step
    FYI progress lines; firstmate reads your pane for that.
+   A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the
+   turn after it; continue the same stage until a defined \`done:\` gate under Definition of done.
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - ONLY when you are deliberately idling on a
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset):
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
+5. Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a \`done:\`, \`failed:\`, keyed \`blocked:\`, keyed \`needs-decision:\`, or \`paused:\` line. If you notice you have written "Next, I will", that is the signal to keep going.
+6. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
    Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
    Never write a real blocker as a \`working:\` line: that hides it from firstmate while nothing is waiting on firstmate either.
-6. If a decision belongs to a human (product choices, destructive actions),
+7. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    Every \`needs-decision:\` and \`blocked:\` line MUST carry \`[key=<slug>]\`, using a short slug you choose for that question.
    An unkeyed line lands under the shared key \`default\`, so a second unkeyed decision silently overwrites the first and only the last one is ever seen.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself, reusing the exact key you opened it with, as you resume.
-7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
+8. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
-8. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
-9. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
+9. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
+10. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -541,6 +544,13 @@ MATT_FLOW_MODE_SECTION=${MATT_FLOW_MODE_SECTION%$'\n'}
 MATT_FLOW_SECTION=$'\n'"$MATT_FLOW_SECTION"$'\n'"$MATT_FLOW_MODE_SECTION"$'\n'
 fi
 
+SHIP_SCOPE_RULE=
+NEXT_SHIP_RULE=6
+if [ "$MATT_FLOW" -eq 0 ]; then
+  SHIP_SCOPE_RULE=$'\n''6. If while working or testing you find pre-existing bugs, performance concerns, or behaviors the task does not mention, do not fix, optimize, or extend them in this change unless the requested behavior cannot work without it. Report each one as a follow-up in your done line.'
+  NEXT_SHIP_RULE=7
+fi
+
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -580,29 +590,30 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
+5. Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a \`done:\`, \`failed:\`, keyed \`blocked:\`, keyed \`needs-decision:\`, or \`paused:\` line. If you notice you have written "Next, I will", that is the signal to keep going.$SHIP_SCOPE_RULE
+$NEXT_SHIP_RULE. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
    Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
    Never write a real blocker as a \`working:\` line: that hides it from firstmate while nothing is waiting on firstmate either.
-6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
+$((NEXT_SHIP_RULE + 1)). If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
    Every \`needs-decision:\` and \`blocked:\` line MUST carry \`[key=<slug>]\`, using a short slug you choose for that question.
    An unkeyed line lands under the shared key \`default\`, so a second unkeyed decision silently overwrites the first and only the last one is ever seen.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself, reusing the exact key you opened it with, as you resume.
-7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
+$((NEXT_SHIP_RULE + 2)). Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
-8. After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid.
-9. Before reporting done for any PR with user-visible UI changes, upload viewport screenshots to Cloudflare and embed the returned public URLs in the PR body by running, from inside this task worktree, \`node ~/Sites/agent-workflow-kit/scripts/upload-artifact.mjs --ref pr-<PR#> --pr <PR#> <screenshot-file>...\` (credentials live once per machine at \`~/.claude/cloudflare-r2.env\`).
+$((NEXT_SHIP_RULE + 3)). After CI is green and before reporting any PR done, check its review comments and resolve every actionable review-bot finding (including CodeRabbit and Copilot) and human review thread by fixing it or replying with a concrete reason it is not valid.
+$((NEXT_SHIP_RULE + 4)). Before reporting done for any PR with user-visible UI changes, upload viewport screenshots to Cloudflare and embed the returned public URLs in the PR body by running, from inside this task worktree, \`node ~/Sites/agent-workflow-kit/scripts/upload-artifact.mjs --ref pr-<PR#> --pr <PR#> <screenshot-file>...\` (credentials live once per machine at \`~/.claude/cloudflare-r2.env\`).
    The tool uploads each file, prints ready-to-paste markdown, writes the links into the PR body, and refuses a desktop or full-screen capture, so pass only viewport screenshots from your own lane's browser.
    Committed repo paths (for example \`docs/reference/151/foo.png\`) and local file paths do NOT render in a private-repo PR and do NOT count.
    The \`pr-evidence\` check only confirms that the PR body contains Markdown image syntax with an HTTPS URL; it does not fetch or inspect the image, so open the PR page and verify every image displays before reporting done instead of trusting the upload command's output.
    After embedding the URLs, push a commit (an empty one is fine) so push-triggered checks re-run against the current head; editing the PR body alone does not re-run them.
-10. Run \`npx unslop\` on every changed file and fix all findings before any PR.
-11. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
-12. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
+$((NEXT_SHIP_RULE + 5)). Run \`npx unslop\` on every changed file and fix all findings before any PR.
+$((NEXT_SHIP_RULE + 6)). Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
+$((NEXT_SHIP_RULE + 7)). Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.

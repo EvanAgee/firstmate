@@ -235,6 +235,53 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+# shellcheck disable=SC2016 # Literal backticks must reach the generated brief.
+TURN_COMPLETION_RULE='Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a `done:`, `failed:`, keyed `blocked:`, keyed `needs-decision:`, or `paused:` line. If you notice you have written "Next, I will", that is the signal to keep going.'
+# shellcheck disable=SC2016 # Literal wording is the scaffold contract.
+UNRELATED_FINDINGS_RULE='If while working or testing you find pre-existing bugs, performance concerns, or behaviors the task does not mention, do not fix, optimize, or extend them in this change unless the requested behavior cannot work without it. Report each one as a follow-up in your done line.'
+
+test_worker_turn_and_scope_rules() {
+  local home brief
+  home="$TMP_ROOT/worker-turn-rules-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-turn-ship some-proj --mode local-only >/dev/null 2>&1 \
+    || fail "ordinary ship brief failed to scaffold"
+  brief="$home/data/brief-turn-ship/brief.md"
+  assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
+    "ordinary ship brief lost the nonterminal working line"
+  grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
+    || fail "ordinary ship brief missing the numbered turn-completion rule"
+  grep -Fx "6. $UNRELATED_FINDINGS_RULE" "$brief" >/dev/null \
+    || fail "ordinary ship brief missing the numbered unrelated-findings rule"
+  assert_grep "7. If you hit the same obstacle twice" "$brief" \
+    "ordinary ship brief did not renumber later rules"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-turn-matt some-proj --mode local-only --matt-flow >/dev/null 2>&1 \
+    || fail "Matt-flow ship brief failed to scaffold"
+  brief="$home/data/brief-turn-matt/brief.md"
+  grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
+    || fail "Matt-flow ship brief missing the numbered turn-completion rule"
+  assert_no_grep "$UNRELATED_FINDINGS_RULE" "$brief" \
+    "Matt-flow ship brief gained the ordinary unrelated-findings rule"
+  assert_grep "6. If you hit the same obstacle twice" "$brief" \
+    "Matt-flow ship brief did not renumber later rules"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-turn-scout some-proj --scout >/dev/null 2>&1 \
+    || fail "scout brief failed to scaffold"
+  brief="$home/data/brief-turn-scout/brief.md"
+  assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
+    "scout brief missing the nonterminal working line"
+  grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
+    || fail "scout brief missing the numbered turn-completion rule"
+  assert_no_grep "$UNRELATED_FINDINGS_RULE" "$brief" \
+    "scout brief gained the ship-only unrelated-findings rule"
+  assert_grep "6. If you hit the same obstacle twice" "$brief" \
+    "scout brief did not renumber later rules"
+
+  pass "fm-brief.sh: worker turns finish the work and ordinary ships defer unrelated findings"
+}
+
 # The worker that opens a PR owns its review feedback until the task lands,
 # including feedback that arrives AFTER the done report (a late review-bot pass,
 # a human thread, a requested change). Both PR-producing modes share the watch
@@ -1228,6 +1275,7 @@ test_no_heredoc_in_command_substitution
 test_stock_bash_generates_worker_brief
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_worker_turn_and_scope_rules
 test_pr_producing_modes_own_feedback_until_landing
 test_matt_flow_is_explicit_and_thin
 test_brief_without_matt_flow_has_no_flow_section

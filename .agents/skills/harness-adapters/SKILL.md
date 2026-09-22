@@ -129,8 +129,8 @@ Do not make shell scripts parse or match the human `when`, `why`, or `note` fiel
 Effort precedence is an explicit per-task captain instruction first, then any applicable standing dispatch profile or secondmate pin, then the generic fallback below.
 Never replace an effort value supplied by either higher-precedence source.
 Use the fallback only when neither the captain nor applicable standing configuration specifies effort.
-Use `low` for well-understood work with an explicit bounded path and `xhigh` for ambiguous investigation or design.
-Choose intermediate levels proportionally as complexity, uncertainty, blast radius, or open-ended reasoning increases.
+Use `high` as the floor for every crewmate and scout, and `xhigh` for ambiguous investigation or design.
+Never select `low` or `medium` from this fallback: on Fable 5.1 they fail often enough that the redo costs more than one run at high, and a simple task on high does not spend more than it needs.
 When a verified adapter lacks `xhigh`, cap the choice at its highest supported non-`max` level rather than omitting the intended effort silently.
 Never select `max` from this fallback; use it only when the captain has explicitly expressed that per-task or standing preference.
 

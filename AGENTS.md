@@ -212,7 +212,7 @@ Routing precedence is an explicit captain per-task override recorded by `fm-spaw
 `fm-control.sh relaunch` runs the same automatic admission around an authorized relaunch's resolved profile before stopping the live agent, unless an explicit `--harness` is passed.
 Each rule's `use` array is a pool: every member holds that category's quality floor and is good enough for the work, so new tasks spread evenly across the pool rather than piling onto whichever member comes first.
 Load `quota-array-dispatch` before naming a crewmate or scout class at intake.
-The generic effort fallback and its precedence are owned by `harness-adapters`: explicit captain and standing configured effort win; otherwise use low for well-understood explicit work, xhigh for ambiguous investigation or design, intermediate levels proportionally, and never max without explicit captain preference.
+The generic effort fallback and its precedence are owned by `harness-adapters`: explicit captain and standing configured effort win; otherwise use high as the floor for every crewmate and scout, use xhigh for ambiguous investigation or design, never select low or medium from this fallback, and never select max without explicit captain preference.
 Do not add model-specific versions of that policy.
 
 `secondmate-provisioning` owns secondmate harness pins and inherited local material, while `harness-adapters` owns the harness consequences.
