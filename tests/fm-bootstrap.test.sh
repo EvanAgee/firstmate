@@ -823,7 +823,7 @@ make_routine_bootstrap_fixture() {
   fm_git_identity
   mkdir -p "$home/config" "$home/state"
   printf '%s\n' codex > "$home/config/crew-harness"
-  printf '%s\n' '{"rules":[{"when":"normal work","use":{"harness":"codex"}}],"default":{"harness":"claude","effort":"low"}}' \
+  printf '%s\n' '{"rules":[{"class":"builder","when":"normal work","use":{"harness":"codex"}}],"default":{"harness":"claude","effort":"low"}}' \
     > "$home/config/crew-dispatch.json"
   git init -q -b main "$root"
   {
@@ -1090,7 +1090,7 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   case_dir="$TMP_ROOT/dispatch-active"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf '%s\n' '{"rules":[{"when":"fresh news","use":{"harness":"grok"},"why":"current context"},{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]},{"when":"legacy feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"quota-balanced"}],"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},{"harness":"grok","model":"grok-4.5","effort":"high"}]}' > "$case_dir/home/config/crew-dispatch.json"
+  printf '%s\n' '{"rules":[{"class":"researcher","when":"fresh news","use":{"harness":"grok"},"why":"current context"},{"class":"builder","when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]},{"class":"tester","when":"legacy feature","use":[{"harness":"claude"},{"harness":"codex"}]}],"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5","effort":"high"},{"harness":"grok","model":"grok-4.5","effort":"high"}]}' > "$case_dir/home/config/crew-dispatch.json"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
 
@@ -1101,7 +1101,7 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_BOOTSTRAP_VERBOSE_FACTS=1 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
 
-  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch rule: fresh news -> grok\nBOOTSTRAP_INFO: crew dispatch rule: big feature -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch rule: legacy feature -> quota-balanced[claude, codex]\nBOOTSTRAP_INFO: crew dispatch default: quota-balanced[pi/anthropic/claude-sonnet-5/high, grok/grok-4.5/high]'
+  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch class: researcher -> grok\nBOOTSTRAP_INFO: crew dispatch class: builder -> round-robin[claude/claude-sonnet-5/high, codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch class: tester -> round-robin[claude, codex]\nBOOTSTRAP_INFO: crew dispatch default: round-robin[pi/anthropic/claude-sonnet-5/high, grok/grok-4.5/high]'
   [ "$out" = "$expect" ] || fail "active dispatch verbose info block mismatch"$'\n'"expected: $expect"$'\n'"actual:   $out"
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
@@ -1130,109 +1130,85 @@ test_crew_dispatch_validation() {
     esac
   done <<'ROWS'
 malformed dispatch config is flagged^{"rules":[^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON
-unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: spaceship
-codex Luna max effort is accepted^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5.6-luna","effort":"max"}}]}^empty^
-codex unsupported model max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
-unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:max
-unsupported grok xhigh effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:xhigh
-native pi ultra is accepted^{"rules":[],"default":{"harness":"pi","model":"codex-native/gpt-6-astra","effort":"ultra","provider":"codex"}}^empty^
-native signed pi ultra is accepted^{"rules":[{"when":"native reasoning","use":{"harness":"pi-signed","model":"codex-native/gpt-6-astra","effort":"ultra","provider":"codex"}}]}^empty^
-ordinary pi ultra is refused^{"default":{"harness":"pi","model":"openai-codex/gpt-6-astra","effort":"ultra","provider":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
-missing native model ultra is refused^{"default":{"harness":"pi","effort":"ultra","provider":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
-empty native model ultra is refused^{"default":{"harness":"pi","model":"codex-native/","effort":"ultra","provider":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
-codex harness ultra is refused^{"default":{"harness":"codex","model":"codex-native/gpt-6-astra","effort":"ultra"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:ultra
-pi max effort is accepted^{"rules":[{"when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max","provider":"codex"}}]}^empty^
-pi-signed max effort is accepted^{"rules":[{"when":"signed coding","use":{"harness":"pi-signed","model":"openai-codex/gpt-5.6-sol","effort":"max","provider":"codex"}}]}^empty^
-muse shared efforts are accepted^{"rules":[{"when":"muse low","use":{"harness":"muse","effort":"low"}},{"when":"muse medium","use":{"harness":"muse","effort":"medium"}},{"when":"muse high","use":{"harness":"muse","effort":"high"}},{"when":"muse xhigh","use":{"harness":"muse","effort":"xhigh"}},{"when":"muse max","use":{"harness":"muse","effort":"max"}}]}^empty^
-unsupported muse ultra effort is flagged^{"rules":[{"when":"muse ultra","use":{"harness":"muse","effort":"ultra"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: muse:ultra
-agy model profile is accepted^{"rules":[{"when":"agy work","use":{"harness":"agy","model":"gemini-3.8-flash-high"}}]}^empty^
-gemini profile with explicit provider is accepted^{"rules":[{"when":"gemini work","use":{"harness":"gemini","model":"gemini-3.8-flash-high","provider":"google"}}]}^empty^
-agy low medium high efforts are accepted^{"rules":[{"when":"agy low","use":{"harness":"agy","effort":"low"}},{"when":"agy medium","use":{"harness":"agy","effort":"medium"}},{"when":"agy high","use":{"harness":"agy","effort":"high"}}]}^empty^
-unsupported agy xhigh effort is flagged^{"rules":[{"when":"agy xhigh","use":{"harness":"agy","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:xhigh
-unsupported agy max effort is flagged^{"rules":[{"when":"agy max","use":{"harness":"agy","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:max
-unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high","provider":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
-kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
-unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high
-cursor model profile is accepted^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high"}}]}^empty^
-unsupported cursor effort is flagged^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: cursor:high
-array use with quota-balanced is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^empty^
-array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
-one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"harness":"claude"}]}]}^empty^
+non-object dispatch config is flagged^[]^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - top-level value must be an object
+missing dispatch class is flagged^{"rules":[{"class":"","when":"builder","use":{"harness":"codex"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs non-empty class
+reserved default dispatch class is flagged^{"rules":[{"class":"__default__","when":"builder","use":{"harness":"codex"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - dispatch class __default__ is reserved for the default pool
+duplicate dispatch class is flagged^{"rules":[{"class":"builder","when":"one","use":{"harness":"codex"}},{"class":"builder","when":"two","use":{"harness":"pi"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - dispatch class must be unique: builder
+rule without human notes is accepted^{"rules":[{"class":"builder","use":{"harness":"codex"}}]}^empty^
+unverified dispatch harness is flagged^{"rules":[{"class":"anything","when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported harness 'spaceship' for class anything use profile 1; supported harnesses: claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse, rovo, omp, agy
+unsupported codex max effort is flagged^{"rules":[{"class":"big feature","when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'max' for class big feature use profile 1 harness 'codex'; supported efforts: low, medium, high, xhigh, or omit effort; max applies only to gpt-5.6-luna
+unsupported grok max effort is flagged^{"rules":[{"class":"deep current work","when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'max' for class deep current work use profile 1 harness 'grok'; supported efforts: low, medium, high, or omit effort
+unsupported grok xhigh effort is flagged^{"rules":[{"class":"deep current work","when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'xhigh' for class deep current work use profile 1 harness 'grok'; supported efforts: low, medium, high, or omit effort
+omp model profile is accepted^{"rules":[{"class":"omp coding","when":"omp coding","use":{"harness":"omp","model":"glm52-phala"}}]}^empty^
+omp records shared effort intent^{"rules":[{"class":"omp deep coding","when":"omp deep coding","use":{"harness":"omp","model":"glm52-phala","effort":"high"}}]}^empty^
+pi max effort is accepted^{"rules":[{"class":"deep coding","when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
+pi-signed max effort is accepted^{"rules":[{"class":"signed coding","when":"signed coding","use":{"harness":"pi-signed","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
+muse shared efforts are accepted^{"rules":[{"class":"muse low","when":"muse low","use":{"harness":"muse","effort":"low"}},{"class":"muse medium","when":"muse medium","use":{"harness":"muse","effort":"medium"}},{"class":"muse high","when":"muse high","use":{"harness":"muse","effort":"high"}},{"class":"muse xhigh","when":"muse xhigh","use":{"harness":"muse","effort":"xhigh"}},{"class":"muse max","when":"muse max","use":{"harness":"muse","effort":"max"}}]}^empty^
+unsupported muse ultra effort is flagged^{"rules":[{"class":"muse ultra","when":"muse ultra","use":{"harness":"muse","effort":"ultra"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'ultra' for class muse ultra use profile 1 harness 'muse'; supported efforts: low, medium, high, xhigh, max, or omit effort
+omp max effort is accepted^{"rules":[{"class":"OMP coding","when":"OMP coding","use":{"harness":"omp","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
+unsupported opencode effort is flagged^{"rules":[{"class":"opencode work","when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'high' for class opencode work use profile 1 harness 'opencode'; omit effort for this harness
+kimi model profile is accepted^{"rules":[{"class":"kimi work","when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
+unsupported kimi effort is flagged^{"rules":[{"class":"kimi work","when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'high' for class kimi work use profile 1 harness 'kimi'; omit effort for this harness
+cursor model profile is accepted^{"rules":[{"class":"cursor work","when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high"}}]}^empty^
+unsupported cursor effort is flagged^{"rules":[{"class":"cursor work","when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'high' for class cursor work use profile 1 harness 'cursor'; omit effort for this harness
+legacy select is flagged^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - select is not supported; use pin or resolver round-robin
+array use without select is accepted^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
+one-element array use is accepted^{"rules":[{"class":"focused feature","when":"focused feature","use":[{"harness":"claude"}]}]}^empty^
+pin matching a use member is accepted^{"rules":[{"class":"builder","when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"},{"harness":"grok","model":"grok-4.5","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}]}^empty^
+omitted and explicit default models match^{"rules":[{"class":"builder","use":[{"harness":"codex","enabled":false},{"harness":"codex","model":"default"}],"pin":{"harness":"codex"}}]}^empty^
+whitespace in a member model is flagged^{"rules":[{"class":"builder","use":{"harness":"codex","model":"gpt 5"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - runtime values cannot contain whitespace: use profile model="gpt 5"
+whitespace in a rule pin effort is flagged^{"rules":[{"class":"builder","use":{"harness":"codex","effort":"high"},"pin":{"harness":"codex","effort":"high effort"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - runtime values cannot contain whitespace: rule pin effort="high effort"
+whitespace in a default pin harness is flagged^{"default":{"harness":"codex"},"defaultPin":{"harness":"code x"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - runtime values cannot contain whitespace: defaultPin harness="code x"
+pin outside its use pool is flagged^{"rules":[{"class":"builder","when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"pin":{"harness":"grok","model":"grok-4.5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - pin is not a member of the use pool for builder: grok/grok-4.5/high
+switched-off pinned member is flagged^{"rules":[{"class":"builder","when":"builder","use":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":false},{"harness":"grok","model":"grok-4.5","effort":"high"}],"pin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - pin names a switched-off member for builder: codex/gpt-5.6-sol/high
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^
-provider-less multi-provider profile remains accepted without opt-in^{"rules":[{"when":"cross-provider work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5"}}],"default":{"harness":"pi","model":"anthropic/claude-sonnet-5"}}^empty^
 one-element default array is accepted^{"default":[{"harness":"codex"}]}^empty^
-empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
-array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
-array profile with malformed model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","model":5}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
-resolve fields are accepted^{"rules":[{"when":"hard design","approval":"captain","floor":{"scope":"model:fable","min_percent":20,"provider":"claude"},"use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":"codex"},{"harness":"codex","model":"gpt-5.6-sol","floor":{"scope":"all_models","min_percent":50}}]}],"default":[{"harness":"pi","model":"kimi-code/k3","provider":"kimi","floor":{"scope":"all_models","min_percent":10}}]}^empty^
-non-captain approval is flagged^{"rules":[{"when":"hard design","approval":"firstmate","use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - approval must be "captain" when present
-rule floor without provider is flagged^{"rules":[{"when":"hard design","floor":{"scope":"model:fable","min_percent":20},"use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z
-rule floor uppercase provider is flagged^{"rules":[{"when":"hard design","floor":{"scope":"model:fable","min_percent":20,"provider":"CLAUDE"},"use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z
-rule floor out of range is flagged^{"rules":[{"when":"hard design","floor":{"scope":"model:fable","min_percent":120,"provider":"claude"},"use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z
-empty profile provider is flagged^{"rules":[{"when":"images","use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":""}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
-whitespace profile provider is flagged^{"rules":[{"when":"images","use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":" claude"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
-newline profile provider is flagged^{"rules":[{"when":"images","use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":"claude\n"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
-profile floor without scope is flagged^{"rules":[{"when":"images","use":[{"harness":"codex","floor":{"min_percent":50}}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile floor needs scope and min_percent 0..100
-profile floor provider override is flagged^{"rules":[{"when":"images","use":{"harness":"codex","floor":{"scope":"all_models","min_percent":50,"provider":"claude"}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile floor needs scope and min_percent 0..100
-unknown select is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"mystery"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unknown select: mystery
-array profile codex max without Luna model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
+defaultPin matching a default member is accepted^{"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"defaultPin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}^empty^
+defaultPin outside the default pool is flagged^{"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}],"defaultPin":{"harness":"grok","model":"grok-4.5","effort":"high"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - defaultPin is not a member of the default pool: grok/grok-4.5/high
+switched-off defaultPin member is flagged^{"default":[{"harness":"codex","model":"gpt-5.6-sol","effort":"high","enabled":false},{"harness":"grok","model":"grok-4.5","effort":"high"}],"defaultPin":{"harness":"codex","model":"gpt-5.6-sol","effort":"high"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - defaultPin names a switched-off member: codex/gpt-5.6-sol/high
+empty array use is flagged^{"rules":[{"class":"big feature","when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
+array profile without harness is flagged^{"rules":[{"class":"big feature","when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
+array profile with malformed model is flagged^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"codex","model":5}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings when present
+array profile unsupported effort is flagged^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unsupported effort 'max' for class big feature use profile 1 harness 'codex'; supported efforts: low, medium, high, xhigh, or omit effort; max applies only to gpt-5.6-luna
 empty default array is flagged^{"default":[]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default needs at least one profile
 non-object default array entry is flagged^{"default":["codex"]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile must be an object
 default array profile without harness is flagged^{"default":[{"model":"gpt-5.5"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile needs harness
-default array malformed effort is flagged^{"default":[{"harness":"codex","effort":3}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
-default profile floor without min_percent is flagged^{"default":[{"harness":"codex","floor":{"scope":"all_models"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile floor needs scope and min_percent 0..100
-default profile floor provider override is flagged^{"default":{"harness":"codex","floor":{"scope":"all_models","min_percent":50,"provider":"claude"}}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile floor needs scope and min_percent 0..100
+default array malformed effort is flagged^{"default":[{"harness":"codex","effort":3}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings when present
+rung without enabled key is accepted^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high"}]}]}^empty^
+rung enabled true is accepted^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"claude","model":"opus","effort":"high","enabled":true}]}]}^empty^
+one switched-off rung beside an on rung is accepted^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"claude","model":"opus","enabled":false},{"harness":"codex","model":"gpt-5.5"}]}]}^empty^
+switched-off default rung beside an on rung is accepted^{"default":[{"harness":"claude","enabled":false},{"harness":"codex"}]}^empty^
+non-boolean rung enabled is flagged^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"claude","enabled":"no"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile enabled must be true or false when present
+non-boolean default enabled is flagged^{"default":[{"harness":"codex","enabled":1}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile enabled must be true or false when present
+all rungs switched off is flagged^{"rules":[{"class":"big feature","when":"big feature","use":[{"harness":"claude","enabled":false},{"harness":"codex","enabled":false}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - every rung is turned off for: big feature
+single switched-off object use is flagged^{"rules":[{"class":"solo rung","when":"solo rung","use":{"harness":"claude","enabled":false}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - every rung is turned off for: solo rung
+all default rungs switched off is flagged^{"default":[{"harness":"codex","enabled":false}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - every default rung is turned off
 ROWS
 
-  case_dir="$TMP_ROOT/dispatch-opt-in-gate"
+  # The typed-key gate this section used to cover is gone: dispatch validation
+  # is now deterministic and owned by bin/fm-dispatch-validate.sh, with no
+  # approval, floor, provider, or key-gated harness set to switch on. What
+  # survives is the security property: bootstrap scrubs TYPESAFE_API_KEY from
+  # its own environment, so no child it launches inherits the value.
+  case_dir="$TMP_ROOT/dispatch-key-scrub"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
 
-  printf '%s\n' '{"rules":[{"when":"legacy malformed model","use":{"harness":"codex","model":5}}]}' > "$case_dir/home/config/crew-dispatch.json"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings when present' ] \
-    || fail "no-key use-profile diagnostic changed from main, got: $out"
-
-  printf '%s\n' '{"default":{"harness":"codex","effort":3}}' > "$case_dir/home/config/crew-dispatch.json"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings when present' ] \
-    || fail "no-key default-profile diagnostic changed from main, got: $out"
-
-  printf '%s\n' '{"rules":[{"when":"legacy metadata","approval":"firstmate","floor":{"scope":"all_models","min_percent":200,"provider":"CLAUDE"},"use":{"harness":"claude","provider":"Anthropic","floor":{"scope":"all_models"}}}]}' > "$case_dir/home/config/crew-dispatch.json"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ -z "$out" ] || fail "resolver-only fields must be ignored without the typed key, got: $out"
-  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$case_dir/home/.env"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' ] \
-    || fail "typed .env key must activate resolver-field validation, got: $out"
-
-  rm -f "$case_dir/home/.env"
-  printf '%s\n' '{"rules":[{"when":"gemini work","use":{"harness":"gemini","model":"gemini-3.8-flash-high","provider":"google"}}]}' > "$case_dir/home/config/crew-dispatch.json"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: gemini' ] \
-    || fail "no-key bootstrap must preserve its former verified-harness baseline, got: $out"
-  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$case_dir/home/.env"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ -z "$out" ] || fail "typed resolution should add verified Gemini crewmate routing, got: $out"
-
-  rm -f "$case_dir/home/.env"
+  # The probe is the fake jq, so the home needs a config that actually reaches
+  # validation; a home with no crew-dispatch.json returns before jq runs.
+  printf '%s\n' '{"rules":[{"class":"builder","when":"normal work","use":{"harness":"codex"}}]}' \
+    > "$case_dir/home/config/crew-dispatch.json"
   : > "$case_dir/child-env.log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     TYPESAFE_API_KEY=test-key FM_TEST_CHILD_ENV_LOG="$case_dir/child-env.log" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ -z "$out" ] || fail "environment-key validation should remain silent, got: $out"
+  [ -z "$out" ] || fail "an ambient typed key must not produce bootstrap output, got: $out"
   child_env=$(cat "$case_dir/child-env.log")
   [ -n "$child_env" ] || fail "bootstrap child environment probe did not run"
   assert_not_contains "$child_env" 'secret-present' "bootstrap children never inherit the typesafe key"
-  pass "bootstrap gates resolver fields and additive harnesses on the typed key"
+  pass "bootstrap never leaks an ambient typed key to its children"
 }
 
 test_bootstrap_reporting

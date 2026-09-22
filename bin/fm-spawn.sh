@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--issue <ref>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--class <class>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--captain-override <reason>] [--backend <name>] [--issue <ref>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--class <class>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--captain-override <reason>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -59,13 +59,29 @@
 #   The replacement still never starts outside the copy
 #   holding the work: a Herdr shell that has drifted out of the recorded
 #   worktree is told once to return, and only a shell that will not go refuses.
+#   --class <class> resolves a crewmate or scout runtime through
+#   bin/fm-dispatch-resolve.sh. When config/crew-dispatch.json exists, fresh
+#   crewmate and scout spawns require --class unless they use the raw launch
+#   command escape hatch without --class. --class cannot be combined with a
+#   concrete --harness, --model, or --effort unless --captain-override records
+#   why this task differs, and it refuses raw shell commands whose runtime
+#   tuple cannot be proven from those structured axes. A --class spawn also
+#   passes provider-availability admission (bin/fm-route.sh) before any
+#   endpoint exists: the class's own candidate routes are balanced by
+#   fewest-pending, and no eligible candidate refuses the spawn rather than
+#   launching into a proven-unavailable service. A captain override bypasses
+#   admission, the same way it bypasses the pool's own enabled filter. The
+#   spawn records dispatch_class and the resolver's dispatch_reason in task
+#   metadata, plus dispatch_override on a captain override.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed. Ultra is the explicit
-#   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
+#   from that harness's launch rather than guessed. Class dispatch validates
+#   those axes up front instead: with --class, a class or override axis the
+#   selected harness does not support refuses the spawn instead of being
+#   omitted. Ultra is the explicit exception: bin/fm-harness.sh validate-native-effort owns its model scope;
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
@@ -148,10 +164,11 @@
 #   claiming the same issue refuses before worktree or endpoint creation.
 #   GitHub unreachability reports a skipped remote check and still enforces local
 #   claims. Scouts, secondmates, and relaunches refuse --issue.
-#   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
-#   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
-#   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
+#   With no class or harness arg, a crewmate/scout spawn resolves the CREW
+#   harness only when config/crew-dispatch.json is absent. When that file
+#   exists, a fresh crewmate/scout spawn requires --class and resolves the
+#   runtime in shell through bin/fm-dispatch-resolve.sh; concrete harness,
+#   model, and effort selection belongs to the resolver. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy)
@@ -240,11 +257,11 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo/--issue
+#   source of truth; shared --scout/--class/--harness/--model/--effort/--captain-override/--backend/--mode/--yolo/--issue
 #   applies to every pair. A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
-#   If config/crew-dispatch.json exists, shared --harness is required for crewmate
-#   and scout batches. The loop lives here, in bash, so callers never hand-write a
+#   If config/crew-dispatch.json exists, shared --class is required for crewmate
+#   and scout batches unless the raw launch command escape hatch is used. The loop lives here, in bash, so callers never hand-write a
 #   multi-task shell loop (the tool shell is zsh, which does not word-split unquoted
 #   $vars and silently breaks ad-hoc `for ... in $pairs` loops).
 # Launch delivery:
@@ -576,6 +593,8 @@ KIND_SET=0
 HARNESS_ARG=
 MODEL=
 EFFORT=
+DISPATCH_CLASS=
+CAPTAIN_OVERRIDE=
 BACKEND_ARG=
 MODE=
 YOLO=
@@ -583,6 +602,8 @@ TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+DISPATCH_CLASS_SET=0
+CAPTAIN_OVERRIDE_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -612,6 +633,14 @@ for a in "$@"; do
     effort)
       EFFORT=$a
       EFFORT_SET=1
+      ;;
+    class)
+      DISPATCH_CLASS=$a
+      DISPATCH_CLASS_SET=1
+      ;;
+    captain-override)
+      CAPTAIN_OVERRIDE=$a
+      CAPTAIN_OVERRIDE_SET=1
       ;;
     backend)
       BACKEND_ARG=$a
@@ -665,6 +694,16 @@ for a in "$@"; do
     EFFORT=${a#--effort=}
     EFFORT_SET=1
     ;;
+  --class) want_value=class ;;
+  --class=*)
+    DISPATCH_CLASS=${a#--class=}
+    DISPATCH_CLASS_SET=1
+    ;;
+  --captain-override) want_value=captain-override ;;
+  --captain-override=*)
+    CAPTAIN_OVERRIDE=${a#--captain-override=}
+    CAPTAIN_OVERRIDE_SET=1
+    ;;
   --backend) want_value=backend ;;
   --backend=*)
     BACKEND_ARG=${a#--backend=}
@@ -706,6 +745,27 @@ done
   echo "error: --effort requires a non-empty value" >&2
   exit 1
 }
+[ "$MODEL" != default ] || MODEL=
+[ "$DISPATCH_CLASS_SET" -eq 0 ] || [ -n "$DISPATCH_CLASS" ] || {
+  echo "error: --class requires a non-empty value" >&2
+  exit 1
+}
+[ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || [ -n "$CAPTAIN_OVERRIDE" ] || {
+  echo "error: --captain-override requires a non-empty value" >&2
+  exit 1
+}
+case "$DISPATCH_CLASS" in
+  *$'\r'* | *$'\n'*)
+    echo "error: --class cannot contain CR or LF characters" >&2
+    exit 1
+    ;;
+esac
+case "$CAPTAIN_OVERRIDE" in
+  *$'\r'* | *$'\n'*)
+    echo "error: --captain-override cannot contain CR or LF characters" >&2
+    exit 1
+    ;;
+esac
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || {
   echo "error: --backend requires a non-empty value" >&2
   exit 1
@@ -761,12 +821,37 @@ case "$EFFORT" in
   exit 1
   ;;
 esac
+if [ "$DISPATCH_CLASS_SET" -eq 1 ] && { [ "$HARNESS_SET" -eq 1 ] || [ "$MODEL_SET" -eq 1 ] || [ "$EFFORT_SET" -eq 1 ]; } \
+  && [ "$CAPTAIN_OVERRIDE_SET" -eq 0 ]; then
+  echo "error: --class selects harness, model, and effort; pass --captain-override <reason> to override any of those axes" >&2
+  exit 1
+fi
+[ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || [ "$DISPATCH_CLASS_SET" -eq 1 ] || {
+  echo "error: --captain-override requires --class" >&2
+  exit 1
+}
+if [ "$CAPTAIN_OVERRIDE_SET" -eq 1 ] && [ "$HARNESS_SET" -eq 0 ] && [ "$MODEL_SET" -eq 0 ] && [ "$EFFORT_SET" -eq 0 ]; then
+  echo "error: --captain-override requires at least one of --harness, --model, or --effort" >&2
+  exit 1
+fi
+[ "$KIND" != secondmate ] || [ "$DISPATCH_CLASS_SET" -eq 0 ] || {
+  echo "error: --class applies only to crewmate and scout spawns; secondmates use config/secondmate-harness" >&2
+  exit 1
+}
 
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
+  [ "$DISPATCH_CLASS_SET" -eq 0 ] || {
+    echo "error: --relaunch keeps the task's recorded dispatch; --class cannot replace it" >&2
+    exit 1
+  }
+  [ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || {
+    echo "error: --relaunch keeps the task's recorded dispatch override; --captain-override cannot replace it" >&2
+    exit 1
+  }
   [ "$BACKEND_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2
     exit 1
@@ -1132,6 +1217,13 @@ SPAWN_CONTROL_LOCK=
 SPAWN_CONTROL_LOCK_HELD=0
 SPAWN_CONTROL_PARENT=0
 SPAWN_META_TMP=
+# Provider-availability assignment state. ROUTE_ASSIGNMENT_ACTIVE means a
+# route claim is held and the exit trap still owes it exactly one finish or
+# release; ROUTE_FINISHED makes that settlement idempotent.
+ROUTE_ASSIGNMENT_ACTIVE=0
+ROUTE_ASSIGNMENT_ID=
+ROUTE_FINISHED=0
+AGENT_LAUNCH_SENT=0
 SPAWN_META_LOCK=
 SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
@@ -1306,6 +1398,31 @@ spawn_abort_cleanup() {
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
   fi
+  # Provider-availability: close the acquired assignment exactly once, on
+  # every exit path (success or failure), so a failed launch releases its
+  # slot instead of leaking it.
+  # launch-failed is finish evidence against the route, so it is recorded
+  # only when the harness process was actually started. A failure before
+  # that point - a bad argument, a guard refusal, a local infra error - is
+  # evidence about the request, and the claim is RELEASED (fm-route.sh
+  # release owns that contract): the route keeps its recorded state and the
+  # task id is freed to retry immediately instead of being stuck behind a
+  # closed record. A deferral is left untouched (already re-evaluable).
+  if [ "$ROUTE_ASSIGNMENT_ACTIVE" = 1 ] && [ "$ROUTE_FINISHED" = 0 ]; then
+    ROUTE_FINISHED=1
+    if [ "$status" -eq 0 ]; then
+      jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" --arg adapter "$HARNESS" --arg model "${MODEL:-default}" --arg effort "${EFFORT:-default}" \
+        '{assignment_id:$a, outcome:"success", profile:{adapter:$adapter, model:$model, effort:$effort}}' \
+        | "$SCRIPT_DIR/fm-route.sh" finish >/dev/null 2>&1 || true
+    elif [ "$AGENT_LAUNCH_SENT" = 1 ]; then
+      jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" '{assignment_id:$a, outcome:"launch-failed"}' \
+        | "$SCRIPT_DIR/fm-route.sh" finish >/dev/null 2>&1 || true
+    else
+      jq -cn --arg a "$ROUTE_ASSIGNMENT_ID" --arg owner "$ID" \
+        '{assignment_id:$a, owner:{identity:$owner}}' \
+        | "$SCRIPT_DIR/fm-route.sh" release >/dev/null 2>&1 || true
+    fi
+  fi
   return "$status"
 }
 trap spawn_abort_cleanup EXIT
@@ -1376,15 +1493,22 @@ if [ "$RELAUNCH" -eq 1 ] && [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart"
   exit 1
 fi
 if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in */*) false ;; *) true ;; esac then
-  if [ "$KIND" != secondmate ] && [ -z "$HARNESS_ARG" ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
-    echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
-    exit 1
+  if [ "$KIND" != secondmate ] && [ "$DISPATCH_CLASS_SET" -eq 0 ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
+    case "$HARNESS_ARG" in
+      *' '*) : ;;
+      *)
+        echo "error: config/crew-dispatch.json is active - pass one shared --class for the batch" >&2
+        exit 1
+        ;;
+    esac
   fi
   rc=0
   shared_args=()
-  [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
-  [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
-  [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  [ "$HARNESS_SET" -eq 0 ] || shared_args+=(--harness "$HARNESS_ARG")
+  [ "$MODEL_SET" -eq 0 ] || shared_args+=(--model "${MODEL:-default}")
+  [ "$EFFORT_SET" -eq 0 ] || shared_args+=(--effort "$EFFORT")
+  [ "$DISPATCH_CLASS_SET" -eq 0 ] || shared_args+=(--class "$DISPATCH_CLASS")
+  [ "$CAPTAIN_OVERRIDE_SET" -eq 0 ] || shared_args+=(--captain-override "$CAPTAIN_OVERRIDE")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -2132,6 +2256,164 @@ launch_template() {
   esac
 }
 
+# Defined here rather than beside the other path helpers below because the
+# pre-admission validation immediately after it needs the resolved project
+# directory before any route is claimed.
+resolve_project_dir_arg() {
+  local path=$1
+  case "$path" in
+  projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
+  *) printf '%s\n' "$path" ;;
+  esac
+}
+
+# Validate the spawn's own arguments - the project directory and the brief -
+# BEFORE any route is claimed by the provider-availability admission below.
+# A refusal here is evidence about the request, not about the route, and must
+# not spend a route assignment on a launch that never reaches a harness
+# process. The authoritative PROJ_ABS and BRIEF are still resolved further
+# down with the rest of the spawn's layout; this pass only proves the
+# arguments resolve at all, so it neither assigns them nor duplicates the
+# delivery-agreement and accessibility checks that follow.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$DISPATCH_CLASS_SET" -eq 1 ]; then
+  PREADMIT_PROJ=$(resolve_project_dir_arg "$PROJ")
+  (cd "$PREADMIT_PROJ") || exit 1
+  [ -f "$DATA/$ID/brief.md" ] || {
+    echo "error: no brief at $DATA/$ID/brief.md" >&2
+    exit 1
+  }
+  # The brief/spawn delivery agreement is a disagreement between two of this
+  # spawn's own inputs, so it is evidence about the request. The full check
+  # below owns the warning and the standing-posture notice; only the refusal
+  # is repeated here, ahead of the route claim.
+  if [ "$KIND" = ship ]; then
+    PREADMIT_BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$DATA/$ID/brief.md" | head -n 1)
+    if [ -n "$PREADMIT_BRIEF_MODE" ] && [ "$PREADMIT_BRIEF_MODE" != "$MODE" ]; then
+      echo "error: delivery mismatch for $ID: the brief says mode=$PREADMIT_BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
+      exit 1
+    fi
+  fi
+fi
+
+# ---- class dispatch: deterministic pool resolution and route admission ------
+# Cheap own-argument refusals have already run at this point; any refusal that
+# still follows releases the claim through the EXIT trap instead of tagging its
+# route (fm-route.sh release owns that contract). bin/fm-dispatch-resolve.sh
+# owns pool selection, pin detection, and the four member filters;
+# bin/fm-route.sh owns route-level eligibility evidence and the assignment
+# ledger a spawn never maintains itself.
+DISPATCH_REASON=
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  if [ "$DISPATCH_CLASS_SET" -eq 1 ]; then
+    if [ "$HARNESS_SET" -eq 0 ] && [ -n "${POS[2]:-}" ]; then
+      echo "error: a positional harness cannot accompany --class; use --harness with --captain-override <reason>" >&2
+      exit 1
+    fi
+    case "$HARNESS_ARG" in
+      *' '*)
+        echo "error: raw --harness with --class cannot prove runtime axes harness, model, and effort from structured inputs; use a supported concrete --harness <adapter> with --model and --effort as needed, or omit --class to use the raw launch-command escape hatch" >&2
+        exit 1
+        ;;
+    esac
+    DISPATCH_ARGS=(--class "$DISPATCH_CLASS" --home "$FM_HOME")
+    if [ "$CAPTAIN_OVERRIDE_SET" -eq 1 ]; then
+      if [ "$HARNESS_SET" -eq 1 ]; then
+        DISPATCH_ARGS+=(--override-harness "$HARNESS_ARG")
+      fi
+      [ "$MODEL_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-model "${MODEL:-default}")
+      [ "$EFFORT_SET" -eq 0 ] || DISPATCH_ARGS+=(--override-effort "$EFFORT")
+    else
+      # Provider-availability admission (docs/provider-availability-routing.md).
+      # Only one route is acquired per spawn: acquire's own fewest-pending
+      # balance already accounts for concurrent spawns without this script
+      # tracking counts itself. The assignment id is the task id itself,
+      # stable across a relaunch retry of the same task, and acquire's
+      # idempotency keys on assignment_id+owner.identity, so the freshly
+      # minted generation here is a freshness marker only (SPAWN_GEN is not
+      # assigned until much later in this script, so it is not reused).
+      ROUTE_ASSIGNMENT_GEN="r$(date +%s).${BASHPID:-$$}.$RANDOM"
+      # Candidates are scoped to THIS class's own approved pool, never the
+      # whole catalog: acquire picking a route the class has no member for
+      # would turn every other pool member into an --exclude-routes entry
+      # and refuse an otherwise healthy launch. An empty list means "no
+      # routing policy covers this class", which is inert by design; a
+      # non-zero exit means the resolver could not answer at all, which must
+      # refuse the spawn rather than silently skip the admission gate.
+      ROUTE_CANDIDATES_RAW=$("$SCRIPT_DIR/fm-route.sh" routes --class "$DISPATCH_CLASS" 2>&1) || {
+        echo "error: provider-availability admission could not determine candidate routes for class '$DISPATCH_CLASS': $(printf '%s' "$ROUTE_CANDIDATES_RAW" | tr '\n' ' ')" >&2
+        exit 1
+      }
+      if [ -z "$ROUTE_CANDIDATES_RAW" ]; then
+        ROUTE_CANDIDATES_JSON='[]'
+      else
+        ROUTE_CANDIDATES_JSON=$(printf '%s\n' "$ROUTE_CANDIDATES_RAW" | jq -R . | jq -s .)
+      fi
+      if [ "$(jq 'length' <<<"$ROUTE_CANDIDATES_JSON")" -gt 0 ]; then
+        ROUTE_ACQUIRE_REQUEST=$(jq -cn \
+          --arg a "$ID" --arg owner "$ID" --arg gen "$ROUTE_ASSIGNMENT_GEN" \
+          --argjson routes "$ROUTE_CANDIDATES_JSON" \
+          '{assignment_id:$a, owner:{identity:$owner, generation:$gen}, routes:$routes}')
+        ROUTE_ACQUIRE_RESULT=$(printf '%s' "$ROUTE_ACQUIRE_REQUEST" | "$SCRIPT_DIR/fm-route.sh" acquire 2>&1) || {
+          # fm-route.sh reports validation failures as JSON on stdout, but a
+          # usage/argument-parse failure exits 2 with plain text on stderr
+          # and an empty stdout. Both streams are captured, so report
+          # whichever this run produced rather than a bare "unknown error".
+          ROUTE_ACQUIRE_DETAIL=$(jq -r '.error // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRE_DETAIL=
+          [ -n "$ROUTE_ACQUIRE_DETAIL" ] || ROUTE_ACQUIRE_DETAIL=$(printf '%s' "$ROUTE_ACQUIRE_RESULT" | tr '\n' ' ')
+          echo "error: provider-availability admission failed for $ID: ${ROUTE_ACQUIRE_DETAIL:-unknown error}" >&2
+          exit 1
+        }
+        # Only result=="selected" ever authorizes a launch. A deferred or
+        # already-closed answer carries no authorization (and already-closed
+        # carries no route_id at all), so neither may set the active flag.
+        ROUTE_ACQUIRE_STATUS=$(jq -r '.result // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRE_STATUS=
+        if [ "$ROUTE_ACQUIRE_STATUS" = already-closed ]; then
+          echo "error: assignment '$ID' is already closed; a new attempt needs a new assignment id, not a spent record" >&2
+          exit 1
+        fi
+        ROUTE_ACQUIRED=$(jq -r 'select(.result == "selected") | .route_id // empty' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null) || ROUTE_ACQUIRED=
+        if [ -z "$ROUTE_ACQUIRED" ]; then
+          ROUTE_DEFER_REASON=$(jq -r '.reason // "no reason given"' <<<"$ROUTE_ACQUIRE_RESULT" 2>/dev/null)
+          echo "error: no approved route is currently eligible for class '$DISPATCH_CLASS' ($ROUTE_DEFER_REASON); wait for verified recovery or ask the captain to override" >&2
+          exit 1
+        fi
+        ROUTE_ASSIGNMENT_ID=$ID
+        ROUTE_ASSIGNMENT_ACTIVE=1
+        EXCLUDE_ROUTES_LIST=$(jq -r --arg picked "$ROUTE_ACQUIRED" '[.[] | select(. != $picked)] | join(",")' <<<"$ROUTE_CANDIDATES_JSON")
+        [ -z "$EXCLUDE_ROUTES_LIST" ] || DISPATCH_ARGS+=(--exclude-routes "$EXCLUDE_ROUTES_LIST")
+      fi
+    fi
+    DISPATCH_RESULT=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" "${DISPATCH_ARGS[@]}") || exit 1
+    DISPATCH_HARNESS=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^harness=\([^ ]*\) model=.*/\1/p')
+    DISPATCH_MODEL=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* model=\([^ ]*\) effort=.*/\1/p')
+    DISPATCH_EFFORT=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* effort=\([^ ]*\) reason=.*/\1/p')
+    DISPATCH_REASON=$(printf '%s\n' "$DISPATCH_RESULT" | sed -n 's/^.* reason=\([^ ]*\)$/\1/p')
+    [ -n "$DISPATCH_HARNESS" ] && [ -n "$DISPATCH_MODEL" ] && [ -n "$DISPATCH_EFFORT" ] && [ -n "$DISPATCH_REASON" ] || {
+      echo "error: dispatch resolver returned an invalid result" >&2
+      exit 1
+    }
+    if [ "$HARNESS_SET" -eq 0 ]; then
+      ARG3=$DISPATCH_HARNESS
+    fi
+    if [ "$MODEL_SET" -eq 0 ]; then
+      case "$DISPATCH_MODEL" in default) MODEL= ;; *) MODEL=$DISPATCH_MODEL ;; esac
+    fi
+    if [ "$EFFORT_SET" -eq 0 ]; then
+      case "$DISPATCH_EFFORT" in default) EFFORT= ;; *) EFFORT=$DISPATCH_EFFORT ;; esac
+    fi
+    printf 'dispatch: class=%s harness=%s model=%s effort=%s reason=%s\n' \
+      "$DISPATCH_CLASS" "$ARG3" "${MODEL:-default}" "${EFFORT:-default}" "$DISPATCH_REASON" >&2
+  elif [ -f "$CONFIG/crew-dispatch.json" ]; then
+    case "$ARG3" in
+      *' '*) : ;;
+      *)
+        echo "error: config/crew-dispatch.json is active - pass --class <class>; concrete harness, model, and effort selection belongs to the resolver" >&2
+        exit 1
+        ;;
+    esac
+  fi
+fi
+
 case "$ARG3" in
 *' '*) # raw launch command (unverified-adapter escape hatch)
   RAW_LAUNCH=1
@@ -2158,10 +2440,9 @@ case "$ARG3" in
     HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
     harness_src='config/secondmate-harness (falling back to config/crew-harness)'
   else
-    if [ -f "$CONFIG/crew-dispatch.json" ]; then
-      echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
-      exit 1
-    fi
+    # The dispatch backstop above has already refused this arrival when
+    # config/crew-dispatch.json is active without --class, so reaching this
+    # branch means the file is absent and the static crew harness applies.
     HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
     harness_src='config/crew-harness'
   fi
@@ -2591,14 +2872,6 @@ resolved_existing_dir() {
     return 1
   }
   cd "$path" && pwd -P
-}
-
-resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-  projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-  *) printf '%s\n' "$path" ;;
-  esac
 }
 
 path_is_ancestor_of() {
@@ -4932,6 +5205,10 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
+# The launch command has been delivered to the endpoint for execution.
+# From here on a failure is evidence about the route itself, so the exit
+# trap records launch-failed instead of releasing the claim.
+AGENT_LAUNCH_SENT=1
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then
     kimi_spawn_fail "$KIMI_READY_FAILURE_DETAIL"

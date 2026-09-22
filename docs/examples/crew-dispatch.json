@@ -1,26 +1,69 @@
 {
+  "note": "Human notes can explain the pools. The resolver selects a rung only when its route is available through bin/fm-route.sh, it is not paused, and it is not quarantined.",
   "rules": [
     {
-      "when": "The task depends on fresh news, current events, live public facts, or recent market and product changes.",
-      "use": { "harness": "grok" },
-      "why": "Grok is the preferred dispatch when current web-connected context is central to the work."
-    },
-    {
-      "when": "The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering.",
-      "use": { "harness": "claude", "model": "haiku", "effort": "low" },
-      "why": "Use the cheapest fast profile when the task is narrow and low ambiguity."
-    },
-    {
-      "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
+      "class": "researcher",
+      "when": "Research, diagnosis, audits, and planning.",
       "use": [
-        { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
-        { "harness": "codex", "model": "gpt-5.5", "effort": "high" }
+        { "harness": "claude", "model": "fable", "effort": "xhigh" },
+        { "harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+        {
+          "harness": "pi",
+          "model": "xai/grok-4.6",
+          "effort": "high",
+          "paused": { "reason": "The captain is preserving the Grok subscription this month.", "until": "2026-10-01" },
+          "history": "Disabled 2026-09-15 while leaning on another subscription."
+        }
       ],
-      "why": "Use a strong coding profile for big, ambiguous work; resolve the alternatives through quota-array-dispatch."
+      "why": "Every member meets the research floor."
+    },
+    {
+      "class": "builder",
+      "when": "Features, fixes, refactors, and other ship tasks.",
+      "use": [
+        { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" },
+        { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+        {
+          "harness": "pi",
+          "model": "phala/z-ai/glm-5.3",
+          "effort": "xhigh",
+          "quarantined": {
+            "evidence": "Two 429 storms on a real first turn, minutes after a clean probe.",
+            "release": "A probe that sends a real 20k-token brief."
+          },
+          "history": "Disabled 2026-09-06 after the second 429 storm."
+        }
+      ],
+      "pin": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+      "why": "The pin selects Codex until it is removed. The quarantined rung stays out until its release condition is met, never on a passing probe alone."
+    },
+    {
+      "class": "designer",
+      "when": "Visual design and interface polish.",
+      "use": [
+        { "harness": "claude", "model": "fable", "effort": "xhigh" },
+        { "harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" }
+      ]
+    },
+    {
+      "class": "tester",
+      "when": "Test writing, browser checks, and bug reproduction.",
+      "use": [
+        { "harness": "claude", "model": "opus", "effort": "high" },
+        { "harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+        {
+          "harness": "pi",
+          "model": "xai/grok-4.6",
+          "effort": "high",
+          "paused": { "reason": "The captain is preserving the Grok subscription this month." }
+        }
+      ],
+      "why": "A paused member stays out until the captain lifts the pause."
     }
   ],
   "default": [
-    { "harness": "codex", "model": "gpt-5.5", "effort": "medium" },
-    { "harness": "pi", "model": "anthropic/claude-sonnet-5", "effort": "medium", "provider": "claude" }
-  ]
+    { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+    { "harness": "pi", "model": "xai/grok-4.6", "effort": "high" }
+  ],
+  "defaultPin": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" }
 }

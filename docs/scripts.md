@@ -149,6 +149,11 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode, write the ship instructions carrying that mode's definition of done, and supersede the task's brief so a later relaunch cannot revive stale scout delivery text |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
 | `fm-harness.sh`          | Detect the running harness, resolve crew or secondmate harness, model, and effort, and validate the native-only `ultra` effort |
+| `fm-dispatch-resolve.sh` | Resolve a crewmate or scout class to one configured harness, model, and effort tuple |
+| `fm-dispatch-validate.sh` | Validate crew-dispatch configuration and resolved runtime tuples before callers act on them |
+| `fm-dispatch-runtime-lib.sh` | Adapter support tables for the dispatch contract: which harnesses and efforts a profile may name |
+| `fm-route.sh`            | Provider-availability routes: eligibility evidence, the assignment ledger, and the refresh that reads live quota |
+| `fm-route-refresh-install.sh` | Install or remove the scheduled launchd job that refreshes route availability |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared Relay config, relay, and reply-threading helpers                              |
 | `fm-x-poll.sh`           | One bounded Relay poll: stash newly offered mentions and emit their once-only wake   |

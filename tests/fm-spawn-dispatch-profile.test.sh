@@ -71,9 +71,12 @@ make_spawn_case() {
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog"
 }
 
+# The deterministic dispatch contract keys every rule on its class
+# (bin/fm-dispatch-resolve.sh --class), so a rule without one is refused as
+# invalid config. The pool and default shapes are otherwise unchanged.
 enable_dispatch_profile() {
   local home=$1
-  printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"grok","model":"grok-4","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+  printf '%s\n' '{"rules":[{"class":"current-events","when":"current events","use":{"harness":"grok","model":"grok-4","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
     > "$home/config/crew-dispatch.json"
 }
 
@@ -301,7 +304,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
   pass "unresolvable relative spawn overrides fail with named diagnostics"
 }
 
-test_active_dispatch_profile_requires_explicit_harness_for_ship() {
+test_active_dispatch_profile_requires_class_for_ship() {
   local rec id out status
   id=profile-required-ship-z11
   rec=$(make_spawn_case profile-required-ship claude "$id")
@@ -310,14 +313,14 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 1 "$status" "ship spawn without explicit harness should fail when dispatch profiles are active"
-  assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
+  expect_code 1 "$status" "ship spawn without --class should fail when dispatch profiles are active"
+  assert_contains "$out" "config/crew-dispatch.json is active - pass --class <class>" \
     "spawn did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "ship refusal should happen before meta is written"
-  pass "active crew-dispatch profile requires an explicit harness for ship spawns"
+  pass "active crew-dispatch profile requires --class for ship spawns"
 }
 
-test_active_dispatch_profile_requires_explicit_harness_for_scout() {
+test_active_dispatch_profile_requires_class_for_scout() {
   local rec id out status
   id=profile-required-scout-z12
   rec=$(make_spawn_case profile-required-scout claude "$id")
@@ -326,46 +329,60 @@ test_active_dispatch_profile_requires_explicit_harness_for_scout() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
   status=$?
-  expect_code 1 "$status" "scout spawn without explicit harness should fail when dispatch profiles are active"
-  assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
+  expect_code 1 "$status" "scout spawn without --class should fail when dispatch profiles are active"
+  assert_contains "$out" "config/crew-dispatch.json is active - pass --class <class>" \
     "scout refusal did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "scout refusal should happen before meta is written"
-  pass "active crew-dispatch profile requires an explicit harness for scout spawns"
+  pass "active crew-dispatch profile requires --class for scout spawns"
 }
 
-test_active_dispatch_profile_allows_explicit_harness() {
+test_active_dispatch_profile_allows_captain_override() {
   local rec id out status launch
   id=profile-explicit-z13
   rec=$(make_spawn_case profile-explicit claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
+  # Under the deterministic contract an explicit harness no longer satisfies an
+  # active profile on its own: --class selects the runtime, and pinning an axis
+  # beside it requires --captain-override to record why this task differs
+  # (captain rule 2026-08-30, agent assignment is code, not judgment). The
+  # axes, metadata, and launch flags asserted below are the ones the original
+  # explicit-harness form produced.
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+    "$id" "$PROJ_DIR" --class current-events \
+    --harness codex --model gpt-5 --effort high \
+    --captain-override "pin codex for this task")
   status=$?
-  expect_code 0 "$status" "explicit harness should satisfy active dispatch-profile requirement"
-  assert_contains "$out" "spawned $id harness=codex" "spawn did not report explicit codex harness"
+  expect_code 0 "$status" "a captain override should satisfy active dispatch-profile requirement"
+  assert_contains "$out" "spawned $id harness=codex" "spawn did not report the overridden codex harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' -c 'model_reasoning_effort=\"high\"' --dangerously-bypass-approvals-and-sandbox" \
-    "explicit harness launch did not thread model and effort"
-  pass "active crew-dispatch profile allows an explicit resolved harness"
+    "overridden launch did not thread model and effort"
+  pass "active crew-dispatch profile allows a captain-overridden resolved harness"
 }
 
-test_active_dispatch_profile_allows_positional_harness() {
+test_active_dispatch_profile_refuses_positional_harness() {
   local rec id out status
   id=profile-positional-z14
   rec=$(make_spawn_case profile-positional claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
+  # The legacy positional harness form carries no record of why this task
+  # departs from its class, so the deterministic contract refuses it rather
+  # than letting it silently outrank the resolver. --harness with
+  # --captain-override is the supported way to pin the same axis, and
+  # test_active_dispatch_profile_allows_captain_override covers it.
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" codex --model gpt-5 --effort high)
+    "$id" "$PROJ_DIR" codex --class current-events)
   status=$?
-  expect_code 0 "$status" "positional harness should satisfy active dispatch-profile requirement"
-  assert_contains "$out" "spawned $id harness=codex" "spawn did not report positional codex harness"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
-  pass "active crew-dispatch profile allows the legacy positional harness form"
+  expect_code 1 "$status" "a positional harness beside --class should be refused"
+  assert_contains "$out" "a positional harness cannot accompany --class" \
+    "spawn did not explain why the positional form is refused"
+  assert_absent "$HOME_DIR/state/$id.meta" "refusal should happen before meta is written"
+  pass "active crew-dispatch profile refuses the legacy positional harness form"
 }
 
 test_active_dispatch_profile_allows_raw_launch_command() {
@@ -699,8 +716,13 @@ test_batch_preserves_native_ultra() {
   rec=$(make_spawn_case ultra-batch pi "$id1" "$id2")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  # A batch under an active profile carries one shared --class, and pinning
+  # concrete axes beside it needs --captain-override, exactly as a single
+  # spawn does. The shared-flag forwarding under test is unchanged.
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness pi --model codex-native/gpt-6-astra --effort ultra)
+    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --class current-events \
+    --harness pi --model codex-native/gpt-6-astra --effort ultra \
+    --captain-override "native ultra for this batch")
   expect_code 0 "$?" "native Ultra batch failed: $out"
   assert_meta_profile "$HOME_DIR/state/$id1.meta" pi codex-native/gpt-6-astra ultra
   assert_meta_profile "$HOME_DIR/state/$id2.meta" pi codex-native/gpt-6-astra ultra
@@ -860,7 +882,9 @@ test_batch_forwards_shared_profile_flags() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --class current-events \
+    --harness codex --model gpt-5 --effort high \
+    --captain-override "pin codex for this batch")
   status=$?
   expect_code 0 "$status" "batch spawn with shared profile flags should succeed"
   assert_contains "$out" "spawned $id1 harness=codex" "first batch task did not use shared harness"
@@ -1488,10 +1512,10 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
-test_active_dispatch_profile_requires_explicit_harness_for_ship
-test_active_dispatch_profile_requires_explicit_harness_for_scout
-test_active_dispatch_profile_allows_explicit_harness
-test_active_dispatch_profile_allows_positional_harness
+test_active_dispatch_profile_requires_class_for_ship
+test_active_dispatch_profile_requires_class_for_scout
+test_active_dispatch_profile_allows_captain_override
+test_active_dispatch_profile_refuses_positional_harness
 test_active_dispatch_profile_allows_raw_launch_command
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort

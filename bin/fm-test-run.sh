@@ -718,7 +718,8 @@ tests/fm-cursor-harness.test.sh 30212
 tests/fm-cursor-primary-live-e2e.test.sh 72
 tests/fm-cursor-primary.test.sh 52269
 tests/fm-daemon.test.sh 27262
-tests/fm-dispatch-resolve.test.sh 4397
+tests/fm-dispatch-resolve-availability.test.sh 5385
+tests/fm-dispatch-resolve.test.sh 12279
 tests/fm-documentation-audiences.test.sh 847
 tests/fm-extension-binding.test.sh 9053
 tests/fm-fleet-snapshot-view.test.sh 17465
@@ -785,6 +786,7 @@ tests/fm-remote-secondmate-lifecycle-e2e.test.sh 241208
 tests/fm-remote-secondmate-parent-binding.test.sh 32176
 tests/fm-remote-secondmate-trace-context.test.sh 59689
 tests/fm-remote-transport-lanes.test.sh 62635
+tests/fm-route.test.sh 57646
 tests/fm-rovo-harness.test.sh 14322
 tests/fm-rovo-signals-live-e2e.test.sh 48
 tests/fm-secondmate-harness.test.sh 163801
@@ -807,8 +809,9 @@ tests/fm-sessionstart-hook-live-e2e.test.sh 97
 tests/fm-sessionstart-instruction-refresh-live-e2e.test.sh 46
 tests/fm-sessionstart-nudge.test.sh 66247
 tests/fm-shared-captain-inheritance.test.sh 5687
-tests/fm-spawn-dispatch-profile.test.sh 138433
+tests/fm-spawn-dispatch-profile.test.sh 270515
 tests/fm-spawn-pool-base-freshen.test.sh 62249
+tests/fm-spawn-route-admission.test.sh 112428
 tests/fm-spawn-worktree-settle.test.sh 8482
 tests/fm-startup-memory-budget.test.sh 7392
 tests/fm-startup-network.test.sh 61336
@@ -1477,12 +1480,20 @@ families_for_changed_path() {
       ;;
     bin/fm-dispatch-resolve.sh)
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
+      printf '%s\n' "__script__:fm-dispatch-resolve-availability.test.sh"
+      printf '%s\n' "__script__:fm-spawn-route-admission.test.sh"
+      ;;
+    bin/fm-dispatch-runtime-lib.sh | bin/fm-dispatch-validate.sh)
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
+      printf '%s\n' "__script__:fm-bootstrap.test.sh"
+      ;;
+    bin/fm-route.sh | bin/fm-route-refresh-install.sh)
+      printf '%s\n' "__script__:fm-route.test.sh"
+      printf '%s\n' "__script__:fm-spawn-route-admission.test.sh"
       ;;
     bin/fm-env-lib.sh)
-      # The one .env accessor, sourced by bin/fm-x-lib.sh (Relay token) and
-      # bin/fm-dispatch-resolve.sh (TYPESAFE_API_KEY).
+      # The one .env accessor, sourced by bin/fm-x-lib.sh (Relay token).
       printf '%s\n' pr-forge
-      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;
     .pi/extensions/fm-branch-supervision.ts|.pi/extensions/lib/fm-async-exec.ts|\
     .pi/extensions/lib/fm-branch-dispatch.ts|.pi/extensions/lib/fm-native-contract.ts)

@@ -2,19 +2,20 @@
 
 Audience: maintainer verification.
 
-This record supports the dispatch judgment rules in `.agents/skills/quota-array-dispatch/SKILL.md` and the bounded vendor probe in `bin/fm-vendor-auth-probe.sh`.
+This record supports the captain-facing dispatch health note in `.agents/skills/quota-array-dispatch/SKILL.md` and the bounded vendor probe in `bin/fm-vendor-auth-probe.sh`.
 It records only facts that must be re-established when a producer or vendor version changes.
 Task chronology, incident transcripts, and credential metadata stay in private reports or PR evidence.
 
-Firstmate resolves a candidate's provider family, credential surface, and applicable quota by reading the evidence below and reasoning in the open.
+Firstmate may explain a configured member's provider family, credential surface, and applicable quota in the health note by reading the evidence below.
+That note never changes which member the resolver selects.
 No script maps a model to a provider, a provider to a credential store, or a name prefix to a family, so the facts here are what that reasoning rests on.
 Credential paths below are shown with the home directory replaced by `<home>`.
 
-## Quota granularity the judgment depends on
+## Quota granularity the health note depends on
 
-Verified 2026-07-30 against quota-axi 0.1.16 for the provider and model-scope relationships below.
-That release's captured default output included `quotaSemantics.description`; the current default TOON and JSON fallback field placement are verified against 0.1.29 in the next section.
-Current dispatch reads the TOON scope and `limitedBy` fields; the JSON fallback's corresponding `scope` and `boundedBy` fields preserve the same provider/model applicability without relying on the `--full`-only description.
+Verified 2026-07-30 against quota-axi 0.1.16.
+
+`quota-axi --json` reports availability at whatever granularity the vendor supplies, and states the vendor's own bounding rule in `quotaSemantics.description`.
 
 ```json
 {
@@ -31,7 +32,7 @@ Current dispatch reads the TOON scope and `limitedBy` fields; the JSON fallback'
 }
 ```
 
-Three properties follow and are load-bearing for dispatch:
+Three properties govern the health note:
 
 - An `all_models` (or `all_products`) scope is real evidence for every model in that provider family, including a model with no window of its own.
 - A `model:`-scoped entry is an additional bound for that one model. `model:codex_bengalfox` is the GPT-5.3-Codex-Spark window and bounds nothing else.
@@ -40,27 +41,18 @@ Three properties follow and are load-bearing for dispatch:
 `quotaSemantics.status` is `unknown` with no `effectiveAvailability` entries at all for providers whose vendor exposes no window (observed for `cursor` and `copilot`).
 `state.authStatus` is present only for some providers (observed for `grok` alone), so its absence is missing evidence, not a credential fault.
 
-## Completion-runway and selection shape the judgment depends on
+## Completion-runway shape the health note depends on
 
-Verified 2026-08-18 against quota-axi 0.1.29 schema 5, captured from an isolated `quota-axi@0.1.29` install.
-The default TOON exposed these table headers, with row counts normalized to `N`:
-
-```text
-quota[N]{provider,scope,effectivePercentRemaining,spendPriority,runway,confidence,limitedBy,resetsAt}:
-exhaustion[N]{provider,scope,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId}:
-attention[N]{provider,scope,kind,detail,remedy}:
-```
-
-`exhaustion[]` and `attention[]` are sparse, so an empty table is rendered with count zero and no row fields.
-The command below records the JSON fallback shape without persisting account-specific quota values:
+Verified 2026-07-31 against quota-axi 0.1.17 schema 3.
+The command below records the producer shape without persisting account-specific quota values:
 
 ```sh
-quota-axi --json | jq '{schemaVersion, effectiveAvailabilityFields: ([.providers[]?.quotaSemantics.effectiveAvailability[]? | keys] | unique), runwayFields: ([.providers[]?.quotaSemantics.effectiveAvailability[]?.runway? | select(type == "object") | keys] | unique), selectionFields: ([.providers[]?.quotaSemantics.effectiveAvailability[]?.selection? | select(type == "object") | keys] | unique), paceFields: ([.providers[]?.quotaSemantics.effectiveAvailability[]?.pace? | select(type == "object") | keys] | unique), windowPaceFields: ([.providers[]?.windows[]?.pace? | select(type == "object") | keys] | unique)}'
+quota-axi --json | jq '{schemaVersion, effectiveAvailabilityFields: ([.providers[]?.quotaSemantics.effectiveAvailability[]? | keys] | unique), runwayFields: ([.providers[]?.quotaSemantics.effectiveAvailability[]?.runway? | select(type == "object") | keys] | unique)}'
 ```
 
 ```json
 {
-  "schemaVersion": 5,
+  "schemaVersion": 3,
   "effectiveAvailabilityFields": [
     [
       "boundedBy",
@@ -69,47 +61,31 @@ quota-axi --json | jq '{schemaVersion, effectiveAvailabilityFields: ([.providers
       "pace",
       "runway",
       "scope",
-      "selection",
       "status"
     ]
   ],
   "runwayFields": [
     [
+      "limitingWindowId",
+      "projectedExhaustedAt",
+      "projectionBasis",
       "projectionConfidence",
-      "status"
-    ]
-  ],
-  "selectionFields": [
-    [
-      "spendPriority",
-      "status"
-    ]
-  ],
-  "paceFields": [
-    [
       "status",
-      "worstReservePercentPoints",
-      "worstReserveWindowId"
-    ]
-  ],
-  "windowPaceFields": [
+      "usableRunwaySeconds"
+    ],
     [
-      "burnMultiple",
-      "reservePercentPoints",
-      "status"
+      "limitingWindowId",
+      "projectedExhaustedAt",
+      "status",
+      "usableRunwaySeconds"
     ]
   ]
 }
 ```
 
-This live snapshot was all `through_reset`, so finite-runway fields were omitted.
-`usableRunwaySeconds`, `projectedExhaustedAt`, and `limitingWindowId` remain in default `--json` when `runway.status` is `projected_exhaustion` or `exhausted_now`.
-`selection.unmeasurableWindowIds`, scope `aheadWindowIds`/`unknownWindowIds`, and window `pace.reason` likewise remain in default `--json` when they apply.
-`quotaSemantics.description`, `behindWindowIds`, `onPaceWindowIds`, and per-window cycle-progress internals are `--full` only.
-There is no `projectionBasis` field; its absence means `cycle_average`.
-`runway` and `selection` are nested under each effective-availability scope, so the same provider/model applicability rules govern headroom, runway, and `spendPriority`.
-Projection confidence is not present on every known runway, so selection must preserve that absence as uncertainty rather than fabricate it.
-The older-schema fallback contract is owned by `quota-array-dispatch`; this evidence does not reinterpret an absent runway, pace, or selection field.
+`runway` is nested under each effective-availability scope, so the same provider/model applicability rules govern both effective headroom and runway.
+Projection confidence and basis are not present on every known runway, so the health note must preserve their absence as uncertainty rather than fabricate them.
+An absent runway or pace field remains unknown.
 
 ## Provider-family counterfactual that this producer schema supports
 
@@ -168,7 +144,8 @@ Observed source statuses are `available`, `expired` (with an `error` slug), and 
 - A `pi:`-prefixed source exists only where Pi holds its own credential for that family (`pi:xai`, `pi:kimi-coding`). Pi's `openai-codex` family has none, because it authenticates through the Codex store that the `codex` provider already lists. A missing `pi:` source is therefore never evidence against a Pi candidate.
 
 Neither this per-source shape nor `state.authStatus` exists before quota-axi 0.1.16.
-`bin/fm-bootstrap.sh` enforces the current compatibility floor through `bin/fm-quota-axi-lib.sh`.
+`bin/fm-quota-axi-lib.sh` exposes the compatibility floor to optional health checks.
+Bootstrap and runtime selection do not require quota-axi.
 
 Grok also reports `credits.remaining: 0` alongside `percentRemaining: 41` on a healthy account.
 That zero is a prepaid balance, not the subscription window, and is never headroom.
@@ -197,8 +174,6 @@ Re-run the two commands above and update this section and the pinned version tog
 
 `tests/fm-vendor-auth-probe.test.sh` drives the real script against a fake vendor CLI that records every invocation's argv and anything readable on stdin.
 It asserts that the script accepts no harness, model, or provider input, never calls `quota-axi`, exits alike for every probe result because it renders no verdict, invokes only the two fixed non-destructive argv forms with stdin closed, holds a real bound even when the configured bound is zero or malformed, and never echoes raw vendor output.
-`tests/fm-spawn-dispatch-profile.test.sh` owns spawn's deterministic profile and harness refusals.
-`tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
-`tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake schema-5 snapshot per case, served as quota-axi's default TOON.
-It covers TOON-first `spendPriority` ranking among candidates that pass eligibility, reasoning-class, and runway-feasibility gates, explicit accounting for unmeasurable runway, the strongest-reasoning constraint, and the runway feasibility floor over a higher `spendPriority`.
-The skill's primary path is that default TOON; `--json` is the documented defensive fallback, and this section records the producer `--json` shape that fallback consumes.
+`tests/fm-dispatch-resolve.test.sh` owns pin, live-worker count, switched-off pin, and default selection.
+`tests/fm-spawn-dispatch-profile.test.sh` owns class resolution, recorded captain overrides, and concrete-runtime refusals.
+`tests/fm-bootstrap.test.sh` proves quota-axi availability and version do not gate bootstrap.
