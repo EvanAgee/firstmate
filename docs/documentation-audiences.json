@@ -572,6 +572,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/fm-spec-gate-brief-and-landing.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/proof/fm-stale-reason-daemon-parse.md",
       "audience": "maintainer-verification"
     },
