@@ -613,7 +613,7 @@ if [ "$SPEC_SET" -eq 1 ]; then
 IFS= read -r -d '' SPEC_SECTION <<EOF || true
 # Spec
 Spec: $SPEC
-Name every acceptance criterion id of that spec in \`docs/proof/$ID.md\` on your branch; landing is refused until the proof names each one.
+Name every acceptance criterion id of that spec in \`docs/proof/$ID.md\` on your branch, because the spec gate refuses the landing until the proof names each one.
 EOF
 else
 SPEC_LINT=${FM_SPEC_LINT:-$HOME/.agents/skills/spec-lint/spec-lint}
@@ -624,7 +624,8 @@ This task has no approved spec yet, so writing it is your first job.
 Before any code, write the spec at \`docs/specs/$ID.md\` in the shape of the \`to-spec\` skill's template (\`$HOME/.agents/skills/to-spec/SKILL.md\`) and commit it on your branch.
 Lint it with \`$SPEC_LINT docs/specs/$ID.md\` and fix every fault it prints until it passes.
 Build against that spec, then prove every acceptance criterion in \`docs/proof/$ID.md\`, naming each id.
-Name the spec path in your done line: firstmate points this brief at it before landing, and landing is refused until the branch changes exactly one spec that lints clean and its proof names every id.
+Name the spec path in your done line.
+Before landing, firstmate points this brief at that spec, and the spec gate refuses the landing until your branch changes exactly one spec that lints clean and its proof names every id.
 EOF
 fi
 SPEC_SECTION=${SPEC_SECTION%$'\n'}
