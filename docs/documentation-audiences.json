@@ -568,6 +568,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/spec-catchup-upstream-rebase.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
