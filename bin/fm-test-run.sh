@@ -404,6 +404,7 @@ tests/fm-bootstrap.test.sh 38280
 tests/fm-busy-adapter-wiring.test.sh 21729
 tests/fm-busy-state.test.sh 682
 tests/fm-calm-pi-extension.test.sh 234
+tests/fm-ci-watch.test.sh 1874
 tests/fm-classify-decision-key.test.sh 1339
 tests/fm-claude-watch-coordinator-live-e2e.test.sh 43
 tests/fm-claude-watch-coordinator.test.sh 232604
@@ -503,6 +504,7 @@ tests/fm-watch-arm.test.sh 68928
 tests/fm-watch-checkpoint.test.sh 7275
 tests/fm-watch-github-health.test.sh 3478
 tests/fm-watch-triage.test.sh 155834
+tests/fm-watch-wedge-two-signal.test.sh 257668
 tests/fm-watcher-beat-alarm.test.sh 3188
 tests/fm-watcher-lock.test.sh 53266
 EOF
