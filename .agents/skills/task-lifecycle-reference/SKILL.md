@@ -97,6 +97,8 @@ A captain instruction to merge is explicit authority; `yolo` is the only standin
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
 To watch one GitHub Actions run to completion, arm `bin/fm-ci-watch.sh` instead of writing that check by hand.
 
+Before `bin/fm-merge-local.sh`, run `bin/fm-spec-point.sh <id>` as its own command so a brief still on `Spec: to-spec phase` names the spec its lane wrote; its header owns the rules.
+
 Tear down a ship task only after landing is confirmed.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
 Never force teardown without explicit discard authority.
