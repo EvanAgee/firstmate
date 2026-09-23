@@ -148,12 +148,13 @@ A failure at step 6 triggers the rollback in AC8.
 
 - `[NEEDS CLARIFICATION: take the root's commits past 43bf6d3d into c/main before the shakedown, or after the swap? kun/main was 34 commits ahead, at 9296f9b9, on 2026-09-23.]` - Evan Agee
 - `[NEEDS CLARIFICATION: does the swap rewrite origin main to c/main's history, which needs a force push, or land c/main on main as a merge commit whose tree equals the shakedown SHA, which keeps pooled worktrees fast-forwardable? AC7 accepts either.]` - Evan Agee
+- `[NEEDS CLARIFICATION: Decisions says nothing lands on main until the shakedown passes, yet 25 behavior commits landed there after 2026-09-21, read as a rule for Phase C work only. Should main keep taking behavior commits until the swap, each adding a drift-ledger row, or freeze them so the ledger stops growing?]` - Evan Agee
 - `[NEEDS CLARIFICATION: is one local-only ship task plus one scout enough for the shakedown, or must it cover each primary and crew harness the live fleet runs?]` - Evan Agee
 
 ## Done
 
 History only; none of this is acceptance work.
-`git log --oneline 43bf6d3d..7530c480` lists every commit on `c/main`, including the lint and CI commits `afdf3f9c` and `075f3a4a` that rode with the ports.
+`git log --oneline 43bf6d3d..7530c480` lists every commit `c/main` added on top of the root, including the lint and CI commits `afdf3f9c` and `075f3a4a` that rode with the ports.
 
 | Ticket | What landed on `c/main` | Commits |
 | --- | --- | --- |
