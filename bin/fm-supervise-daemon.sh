@@ -228,6 +228,9 @@ WEDGE_ALARM_LAST_EPOCH=0
 INJECT_FAIL_SLEEP_DEFAULT=30
 INJECT_CONFIRM_RETRIES_DEFAULT=3
 INJECT_CONFIRM_SLEEP_DEFAULT=0.5
+# Largest injection that reaches the harness as one terminal read it types
+# rather than pastes; see _fit_injection.
+INJECT_MAX_BYTES=800
 CRASH_THRESHOLD_DEFAULT=10
 CRASH_WINDOW_DEFAULT=60
 CRASH_BACKOFF_DEFAULT=60
@@ -336,6 +339,34 @@ _collapse_newlines() {  # <text>
   local s=$1
   s=${s//$'\n'/ - }
   printf '%s' "$s"
+}
+
+_byte_len() {  # <text>
+  printf '%s' "$1" | LC_ALL=C wc -c | tr -d '[:space:]'
+}
+
+# _fit_injection: encode <body> as an away-supervisor injection that the
+# harness receives as ONE terminal read below its paste threshold. A macOS pty
+# hands the reader at most 1022 bytes per read, and Claude Code 2.1.280 turns
+# any read over 800 characters into a paste; a longer digest arrived as a paste
+# plus a typed tail that replaced it, so the captain pane got only the digest's
+# last words with no operational prefix (2026-09-23). A body over the budget is
+# cut at a word boundary, ends with a pointer to its full text, and that full
+# text is logged. Returns non-zero, sending nothing, if no cut fits.
+_fit_injection() {  # <body> <state> <result-var>
+  local body=$1 state=$2 note fitted avail
+  fm_operational_input_encode away-supervisor "$body" fitted || return 1
+  if [ "$(_byte_len "$fitted")" -gt "$INJECT_MAX_BYTES" ]; then
+    note=" ... [cut to fit one terminal read; full digest under 'inject cut' in $state/.supervise-daemon.log]"
+    fm_operational_input_encode away-supervisor "$note" fitted || return 1
+    avail=$((INJECT_MAX_BYTES - $(_byte_len "$fitted")))
+    [ "$avail" -gt 0 ] || return 1
+    fitted=$(printf '%s' "$body" | head -c "$avail")
+    fm_operational_input_encode away-supervisor "${fitted% *}$note" fitted || return 1
+    [ "$(_byte_len "$fitted")" -le "$INJECT_MAX_BYTES" ] || return 1
+    log "inject cut: $(_byte_len "$body")-byte digest exceeds the ${INJECT_MAX_BYTES}-byte single-read budget; full digest: $body"
+  fi
+  printf -v "$3" '%s' "$fitted"
 }
 
 # discover_supervisor_target / discover_supervisor_backend are owned by
@@ -1118,11 +1149,8 @@ inject_msg() {  # <message> [state]
   afk_active "$state" || { log "inject deferred: afk inactive"; return 1; }
   # (2) Single-line digest: collapse any embedded newlines so submission via
   # send-keys + Enter is unambiguous regardless of how the TUI composer treats
-  # them. Then use the canonical typed envelope so downstream consumers retain
-  # the exact away-supervisor kind without interpreting this payload's prose.
+  # them. Step (4) wraps it in the canonical typed envelope.
   msg=$(_collapse_newlines "$msg")
-  fm_operational_input_encode away-supervisor "$msg" encoded || return 1
-  msg=$encoded
   target="${FM_SUPERVISOR_TARGET:-$FM_SUPERVISOR_TARGET_DEFAULT}"
   # BACKEND-AWARE (previously a raw `tmux display-message` pane-exists probe):
   # dispatches through bin/fm-backend.sh so a herdr supervisor pane is checked
@@ -1174,6 +1202,11 @@ inject_msg() {  # <message> [state]
       harness=
       ;;
   esac
+  # The canonical typed envelope lets downstream consumers retain the exact
+  # away-supervisor kind without interpreting this payload's prose, sized to
+  # land as one typed terminal read.
+  _fit_injection "$msg" "$state" encoded || { log "inject refused: digest cannot fit one terminal read"; return 1; }
+  msg=$encoded
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
   verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" "" "$harness" "$omp_bun" "$omp_bin")

@@ -1994,6 +1994,86 @@ test_inject_msg_herdr_submits_through_backend_dispatch() {
   pass "inject_msg: OMP Herdr away delivery reaches the exact-runtime native confirmation path"
 }
 
+# Drives a digest through escalate_flush, inject_msg, and the real Herdr submit
+# path into a fake `herdr` that keeps the exact bytes `pane send-text` received
+# and reports a turn starting once Enter arrives.
+herdr_flush_capture() {  # <case-name> <buffered-item> -> echoes case dir
+  local dir state fakebin
+  dir=$(make_supercase "$1")
+  state="$dir/state"; fakebin="$dir/fakebin"
+  cat > "$fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  'status --json') printf '{"server":{"running":true}}\n' ;;
+  'pane send-text') printf '%s' "$4" > "$FM_FAKE_SENT" ;;
+  'pane send-keys') : > "$FM_FAKE_SENT.enter" ;;
+  'agent get')
+    status=idle
+    [ -e "$FM_FAKE_SENT.enter" ] && status=working
+    printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$status" ;;
+esac
+SH
+  chmod +x "$fakebin/herdr"
+  escalate_add "$state" "$2"
+  afk_enter "$state"
+  (
+    fm_backend_target_exists() { return 0; }
+    pane_is_busy() { return 1; }
+    fm_backend_composer_state() { printf 'empty'; }
+    PATH="$fakebin:$PATH" FM_FAKE_SENT="$dir/sent" LOG="$state/.supervise-daemon.log" \
+      FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" FM_SUPERVISOR_HARNESS=claude \
+      FM_INJECT_CONFIRM_SLEEP=0.05 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.05 \
+      escalate_flush "$state"
+  ) || fail "$1: escalate_flush did not report the Herdr submit as delivered"
+  printf '%s' "$dir"
+}
+
+# Filler of <n> ASCII bytes, so a test can place a digest exactly on the budget.
+filler_bytes() {  # <n>
+  local s=''
+  while [ "${#s}" -lt "$1" ]; do s="${s}word "; done
+  printf '%s' "${s:0:$1}"
+}
+
+# 2026-09-23: a Herdr pane on macOS hands a harness at most 1022 bytes per
+# terminal read, and Claude Code 2.1.280 turns any read over 800 characters
+# into a paste. A longer digest arrived as a paste plus a typed tail, the tail
+# replaced the paste, and the captain pane received only the last words of the
+# digest with no operational prefix, so it read as a captain message.
+test_inject_msg_herdr_oversize_digest_lands_whole() {
+  local dir sent kind body
+  dir=$(herdr_flush_capture inject-herdr-oversize \
+    "aos-skill-journey-walk.status: needs-decision [key=pick]: HEAD-MARKER $(filler_bytes 1200) TAIL-MARKER")
+  sent=$(cat "$dir/sent")
+  [ "$(printf '%s' "$sent" | wc -c)" -le 800 ] \
+    || fail "oversize digest reached pane send-text as $(printf '%s' "$sent" | wc -c | tr -d ' ') bytes; it splits across terminal reads"
+  fm_operational_input_kind "$sent" kind && [ "$kind" = away-supervisor ] \
+    || fail "oversize digest lost its operational prefix: ${sent:0:60}"
+  fm_operational_input_body "$sent" body || fail "oversize digest body unreadable"
+  assert_contains "$body" 'HEAD-MARKER' "oversize digest dropped its head"
+  assert_contains "$body" "$dir/state/.supervise-daemon.log" "cut digest does not say where its full text is"
+  grep -F 'TAIL-MARKER' "$dir/state/.supervise-daemon.log" >/dev/null \
+    || fail "cut digest's full text was not logged"
+  [ ! -s "$dir/state/.subsuper-escalations" ] || fail "delivered cut digest left its buffer behind"
+  pass "inject_msg: an oversize Herdr digest reaches the pane as one prefixed read with a pointer to its full text"
+}
+
+test_inject_msg_digest_budget_boundary() {
+  local dir sent overhead
+  # Header plus the flush wrapper around a buffered item, measured on a short item.
+  dir=$(herdr_flush_capture inject-budget-measure 'x')
+  overhead=$(( $(wc -c < "$dir/sent") - 1 ))
+  dir=$(herdr_flush_capture inject-budget-at "$(filler_bytes $((800 - overhead)))")
+  sent=$(cat "$dir/sent")
+  [ "$(printf '%s' "$sent" | wc -c)" -eq 800 ] || fail "budget fixture is not exactly 800 bytes"
+  assert_not_contains "$sent" 'supervise-daemon.log' "an 800-byte digest was cut"
+  dir=$(herdr_flush_capture inject-budget-over "$(filler_bytes $((801 - overhead)))")
+  sent=$(cat "$dir/sent")
+  [ "$(printf '%s' "$sent" | wc -c)" -le 800 ] || fail "an 801-byte digest was sent uncut"
+  assert_contains "$sent" 'supervise-daemon.log' "an 801-byte digest was cut without a pointer"
+  pass "inject_msg: an 800-byte digest lands unchanged and an 801-byte digest is cut"
+}
+
 # Safety-critical (task fm-composer-shellglyph-safety): the away-mode injector
 # must NEVER type an escalation into a dead-shell pane. A bare shell prompt
 # classifies `unknown` (not `pending`), and inject_msg now defers on anything
@@ -2227,5 +2307,7 @@ test_inject_msg_herdr_composer_guard_defers
 test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_refuses_unknown_harness_before_submit
 test_inject_msg_herdr_submits_through_backend_dispatch
+test_inject_msg_herdr_oversize_digest_lands_whole
+test_inject_msg_digest_budget_boundary
 test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state

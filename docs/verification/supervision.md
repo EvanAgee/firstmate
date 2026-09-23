@@ -2,7 +2,7 @@
 
 Audience: maintainer verification.
 
-This record supports current session-start, turn-end, watcher-continuity, and wedge-alarm guarantees.
+This record supports current session-start, turn-end, watcher-continuity, wedge-alarm, and away-mode digest delivery guarantees.
 Operator behavior and active limits remain in the linked current guides.
 Task-specific chronology, temporary paths, run identifiers, and delivery transcripts remain in private reports or PR evidence.
 
@@ -643,3 +643,35 @@ The test repeats the stale wake and confirms the interrupt and steer each occurr
 The same watcher test file covers a growing output, an immediate stale wake, a non-Claude worker, and unchanged wake and absorb paths.
 The fixture does not verify the rendered foreground Bash signature against a live Claude Code process.
 Codex background terminals remain out of scope because no documented, stable per-task output-file location was found.
+
+## Away-mode digest size budget
+
+On 2026-09-23, the daemon's Herdr injection path ran against Darwin 27.0, Herdr 0.9.0, and Claude Code 2.1.280, in an isolated Herdr lab session provisioned through `bin/fm-herdr-lab.sh`.
+
+`herdr pane send-text` writes its text raw, with no bracketed-paste markers even after the pane program enables mode 2004.
+A raw-mode reader in the lab pane logged these `os.read` sizes for single `send-text` calls:
+
+```text
+send-text bytes=1000  -> len=1000
+send-text bytes=1100  -> len=1022, len=78
+send-text bytes=1500  -> len=1022, len=478
+send-text bytes=3000  -> len=1022, len=1022, len=956
+```
+
+Claude Code 2.1.280 treats one input read longer than 800 characters as a paste: its key handler tests `C.key.length>vq`, with `vq=800` exported from the paste module of the installed binary.
+A 1097-byte prefixed digest sent through `fm_backend_send_text_submit herdr` reported `empty` (delivered), and Claude Code's input history recorded only the 73-character typed tail, with no paste attached.
+The same walk through `escalate_flush` on an unmodified copy of the code recorded only a 211-character tail without the operational prefix.
+With the 800-byte budget, the same walk recorded a 796-byte message beginning `FIRSTMATE_OP: v1 away-supervisor:` and ending with the log pointer, and a 432-byte digest landed unchanged, neither as a paste.
+
+The budget is pinned without Herdr by:
+
+```sh
+bash tests/fm-daemon.test.sh test_inject_msg_herdr_oversize_digest_lands_whole test_inject_msg_digest_budget_boundary
+```
+
+```text
+ok - inject_msg: an oversize Herdr digest reaches the pane as one prefixed read with a pointer to its full text
+ok - inject_msg: an 800-byte digest lands unchanged and an 801-byte digest is cut
+```
+
+Other primary harnesses were not measured for their own paste thresholds; the budget applies to every backend and harness because it sits in `inject_msg` ahead of backend dispatch.

@@ -175,6 +175,10 @@ the operational prefix lets firstmate distinguish it from a real captain message
 - **Single-line digest** - embedded newlines are collapsed to a literal
   separator before injection, so submission is unambiguous regardless of
   harness.
+- **Single-read size budget** - an injection is at most 800 bytes, so it reaches the harness as one terminal read that it types rather than pastes.
+  A longer write splits across reads, and Claude Code let the typed tail replace the pasted head, so the pane got a fragment with no prefix.
+  The daemon cuts a longer digest at a word boundary, ends it with a pointer to its full text, and logs that text under `inject cut` in `state/.supervise-daemon.log`.
+  `docs/verification/supervision.md` "Away-mode digest size budget" owns the evidence.
 - **Busy and composer guards on the supervisor pane** - before injecting, the daemon runs the detected-primary-harness rendered busy guard and reads `fm_backend_composer_state` directly.
   Only `empty` permits injection; `pending` protects half-typed or swallowed input, and `unknown` protects unreadable panes and bare dead-shell prompts.
   Every other result preserves the buffer for retry, so the daemon never merges its digest into the captain's half-typed line or types it into a shell.
