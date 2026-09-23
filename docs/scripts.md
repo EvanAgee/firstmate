@@ -28,7 +28,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
 | `fm-decision-hold.sh`    | Create, verify, complete, defer, close, and repair durable captain-held decisions |
 | `fm-captain-queue.sh`    | Write and reconcile fleet-board captain cards with automatic seven-day expiry parking and repeat-safe manual `park` |
-| `fm-brief.sh`            | Scaffold ship (explicit `--mode`, opt-in `--matt-flow`), scout, secondmate-charter, and Herdr-lab briefs   |
+| `fm-brief.sh`            | Scaffold ship (explicit `--mode`, `--spec` or a spec-first section, opt-in `--matt-flow`), scout, secondmate-charter, and Herdr-lab briefs |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
 | `fm-install-treehouse.sh`| Install CI's exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
@@ -69,7 +69,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture and PR merge policy from `data/projects.md` |
 | `fm-delivery-record.sh`  | Append one landed task's available delivery timing to the private home ledger |
 | `fm-delivery-backfill.sh` | Backfill recent aos, faapto, and firstmate merged-task timing without duplicating task ids |
-| `fm-merge-local.sh`      | Fast-forward a project's local default branch: an approved `local-only` landing, or a PR-bound task's outage landing while GitHub is unreachable; `--push` then pushes a `local-only` landing and closes its linked issues |
+| `fm-merge-local.sh`      | Fast-forward a project's local default branch past unrelated local changes: an approved `local-only` landing, or a PR-bound task's outage landing while GitHub is unreachable; `--push` then pushes a `local-only` landing and closes its linked issues |
+| `fm-spec-point.sh`       | Point a brief still on `Spec: to-spec phase` at the one linted spec its lane wrote, run alone before `fm-merge-local.sh` |
 | `fm-outage-sync.sh`      | On GitHub's return, reconcile each outage landing: fast-forward-push local main, dispatch its deferred workflows, close its task's linked issues, escalate on divergence |
 | `fm-issue-close-after-merge.sh` | Close a landed task's linked GitHub issues, after a PR merge or a pushed local landing, leaving `issues_keep_open=` issues open |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
