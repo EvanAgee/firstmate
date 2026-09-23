@@ -564,6 +564,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/fm-decision-answer-closes-loop.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/proof/fm-stale-reason-daemon-parse.md",
       "audience": "maintainer-verification"
     },
