@@ -1228,7 +1228,7 @@ handle_wake() (  # <reason> <state>
   case "$reason" in
     signal:*) kind=signal; arg="${reason#signal: }"
               decision=$(classify_signal "$arg" "$state") ;;
-    stale:*)  kind=stale; arg="${reason#stale: }"; stale_detail="${arg#"$arg"}"
+    stale:*)  kind=stale; arg="${reason#stale: }"; arg="${arg%%; background output: *}"; stale_detail="${arg#"$arg"}"
               case "$arg" in *" ("*) stale_detail="${arg#*" ("}"; arg="${arg%% \(*}" ;; esac
               case "$queue_key" in
                 "$arg|pipeline-stall|"*)

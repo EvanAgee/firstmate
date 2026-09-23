@@ -245,6 +245,31 @@ test_stalled_stale_escalates_with_diagnosis() {
   pass "away stale classification preserves stalled diagnoses over historical status and wake detail"
 }
 
+test_background_output_stale_durable_wake_acknowledges() {
+  local dir state win reason check_reason
+  dir=$(make_supercase stale-background-output-durable)
+  state="$dir/state"
+  win=sess:fm-background-output
+  reason="stale: $win; background output: $dir/tasks/b433a94wt.output (769s old)"
+  check_reason="check: $state/probe.check.sh: blocked: probe needs attention"
+  fm_write_meta "$state/background-output.meta" "window=$win" "backend=tmux"
+  printf 'working: investigating\n' > "$state/background-output.status"
+  (
+    export FM_STATE_OVERRIDE="$state" FM_HOME="$dir"
+    export FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh"
+    export FM_FAKE_CREW_STATE='state: unknown · source: none · temporarily unreadable'
+    export FM_ESCALATE_BATCH_SECS=999999 FM_MAX_DEFER_SECS=999999
+    LOG="$dir/daemon.log"
+    append_wake "$state" stale "$win" "$reason"
+    append_wake "$state" check "$state/probe.check.sh" "$check_reason"
+    handle_durable_wakes "$reason" "$state" || fail "background-output stale wake was not acknowledged"
+    [ ! -s "$state/.wake-queue" ] || fail "background-output stale wake stayed in the durable queue"
+    [ "$(cat "$state/.subsuper-escalations")" = "$check_reason" ] \
+      || fail "check behind background-output stale wake was not escalated once"
+  ) || fail "background-output durable wake regression failed"
+  pass "background-output stale wake acknowledges and delivers the following check"
+}
+
 test_retired_endpoint_cannot_deliver_to_unrelated_task() {
   local backend dir state old_win=default:w1:p2 live_win=default:w9:p9
   local generic_win=default:w4:p4 detail='pipeline stalled 25m at review, run 01RUN, agent none' expected file preserved
@@ -2111,6 +2136,7 @@ test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_stale_terminal_escalates
 test_stalled_stale_escalates_with_diagnosis
+test_background_output_stale_durable_wake_acknowledges
 test_retired_endpoint_cannot_deliver_to_unrelated_task
 test_reported_stall_identity_survives_housekeeping
 test_stale_paused_classifies_pause

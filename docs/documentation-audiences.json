@@ -524,6 +524,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/proof/fm-stale-reason-daemon-parse.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
