@@ -99,9 +99,27 @@ test_parallel_shards_consume_the_proven_set() {
   pass "parallel shards consume the proven-isolated set only"
 }
 
+# A test file run directly, outside the runner, must not inherit a crewmate's
+# FM_HOME or override variables, or a test that forgets to set one reads and
+# writes the live home. Sourcing tests/lib.sh gives it the runner's clean slate.
+test_lib_clears_ambient_home_selection() {
+  local out var
+  # shellcheck disable=SC2016 # the child shell expands its own variables after sourcing.
+  out=$(env FM_HOME=/ambient/home FM_STATE_OVERRIDE=/ambient/state FM_DATA_OVERRIDE=/ambient/data \
+    FM_ROOT_OVERRIDE=/ambient/root FM_PROJECTS_OVERRIDE=/ambient/projects \
+    FM_CONFIG_OVERRIDE=/ambient/config FM_BACKEND=ambient \
+    bash -c '. "$1"; for v in FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_ROOT_OVERRIDE FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE FM_BACKEND; do printf "%s=%s\n" "$v" "${!v-unset}"; done' \
+    _ "$ROOT/tests/lib.sh")
+  for var in FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_ROOT_OVERRIDE FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE FM_BACKEND; do
+    assert_contains "$out" "$var=unset" "sourcing tests/lib.sh kept ambient $var"
+  done
+  pass "tests/lib.sh clears ambient home selection the same way the runner does"
+}
+
 test_list_candidates_nonempty_and_stable
 test_candidates_exclude_serial_classes
 test_extra_hermetic_candidates_present
 test_list_exclusions_documents_reasons
 test_family_map_labels_this_contract
 test_parallel_shards_consume_the_proven_set
+test_lib_clears_ambient_home_selection

@@ -575,6 +575,48 @@ test_persistent_no_watcher_episode_survives_beacon_touch() {
   pass "fm-guard stale banner: a no-watcher episode survives a beacon mtime change"
 }
 
+record_away_daemon() {
+  local dir=$1 pid=$2 home identity
+  home=$(case_home "$dir")
+  identity=$(FM_STATE_OVERRIDE="$home/state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$pid") || return 1
+  mkdir -p "$home/state/.supervise-daemon.lock"
+  printf '%s\n' "$pid" > "$home/state/.supervise-daemon.lock/pid"
+  printf '%s\n' "$identity" > "$home/state/.supervise-daemon.lock/pid-identity"
+}
+
+# In away mode the daemon runs the watcher one cycle at a time and handles each
+# wake between cycles, so a guarded command can land while no watcher process
+# holds the lock. A live daemon with a fresh beacon owns supervision then, under
+# every watcher model; a dead daemon or a cleared away flag is still down.
+test_away_daemon_gap_is_healthy() {
+  local dir home pid out_persistent out_extension out_no_afk out_dead
+  dir=$(make_guard_case away-daemon-gap)
+  home=$(case_home "$dir")
+  : > "$home/state/.afk"
+  touch "$home/state/.last-watcher-beat"
+  sleep 60 &
+  pid=$!
+  record_away_daemon "$dir" "$pid" || { kill "$pid" 2>/dev/null; fail "could not record the away daemon"; }
+  out_persistent=$(run_guard_case "$dir")
+  out_extension=$(run_guard_case_extension "$dir")
+  rm -f "$home/state/.afk"
+  out_no_afk=$(run_guard_case "$dir")
+  : > "$home/state/.afk"
+  rm -f "$home/state/.guard-watcher-stale-banner"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  out_dead=$(run_guard_case "$dir")
+  [ -z "$out_persistent" ] \
+    || fail "a live away daemon between watcher cycles must stay silent under the persistent model, got: $out_persistent"
+  [ -z "$out_extension" ] \
+    || fail "a live away daemon between watcher cycles must stay silent under the extension model, got: $out_extension"
+  [ "$(count_text "$out_no_afk" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "a live daemon without the away flag must still alarm: $out_no_afk"
+  [ "$(count_text "$out_dead" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "a dead away daemon must still alarm: $out_dead"
+  pass "fm-guard stale banner: a live away daemon between watcher cycles is healthy"
+}
+
 # The send-time false alarm this suite exists to pin: on a Pi primary the watcher
 # process is torn down and respawned by the extension on every actionable wake, so
 # a guarded command that lands in a hand-off sees a fresh beacon and an unheld lock
@@ -879,6 +921,7 @@ test_persistent_model_ignores_rewake_epoch
 test_autoarm_stale_episode_is_stable
 test_persistent_no_watcher_banner_names_missing_process
 test_persistent_no_watcher_episode_survives_beacon_touch
+test_away_daemon_gap_is_healthy
 test_fresh_beacon_without_live_watcher_stays_alarm
 test_x_mode_without_live_watcher_stays_alarm
 test_healthy_recovery_rearms_next_stale_episode

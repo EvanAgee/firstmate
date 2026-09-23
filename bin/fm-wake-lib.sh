@@ -322,6 +322,8 @@ fm_away_daemon_owns_supervision() {
 # extension never restores still alarms once the beacon passes grace.
 # persistent: require a live identity-matched watcher with a fresh beacon
 # (fm_watcher_healthy); a fresh leftover beacon with no live watcher is still down.
+# Every model: while fm_away_daemon_owns_supervision holds, the away daemon's
+# between-cycle gap is healthy, as in the turn-end guard.
 # shellcheck disable=SC2034 # Read by callers after the function returns.
 FM_WATCHER_VERDICT_OK=false
 # shellcheck disable=SC2034 # Read by callers after the function returns.
@@ -347,8 +349,9 @@ fm_watcher_supervision_verdict() {
     # shellcheck disable=SC2034 # Read by callers after the function returns.
     FM_WATCHER_VERDICT_OK=true
   elif [ "$fresh" = true ]; then
-    if [ "$model" = extension ] && fm_watcher_lock_unheld "$state" \
-      && fm_extension_owns_supervision "$state" "$root"; then
+    if { [ "$model" = extension ] && fm_watcher_lock_unheld "$state" \
+      && fm_extension_owns_supervision "$state" "$root"; } \
+      || fm_away_daemon_owns_supervision "$state" "$grace"; then
       # shellcheck disable=SC2034 # Read by callers after the function returns.
       FM_WATCHER_VERDICT_OK=true
     else

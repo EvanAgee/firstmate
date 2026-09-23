@@ -191,6 +191,32 @@ test_direct_pr_and_scout_refresh_before_launch() {
   pass "direct-PR ships and scouts both refresh stale pooled worktrees before launch"
 }
 
+# A retired secondmate home returned to the pool keeps its gitignored identity
+# markers and private dirs. The task worktree must not keep reading as that
+# home, while the retired home's private records stay untouched for recovery.
+test_pool_drops_retired_secondmate_identity_markers() {
+  local rec id out status exclude
+  id='pool-retired-marker-r5'
+  rec=$(make_case retired-marker "$id")
+  read_case_record "$rec"
+  exclude="$(git -C "$POOL_DIR" rev-parse --git-common-dir)/info/exclude"
+  printf '.fm-secondmate-home\n.fm-secondmate-parent\n/state/\n' >> "$exclude"
+  printf 'aos-pr-lander\n' > "$POOL_DIR/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\n' > "$POOL_DIR/.fm-secondmate-parent"
+  mkdir -p "$POOL_DIR/state"
+  printf 'retired home record\n' > "$POOL_DIR/state/route.json"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "spawn should accept a pooled worktree carrying retired secondmate markers"
+  assert_absent "$POOL_DIR/.fm-secondmate-home" "spawn left a retired secondmate home marker in the task worktree"
+  assert_absent "$POOL_DIR/.fm-secondmate-parent" "spawn left a retired secondmate parent record in the task worktree"
+  assert_contains "$out" "retired secondmate" "spawn did not report the markers it removed"
+  assert_grep 'retired home record' "$POOL_DIR/state/route.json" \
+    "spawn discarded the retired home's private records"
+  pass "a pooled worktree drops retired secondmate identity markers and keeps the home's private records"
+}
+
 test_dirty_pool_refuses_without_discarding_work() {
   local rec id out status before
   id='pool-dirty-refusal-r4'
@@ -241,5 +267,6 @@ test_direct_pr_and_scout_refresh_before_launch
 test_dirty_pool_refuses_without_discarding_work
 test_unresolved_remote_default_refuses_pool
 test_unreachable_origin_refuses_stale_pool_base
+test_pool_drops_retired_secondmate_identity_markers
 
 echo "# all fm-spawn-pool-base-freshen tests passed"

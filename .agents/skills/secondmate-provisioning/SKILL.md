@@ -239,6 +239,7 @@ A remote route delegates the same guard to its configured host and additionally 
 SSH exit 255 preserves the route and local records because remote completion is unknown.
 When safe, teardown kills the direct endpoint, removes the `data/secondmates.md` route, clears the main home metadata, and removes the retired secondmate home.
 Removing a leased home releases its durable treehouse lease via `treehouse return`, so the pool slot is freed for reuse rather than left leased forever.
+`treehouse return` keeps the retired home's gitignored files in the slot; the next fresh spawn into it removes only the identity markers ([architecture](../../../docs/architecture.md#worktrees-not-branches-in-your-checkout)).
 A plain-clone home with no pool slot is simply removed.
 If `treehouse return` fails for a leased home, teardown stops with state intact rather than raw-removing the directory and hiding a held lease.
 Before either return or direct removal, teardown asks the target home's process-event runner to retire its registrations and physically owned machine-wide claims through the safe generation-bound path.

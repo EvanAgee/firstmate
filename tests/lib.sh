@@ -49,6 +49,11 @@ export FM_API="${FM_API:-0}"
 # shellcheck disable=SC2034
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 unset OMPCODE  # No test should inherit the parent omp process's marker; tests that test omp detection set it explicitly.
+# A test file run directly gets the same clean home selection that
+# bin/fm-test-run.sh gives each worker, so a test that forgets FM_HOME never
+# reads or writes the live home of the crewmate running it.
+unset FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_ROOT_OVERRIDE \
+  FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE FM_BACKEND
 
 # --- reporters --------------------------------------------------------------
 

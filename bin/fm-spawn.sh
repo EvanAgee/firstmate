@@ -2698,6 +2698,17 @@ freshen_spawn_worktree_base() {  # <worktree>
     echo "error: pooled worktree '$worktree' is at '${actual:-unknown}', not current '$target' ('$expected'); refusing to launch" >&2
     return 1
   fi
+  # A retired secondmate home returned to the pool keeps its gitignored identity
+  # markers, which would make this task's hooks treat the worktree as that home.
+  # Its private records stay in place; only the identity goes.
+  if [ -e "$worktree/$SUB_HOME_MARKER" ] || [ -L "$worktree/$SUB_HOME_MARKER" ] \
+    || [ -e "$worktree/.fm-secondmate-parent" ] || [ -L "$worktree/.fm-secondmate-parent" ]; then
+    if ! rm -f -- "$worktree/$SUB_HOME_MARKER" "$worktree/.fm-secondmate-parent"; then
+      echo "error: could not remove retired secondmate markers from pooled worktree '$worktree'; refusing to launch a task that would read as that home" >&2
+      return 1
+    fi
+    echo "spawn: removed retired secondmate markers from pooled worktree '$worktree'" >&2
+  fi
 }
 
 herdr_projection_meta_field_exact() {  # <meta> <key>
