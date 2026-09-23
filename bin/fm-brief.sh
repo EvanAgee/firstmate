@@ -10,7 +10,7 @@
 # name the specific default patterns to avoid, because
 # a generic "avoid an AI look" only swaps one default for another;
 # the worker checks its first result for default styles and extends that list.
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab] [--matt-flow]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--spec <issue URL|owner/repo#N|path>] [--herdr-lab] [--matt-flow]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -35,6 +35,17 @@
 #   Matt flow. It adds one thin flow trigger that enters at the installed `tdd`
 #   skill, because the brief is already the spec and the earlier flow phases are
 #   either done or human-only; the installed skills own every phase it names.
+#   It therefore requires --spec: a Matt-flow task's spec already exists.
+#   --spec applies only to ship briefs and names the task's approved spec. The
+#   brief then carries "Spec: <value>" as written, plus the rule that the proof at
+#   docs/proof/<task-id>.md names every acceptance criterion id of that spec.
+#   Without --spec a ship brief carries "Spec: to-spec phase" and a Spec first
+#   section: the worker writes docs/specs/<task-id>.md in the to-spec template's
+#   shape, lints it with $FM_SPEC_LINT (default
+#   ~/.agents/skills/spec-lint/spec-lint), proves every acceptance criterion in
+#   docs/proof/<task-id>.md, and names the spec path in its done line. Before
+#   landing, bin/fm-spec-point.sh points that brief at the spec the branch wrote.
+#   The captain's spec-gate hook reads the first "Spec:" line in the brief.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -131,6 +142,8 @@ NO_PROJECTS=0
 MATT_FLOW=0
 MODE=
 MODE_SET=0
+SPEC=
+SPEC_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -140,6 +153,7 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
+      spec) SPEC=$a; SPEC_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -153,6 +167,8 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --spec) want_value=spec ;;
+    --spec=*) SPEC=${a#--spec=}; SPEC_SET=1 ;;
     # yolo never reaches the worker: it is firstmate's approval authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -183,6 +199,18 @@ fi
 
 if [ "$MATT_FLOW" -eq 1 ] && [ "$KIND" != ship ]; then
   echo "error: --matt-flow applies only to ship briefs" >&2
+  exit 1
+fi
+if [ "$SPEC_SET" -eq 1 ] && [ "$KIND" != ship ]; then
+  echo "error: --spec applies only to ship briefs; a scout delivers a report and a secondmate charter is not a work item" >&2
+  exit 1
+fi
+if [ "$SPEC_SET" -eq 1 ] && [ -z "$SPEC" ]; then
+  echo "error: --spec requires a value: an issue URL, owner/repo#N, or a path" >&2
+  exit 1
+fi
+if [ "$MATT_FLOW" -eq 1 ] && [ "$SPEC_SET" -eq 0 ]; then
+  echo "error: --matt-flow requires --spec <issue URL|owner/repo#N|path>: a Matt-flow brief enters at tdd, so its spec must already exist" >&2
   exit 1
 fi
 ID=${POS[0]}
@@ -581,6 +609,26 @@ MATT_FLOW_MODE_SECTION=${MATT_FLOW_MODE_SECTION%$'\n'}
 MATT_FLOW_SECTION=$'\n'"$MATT_FLOW_SECTION"$'\n'"$MATT_FLOW_MODE_SECTION"$'\n'
 fi
 
+if [ "$SPEC_SET" -eq 1 ]; then
+IFS= read -r -d '' SPEC_SECTION <<EOF || true
+# Spec
+Spec: $SPEC
+Name every acceptance criterion id of that spec in \`docs/proof/$ID.md\` on your branch; landing is refused until the proof names each one.
+EOF
+else
+SPEC_LINT=${FM_SPEC_LINT:-$HOME/.agents/skills/spec-lint/spec-lint}
+IFS= read -r -d '' SPEC_SECTION <<EOF || true
+# Spec first
+Spec: to-spec phase
+This task has no approved spec yet, so writing it is your first job.
+Before any code, write the spec at \`docs/specs/$ID.md\` in the shape of the \`to-spec\` skill's template (\`$HOME/.agents/skills/to-spec/SKILL.md\`) and commit it on your branch.
+Lint it with \`$SPEC_LINT docs/specs/$ID.md\` and fix every fault it prints until it passes.
+Build against that spec, then prove every acceptance criterion in \`docs/proof/$ID.md\`, naming each id.
+Name the spec path in your done line: firstmate points this brief at it before landing, and landing is refused until the branch changes exactly one spec that lints clean and its proof names every id.
+EOF
+fi
+SPEC_SECTION=${SPEC_SECTION%$'\n'}
+
 SHIP_SCOPE_RULE=
 NEXT_SHIP_RULE=7
 if [ "$MATT_FLOW" -eq 0 ]; then
@@ -593,6 +641,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 # Task
 {TASK}
+
+$SPEC_SECTION
 
 $WORKER_SKILLS_SECTION
 

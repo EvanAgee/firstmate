@@ -213,7 +213,7 @@ test_ship_modes_generate_clean_briefs() {
       "$id: brief missing the unconditional unslop gate"
     assert_no_grep "Matt-flow" "$brief" \
       "$id: ordinary ship brief unexpectedly declared Matt-flow"
-    assert_no_grep "\`to-spec\`" "$brief" \
+    assert_no_grep "\`to-tickets\`" "$brief" \
       "$id: ordinary ship brief unexpectedly mentioned a Matt-flow skill"
     assert_no_grep "\`code-review\`" "$brief" \
       "$id: ordinary ship brief unexpectedly mentioned a Matt-flow terminal phase"
@@ -262,7 +262,7 @@ test_worker_turn_and_scope_rules() {
   assert_grep "8. If you hit the same obstacle twice" "$brief" \
     "ordinary ship brief did not renumber later rules"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-turn-matt some-proj --mode local-only --matt-flow >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-turn-matt some-proj --mode local-only --matt-flow --spec EvanAgee/firstmate#1 >/dev/null 2>&1 \
     || fail "Matt-flow ship brief failed to scaffold"
   brief="$home/data/brief-turn-matt/brief.md"
   grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
@@ -312,7 +312,7 @@ test_turn_rule_names_the_four_early_stops() {
   printf '%s\n' "${EARLY_STOP_LINES[@]}" > "$expected"
 
   for variant in "no-mistakes:--mode no-mistakes" "direct-PR:--mode direct-PR" "local-only:--mode local-only" \
-    "matt:--mode local-only --matt-flow" "scout:--scout"; do
+    "matt:--mode local-only --matt-flow --spec EvanAgee/firstmate#1" "scout:--scout"; do
     id="early-stops-${variant%%:*}"
     args=${variant#*:}
     # shellcheck disable=SC2086 # args is a deliberate flag list.
@@ -404,7 +404,7 @@ test_matt_flow_is_explicit_and_thin() {
   home="$TMP_ROOT/matt-flow-home"
   mkdir -p "$home/data"
   id="brief-matt-flow-a4"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow --spec EvanAgee/firstmate#1 >/dev/null 2>&1
   status=$?
   expect_code 0 "$status" "Matt-flow brief generation should exit 0"
   brief="$home/data/$id/brief.md"
@@ -460,7 +460,7 @@ test_matt_flow_without_pipeline_keeps_code_review() {
 
   for mode in direct-PR local-only; do
     id="brief-matt-flow-$mode"
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --matt-flow >/dev/null 2>&1 \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --matt-flow --spec EvanAgee/firstmate#1 >/dev/null 2>&1 \
       || fail "$mode Matt-flow brief failed to scaffold"
     brief="$home/data/$id/brief.md"
     assert_grep "# Matt-flow" "$brief" \
@@ -490,7 +490,7 @@ test_pinned_reviewer_only_where_worker_reviews() {
   home="$TMP_ROOT/pinned-reviewer-home"
   mkdir -p "$home/data"
   id="brief-reviewer-matt-no-mistakes"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow --spec EvanAgee/firstmate#1 >/dev/null 2>&1 \
     || fail "no-mistakes Matt-flow brief failed to scaffold"
   assert_no_grep "claude -p --model opus" "$home/data/$id/brief.md" \
     "no-mistakes Matt-flow brief ran its own reviewer beside the pipeline"
@@ -557,7 +557,7 @@ test_ship_validation_runs_full_suites_on_github() {
     "local-only: Definition of done retained the old no-push instruction"
 
   id="brief-github-matt"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --matt-flow >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only --matt-flow --spec EvanAgee/firstmate#1 >/dev/null 2>&1 \
     || fail "local-only --matt-flow: ship brief failed to scaffold"
   matt_brief="$home/data/$id/brief.md"
   assert_grep "Enter at the installed \`tdd\` skill: write the failing test first, then make it pass." "$matt_brief" \
@@ -601,7 +601,7 @@ test_ship_modes_demand_a_walked_path_before_done() {
         matt-flow)
           id="brief-walk-$mode-matt-flow"
           flow_label="$mode --matt-flow"
-          FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --matt-flow >/dev/null 2>&1 \
+          FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --matt-flow --spec EvanAgee/firstmate#1 >/dev/null 2>&1 \
             || fail "$flow_label: ship brief failed to scaffold"
           ;;
       esac
@@ -991,7 +991,7 @@ test_no_1password_rule_in_ship_and_scout_scaffolds() {
   done
 
   id="brief-no1p-matt-flow"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --matt-flow --spec EvanAgee/firstmate#1 >/dev/null 2>&1 \
     || fail "matt-flow: ship brief failed to scaffold"
   brief="$home/data/$id/brief.md"
   assert_grep "$NO_1PASSWORD_RULE" "$brief" \
@@ -1428,6 +1428,87 @@ test_no_subagents_rule_emits_in_every_variant() {
   pass "every generated scout/ship brief carries the no-subagents standing rule inside its Rules section"
 }
 
+# The spec contract (docs/specs/fm-spec-gate-brief-and-landing.md): every ship
+# brief carries a Spec: line the spec gate can read, so firstmate never edits a
+# brief by hand before spawning it.
+first_spec_line() {  # <brief>
+  grep -m1 '^Spec:' "$1"
+}
+
+# AC1
+test_spec_option_writes_the_named_spec() {
+  local home brief
+  home="$TMP_ROOT/spec-named-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" spec-named some-proj --mode local-only --spec EvanAgee/firstmate#140 >/dev/null 2>&1 \
+    || fail "a ship brief with --spec failed to scaffold"
+  brief="$home/data/spec-named/brief.md"
+  [ "$(first_spec_line "$brief")" = "Spec: EvanAgee/firstmate#140" ] \
+    || fail "--spec did not become the brief's first Spec: line (got: $(first_spec_line "$brief"))"
+  assert_grep "Name every acceptance criterion id of that spec in \`docs/proof/spec-named.md\` on your branch" "$brief" \
+    "a brief with a named spec did not require its ids in the proof"
+  assert_no_grep "# Spec first" "$brief" \
+    "a brief with a named spec still told the worker to write one"
+  pass "fm-brief.sh: --spec writes the named spec as the brief's Spec: line"
+}
+
+# AC2
+test_ship_brief_defaults_to_spec_first() {
+  local home mode id brief section
+  home="$TMP_ROOT/spec-first-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="spec-first-$mode"
+    FM_HOME="$home" FM_SPEC_LINT=/opt/lint/spec-lint "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief without --spec failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    [ "$(first_spec_line "$brief")" = "Spec: to-spec phase" ] \
+      || fail "$mode: brief without --spec did not say Spec: to-spec phase (got: $(first_spec_line "$brief"))"
+    section=$(awk '$0 == "# Spec first" { on = 1; next } on && /^# / { exit } on' "$brief")
+    [ -n "$section" ] || fail "$mode: brief without --spec has no Spec first section"
+    assert_contains "$section" "\`docs/specs/$id.md\`" "$mode: Spec first section did not name the spec path"
+    assert_contains "$section" "\`/opt/lint/spec-lint docs/specs/$id.md\`" "$mode: Spec first section did not name the lint command"
+    assert_contains "$section" "\`docs/proof/$id.md\`" "$mode: Spec first section did not name the proof path"
+    assert_contains "$section" "done line" "$mode: Spec first section did not ask for the spec path in the done line"
+  done
+  pass "fm-brief.sh: a ship brief without --spec starts in the to-spec phase with a Spec first section"
+}
+
+# AC3
+test_spec_option_is_ship_only() {
+  local home out status label id
+  home="$TMP_ROOT/spec-ship-only-home"
+  mkdir -p "$home/data"
+  for label in scout secondmate; do
+    id="spec-refused-$label"
+    if [ "$label" = scout ]; then
+      out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout --spec o/r#1 2>&1); status=$?
+    else
+      out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects --spec o/r#1 2>&1); status=$?
+    fi
+    expect_code 1 "$status" "$label: --spec should be refused"
+    assert_contains "$out" "--spec" "$label: refusal did not name --spec"
+    assert_absent "$home/data/$id/brief.md" "$label: a refused --spec still wrote a brief"
+  done
+  pass "fm-brief.sh: --spec is refused on scout and secondmate scaffolds"
+}
+
+# AC4
+test_matt_flow_requires_a_spec() {
+  local home out status
+  home="$TMP_ROOT/matt-flow-spec-home"
+  mkdir -p "$home/data"
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" mf some-proj --mode local-only --matt-flow 2>&1); status=$?
+  expect_code 1 "$status" "--matt-flow without --spec should be refused"
+  assert_contains "$out" "--spec" "--matt-flow refusal did not name --spec"
+  assert_absent "$home/data/mf/brief.md" "a refused --matt-flow brief was still written"
+  pass "fm-brief.sh: --matt-flow requires --spec"
+}
+
+test_spec_option_writes_the_named_spec
+test_ship_brief_defaults_to_spec_first
+test_spec_option_is_ship_only
+test_matt_flow_requires_a_spec
 test_no_subagents_rule_emits_in_every_variant
 test_script_parses
 test_no_heredoc_in_command_substitution
