@@ -628,6 +628,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/specs/fm-spec-gate-brief-and-landing.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/specs/fm-watcher-stale-while-monitor.md",
       "audience": "maintainer-architecture"
     },
