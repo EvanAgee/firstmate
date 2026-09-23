@@ -576,6 +576,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/fm-watcher-stale-while-monitor.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/proof/fm-worker-exit-while-paused.md",
       "audience": "maintainer-verification"
     },
@@ -621,6 +625,10 @@
     },
     {
       "path": "docs/specs/fm-autoarm-merged-announce-loop.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/specs/fm-watcher-stale-while-monitor.md",
       "audience": "maintainer-architecture"
     },
     {
