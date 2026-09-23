@@ -11,6 +11,12 @@ metadata:
 
 # harness-adapters
 
+## Moved from AGENTS.md
+
+`AGENTS.md` section 13 used to list this skill's load trigger, kept here word for word; `AGENTS.md` now triggers it from the operating section that uses it.
+
+- `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
+
 Use this reference before any harness-specific firstmate operation: spawn, recovery, trust-dialog handling, skill invocation, interrupt, exit, resume, or adapter verification.
 
 Crewmates default to the same harness firstmate is running on unless `config/crew-harness` records an adapter name.

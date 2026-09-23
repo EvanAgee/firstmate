@@ -10,10 +10,11 @@ metadata:
 
 # home-layout-reference
 
-This is the full layout inventory that `AGENTS.md` section 2 summarizes.
-Section numbers below refer to `AGENTS.md`.
-`docs/configuration.md` owns the top-level layout and configuration schemas, and each producing script's header and help own exact child fields and mutation mechanics.
+This is the full layout inventory that `AGENTS.md` section 2 summarizes, moved word for word.
+In the inventory, "this file" means `AGENTS.md`, and section numbers refer to `AGENTS.md`.
 An entry marked "never touch" or "written only by" a script is owned by that script; never hand-edit it.
+
+`docs/configuration.md` is the single owner of the top-level operational-home layout and configuration schemas; each producing script's header and help own exact child fields and mutation mechanics.
 
 ```
 AGENTS.md            this file (CLAUDE.md is a real @AGENTS.md pointer to it)
@@ -111,3 +112,5 @@ state/               runtime records and signals; gitignored
   .api.pid .api.pid-identity .api.port .api.session-pid .api.log .api.lock  localhost API process records; bin/fm-api.sh
 .no-mistakes/        local validation state and evidence; gitignored
 ```
+
+A `state/<id>.status` line is a wake event, not current-state truth; `bin/fm-crew-state.sh` owns current-state reconciliation.

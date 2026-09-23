@@ -14,6 +14,17 @@ metadata:
 
 # fmx-respond
 
+## Moved from AGENTS.md
+
+`AGENTS.md` section 13 used to list this skill's load trigger, kept here word for word; `AGENTS.md` now triggers it from the operating section that uses it.
+
+- `fmx-respond` - load on an `x-mention <request_id>` `check:` wake to handle the mention, on an `x-mode-error ...` `check:` wake to report the Relay configuration blocker, on a `public-followup ...` `check:` wake or a startup-surfaced public commitment, and on any milestone or terminal wake for a Relay-linked task before posting its completion follow-up; relevant only when Relay is on.
+
+These `AGENTS.md` sentences moved here word for word:
+
+Relay is the public-mention integration older docs and some emitted lines still call "X mode"; its identifiers keep the `FMX_`, `x-`, and `fm-x-` spellings.
+`docs/configuration.md` owns activation, generated state, cadence, wire protocol, and opt-out mechanics.
+
 Relay lets a firstmate instance answer and act on public mentions routed through the shared `@myfirstmate` relay.
 A mention arrives through the watcher as a `check:` wake whose payload is `x-mention <request_id>`.
 The full mention is stashed locally; this skill acts on any request it carries and turns it into one public reply, or deliberately skips it when there is nothing to answer.

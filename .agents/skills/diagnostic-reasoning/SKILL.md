@@ -11,6 +11,12 @@ metadata:
 
 # diagnostic-reasoning
 
+## Moved from AGENTS.md
+
+`AGENTS.md` section 13 used to list this skill's load trigger, kept here word for word; `AGENTS.md` now triggers it from the operating section that uses it.
+
+- `diagnostic-reasoning` - load before scoping a reported bug, before acting on a diagnostic report, runtime alert, monitoring signal, outage report, failing scheduled check, or triage summary, and before repeating any second-hand claim about a cause as established fact.
+
 Use this procedure before scoping a reported bug and before acting on a diagnostic report.
 A runtime alert, monitoring signal, outage report, failing scheduled check, or triage summary is a report of broken behavior and carries the same trigger; the arriving format does not change the procedure owed.
 This skill is the single owner of Firstmate's bug-diagnosis reasoning procedure.

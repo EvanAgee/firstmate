@@ -10,16 +10,18 @@ metadata:
 
 # session-start-reference
 
-`bin/fm-session-start.sh`'s header is the single owner of composed commands, ordering, and digest contents; this map is the behavioral reading of that output.
-`AGENTS.md` section 3 keeps the lock, read-once, network-check, and bootstrap-consent rules inline.
+`AGENTS.md` section 3 keeps the lock, read-once, network-check, and bootstrap-consent rules inline; this skill holds the digest map moved out of it word for word.
+Section numbers below refer to `AGENTS.md`.
+
 `bin/fm-supervision-instructions.sh` renders the emitted supervision block from `docs/supervision-protocols/`.
 `secondmate-provisioning` owns startup secondmate sync, liveness, and inherited local-material convergence.
+Treat digest status tails as wake-event history and use targeted current-state reconciliation when the live state matters.
+Honor lock-refused read-only mode exactly as section 3 requires.
+Run the session-start `export CHROME_DEVTOOLS_AXI_MCP_PATH=...` before the first `chrome-devtools-axi` command so this shell inherits the pinned launcher.
 
 The digest itself makes no external-network call and never waits for one.
 Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, and project clone refresh - runs concurrently in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
-When that section reports its checks still in progress it names exactly what is unconfirmed, and `AGENTS.md` section 3 owns how to treat those.
-
-The digest prints these sections in order:
+When that section reports its checks still in progress it names exactly what is unconfirmed; treat none of those as passed until the result lands, either from `bin/fm-startup-network.sh report` or as a `check: startup-network` wake.
 
 1. **Lock** - acquires the per-home session lock first, before anything mutates shared state, then starts the deferred network stage above.
 2. **Bootstrap** - detect-only checks (tool/version problems, the worktree-tangle check, harness override, dispatch-profile validation, backlog-backend status) always run, but routine confirmations stay silent by default.
@@ -41,4 +43,4 @@ The digest prints these sections in order:
    A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use the firstmate repo's built-in defaults, `projects.md` absent means rebuild it from the clones under `projects/`, etc.).
    The closing reminder points back to the emitted supervision block and preserves only the lock, afk, Relay, and read-once reminders.
 
-An `ABSENT` captain, shared-captain, secondmate, or learnings file means the firstmate repo's built-in defaults, no shared captain preferences, no registered secondmates, or no captured learnings.
+An `ABSENT` captain, shared-captain, secondmate, or learnings file means the firstmate repo's built-in defaults, no shared captain preferences, no registered secondmates, or no captured learnings; rebuild an absent or stale project registry from the clones before dispatch.

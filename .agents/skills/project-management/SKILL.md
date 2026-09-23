@@ -12,6 +12,17 @@ metadata:
 
 # project-management
 
+## Moved from AGENTS.md
+
+`AGENTS.md` section 13 used to list this skill's load trigger, kept here word for word; `AGENTS.md` now triggers it from the operating section that uses it.
+
+- `project-management` - load before adding, creating, removing, or initializing a project.
+  Cloning or registering a project is add intake and uses the same trigger.
+
+These `AGENTS.md` sentences moved here word for word:
+
+`bin/fm-flow.sh <project> fast|full|status` owns a project's flow flip between the full PR flow and the fast local-only flow, including its GitHub rulesets and the push-authority line in `data/captain.md`.
+
 Use this procedure before adding, creating, removing, or initializing a project.
 Cloning or registering a project is add intake and uses the same trigger.
 This skill is the single owner of Firstmate's project-management procedure.

@@ -11,6 +11,13 @@ metadata:
 
 # updatefirstmate
 
+## Moved from AGENTS.md
+
+These `AGENTS.md` sentences moved here word for word:
+
+Firstmate's shared instruction surface reaches running homes only after it lands on the default branch and those homes fast-forward.
+Only `AGENTS.md`, `bin/`, and `.agents/skills/` are loaded by a running firstmate; public `skills/` is an installer-facing surface.
+
 Self-update firstmate in place.
 Firstmate is its own repo, behind the same no-mistakes gate as any project, so new tracked material (`AGENTS.md`, `bin/`, `.agents/skills/`, and public `skills/`) reaches `main` and then sits there until each running firstmate pulls it.
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are a running firstmate instruction surface; public `skills/` is installer-facing and is not loaded by firstmate.

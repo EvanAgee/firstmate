@@ -10,7 +10,8 @@ metadata:
 
 # knowledge-routing
 
-`AGENTS.md` section 6 keeps the project-memory boundaries inline; this skill is the source of truth for destinations.
+`AGENTS.md` section 6 keeps the project-memory boundaries inline; this skill is the source of truth for destinations, moved out of it word for word.
+
 Treat `data/captain.md` as the domain-local record of captain preferences, optional `data/captain-shared.md` as the main-authoritative shared captain-preference file for secondmate inheritance, and `data/learnings.md` as curated home-local knowledge, regardless of harness memory.
 
 Route durable knowledge to its most specific owner:
@@ -22,4 +23,5 @@ Route durable knowledge to its most specific owner:
 - Knowledge useful to almost every contributor to one project belongs in that project's committed `AGENTS.md`.
 - Knowledge general to every firstmate user belongs in this repo's shared tracked surface.
 
-A crewmate creates or updates a project's `AGENTS.md` lazily through the project's selected delivery path, using `bin/fm-ensure-agents-md.sh` and preferring pointers to authoritative sources over copied detail.
+Firstmate never writes a project's `AGENTS.md` directly.
+A crewmate creates or updates it lazily through the project's selected delivery path, using `bin/fm-ensure-agents-md.sh` and preferring pointers to authoritative sources over copied detail.
