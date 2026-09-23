@@ -164,6 +164,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/backlog-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/bakeoff/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -173,6 +177,10 @@
     },
     {
       "path": ".agents/skills/bootstrap-diagnostics/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/captain-communication/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -256,6 +264,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/home-layout-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/implement/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -265,6 +277,10 @@
     },
     {
       "path": ".agents/skills/improve-codebase-architecture/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/knowledge-routing/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -324,6 +340,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/session-start-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/setup-pre-commit/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -337,6 +357,14 @@
     },
     {
       "path": ".agents/skills/stuck-crewmate-recovery/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/supervision-reference/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/task-lifecycle-reference/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -518,6 +546,10 @@
     {
       "path": "docs/orca-backend.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/proof/5175.md",
+      "audience": "maintainer-verification"
     },
     {
       "path": "docs/provider-availability-routing.md",
