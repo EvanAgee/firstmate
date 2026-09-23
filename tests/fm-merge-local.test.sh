@@ -437,6 +437,84 @@ test_local_only_without_push_leaves_issues_to_a_pushed_landing() {
   pass "fm-merge-local without --push leaves linked issues open and says so"
 }
 
+# Build a project whose main tracks shared.txt and telemetry/knobs.jsonl, with a
+# lane branch fm/<id> whose one commit runs <lane-change> in the project dir.
+# Echoes the project path.
+make_project_with_files() {  # <name> <id> <lane-change>
+  local name=$1 id=$2 change=$3 proj
+  proj="$TMP_ROOT/$name/proj"
+  mkdir -p "$proj/telemetry"
+  git -C "$proj" init -q
+  printf 'base\n' > "$proj/shared.txt"
+  printf '{"knob":1}\n' > "$proj/telemetry/knobs.jsonl"
+  git -C "$proj" add -A
+  git -C "$proj" commit -qm init
+  git -C "$proj" branch -M main
+  git -C "$proj" checkout -q -b "fm/$id"
+  (cd "$proj" && eval "$change")
+  git -C "$proj" add -A
+  git -C "$proj" commit -qm lanework
+  git -C "$proj" checkout -q main
+  printf '%s\n' "$proj"
+}
+
+# AC9: local changes that the fast-forward does not touch stay exactly as they
+# were, and the landing goes through the guarded path.
+test_local_only_lands_past_unrelated_local_changes() {
+  local state proj rc status_after
+  state="$TMP_ROOT/unrelated-dirty/state"
+  mkdir -p "$state"
+  proj=$(make_project_with_files unrelated-dirty t9 'mkdir -p src && printf "feature\n" > src/feature.txt')
+  fm_write_meta "$state/t9.meta" "project=$proj" mode=local-only
+  printf '{"knob":2}\n' > "$proj/telemetry/knobs.jsonl"
+  mkdir -p "$proj/records/run-1"
+  printf 'record\n' > "$proj/records/run-1/out.json"
+
+  run_merge "$state" t9 > "$TMP_ROOT/unrelated-dirty/out" 2> "$TMP_ROOT/unrelated-dirty/err"; rc=$?
+  expect_code 0 "$rc" "unrelated-dirty: landing past unrelated local changes failed: $(cat "$TMP_ROOT/unrelated-dirty/err")"
+  [ "$(git -C "$proj" rev-parse main)" = "$(git -C "$proj" rev-parse fm/t9)" ] \
+    || fail "unrelated-dirty: main did not fast-forward to the lane"
+  [ "$(cat "$proj/telemetry/knobs.jsonl")" = '{"knob":2}' ] \
+    || fail "unrelated-dirty: the local edit to telemetry/knobs.jsonl was not kept"
+  [ "$(cat "$proj/records/run-1/out.json")" = record ] \
+    || fail "unrelated-dirty: the untracked record was not kept"
+  status_after=$(git -C "$proj" status --porcelain --untracked-files=all)
+  assert_contains "$status_after" " M telemetry/knobs.jsonl" "unrelated-dirty: the local edit is no longer uncommitted"
+  assert_contains "$status_after" "?? records/run-1/out.json" "unrelated-dirty: the record is no longer untracked"
+  pass "fm-merge-local lands a local-only task past local changes the fast-forward does not touch"
+}
+
+# AC10: a local path that is, contains, or sits inside a path the fast-forward
+# changes refuses the landing and leaves everything where it was.
+test_overlapping_local_changes_refuse_the_landing() {
+  local label change local_path state proj before rc err
+  while IFS='|' read -r label change local_path; do
+    [ -n "$label" ] || continue
+    state="$TMP_ROOT/overlap-$label/state"
+    mkdir -p "$state"
+    proj=$(make_project_with_files "overlap-$label" "t10$label" "$change")
+    fm_write_meta "$state/t10$label.meta" "project=$proj" mode=local-only
+    mkdir -p "$proj/$(dirname "$local_path")"
+    printf 'local work\n' > "$proj/$local_path"
+    before=$(git -C "$proj" rev-parse main)
+
+    run_merge "$state" "t10$label" > "$TMP_ROOT/overlap-$label/out" 2> "$TMP_ROOT/overlap-$label/err"; rc=$?
+    err=$(cat "$TMP_ROOT/overlap-$label/err")
+    expect_code 1 "$rc" "overlap-$label: an overlapping landing should be refused"
+    assert_contains "$err" "local changes overlap the landing" "overlap-$label: refusal did not say the local changes overlap"
+    assert_contains "$err" "$local_path" "overlap-$label: refusal did not name the overlapping path"
+    [ "$(git -C "$proj" rev-parse main)" = "$before" ] || fail "overlap-$label: main moved despite the refusal"
+    [ "$(cat "$proj/$local_path")" = "local work" ] || fail "overlap-$label: the local file was changed"
+  done <<'ROWS'
+edited|printf 'lane\n' > shared.txt|shared.txt
+added|printf 'lane\n' > new.txt|new.txt
+dirfile|printf 'lane\n' > notes|notes/draft.md
+ROWS
+  pass "fm-merge-local refuses a landing whose changes overlap local changes, and leaves both untouched"
+}
+
+test_local_only_lands_past_unrelated_local_changes
+test_overlapping_local_changes_refuse_the_landing
 test_pr_bound_refused_without_outage_flag
 test_pr_bound_accepted_during_outage_records_ledger
 test_diverged_branch_escalates_not_forces

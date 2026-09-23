@@ -21,7 +21,11 @@
 #
 # In both cases the merge is a clean fast-forward only: it refuses a diverged
 # branch and tells you to have the crewmate rebase. It never force-merges and
-# never touches unlanded work. The outage path lands only what the captain's
+# never touches unlanded work. The project's main checkout may carry uncommitted
+# or untracked files, such as a live telemetry file or run records, as long as
+# none of them is, contains, or sits inside a path the fast-forward changes; an
+# overlap refuses the landing and names the local paths, which are never
+# stashed, discarded, or rewritten. The outage path lands only what the captain's
 # existing authority (yolo, or an explicit approval) already covers; it invents
 # no new merge authority. See AGENTS.md prime directives, task lifecycle, and
 # data/outage-local-merge-design/ (the design) plus its captain-decision.md.
@@ -210,14 +214,10 @@ git -C "$PROJ" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null \
 
 DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
 
-# The project's main checkout must be on its default branch and clean, so the
+# The project's main checkout must be on its default branch, so the
 # fast-forward lands predictably (firstmate never writes here otherwise).
 cur=$(git -C "$PROJ" symbolic-ref --short HEAD 2>/dev/null || echo "")
 [ "$cur" = "$DEFAULT" ] || { echo "error: $PROJ is on '$cur', expected default branch '$DEFAULT'; cannot merge safely" >&2; exit 1; }
-if [ -n "$(git -C "$PROJ" status --porcelain 2>/dev/null | head -1)" ]; then
-  echo "error: $PROJ has a dirty working tree; refusing to merge into it" >&2
-  exit 1
-fi
 
 # Clean fast-forward only: DEFAULT must be an ancestor of BRANCH.
 if ! git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BRANCH"; then
@@ -226,12 +226,44 @@ if ! git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BRANCH"; then
   exit 1
 fi
 
+# Uncommitted and untracked files in the checkout may stay only where the
+# fast-forward writes nothing. A local path overlaps when it equals a path the
+# landing changes, lies inside one, or contains one; any overlap refuses the
+# landing. Local changes are never stashed, discarded, or rewritten.
+local_paths=$(git -C "$PROJ" status --porcelain -z --untracked-files=all --no-renames | tr '\0' '\n' | cut -c4-)
+if [ -n "$local_paths" ]; then
+  overlap=$(git -C "$PROJ" diff --name-only -z --no-renames "$DEFAULT" "$BRANCH" | tr '\0' '\n' \
+    | LOCAL_PATHS="$local_paths" awk '
+        # Index each local path, and mark every directory above one.
+        BEGIN {
+          n = split(ENVIRON["LOCAL_PATHS"], l, "\n")
+          for (i = 1; i <= n; i++) {
+            p = l[i]; sub(/\/$/, "", p); here[p] = l[i]
+            while (sub(/\/[^\/]*$/, "", p)) above[p] = 1
+          }
+        }
+        # Report each local path a changed path equals, contains, or sits inside.
+        {
+          if ($0 in here) print here[$0]
+          if ($0 in above) for (i = 1; i <= n; i++) if (index(l[i], $0 "/") == 1) print l[i]
+          d = $0
+          while (sub(/\/[^\/]*$/, "", d)) if (d in here) print here[d]
+        }' | sort -u)
+  if [ -n "$overlap" ]; then
+    echo "error: local changes overlap the landing in $PROJ; refusing to merge into it:" >&2
+    printf '%s\n' "$overlap" | sed 's/^/  /' >&2
+    echo "Nothing was changed; land again once those paths carry no local changes." >&2
+    exit 1
+  fi
+fi
+
 before_full=$(git -C "$PROJ" rev-parse "$DEFAULT")
 before=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 git -C "$PROJ" merge --ff-only "$BRANCH" >/dev/null
 after_full=$(git -C "$PROJ" rev-parse "$DEFAULT")
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
+[ -z "$local_paths" ] || echo "left $(printf '%s\n' "$local_paths" | grep -c '') unrelated local change(s) in $PROJ untouched"
 LANDED_AT=
 if ! LANDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ); then
   echo "warning: could not determine the local landing timestamp for $ID" >&2
