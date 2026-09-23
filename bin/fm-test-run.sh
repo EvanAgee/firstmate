@@ -213,7 +213,7 @@ family_for_basename() {
       printf '%s\n' backend-dispatch
       ;;
     fm-pr-autoarm.test.sh|fm-pr-check-security.test.sh|fm-pr-merge.test.sh|fm-pr-review-chase.test.sh|fm-review-diff.test.sh|\
-    fm-issue-close-after-merge.test.sh|\
+    fm-ci-watch.test.sh|fm-issue-close-after-merge.test.sh|\
     fm-teardown.test.sh|fm-x-mode.test.sh)
       printf '%s\n' pr-forge
       ;;
