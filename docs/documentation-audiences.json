@@ -528,6 +528,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/fm-worker-exit-while-paused.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
