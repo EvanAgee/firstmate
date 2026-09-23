@@ -1937,6 +1937,43 @@ test_only_done_cards_auto_clear() {
   pass "only cards whose backlog item is done auto-clear"
 }
 
+test_parked_backlog_item_parks_its_card() {
+  local home out id
+  if ! have_tasks_axi; then
+    echo "skip: tasks-axi not found (parked backlog item)"
+    return 0
+  fi
+  home=$(make_home backlog-parked)
+  seed_backlog "$home"
+  for id in ship-gate deploy-window old-freeze; do
+    backlog_add "$home" "sample-origin-decision-$id" "Decide $id?"
+    add_card "$home" --id "sample-origin-decision-$id" --question "Decide $id?" >/dev/null
+  done
+  tasks-axi hold sample-origin-decision-ship-gate --reason "captain parked it" \
+    --kind parked --file "$home/data/backlog.md" >/dev/null
+  tasks-axi hold sample-origin-decision-deploy-window --reason "captain decision pending" \
+    --kind captain --file "$home/data/backlog.md" >/dev/null
+  tasks-axi hold sample-origin-decision-old-freeze --reason "parked until the freeze lifted" \
+    --kind parked --until 2026-01-01 --file "$home/data/backlog.md" >/dev/null
+  out=$(run_q "$home" reconcile)
+  [ "$out" = "parked: [id=sample-origin-decision-ship-gate] backlog-parked" ] \
+    || fail "reconcile should park only the card whose item is parked, got: $out"
+  [ "$(parked_ids "$home")" = sample-origin-decision-ship-gate ] \
+    || fail "parked backlog item left its card off the parked list: $(parked_ids "$home")"
+  [ "$(active_ids "$home" | sort | tr '\n' ' ')" \
+    = "sample-origin-decision-deploy-window sample-origin-decision-old-freeze " ] \
+    || fail "a captain hold or a lapsed parked hold moved its card: $(active_ids "$home")"
+  jq -e '
+    .records[]
+    | select(.id == "sample-origin-decision-ship-gate")
+    | .parked_reason == "backlog-parked" and .question == "Decide ship-gate?"
+  ' "$home/data/captain-queue.json" >/dev/null \
+    || fail "backlog-parked card lost its reason or content"
+  out=$(run_q "$home" reconcile)
+  [ -z "$out" ] || fail "caught-up backlog park should be silent, got: $out"
+  pass "a card parks when its backlog item carries an active parked hold"
+}
+
 test_dashboard_reply_after_auto_clear_does_not_orphan() {
   local home out rc
   if ! have_tasks_axi; then
@@ -2145,6 +2182,7 @@ test_legacy_repost_preserves_bounded_expiry
 test_done_backlog_item_clears_card_without_a_reply
 test_legacy_missing_backing_ignores_done_collision_and_expires
 test_only_done_cards_auto_clear
+test_parked_backlog_item_parks_its_card
 test_dashboard_reply_after_auto_clear_does_not_orphan
 test_backlog_done_winner_after_orphan_supersedes_delivered_answer
 test_dashboard_reply_still_clears_when_backlog_item_is_open

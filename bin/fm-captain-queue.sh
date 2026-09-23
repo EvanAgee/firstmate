@@ -55,6 +55,10 @@
 # unreadable stay. Auto-clear prints `cleared:` lines, not `handled:`; those
 # are not dashboard answers to act on. A readable backlog is checked directly
 # when tasks-axi cannot answer.
+# The same sweep parks each remaining active backed card whose backlog item
+# `tasks-axi show` reports as `held: yes` with `hold_kind: parked`, and prints
+# `parked: [id=<id>] backlog-parked`. A lapsed date gate, another hold kind, or
+# a tasks-axi failure leaves the card active.
 # `add` records backlog_backed as true, false, or null when the backlog cannot
 # be read. False, null, and legacy records without the field expire after
 # UNBACKED_CARD_EXPIRY_DAYS (7) days without dropping their content.
@@ -958,8 +962,19 @@ backlog_item_done() {  # <id>
   [ "$state" = "done" ]
 }
 
-# Retire remaining active cards whose backing backlog item is done.
-# Mutates the caller's `queue`. Prints `cleared:` lines, never `handled:`.
+# True when tasks-axi shows <id> under an active parked hold. A lapsed date
+# gate reads held: no. A missing or failing tasks-axi returns false.
+backlog_item_parked() {  # <id>
+  local show
+  command -v tasks-axi >/dev/null 2>&1 || return 1
+  show=$(tasks-axi show "$1" --file "$DATA/backlog.md" 2>/dev/null) || return 1
+  printf '%s\n' "$show" | grep -qx '  held: yes' \
+    && printf '%s\n' "$show" | grep -qx '  hold_kind: parked'
+}
+
+# Retire remaining active cards whose backing backlog item is done, and park
+# those whose item is parked.
+# Mutates the caller's `queue`. Prints `cleared:` and `parked:` lines, never `handled:`.
 clear_closed_cards() {
   local id generation stamp records
   records=$(printf '%s\n' "$queue" | jq -r '
@@ -973,11 +988,17 @@ clear_closed_cards() {
   [ -f "$DATA/backlog.md" ] || return 0
   while IFS=$'\t' read -r id generation || [ -n "$id" ]; do
     [ -n "$id" ] || continue
-    backlog_item_done "$id" || continue
     stamp=$(now_stamp)
-    queue=$(apply_handled "$queue" "$id" "$generation" "backlog-done" "$stamp") || die 1 "failed to auto-clear $id"
-    printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
-    printf 'cleared: [id=%s] backlog-done\n' "$id"
+    if backlog_item_done "$id"; then
+      queue=$(apply_handled "$queue" "$id" "$generation" "backlog-done" "$stamp") || die 1 "failed to auto-clear $id"
+      printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+      printf 'cleared: [id=%s] backlog-done\n' "$id"
+    elif backlog_item_parked "$id"; then
+      queue=$(apply_parked "$queue" "$id" "$stamp" "backlog-parked" "Parked because its backlog item is parked") \
+        || die 1 "failed to park $id"
+      printf '%s\n' "$queue" | write_queue || die 1 "failed to write captain-queue.json"
+      printf 'parked: [id=%s] backlog-parked\n' "$id"
+    fi
   done <<EOF
 $records
 EOF

@@ -687,7 +687,7 @@ An empty home returns an empty fleet, not an error.
 An unknown task ID returns JSON 404.
 The watcher refreshes the bounded live pane tail once per supervision cycle, and the API serves that snapshot without capturing a pane during the request.
 `GET /captain-queue` serves the `data/captain-queue.json` cards firstmate escalated to the captain, not worker `needs-decision` lines.
-It serves open cards in `items` and aged-out or manually deferred cards in a separate `parked` list, so a reader can tell an unanswered parked card from an answered resolved one.
+It serves open cards in `items` and aged-out, manually deferred, or backlog-parked cards in a separate `parked` list, so a reader can tell an unanswered parked card from an answered resolved one.
 `bin/fm-api-reads.mjs` owns the one open-card rule, covering both the card's question and its options; a card that fails it is left out of `items` and reported on the API's stderr with its card id and the reason, which lands in `state/.api.log`.
 `bin/fm-captain-queue.sh add` refuses a card the same rule would drop, naming the reason, so a newly stored card is always a card this endpoint can serve; a card stored before that check existed can still be refused here, and the log line names it.
 `POST /captain-queue/reply` records the card generation with its answer and queues a captain-reply wake; `bin/fm-api-server.mjs` owns the exact request and stored record shapes.
