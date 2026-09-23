@@ -6,15 +6,16 @@
 # The no-verb signal and stale path is absorb-only-when-provably-working: a wake
 # is absorbed only when the crew shows POSITIVE evidence it is still working (a
 # non-stalled active no-mistakes step, or a backend busy signal), and surfaced
-# otherwise, so a crew that finishes (or stops and waits) without a current
-# working signal is never silently swallowed. A declared external-wait pause is
+# otherwise, except for two nonterminal worker turn ends that receive automatic
+# continuation nudges. A declared external-wait pause is
 # the separate idle absorb case and re-surfaces only on its long bounded cadence,
 # although its initial no-verb status signal still surfaces in normal mode.
 # While state/.afk exists, the daemon owns triage and this watcher queues and exits
 # on every wake. Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          has a captain-relevant verb OR a no-verb signal's crew
-#                          is not provably working, unless afk is active
+#                          is not provably working, except while an automatic
+#                          continuation nudge absorbs the turn end
 #   stale: <window>        a provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
@@ -176,8 +177,7 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
 # while the crew shows positive evidence it is still working (a non-stalled active
 # no-mistakes step, or a busy pane, via crew_is_provably_working over
 # fm-crew-state.sh); a crew that stopped its turn with no current working evidence
-# is SURFACED, so a finish reported only through interactive pane menus
-# (no done: status) is never swallowed. An ACTIONABLE wake (a captain-relevant
+# is SURFACED after at most two automatic continuation nudges. An ACTIONABLE wake (a captain-relevant
 # signal, a no-verb signal whose crew is not provably working, any check, a stale
 # pane whose crew is not provably working, a provably-working stale past the
 # threshold, or anything unknown) is written to the durable queue and exits, which
@@ -481,6 +481,71 @@ absorbed_awaiting_merge() {  # <task> <last-status-line>
   esac
   [ -e "$STATE/$task.pr-poll" ] || return 1
   fm_pr_announced_url "$last" >/dev/null
+}
+
+# Continue one stopped worker turn at most twice without involving firstmate.
+# The counter also records the status and turn signatures, so a new status line
+# resets the streak and a watcher restart cannot send twice for one marker.
+auto_continue_turn_end() {  # <changed signal paths...>
+  local f task='' found=0 candidate meta kind last verb open win backend tail
+  local counter count prior_status prior_turn extra status_sig turn_sig tmp error
+  AUTO_CONTINUE_CAP=
+  for f in "$@"; do
+    case "$f" in
+      "$STATE"/*.turn-ended) candidate=${f##*/}; candidate=${candidate%.turn-ended}; found=1 ;;
+      "$STATE"/*.status) candidate=${f##*/}; candidate=${candidate%.status} ;;
+      *) return 1 ;;
+    esac
+    [ -z "$task" ] || [ "$task" = "$candidate" ] || return 1
+    task=$candidate
+  done
+  [ "$found" -eq 1 ] && [ -n "$task" ] || return 1
+  meta="$STATE/$task.meta"
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  kind=$(fm_meta_get "$meta" kind)
+  case "$kind" in ship|scout) ;; *) return 1 ;; esac
+  last=$(last_status_line "$STATE/$task.status")
+  verb=$(status_line_verb "$last")
+  case "$verb" in done|failed|blocked|needs-decision|paused|captain-held) return 1 ;; esac
+  open=$(status_open_decisions "$STATE/$task.status") || return 1
+  [ -z "$open" ] || return 1
+  win=$(fm_backend_target_of_meta "$meta")
+  [ -n "$win" ] || return 1
+  backend=$(fm_backend_of_meta "$meta")
+  [ "$(fm_backend_agent_state "$backend" "$win" "$meta" 2>/dev/null)" = alive ] || return 1
+  tail=$(fm_backend_capture "$backend" "$win" 40 "$(window_label "$win")" 2>/dev/null) || return 1
+  window_is_busy "$win" "$tail" && return 1
+
+  status_sig=$(fm_wake_signal_sig "$STATE/$task.status" 2>/dev/null) || status_sig=none
+  turn_sig=$(fm_wake_signal_sig "$STATE/$task.turn-ended" 2>/dev/null) || return 1
+  [ -n "$turn_sig" ] || return 1
+  counter="$STATE/$task.turn-continue"
+  count=0; prior_status=; prior_turn=; extra=
+  if [ -f "$counter" ] && [ ! -L "$counter" ]; then
+    read -r count prior_status prior_turn extra < "$counter" || true
+  fi
+  case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  [ "$prior_status" = "$status_sig" ] || count=0
+  [ "$prior_turn" != "$turn_sig" ] || return 0
+  if [ "$count" -ge 2 ]; then
+    AUTO_CONTINUE_CAP=$count
+    return 1
+  fi
+  count=$((count + 1))
+  tmp=$(umask 077; mktemp "$STATE/.$task.turn-continue.XXXXXX") || return 1
+  if ! printf '%s %s %s\n' "$count" "$status_sig" "$turn_sig" > "$tmp" \
+    || ! mv -f -- "$tmp" "$counter"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if error=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      "$SCRIPT_DIR/fm-send.sh" "$task" \
+      'Your turn ended without a done, failed, blocked, needs-decision, or paused line, so the work is still open. Continue with the next step; if something truly blocks you, append the keyed line and stop.' 2>&1); then
+    triage_log "auto-continued $task (nudge $count of 2)"
+    return 0
+  fi
+  triage_log "auto-continue send failed for $task (nudge $count of 2): $(printf '%s' "$error" | tr '\n' ' ')"
+  return 1
 }
 
 # 0 if <task> is a finished worker awaiting its merge rather than a wedge: the
@@ -1484,18 +1549,22 @@ EOF
     # Triage: a signal is ACTIONABLE when any of these holds (cheapest first):
     #   - the away-mode daemon owns triage (afk) and wants every wake;
     #   - any status file carries a captain-relevant verb;
-    #   - or it is a no-verb wake (a bare turn-end, a working: note) whose crew is
-    #     NOT provably working - the crew stopped its turn with no current working
-    #     evidence, so it may be done (even via an interactive menu
-    #     that wrote no done: status), waiting on a decision, or wedged. Absorbing
-    #     such a turn-end is exactly the swallowed-finish this change guards against.
+    #   - or it is a no-verb wake whose crew is not provably working and whose
+    #     turn end cannot receive an automatic continuation nudge.
     # Actionable -> enqueue, advance .seen-* markers, exit. Benign (a no-verb wake
     # whose crew IS provably working) in always-on mode -> advance the markers so it
     # will not re-fire, log, and keep blocking without enqueuing. The provably-working
     # check is the only costly one (it may run a bounded no-mistakes call), so the ||
     # ordering evaluates it ONLY for a non-afk, no-captain-verb signal.
-    # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
-    if afk_present || signal_reason_is_actionable $files || ! signal_crew_provably_working $files; then
+    surface=0
+    # shellcheck disable=SC2086  # Validated task ids cannot contain spaces.
+    if afk_present || signal_reason_is_actionable $files; then
+      surface=1
+    elif ! signal_crew_provably_working $files && ! auto_continue_turn_end $files; then
+      surface=1
+      [ -z "$AUTO_CONTINUE_CAP" ] || reason="$reason (nudge count $AUTO_CONTINUE_CAP)"
+    fi
+    if [ "$surface" -eq 1 ]; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         fm_wake_append signal "$(basename "$f")" "$reason" || exit 1

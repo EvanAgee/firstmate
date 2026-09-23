@@ -353,6 +353,22 @@ Harness identity is read from the executable path and `argv[0]` as well as the c
 The same suite ingests a keyed remote-secondmate parent reply through the real adapter, establishes the incremental OPEN DECISIONS cursor, interrupts supervision, and proves re-arm replays every unacknowledged queue row plus the still-open decision through the ordinary drain path.
 It also covers decision-only recovery, interrupted handling, handling-window generation reuse, non-fatal moved-generation acknowledgement with sequence-bounded consumption, and a persistent successor remaining live after recovery is acknowledged.
 
+### Automatic worker continuation
+
+On 2026-09-22, the isolated fake-tmux walk used the real `bin/fm-watch.sh` and `bin/fm-send.sh` data path through the continuation cases in `tests/fm-watch-triage.test.sh`.
+It observed one send for each of the first two nonterminal worker turn ends, a durable watcher wake with `nudge count 2` on the third, and a reset after a new status line.
+The counter after the third turn began with `2`, and the triage log recorded `auto-continued task (nudge 1 of 2)` and `auto-continued task (nudge 2 of 2)`.
+The same cases checked scout delivery and the secondmate, open-decision, away-mode, dead-endpoint, valid-ending, and busy-pane exclusions.
+`tests/fm-teardown.test.sh` checks removal of the counter during task teardown.
+
+```sh
+bin/fm-lint.sh bin/fm-watch.sh bin/fm-teardown.sh tests/fm-watch-triage.test.sh tests/fm-teardown.test.sh
+bash tests/fm-watch-triage.test.sh
+bash tests/fm-teardown.test.sh
+```
+
+The fake endpoint proves the watcher decision and send path; this change has no new harness parser, so the existing runtime-backend live guards remain the source for vendor busy and liveness signals.
+
 The Claude product live path for the former single-hook auto-arm ran with Claude Code 2.1.219 on 2026-07-24 (the test file was then `tests/fm-claude-stop-autoarm-live-e2e.test.sh`):
 
 ```text

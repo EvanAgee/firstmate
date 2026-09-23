@@ -527,6 +527,141 @@ test_turn_ended_not_working_surfaced() {
   pass "a bare turn-end whose crew is not provably working is surfaced (the swallowed-finish fix)"
 }
 
+# The transport is the real fm-send.sh over a fake tmux endpoint. The fake
+# exposes an idle Claude process and records only literal text typed to it.
+make_continuation_endpoint() {  # <case-dir>
+  local dir=$1
+  cat > "$dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list-windows) case "$*" in *window_id*) printf '@1 fm-task\n' ;; *) printf 'sess:fm-task\n' ;; esac ;;
+  display-message)
+    case "$*" in
+      *pane_current_command*) printf '%s\n' "${FM_FAKE_TMUX_CURRENT_COMMAND:-claude}" ;;
+      *cursor_y*) printf '1\n' ;;
+      *) printf '%%1\n' ;;
+    esac ;;
+  capture-pane) printf '╭────╮\n│    │\n╰────╯\n' ;;
+  send-keys)
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in -t) shift 2 ;; -l) shift; printf '%s\n' "$1" >> "$FM_CONTINUE_SEND_LOG"; exit 0 ;; *) exit 0 ;; esac
+    done ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/tmux"
+  fm_write_meta "$dir/state/task.meta" "window=sess:fm-task" "backend=tmux" "kind=ship" "harness=claude"
+}
+
+wait_continuation_count() {  # <counter-file> <count>
+  local file=$1 count=$2 i
+  for ((i=0; i<80; i++)); do
+    [ "$(awk '{print $1}' "$file" 2>/dev/null)" = "$count" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_continuation_sends() {  # <send-log> <count>
+  local file=$1 count=$2 i
+  for ((i=0; i<80; i++)); do
+    [ -f "$file" ] && [ "$(wc -l < "$file" | tr -d ' ')" = "$count" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+test_turn_end_continuation_cap_and_reset() {
+  local dir state fakebin out marker counter pid
+  dir=$(make_case continuation); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  make_continuation_endpoint "$dir"
+  marker="$state/task.turn-ended"; counter="$state/task.turn-continue"
+  printf 'working: first step\n' > "$state/task.status"
+  : > "$marker"
+  export FM_CONTINUE_SEND_LOG="$dir/sends.log" FM_FAKE_CREW_STATE='state: working · source: status-log · first step'
+  FM_HOME="$dir" FM_SEND_SETTLE=0 watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_continuation_count "$counter" 1 || { reap "$pid"; fail "first bare turn did not get a nudge"; }
+  wait_continuation_sends "$FM_CONTINUE_SEND_LOG" 1 || { reap "$pid"; fail "first turn sent wrong number of nudges"; }
+  [ ! -s "$state/.wake-queue" ] || fail "first nudge woke firstmate"
+  rm -f "$marker"; : > "$marker"
+  wait_continuation_count "$counter" 2 || { reap "$pid"; fail "second bare turn did not get a nudge"; }
+  wait_continuation_sends "$FM_CONTINUE_SEND_LOG" 2 || { reap "$pid"; fail "second turn sent wrong number of nudges"; }
+  rm -f "$marker"; : > "$marker"
+  wait_for_exit "$pid" 80 || { reap "$pid"; fail "third bare turn did not wake firstmate"; }
+  grep -F 'nudge count 2' "$out" >/dev/null || fail "third wake omitted nudge count"
+  grep -F "$marker" "$state/.wake-queue" >/dev/null || fail "third turn did not enter the durable wake queue"
+  [ "$(wc -l < "$FM_CONTINUE_SEND_LOG" | tr -d ' ')" = 2 ] || fail "third turn sent an extra nudge"
+  [ "$(grep -Fc 'auto-continued task' "$state/.watch-triage.log")" = 2 ] || fail "triage log omitted a nudge"
+  printf 'continuation counter after third turn: %s\n' "$(cat "$counter")"
+  grep -F 'auto-continued task' "$state/.watch-triage.log"
+  printf 'working: second step\n' >> "$state/task.status"
+  prime_status_seen "$state" "$state/task.status"
+  rm -f "$marker"; : > "$marker"
+  ack_stopped_cycle "$state" || fail "could not acknowledge cap wake"
+  FM_HOME="$dir" FM_SEND_SETTLE=0 watch_bg "$state" "$fakebin" "$out.reset"
+  pid=$!
+  wait_continuation_count "$counter" 1 || { reap "$pid"; fail "new status line did not reset nudge count"; }
+  wait_continuation_sends "$FM_CONTINUE_SEND_LOG" 3 || { reap "$pid"; fail "reset did not send exactly one nudge"; }
+  reap "$pid"
+  unset FM_CONTINUE_SEND_LOG FM_FAKE_CREW_STATE
+  pass "bare turns get two nudges, third wakes firstmate, and a new status line resets count"
+}
+
+test_turn_end_continuation_exclusions() {
+  local name dir state out pid
+  for name in secondmate open-decision away dead terminal blocked paused busy; do
+    dir=$(make_case "continuation-$name"); state="$dir/state"; out="$dir/watch.out"
+    make_continuation_endpoint "$dir"
+    printf 'working: progress\n' > "$state/task.status"
+    : > "$state/task.turn-ended"
+    export FM_CONTINUE_SEND_LOG="$dir/sends.log"
+    export FM_FAKE_CREW_STATE='state: working · source: status-log · progress'
+    unset FM_FAKE_TMUX_CURRENT_COMMAND
+    case "$name" in
+      secondmate) sed 's/kind=ship/kind=secondmate/' "$state/task.meta" > "$state/task.meta.tmp"; mv "$state/task.meta.tmp" "$state/task.meta" ;;
+      open-decision) printf 'needs-decision [key=choice]: choose A or B\nworking: unrelated progress\n' > "$state/task.status" ;;
+      away) : > "$state/.afk" ;;
+      dead) export FM_FAKE_TMUX_CURRENT_COMMAND=zsh ;;
+      terminal) printf 'done: complete\n' > "$state/task.status" ;;
+      blocked) printf 'blocked [key=dependency]: waiting for a reply\n' > "$state/task.status" ;;
+      paused) printf 'paused: waiting for a scheduled window\n' > "$state/task.status" ;;
+      busy) export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy' ;;
+    esac
+    FM_HOME="$dir" FM_SEND_SETTLE=0 watch_bg "$state" "$dir/fakebin" "$out"
+    pid=$!
+    if [ "$name" = busy ]; then
+      wait_live "$pid" 30 || { reap "$pid"; fail "busy pane surfaced or exited"; }
+      reap "$pid"
+    else
+      wait_for_exit "$pid" 80 || { reap "$pid"; fail "$name turn end was not surfaced"; }
+    fi
+    [ ! -e "$state/task.turn-continue" ] || fail "$name turn end created a nudge counter"
+    [ ! -s "$FM_CONTINUE_SEND_LOG" ] || fail "$name turn end sent a nudge"
+  done
+  unset FM_CONTINUE_SEND_LOG FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  pass "secondmate, open decision, away mode, dead endpoint, valid ending, and busy pane are never nudged"
+}
+
+test_scout_turn_end_gets_continuation() {
+  local dir state out pid
+  dir=$(make_case continuation-scout); state="$dir/state"; out="$dir/watch.out"
+  make_continuation_endpoint "$dir"
+  sed 's/kind=ship/kind=scout/' "$state/task.meta" > "$state/task.meta.tmp"
+  mv "$state/task.meta.tmp" "$state/task.meta"
+  printf 'working: scouting\n' > "$state/task.status"
+  : > "$state/task.turn-ended"
+  export FM_CONTINUE_SEND_LOG="$dir/sends.log" FM_FAKE_CREW_STATE='state: working · source: status-log · scouting'
+  FM_HOME="$dir" FM_SEND_SETTLE=0 watch_bg "$state" "$dir/fakebin" "$out"
+  pid=$!
+  wait_continuation_sends "$FM_CONTINUE_SEND_LOG" 1 || { reap "$pid"; fail "scout did not get a continuation"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "scout continuation woke firstmate"; }
+  reap "$pid"
+  unset FM_CONTINUE_SEND_LOG FM_FAKE_CREW_STATE
+  pass "an idle scout gets the same continuation as a crewmate"
+}
+
 # A crew reports every finished turn through the SAME 0-byte marker path: the
 # harness removes and recreates state/<id>.turn-ended per turn. Two such turns can
 # land inside one epoch second, so the scan's signature must separate them. Under
@@ -2144,6 +2279,9 @@ test_crew_absorb_class_classifier
 test_stalled_run_step_never_absorbs
 test_signal_crew_provably_working_classifier
 test_secondmate_status_signal_never_absorbed_classifier
+test_turn_end_continuation_cap_and_reset
+test_turn_end_continuation_exclusions
+test_scout_turn_end_gets_continuation
 test_provably_working_signal_absorbed
 test_turn_ended_provably_working_absorbed
 test_turn_ended_not_working_surfaced

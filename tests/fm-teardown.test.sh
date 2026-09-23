@@ -1321,6 +1321,7 @@ test_teardown_missing_busy_sidecar_completes() {
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$case_dir/state" task-x1)
   printf 'busy_gen=%s\n' "$gen" >> "$case_dir/state/task-x1.meta"
   rm -f "$case_dir/state/task-x1.busy-gen"
+  printf '2 status-signature turn-signature\n' > "$case_dir/state/task-x1.turn-continue"
 
   set +e
   run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1332,7 +1333,9 @@ test_teardown_missing_busy_sidecar_completes() {
     "missing-busy-sidecar: teardown left the orphan busy record"
   assert_absent "$case_dir/state/task-x1.meta" \
     "missing-busy-sidecar: teardown remained incomplete"
-  pass "teardown completes when an exact busy-state sidecar is already absent"
+  assert_absent "$case_dir/state/task-x1.turn-continue" \
+    "missing-busy-sidecar: teardown left the continuation counter"
+  pass "teardown completes when a busy-state sidecar is absent and removes the continuation counter"
 }
 
 test_herdr_teardown_clears_escalation_marker() {
