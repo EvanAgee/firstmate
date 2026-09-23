@@ -193,7 +193,9 @@
 #   A torn-down task's meta is removed by fm-teardown, so it cannot linger as
 #   a false claim. --issue is refused on --scout, --secondmate, and --relaunch
 #   spawns: the guard targets ship dispatch. A relaunch keeps its task's
-#   recorded issues= through meta preservation.
+#   recorded issues= through meta preservation. Recorded issues close
+#   automatically once the task lands; bin/fm-issue-close-after-merge.sh owns
+#   that and the issues_keep_open= line that exempts one.
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.

@@ -9,8 +9,8 @@
 #   |---------------------|--------------------------------|-------------------------------|
 #   | Registry posture    | [no-mistakes-prod-only +yolo]  | [local-only +yolo]            |
 #   | Worker delivery     | pipeline or PR, waits          | clean local branch, stops     |
-#   | Merge               | bin/fm-pr-merge.sh after green | bin/fm-merge-local.sh ff,     |
-#   |                     |                                | then firstmate pushes main    |
+#   | Merge               | bin/fm-pr-merge.sh after green | bin/fm-merge-local.sh --push: |
+#   |                     |                                | ff, push main, close issues   |
 #   | Main-protection and | active                         | disabled                      |
 #   | Copilot-review      |                                |                               |
 #   | rulesets            |                                |                               |

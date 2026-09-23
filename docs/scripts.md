@@ -69,7 +69,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture and PR merge policy from `data/projects.md` |
 | `fm-delivery-record.sh`  | Append one landed task's available delivery timing to the private home ledger |
 | `fm-delivery-backfill.sh` | Backfill recent aos, faapto, and firstmate merged-task timing without duplicating task ids |
-| `fm-merge-local.sh`      | Fast-forward a project's local default branch: an approved `local-only` landing, or a PR-bound task's outage landing while GitHub is unreachable |
+| `fm-merge-local.sh`      | Fast-forward a project's local default branch: an approved `local-only` landing, or a PR-bound task's outage landing while GitHub is unreachable; `--push` then pushes a `local-only` landing and closes its linked issues |
 | `fm-outage-sync.sh`      | On GitHub's return, reconcile each outage landing: fast-forward-push local main, dispatch its deferred workflows, escalate on divergence |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
 | `fm-review-loop-stop.sh` | Record no-mistakes Review clusters and surface one decision report when a cluster repeats or one prefix keeps widening |

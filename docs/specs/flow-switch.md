@@ -10,7 +10,7 @@ and the two must be switchable in seconds, both ways.
 |---|---|---|
 | Registry posture | `[no-mistakes-prod-only +yolo]` | `[local-only +yolo]` |
 | Worker delivery | pipeline or PR, waits for checks | clean local branch, stops |
-| Merge | `bin/fm-pr-merge.sh` after green | `bin/fm-merge-local.sh` fast-forward, then firstmate pushes main |
+| Merge | `bin/fm-pr-merge.sh` after green | `bin/fm-merge-local.sh --push`: fast-forward, push main, close linked issues |
 | GitHub main ruleset (`Copilot review for default branch`, id 17617595 on aos) | active | disabled |
 | Automatic Copilot review ruleset (20852194) | active | disabled |
 | Commit-identity ruleset (23315573) | active | active, never touched |

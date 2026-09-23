@@ -35,9 +35,19 @@
 # return). The ledger is a record of what already safely happened; it gates and
 # drives nothing.
 #
-# Usage: fm-merge-local.sh <task-id> [<lane-branch>] [--deferred-checks <list>]
+# A local-only landing reaches GitHub only when it is pushed, and the task's
+# linked issues close only after that. --push does both in order: a plain
+# fast-forward push of the default branch to origin (never forced), then
+# bin/fm-issue-close-after-merge.sh --landed on the landed commit. A failed push
+# keeps the local landing, closes nothing, and exits non-zero. Without --push, a
+# task with linked issues prints the closer command to run after a manual push.
+#
+# Usage: fm-merge-local.sh <task-id> [<lane-branch>] [--push] [--deferred-checks <list>]
 #   <lane-branch>          explicit branch to fast-forward the default branch to;
 #                          omit to resolve from the task worktree or fm/<id>.
+#   --push                 push the landed default branch to origin, then close
+#                          the task's linked issues; local-only tasks only, since
+#                          an outage landing goes up through bin/fm-outage-sync.sh.
 #   --deferred-checks <l>  comma-separated names of the schedule-only workflows
 #                          that could not run during the outage and must be
 #                          dispatched on return (recorded verbatim in the ledger
@@ -64,13 +74,18 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 "$FM_ROOT/bin/fm-guard.sh" || true
 
-ID=${1:?usage: fm-merge-local.sh <task-id> [<lane-branch>] [--deferred-checks <list>] [--adversarial-review-passed <ref>]}
+ID=${1:?usage: fm-merge-local.sh <task-id> [<lane-branch>] [--push] [--deferred-checks <list>] [--adversarial-review-passed <ref>]}
 shift
 LANE_BRANCH=
+PUSH=no
 DEFERRED_CHECKS=
 ADVERSARIAL_REVIEW=
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --push)
+      PUSH=yes
+      shift
+      ;;
     --deferred-checks)
       DEFERRED_CHECKS=${2:-}
       shift 2
@@ -133,6 +148,11 @@ case "$MODE" in
     exit 1
     ;;
 esac
+
+if [ "$PUSH" = yes ] && [ "$OUTAGE_LANDING" = yes ]; then
+  echo "error: --push applies only to a local-only landing; an outage landing goes up through bin/fm-outage-sync.sh when GitHub returns" >&2
+  exit 1
+fi
 
 # Adversarial-review gate for an AUTONOMOUS outage auto-land. Per the captain's
 # decision, a yolo=on project auto-lands green-on-local work during an outage only
@@ -254,4 +274,20 @@ if [ "$OUTAGE_LANDING" = yes ]; then
     "$landed_at" "$ID" "$PROJ" "$BRANCH" "$before_full" "$after_full" "$deferred_field" "$review_ref" \
     >> "$ledger_dir/$project_name.log"
   echo "recorded outage landing for $project_name in $ledger_dir/$project_name.log (deferred checks: ${DEFERRED_CHECKS:-none}, review: ${ADVERSARIAL_REVIEW:-none})"
+fi
+
+# Only a pushed landing may close a linked issue, so the closer runs strictly
+# after a push that succeeded; it then confirms the commit on GitHub itself.
+if [ "$PUSH" = yes ]; then
+  if ! git -C "$PROJ" push --quiet origin "$DEFAULT:$DEFAULT"; then
+    echo "error: $ID landed on local $DEFAULT ($after) but the push to origin failed; linked issues stay open." >&2
+    echo "Push it, then run bin/fm-issue-close-after-merge.sh $ID --landed $after_full" >&2
+    exit 1
+  fi
+  echo "pushed local $DEFAULT to origin ($after)"
+  if ! "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$ID" --landed "$after_full"; then
+    echo "warning: linked issues were not all closed for $ID after pushing $after" >&2
+  fi
+elif [ "$OUTAGE_LANDING" = no ] && grep -q '^issues=' "$META"; then
+  echo "linked issues stay open until this landing is pushed; then run bin/fm-issue-close-after-merge.sh $ID --landed $after_full"
 fi

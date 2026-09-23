@@ -22,6 +22,13 @@
 #       gate (the captain is the authority for a yolo=off landing)
 #   (g) every successful landing appends delivery timing, and a ledger failure
 #       is logged without changing the landing result
+#   (h) a local-only landing with --push pushes the default branch to origin and
+#       then closes the task's linked issues naming the landed commit
+#   (i) a --push whose push fails keeps the local landing, exits non-zero, and
+#       never reads or closes an issue
+#   (j) --push is refused for an outage landing, before anything lands
+#   (k) a local-only landing without --push never touches the forge and says
+#       its linked issues stay open
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -57,6 +64,36 @@ run_merge() {  # <state> [args...]
   mkdir -p "$data"
   FM_ROOT_OVERRIDE="$INERT_ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" \
     "$MERGE" "$@"
+}
+
+# Give a project from make_project_ff a bare origin holding its current main, and
+# a fakebin whose gh-axi and gh record every call. Plain gh reports the landed
+# commit on the default branch and every issue open, which is all the issue
+# closer asks. Echoes the fakebin path.
+add_origin_and_forge() {  # <case-dir> <proj>
+  local case_dir=$1 proj=$2 fakebin
+  git init -q --bare "$case_dir/origin.git"
+  git -C "$proj" remote add origin "$case_dir/origin.git"
+  git -C "$proj" push -q origin main
+  fakebin="$case_dir/fakebin"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/gh-axi.log"
+exit 0
+SH
+  cat > "$fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/gh.log"
+case "\$1" in
+  api) echo identical ;;
+  issue) echo '{"labels":[],"state":"OPEN"}' ;;
+esac
+SH
+  chmod +x "$fakebin/gh-axi" "$fakebin/gh"
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh.log"
+  printf '%s\n' "$fakebin"
 }
 
 test_pr_bound_refused_without_outage_flag() {
@@ -294,6 +331,112 @@ SH
   pass "fm-merge-local preserves outage ledger fields after timestamp failure"
 }
 
+test_local_only_push_closes_linked_issues() {
+  local case_dir state proj lane fakebin after
+  case_dir="$TMP_ROOT/push-close"
+  state="$case_dir/state"
+  mkdir -p "$state"
+  IFS=$(printf '\t') read -r proj lane < <(make_project_ff push-close fm/tpush)
+  fakebin=$(add_origin_and_forge "$case_dir" "$proj")
+  fm_write_meta "$state/tpush.meta" "project=$proj" "mode=local-only" "issues=acme/widgets#7"
+
+  PATH="$fakebin:$PATH" run_merge "$state" tpush --push \
+    > "$case_dir/out" 2> "$case_dir/err" \
+    || fail "push-close: landing with --push failed: $(cat "$case_dir/err")"
+
+  after=$(git -C "$proj" rev-parse main)
+  [ "$after" = "$(git -C "$proj" rev-parse "$lane")" ] \
+    || fail "push-close: local main is not the lane tip"
+  [ "$(git -C "$case_dir/origin.git" rev-parse main)" = "$after" ] \
+    || fail "push-close: origin main was not pushed to the landed commit"
+  grep -qF "issue close 7 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/commit/$after, landed on the default branch." \
+    "$case_dir/gh-axi.log" \
+    || fail "push-close: the linked issue was not closed naming the landed commit (log: $(cat "$case_dir/gh-axi.log"))"
+  assert_grep "closed: acme/widgets#7 https://github.com/acme/widgets/commit/$after" "$case_dir/out" \
+    "push-close: the close receipt was not printed"
+  pass "fm-merge-local --push pushes the landing and closes linked issues naming the commit"
+}
+
+test_failed_push_keeps_issues_open() {
+  local case_dir state proj lane fakebin origin_before rc
+  case_dir="$TMP_ROOT/push-fail"
+  state="$case_dir/state"
+  mkdir -p "$state"
+  IFS=$(printf '\t') read -r proj lane < <(make_project_ff push-fail fm/tpf)
+  fakebin=$(add_origin_and_forge "$case_dir" "$proj")
+  # Origin main moves on without the lane, so the landing's push is rejected as
+  # a non-fast-forward.
+  git -C "$proj" checkout -q -b elsewhere main
+  git -C "$proj" -c user.name=t -c user.email=t@e.invalid commit -q --allow-empty -m elsewhere
+  git -C "$proj" push -q origin elsewhere:main
+  git -C "$proj" checkout -q main
+  git -C "$proj" branch -q -D elsewhere
+  origin_before=$(git -C "$case_dir/origin.git" rev-parse main)
+  fm_write_meta "$state/tpf.meta" "project=$proj" "mode=local-only" "issues=acme/widgets#7"
+
+  set +e
+  PATH="$fakebin:$PATH" run_merge "$state" tpf --push > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "push-fail: a failed push must exit non-zero"
+  assert_grep 'linked issues stay open' "$case_dir/err" \
+    "push-fail: the failure did not say the linked issues stay open"
+  git -C "$proj" merge-base --is-ancestor "$lane" main \
+    || fail "push-fail: the local landing was lost"
+  [ "$(git -C "$case_dir/origin.git" rev-parse main)" = "$origin_before" ] \
+    || fail "push-fail: origin main moved despite the rejected push"
+  [ ! -s "$case_dir/gh.log" ] && [ ! -s "$case_dir/gh-axi.log" ] \
+    || fail "push-fail: the forge was called after a failed push (gh-axi: $(cat "$case_dir/gh-axi.log"))"
+  pass "fm-merge-local --push keeps issues open and exits non-zero when the push fails"
+}
+
+test_push_refused_for_outage_landing() {
+  local case_dir state proj lane main_before rc
+  case_dir="$TMP_ROOT/push-outage"
+  state="$case_dir/state"
+  mkdir -p "$state"
+  IFS=$(printf '\t') read -r proj lane < <(make_project_ff push-outage fm/tpo)
+  fm_write_meta "$state/tpo.meta" "project=$proj" "mode=no-mistakes" "yolo=off"
+  touch "$state/.github-down"
+  main_before=$(git -C "$proj" rev-parse main)
+
+  set +e
+  run_merge "$state" tpo --push > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "push-outage: --push on an outage landing must be refused"
+  assert_grep 'fm-outage-sync.sh' "$case_dir/err" \
+    "push-outage: the refusal did not point to the sync-on-return path"
+  [ "$(git -C "$proj" rev-parse main)" = "$main_before" ] \
+    || fail "push-outage: main advanced despite the refusal"
+  assert_absent "$state/outage-landings/proj.log" \
+    "push-outage: a refused landing wrote a ledger entry"
+  pass "fm-merge-local refuses --push for an outage landing before anything lands"
+}
+
+test_local_only_without_push_leaves_issues_to_a_pushed_landing() {
+  local case_dir state proj lane fakebin
+  case_dir="$TMP_ROOT/no-push"
+  state="$case_dir/state"
+  mkdir -p "$state"
+  IFS=$(printf '\t') read -r proj lane < <(make_project_ff no-push fm/tnp)
+  fakebin=$(add_origin_and_forge "$case_dir" "$proj")
+  fm_write_meta "$state/tnp.meta" "project=$proj" "mode=local-only" "issues=acme/widgets#7"
+
+  PATH="$fakebin:$PATH" run_merge "$state" tnp > "$case_dir/out" 2> "$case_dir/err" \
+    || fail "no-push: landing failed: $(cat "$case_dir/err")"
+
+  git -C "$proj" merge-base --is-ancestor "$lane" main \
+    || fail "no-push: the lane did not land"
+  assert_grep 'linked issues stay open' "$case_dir/out" \
+    "no-push: the landing did not say its linked issues stay open"
+  [ ! -s "$case_dir/gh.log" ] && [ ! -s "$case_dir/gh-axi.log" ] \
+    || fail "no-push: an unpushed landing called the forge"
+  pass "fm-merge-local without --push leaves linked issues open and says so"
+}
+
 test_pr_bound_refused_without_outage_flag
 test_pr_bound_accepted_during_outage_records_ledger
 test_diverged_branch_escalates_not_forces
@@ -302,3 +445,7 @@ test_yolo_on_auto_land_refused_without_review
 test_yolo_off_lands_without_review_gate
 test_delivery_failure_does_not_block_local_landing
 test_timestamp_failure_does_not_block_local_landing
+test_local_only_push_closes_linked_issues
+test_failed_push_keeps_issues_open
+test_push_refused_for_outage_landing
+test_local_only_without_push_leaves_issues_to_a_pushed_landing

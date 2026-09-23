@@ -23,6 +23,16 @@
 #   (m) a merged GitLab request on a task with no linked issues is a silent
 #       no-op, so an ordinary GitLab task never makes its caller log a warning
 #   (n) a merged GitLab request on a task that does record issues is refused
+#   (o) a landed commit on the default branch closes each open linked issue
+#       with a comment naming the commit, and never reads a PR
+#   (p) a landed commit that GitHub does not report on the default branch is
+#       refused before any issue is read
+#   (q) a malformed landed SHA is refused before any forge call
+#   (r) a landed commit whose linked issues span two repositories is refused
+#       before any forge call
+#   (s) an issue listed in issues_keep_open= stays open on both forms and is
+#       reported as kept open, while every other linked issue still closes
+#   (t) a malformed issues_keep_open= list is refused before any forge call
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -31,6 +41,8 @@ set -u
 CLOSER="$ROOT/bin/fm-issue-close-after-merge.sh"
 TMP_ROOT=$(fm_test_tmproot fm-issue-close-after-merge-tests)
 URL=https://github.com/acme/widgets/pull/42
+SHA=0123456789abcdef0123456789abcdef01234567
+COMMIT_URL=https://github.com/acme/widgets/commit/$SHA
 
 # One sandbox: a state dir with a task meta, a gh-axi mock for the PR read and
 # the write calls, and a plain-gh mock that answers the issue read. Both record
@@ -43,6 +55,9 @@ URL=https://github.com/acme/widgets/pull/42
 # The mock's issue state lives in <case>/issue-<number>.state (first line the
 # state, second line the comma-separated labels), so a case scripts exactly
 # what the forge reports without the helper knowing how it was produced.
+#
+# Plain gh also answers the landed form's compare read, printing the status
+# GitHub reports for <sha>...HEAD (identical, ahead, behind, or diverged).
 make_case() {  # <name> [issues=<refs>]
   local name=$1 issues=${2-} case_dir
   case_dir="$TMP_ROOT/$name"
@@ -75,6 +90,11 @@ SH
   cat > "$case_dir/fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+if [ "${1:-}" = api ]; then
+  [ "${FM_TEST_COMPARE_RC:-0}" -eq 0 ] || exit "$FM_TEST_COMPARE_RC"
+  printf '%s\n' "${FM_TEST_COMPARE_STATUS:-identical}"
+  exit 0
+fi
 case "${1:-} ${2:-}" in
   "issue view")
     number=$3
@@ -119,6 +139,8 @@ run_closer() {  # <case-dir> <args...>
   FM_TEST_VIEW_RC="${FM_TEST_VIEW_RC:-0}" \
   FM_TEST_CLOSE_RC="${FM_TEST_CLOSE_RC:-0}" \
   FM_TEST_EDIT_RC="${FM_TEST_EDIT_RC:-0}" \
+  FM_TEST_COMPARE_STATUS="${FM_TEST_COMPARE_STATUS:-identical}" \
+  FM_TEST_COMPARE_RC="${FM_TEST_COMPARE_RC:-0}" \
   PATH="$case_dir/fakebin:$PATH" \
     "$CLOSER" "$@"
 }
@@ -447,6 +469,156 @@ test_gitlab_url_with_linked_issues_is_refused() {
   pass "a merged GitLab request that records linked issues is refused"
 }
 
+test_landed_commit_closes_open_issues_naming_the_commit() {
+  local case_dir rc
+  case_dir=$(make_case landed 'acme/widgets#7,acme/widgets#8')
+  set_issue "$case_dir" 7 open agent-in-progress
+  set_issue "$case_dir" 8 closed
+
+  set +e
+  run_closer "$case_dir" task-x1 --landed "$SHA" > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "landed: closing after a landed commit should succeed ($(cat "$case_dir/err"))"
+  assert_grep "api repos/acme/widgets/compare/$SHA...HEAD --jq .status" "$case_dir/gh.log" \
+    "landed: the landed commit was not checked against the default branch"
+  grep -qF "issue close 7 -R acme/widgets --reason completed --comment Fixed by $COMMIT_URL, landed on the default branch." \
+    "$case_dir/gh-axi.log" \
+    || fail "landed: the issue was not closed with the landed-commit comment (log: $(cat "$case_dir/gh-axi.log"))"
+  assert_grep 'issue edit 7 -R acme/widgets --remove-label agent-in-progress' \
+    "$case_dir/gh-axi.log" "landed: the agent-in-progress label was not removed"
+  assert_grep "closed: acme/widgets#7 $COMMIT_URL" "$case_dir/out" \
+    "landed: the receipt did not name the issue and the landed commit"
+  assert_grep 'already-closed: acme/widgets#8' "$case_dir/out" \
+    "landed: the already-closed issue was not reported"
+  assert_no_grep 'pr view' "$case_dir/gh-axi.log" \
+    "landed: a landed commit read a pull request"
+  pass "a landed commit closes each open linked issue with a comment naming the commit"
+}
+
+test_landed_commit_off_the_default_branch_is_refused() {
+  local case_dir rc status i=0
+  for status in behind diverged unreachable; do
+    i=$((i + 1))
+    case_dir=$(make_case "landed-off-main-$i" acme/widgets#7)
+    set_issue "$case_dir" 7 open
+    if [ "$status" = unreachable ]; then
+      FM_TEST_COMPARE_RC=1
+    else
+      FM_TEST_COMPARE_STATUS=$status
+    fi
+
+    set +e
+    run_closer "$case_dir" task-x1 --landed "$SHA" > "$case_dir/out" 2> "$case_dir/err"
+    rc=$?
+    set -e
+    unset FM_TEST_COMPARE_RC FM_TEST_COMPARE_STATUS
+
+    [ "$rc" -ne 0 ] || fail "landed-off-main: a $status commit should be refused"
+    assert_grep "refusing to close any issue" "$case_dir/err" \
+      "landed-off-main: the $status refusal did not say why it stopped"
+    assert_no_grep 'issue view' "$case_dir/gh.log" \
+      "landed-off-main: an issue was read for a $status commit"
+    assert_no_grep 'issue close' "$case_dir/gh-axi.log" \
+      "landed-off-main: an issue was closed for a $status commit"
+  done
+  pass "a landed commit GitHub does not report on the default branch is refused"
+}
+
+test_malformed_landed_sha_is_refused_before_forge_calls() {
+  local case_dir rc sha i=0
+  for sha in '' 1234567 "${SHA}0" 0123456789ABCDEF0123456789ABCDEF01234567 \
+    'zz23456789abcdef0123456789abcdef01234567'; do
+    i=$((i + 1))
+    case_dir=$(make_case "landed-bad-sha-$i" acme/widgets#7)
+    set_issue "$case_dir" 7 open
+
+    set +e
+    run_closer "$case_dir" task-x1 --landed "$sha" > "$case_dir/out" 2> "$case_dir/err"
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "landed-bad-sha: '$sha' was accepted"
+    assert_grep 'not a full commit SHA' "$case_dir/err" \
+      "landed-bad-sha: the refusal for '$sha' did not say why it stopped"
+    [ ! -s "$case_dir/gh.log" ] && [ ! -s "$case_dir/gh-axi.log" ] \
+      || fail "landed-bad-sha: '$sha' reached the forge"
+  done
+  pass "a malformed landed SHA is refused before any forge call"
+}
+
+test_landed_issues_in_two_repositories_are_refused() {
+  local case_dir rc
+  case_dir=$(make_case landed-two-repos 'acme/widgets#7,other/repo#9')
+  set_issue "$case_dir" 7 open
+  set_issue "$case_dir" 9 open
+
+  set +e
+  run_closer "$case_dir" task-x1 --landed "$SHA" > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "landed-two-repos: issues in two repositories should be refused"
+  assert_grep 'more than one repository' "$case_dir/err" \
+    "landed-two-repos: the refusal did not say why it stopped"
+  [ ! -s "$case_dir/gh.log" ] && [ ! -s "$case_dir/gh-axi.log" ] \
+    || fail "landed-two-repos: the forge was called despite the refusal"
+  pass "a landed commit whose linked issues span two repositories is refused"
+}
+
+test_keep_open_issues_stay_open_on_both_forms() {
+  local case_dir rc form receipt
+  for form in pr landed; do
+    case_dir=$(make_case "keep-open-$form" 'acme/widgets#7,acme/widgets#8')
+    printf 'issues_keep_open=acme/widgets#08\n' >> "$case_dir/state/task-x1.meta"
+    set_issue "$case_dir" 7 open
+    set_issue "$case_dir" 8 open agent-in-progress
+
+    set +e
+    if [ "$form" = pr ]; then
+      run_closer "$case_dir" task-x1 "$URL" > "$case_dir/out" 2> "$case_dir/err"
+      rc=$?
+      receipt=$URL
+    else
+      run_closer "$case_dir" task-x1 --landed "$SHA" > "$case_dir/out" 2> "$case_dir/err"
+      rc=$?
+      receipt=$COMMIT_URL
+    fi
+    set -e
+
+    expect_code 0 "$rc" "keep-open-$form: a kept-open issue is not a failure ($(cat "$case_dir/err"))"
+    assert_grep "closed: acme/widgets#7 $receipt" "$case_dir/out" \
+      "keep-open-$form: the other linked issue was not closed"
+    assert_grep 'kept-open: acme/widgets#8' "$case_dir/out" \
+      "keep-open-$form: the kept-open issue was not reported"
+    assert_no_grep 'issue close 8 ' "$case_dir/gh-axi.log" \
+      "keep-open-$form: a kept-open issue was closed"
+    assert_no_grep 'issue edit 8 ' "$case_dir/gh-axi.log" \
+      "keep-open-$form: a kept-open issue lost its label"
+  done
+  pass "an issue in issues_keep_open= stays open on both forms while the rest close"
+}
+
+test_malformed_keep_open_list_is_refused_before_forge_calls() {
+  local case_dir rc
+  case_dir=$(make_case keep-open-bad acme/widgets#7)
+  printf 'issues_keep_open=acme/widgets#7,,\n' >> "$case_dir/state/task-x1.meta"
+  set_issue "$case_dir" 7 open
+
+  set +e
+  run_closer "$case_dir" task-x1 --landed "$SHA" > "$case_dir/out" 2> "$case_dir/err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "keep-open-bad: a malformed keep-open list was accepted"
+  assert_grep 'issues_keep_open' "$case_dir/err" \
+    "keep-open-bad: the refusal did not name the malformed field"
+  [ ! -s "$case_dir/gh.log" ] && [ ! -s "$case_dir/gh-axi.log" ] \
+    || fail "keep-open-bad: a malformed keep-open list reached the forge"
+  pass "a malformed issues_keep_open= list is refused before any forge call"
+}
+
 test_already_closed_issue_is_reported_and_untouched
 test_open_issue_is_closed_with_comment_and_label_removed
 test_open_issue_without_label_skips_the_label_edit
@@ -463,3 +635,9 @@ test_malformed_issue_references_are_refused_before_forge_calls
 test_malformed_pr_url_is_refused
 test_gitlab_url_without_linked_issues_is_a_silent_no_op
 test_gitlab_url_with_linked_issues_is_refused
+test_landed_commit_closes_open_issues_naming_the_commit
+test_landed_commit_off_the_default_branch_is_refused
+test_malformed_landed_sha_is_refused_before_forge_calls
+test_landed_issues_in_two_repositories_are_refused
+test_keep_open_issues_stay_open_on_both_forms
+test_malformed_keep_open_list_is_refused_before_forge_calls

@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Close a shipped task's linked GitHub issues once its PR has merged, so an
-# issue stops depending on a worker remembering a "Closes #n" line in the PR
-# body. Some lanes deliberately write "Refs #n" instead, and GitHub then leaves
-# the issue open after the merge; firstmate closes it here instead.
+# Close a shipped task's linked GitHub issues once its work has landed on the
+# default branch, so an issue stops depending on a worker remembering a
+# "Closes #n" line. Some lanes deliberately write "Refs #n" instead, and GitHub
+# then leaves the issue open after the merge; firstmate closes it here instead.
+#
+# Two forms, one per way work lands:
+#   <task-id> <merged-pr-url>    after a PR merge (bin/fm-pr-merge.sh and the
+#                                merge watch in bin/fm-watch.sh)
+#   <task-id> --landed <sha>     after a local landing was pushed
+#                                (bin/fm-merge-local.sh --push); <sha> is the
+#                                full lowercase commit the default branch landed on
 #
 # The issues come only from the task's own state/<id>.meta issues= field, which
 # bin/fm-spawn.sh records as comma-separated lowercase owner/repo#<number>
@@ -12,19 +19,28 @@
 # A task with no issues= field is a silent no-op, because most tasks ship
 # without a linked issue.
 #
+# An optional issues_keep_open= field in the same meta, in the same ref format,
+# names linked issues whose acceptance still has captain-only items. Firstmate
+# appends that line by hand when it learns an issue must outlive the landing;
+# no script writes it. A kept issue is never read or touched on either form.
+#
 # For each linked issue:
+#   kept open      -> print "kept-open: <owner/repo>#<n>" and touch nothing
 #   already closed -> print "already-closed: <owner/repo>#<n>" and touch nothing
 #   open           -> close it with one plain-English comment naming the merged
-#                     PR URL, remove the agent-in-progress label when the issue
-#                     carries it, and print "closed: <owner/repo>#<n> <url>"
+#                     PR URL or the landed commit URL, remove the
+#                     agent-in-progress label when the issue carries it, and
+#                     print "closed: <owner/repo>#<n> <url>"
 #
 # Four refusals keep this from ever closing something it was not asked to.
-# The PR must report a merged state, so a failed or still-open merge never
-# retires an issue. Every linked issue must live in the PR's own repository, so
-# a task that names an issue elsewhere is refused rather than partly applied.
-# A task that records linked issues must ship through GitHub, because only its
-# issue tracker is addressed here. And an issue absent from the task's own
-# metadata is never reached at all.
+# The work must be on the default branch: the PR form reads a merged PR state,
+# and the landed form asks GitHub to compare <sha> with the default branch and
+# accepts only "identical" or "ahead", so a failed or unpushed landing never
+# retires an issue. Every linked issue must live in one repository, the PR's own
+# for the PR form, so a task that names an issue elsewhere is refused rather
+# than partly applied. A task that records linked issues must ship through
+# GitHub, because only its issue tracker is addressed here. And an issue absent
+# from the task's own metadata is never reached at all.
 #
 # The no-issues check runs before the GitHub check, so an ordinary GitLab task,
 # which never records GitHub issues, exits quietly instead of making its caller
@@ -42,8 +58,10 @@
 # bin/fm-outage-sync.sh uses, so tests can inject a recorder. Each issue's state
 # and labels are read with plain gh instead, because gh-axi's issue view prints
 # no labels line; that one JSON call answers both whether the issue is open and
-# whether it carries the label to strip.
+# whether it carries the label to strip. The landed form's compare read uses
+# plain gh api for the same reason.
 # Usage: fm-issue-close-after-merge.sh <task-id> <merged-pr-url>
+#        fm-issue-close-after-merge.sh <task-id> --landed <sha>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,28 +73,37 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 
 usage() {
-  printf '%s\n' 'Usage: fm-issue-close-after-merge.sh <task-id> <merged-pr-url>'
+  printf '%s\n' 'Usage: fm-issue-close-after-merge.sh <task-id> <merged-pr-url>' \
+    '       fm-issue-close-after-merge.sh <task-id> --landed <sha>'
 }
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
 
-if [ "$#" -ne 2 ]; then
+invalid_request() {
   echo "error: invalid issue close request" >&2
   exit 2
+}
+
+ID=${1:-}
+LANDED_SHA=
+if [ "$#" -eq 3 ] && [ "$2" = --landed ]; then
+  fm_pr_task_id_valid "$ID" || invalid_request
+  LANDED_SHA=$3
+  if ! [[ "$LANDED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "error: '$LANDED_SHA' is not a full commit SHA" >&2
+    exit 2
+  fi
+else
+  [ "$#" -eq 2 ] || invalid_request
+  { fm_pr_task_id_valid "$ID" && fm_pr_url_parse "$2"; } || invalid_request
+  URL=$FM_PR_URL
+  PR_SLUG="$FM_PR_OWNER/$FM_PR_REPO"
+  # The meta stores a case-insensitive GitHub identity lowercased, so compare
+  # and report against the same spelling.
+  PR_SLUG_LOWER=$(printf '%s' "$PR_SLUG" | tr '[:upper:]' '[:lower:]')
 fi
-ID=$1
-RAW_URL=$2
-if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL"; then
-  echo "error: invalid issue close request" >&2
-  exit 2
-fi
-URL=$FM_PR_URL
-PR_SLUG="$FM_PR_OWNER/$FM_PR_REPO"
-# The meta stores a case-insensitive GitHub identity lowercased, so compare and
-# report against the same spelling.
-PR_SLUG_LOWER=$(printf '%s' "$PR_SLUG" | tr '[:upper:]' '[:lower:]')
 
 gh_axi() {
   "${FM_GH_BIN:-gh-axi}" "$@"
@@ -98,7 +125,7 @@ ISSUES=$(grep '^issues=' "$META" | tail -1 | cut -d= -f2- || true)
 # Only GitHub issues are addressed here. A GitLab merge request parses, but its
 # issue tracker is a different API, so a task that does record linked issues is
 # refused rather than half-handled.
-if [ "$FM_PR_PROVIDER" != github ]; then
+if [ -z "$LANDED_SHA" ] && [ "$FM_PR_PROVIDER" != github ]; then
   echo "error: $URL is not a GitHub pull request; refusing to close any issue" >&2
   exit 1
 fi
@@ -110,43 +137,102 @@ if ! [[ "$ISSUES" =~ ^${issue_ref_pattern}(,${issue_ref_pattern})*$ ]]; then
   echo "error: task metadata records '$ISSUES', which is not a GitHub issue ref list" >&2
   exit 1
 fi
-REFS=()
-IFS=, read -r -a REFS <<< "$ISSUES"
-NUMBERS=()
-for ref in "${REFS[@]}"; do
-  slug=${ref%%#*}
-  number=${ref##*#}
+KEEP_OPEN=$(grep '^issues_keep_open=' "$META" | tail -1 | cut -d= -f2- || true)
+if [ -n "$KEEP_OPEN" ] \
+  && ! [[ "$KEEP_OPEN" =~ ^${issue_ref_pattern}(,${issue_ref_pattern})*$ ]]; then
+  echo "error: task metadata records issues_keep_open '$KEEP_OPEN', which is not a GitHub issue ref list" >&2
+  exit 1
+fi
+
+# normalize_ref <owner/repo#n> -> owner/repo#n with the number's leading zeros
+# dropped, so a kept-open ref and a linked ref compare by value.
+normalize_ref() {
+  local number=${1##*#}
   while [ "${number#0}" != "$number" ]; do
     number=${number#0}
   done
+  printf '%s#%s' "${1%%#*}" "$number"
+}
+
+KEEP_SET=,
+if [ -n "$KEEP_OPEN" ]; then
+  IFS=, read -r -a KEEP_REFS <<< "$KEEP_OPEN"
+  for ref in "${KEEP_REFS[@]}"; do
+    KEEP_SET="$KEEP_SET$(normalize_ref "$ref"),"
+  done
+fi
+
+REFS=()
+IFS=, read -r -a REFS <<< "$ISSUES"
+NUMBERS=()
+if [ -n "$LANDED_SHA" ]; then
+  # A landing has no PR to name its repository, so the linked issues must
+  # agree on one, and that repository's default branch is what gets checked.
+  PR_SLUG=${REFS[0]%%#*}
+  PR_SLUG_LOWER=$PR_SLUG
+fi
+for ref in "${REFS[@]}"; do
+  slug=${ref%%#*}
+  ref=$(normalize_ref "$ref")
   if [ "$slug" != "$PR_SLUG_LOWER" ]; then
-    echo "error: task metadata links $ref, which is not in the merged PR's repository $PR_SLUG" >&2
+    if [ -n "$LANDED_SHA" ]; then
+      echo "error: task metadata links issues in more than one repository ($PR_SLUG and $slug); refusing to close any issue" >&2
+    else
+      echo "error: task metadata links $ref, which is not in the merged PR's repository $PR_SLUG" >&2
+    fi
     exit 1
   fi
-  NUMBERS+=("$number")
+  NUMBERS+=("${ref##*#}")
 done
 [ "${#NUMBERS[@]}" -gt 0 ] || exit 0
 
-# The merge itself is the authority for closing anything, so read it first and
-# refuse everything when the PR did not merge. gh-axi reports the state
-# lowercase in its own listing; the forge's own uppercase spelling is accepted
-# too so this does not depend on which one a version prints.
-if ! PR_VIEW=$(gh_axi pr view "$FM_PR_NUMBER" -R "$PR_SLUG" 2>/dev/null); then
-  echo "error: could not read the state of $URL; refusing to close any issue" >&2
-  exit 1
-fi
-PR_STATE=$(printf '%s\n' "$PR_VIEW" \
-  | sed -n 's/^  state: //p' | head -1 | tr -d '"')
-case "$PR_STATE" in
-  merged|MERGED) : ;;
-  *)
-    echo "error: $URL is not merged (state: ${PR_STATE:-unknown}); refusing to close any issue" >&2
+# The landing itself is the authority for closing anything, so check it first
+# and refuse everything when the work is not on the default branch.
+if [ -n "$LANDED_SHA" ]; then
+  # GitHub's compare of <sha>...HEAD reports "identical" or "ahead" exactly
+  # when the default branch contains the commit; "behind", "diverged", or an
+  # unknown commit means the push never reached it.
+  URL="https://github.com/$PR_SLUG/commit/$LANDED_SHA"
+  COMMENT="Fixed by $URL, landed on the default branch."
+  if ! COMPARE=$(gh api "repos/$PR_SLUG/compare/$LANDED_SHA...HEAD" --jq .status 2>/dev/null); then
+    echo "error: could not confirm $LANDED_SHA is on the default branch of $PR_SLUG; refusing to close any issue" >&2
     exit 1
-    ;;
-esac
+  fi
+  case "$COMPARE" in
+    identical|ahead) : ;;
+    *)
+      echo "error: $LANDED_SHA is not on the default branch of $PR_SLUG (compare: ${COMPARE:-unknown}); refusing to close any issue" >&2
+      exit 1
+      ;;
+  esac
+else
+  # gh-axi reports the PR state lowercase in its own listing; the forge's own
+  # uppercase spelling is accepted too so this does not depend on which one a
+  # version prints.
+  COMMENT="Fixed by $URL, merged to main."
+  if ! PR_VIEW=$(gh_axi pr view "$FM_PR_NUMBER" -R "$PR_SLUG" 2>/dev/null); then
+    echo "error: could not read the state of $URL; refusing to close any issue" >&2
+    exit 1
+  fi
+  PR_STATE=$(printf '%s\n' "$PR_VIEW" \
+    | sed -n 's/^  state: //p' | head -1 | tr -d '"')
+  case "$PR_STATE" in
+    merged|MERGED) : ;;
+    *)
+      echo "error: $URL is not merged (state: ${PR_STATE:-unknown}); refusing to close any issue" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 for number in "${NUMBERS[@]}"; do
   ref="$PR_SLUG_LOWER#$number"
+  case "$KEEP_SET" in
+    *",$ref,"*)
+      printf 'kept-open: %s\n' "$ref"
+      continue
+      ;;
+  esac
   # One read answers both questions this loop asks: is the issue still open,
   # and does it carry the label to strip. The reply is a single JSON line,
   # {"labels":["a","b"],"state":"OPEN"}, with the state uppercase.
@@ -168,7 +254,7 @@ for number in "${NUMBERS[@]}"; do
       ;;
   esac
   if ! gh_axi issue close "$number" -R "$PR_SLUG" --reason completed \
-    --comment "Fixed by $URL, merged to main." >/dev/null 2>&1; then
+    --comment "$COMMENT" >/dev/null 2>&1; then
     echo "issue-close-failed: $ref could not be closed on GitHub" >&2
     exit 1
   fi
