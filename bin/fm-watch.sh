@@ -206,8 +206,9 @@ case "$BACKGROUND_OUTPUT_STALE_SECS" in ''|*[!0-9]*|0) BACKGROUND_OUTPUT_STALE_S
 BUSY_TURN_MAX_SECS=${FM_BUSY_TURN_MAX_SECS:-3600}
 # A crew that declared a pause is idling on a known external wait, so its stale
 # pane is absorbed rather than wedge-escalated.
-# A captain-held or paused crew whose agent has confidently exited uses the same
-# bounded cadence, while a live or ambiguously read agent still surfaces once.
+# A captain-held or paused crew whose agent is not confirmed alive uses the same
+# bounded cadence, as does a live agent parked on its declared pause
+# (parked_on_declared_pause), while any other live agent still surfaces once.
 # These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten hold cannot rot invisibly.
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
@@ -812,6 +813,21 @@ handle_paused_stale() {  # <window> <task> <hash> [pause-detail]
   triage_log "absorbed stale (paused, awaiting external - $detail, age ${age}s): $win"
 }
 
+# 0 iff a live agent is parked on its own declared pause: the last status line
+# is paused and the harness's own lifecycle source says the turn ended. A
+# decision gate lives inside a turn, so a turn that source closed holds none
+# open and the pause wins over liveness. The Grok rendered-text fallback is the
+# only non-semantic source (bin/fm-busy-lib.sh) and cannot tell a prompt from a
+# gate, so it never counts.
+parked_on_declared_pause() {  # <task> <last-status-line>
+  status_is_paused "$2" || return 1
+  case "$(fm_busy_classify_meta "$STATE/$1.meta" "$1" "$STATE")" in
+    'idle grok-regex') return 1 ;;
+    'idle '*) return 0 ;;
+  esac
+  return 1
+}
+
 clear_pause_state() {  # <window>
   local win=$1 key
   key=${win//:/_}
@@ -857,7 +873,7 @@ pause_state_class() {  # <window> <task>
   if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     if [ "$(window_kind "$win")" != secondmate ]; then
       agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
-      if [ "$agent_alive" = alive ]; then
+      if [ "$agent_alive" = alive ] && ! parked_on_declared_pause "$task" "$last"; then
         rm -f "$recheck_file"
         printf 'none'
         return
@@ -912,13 +928,14 @@ pause_state_class() {  # <window> <task>
     return
   fi
   agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
-  if [ "$agent_alive" = alive ]; then
+  if [ "$agent_alive" = alive ] && ! parked_on_declared_pause "$task" "$last"; then
     rm -f "$recheck_file"
     printf 'none'
     return
   fi
   # Everything below is reached only for a worker that declared a pause or a
-  # captain hold AND whose agent is not confidently alive AND whose pane is
+  # captain hold AND whose agent is not confidently alive (or is parked on its
+  # declared pause, see parked_on_declared_pause) AND whose pane is
   # already idle (pause_state_class runs only on the stale paths). Both signals
   # are therefore quiet, so the worker's own declared reason for being quiet
   # decides: absorb on the long pause cadence, never the wedge ladder.
@@ -931,7 +948,8 @@ pause_state_class() {  # <window> <task>
   # wedge-escalated to level 3 with a `paused: [key=await-merge]` line sitting
   # at the end of each status log. `alive` is the only verdict that can
   # legitimately override a declared pause, because only a live agent could
-  # still be silencing a decision gate.
+  # still be silencing a decision gate, and only while its turn is not known
+  # to have ended.
   date +%s > "$recheck_file"
   printf 'paused'
 }

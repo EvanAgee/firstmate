@@ -854,6 +854,80 @@ test_declared_pause_with_live_agent_stays_none() {
   fi
 }
 
+# Arm <id>'s busy-state contract and close its turn through the real writer,
+# exactly as a fm-spawn-armed Claude worker's Stop hook leaves it.
+record_turn_ended() {  # <state> <id>
+  "$ROOT/bin/fm-busy-event.sh" arm "$1" "$2" >/dev/null \
+    && "$ROOT/bin/fm-busy-event.sh" apply "$1" "$2" idle --current-gen \
+      --source claude-hook --event stop >/dev/null
+}
+
+# Bare `stale: <window>` wakes queued for <window>, as a plain integer.
+count_bare_stale_wakes() {  # <state> <window>
+  awk -F '\t' -v w="$2" '$3 == "stale" && $4 == w && $5 == "stale: " w { n++ } END { print n + 0 }' \
+    "$1/.wake-queue" 2>/dev/null || printf '0'
+}
+
+# The 2026-09-23 macpro-bench-branch shape: a live Claude worker declared a
+# pause, armed its own CI monitor, and ended its turn. Every fresh idle pane it
+# showed woke firstmate with a bare stale. A turn its own Stop hook closed holds
+# no decision gate open, so its declared pause must win over its liveness.
+test_parked_live_pause_absorbs_each_new_idle_pane() {
+  local dir state window key round bare
+  dir=$(make_wedge_case parked-live pk \
+    'paused: [key=bench-runs] tuned run in progress, monitor armed')
+  state="$dir/state"
+  window=fmtest:fm-pk
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  record_turn_ended "$state" pk || { fail "could not record the ended turn"; return; }
+  seed_stale_pane "$dir" pk "$window" 'idle at prompt · 1 monitor (round 1)'
+  FM_FAKE_TMUX_CURRENT_COMMAND=claude
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · tuned run in progress, monitor armed'
+  for round in 1 2 3; do
+    printf 'idle at prompt · 1 monitor (round %s)' "$round" > "$dir/pane.txt"
+    run_for_seconds "$dir" "$window" 8 FM_PAUSE_RESURFACE_SECS=3600
+    drain_wakes "$state"
+  done
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  bare=$(count_bare_stale_wakes "$state" "$window")
+  if [ "$bare" -ne 0 ]; then
+    fail "a parked live worker woke firstmate with $bare bare stale wakes across three idle panes"
+  elif [ ! -e "$state/.paused-$key" ]; then
+    fail "a parked live worker was not put on the pause cadence"
+  else
+    ok "a parked live worker's new idle panes join the pause cadence without a bare stale wake"
+  fi
+}
+
+# The other side: parking must not silence the worker forever. Past the pause
+# window the same worker re-surfaces once with the paused-recheck reason.
+test_parked_live_pause_rechecks_on_the_long_cadence() {
+  local dir state window bare recheck
+  dir=$(make_wedge_case parked-recheck pq \
+    'paused: [key=bench-runs] confirmation run in progress, monitor armed')
+  state="$dir/state"
+  window=fmtest:fm-pq
+  record_turn_ended "$state" pq || { fail "could not record the ended turn"; return; }
+  touch -t 202001010000 "$state/pq.status"
+  seed_stale_pane "$dir" pq "$window" 'idle at prompt · 1 monitor'
+  FM_FAKE_TMUX_CURRENT_COMMAND=claude
+  export FM_FAKE_TMUX_CURRENT_COMMAND
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · confirmation run in progress, monitor armed'
+  run_for_seconds "$dir" "$window" 10 FM_PAUSE_RESURFACE_SECS=1
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_CURRENT_COMMAND
+  bare=$(count_bare_stale_wakes "$state" "$window")
+  recheck=$(grep -F "stale: $window (paused " "$state/.wake-queue" 2>/dev/null \
+    | grep -c -F 'awaiting external - declared pause, rechecked on a long cadence' || true)
+  if [ "$bare" -ne 0 ]; then
+    fail "a parked live worker surfaced a bare stale wake instead of its recheck"
+  elif [ "${recheck:-0}" -ne 1 ]; then
+    fail "a parked live worker past its pause window queued $recheck rechecks, want 1; queue: $(cat "$state/.wake-queue" 2>/dev/null)"
+  else
+    ok "a parked live worker re-surfaces once with the paused recheck past its window"
+  fi
+}
+
 poll_stalled_case() {
   local dir=$1 win=$2 state key target pid deadline count recovery_token sequence reason completed=0
   state="$dir/state"
@@ -2334,6 +2408,8 @@ if [ "$#" -eq 0 ]; then
   set -- \
     test_declared_pause_beats_run_step_done \
     test_declared_pause_with_live_agent_stays_none \
+    test_parked_live_pause_absorbs_each_new_idle_pane \
+    test_parked_live_pause_rechecks_on_the_long_cadence \
     test_poll_reports_stall_after_generic_wedge_removed_timer \
     test_poll_reports_stall_over_old_terminal_status_without_timer \
     test_away_poll_reports_stall_after_generic_escalation_removed_marker \
