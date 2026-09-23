@@ -616,6 +616,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/specs/fm-autoarm-merged-announce-loop.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/specs/pooled-capacity-admission.md",
       "audience": "maintainer-architecture"
     },
