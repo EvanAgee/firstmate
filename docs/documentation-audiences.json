@@ -552,6 +552,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/ensure-agents-md-opt-out.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/provider-availability-routing.md",
       "audience": "maintainer-architecture"
     },
