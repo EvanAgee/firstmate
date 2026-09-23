@@ -642,3 +642,4 @@ ok - stalled Claude output gets one interrupt, one steer, and durable marker
 The test repeats the stale wake and confirms the interrupt and steer each occurred once.
 The same watcher test file covers a growing output, an immediate stale wake, a non-Claude worker, and unchanged wake and absorb paths.
 The fixture does not verify the rendered foreground Bash signature against a live Claude Code process.
+Codex background terminals remain out of scope because no documented, stable per-task output-file location was found.
