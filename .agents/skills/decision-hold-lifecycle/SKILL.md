@@ -25,6 +25,8 @@ When the captain's answer authorizes follow-up work, the hold remains the author
 When the captain's answer routes no follow-up work at all, such as a declined proposal, `bin/fm-decision-hold.sh decline` records that answer and closes the hold; it never substitutes for routing work the captain did authorize.
 When the captain simply answers a hold that has no follow-up work routed behind it yet, `bin/fm-decision-hold.sh answer` records that answer and closes the hold, so answering is closing rather than a separate later act that can be forgotten.
 When the captain defers the choice, record the exact deferral with `bin/fm-decision-hold.sh park`, which moves it out of the active captain queue without closing it.
+When the decision is also asked on a GitHub issue, give `hold` the issue with `--issue`, and give the close path `--ready` when the answered work is buildable, so the one close also moves the issue's labels.
+Before telling the captain that a decision asked on an issue still waits on him, run `bin/fm-decision-hold.sh stale <owner/repo>` and read every issue it names, because he may already have answered there.
 "A keyed answer closes its matching hold" is one capability with one owner, `bin/fm-decision-hold.sh answers`, and every channel that carries a captain answer feeds it the same `<decision-key>` and answer.
 A channel never maps a key to a hold, records a decision, or closes anything itself, so no channel is special and a new one needs no new closing logic.
 Chat already feeds it: `bin/fm-send.sh --resolve-key` answers a decision in whichever ledger still holds it open, including a decision already transferred to its durable hold.

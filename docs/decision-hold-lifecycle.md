@@ -45,7 +45,8 @@ The heading is matched the permissive way `tasks-axi`'s own parser matches it, a
 A backlog that is missing, empty, structurally destroyed, or unreadable fails the gate loudly instead of passing as archival.
 The `--force` path remains the explicit captain-approved discard escape hatch.
 
-The `resolve`, `answer`, and `decline` subcommands close active holds, while `repair` attests a hold already closed outside the script.
+The `resolve`, `answer`, and `decline` subcommands close open holds, while `repair` attests a hold already closed outside the script.
+An open hold includes one the captain parked or deferred to a date, because his answer replaces that deferral.
 All four require a non-empty captain decision file and record the same resolution block in the hold body with the decision digest, routed identities, and a `Resolution mode:` naming the path.
 An exact retry is idempotent, while a changed decision or, for `resolve`, a changed routed-task set is rejected.
 
@@ -57,6 +58,20 @@ The `answer` and `decline` subcommands share one unrouted close implementation a
 Both record `(none)` as the routed identities and refuse while any task in the same backlog is still blocked by the hold, because releasing routed work without recording it is `resolve`'s job.
 Every candidate found in the listing prefilter is confirmed against its own structured record before the refusal is reported.
 `answer` exists so the act carrying a captain answer can also be the act that closes its hold; `decline` continues to mean the stronger claim that the answer routes no follow-up work at all.
+
+## Issue labels
+
+A decision asked on a GitHub issue is asked twice, once by the hold and once by the issue's `needs-decision` label.
+`hold --issue <owner/repo#N>` records the issue as an `Issue:` line in a new hold's body, and the three close paths take `--issue` for a hold created without one.
+After a close path closes a hold that names an issue, it removes `needs-decision` from that issue once no other hold of the same origin is still held for the captain, and adds `agent-ready` when the caller passes `--ready`.
+While a sibling still waits, it changes no label and names that sibling, so a multi-key issue stays blocked until its last key is answered.
+The caller decides whether the answered work is buildable, which is why `agent-ready` needs `--ready`.
+A failed issue read or label edit exits nonzero with the hold already closed, and an exact re-run retries only the labels.
+A hold that names no issue makes no GitHub call.
+
+`stale <owner/repo>` is the read-only check for the two states where the issue and the backlog disagree.
+It reports an open `needs-decision` issue whose latest comment is a captain answer, and a parked or future hold whose linked issue carries a captain answer dated after the hold's latest deferral.
+It recognizes an answer only by its opening words, `Captain decision`, `Captain direction`, or `Decision recorded (captain`, and it never decides what the captain said or changes anything.
 
 The `park` subcommand requires the same non-empty captain decision file and appends a numbered deferral cycle with its digest, deferral date, hold kind, optional revisit date, original hold reason, and a lossless base64 payload in the hold body.
 The payload is decoded and checked against its digest when the cycle is read, so captain text cannot impersonate record metadata.

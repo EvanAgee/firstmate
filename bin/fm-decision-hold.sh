@@ -19,20 +19,24 @@
 # Usage:
 #   fm-decision-hold.sh id <origin-id> <decision-key>
 #   fm-decision-hold.sh hold <origin-id> <decision-key> \
-#     --title <title> --reason <reason> [--repo <repo>]
+#     --title <title> --reason <reason> [--repo <repo>] [--issue <owner/repo#N>]
 #   fm-decision-hold.sh complete <origin-id> (--none | <decision-key>...)
 #   fm-decision-hold.sh verify <origin-id>
 #   fm-decision-hold.sh resolve <origin-id> <decision-key> \
-#     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...]
-#   fm-decision-hold.sh answer <origin-id> <decision-key> --decision-file <path>
+#     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...] \
+#     [--issue <owner/repo#N>] [--ready]
+#   fm-decision-hold.sh answer <origin-id> <decision-key> --decision-file <path> \
+#     [--issue <owner/repo#N>] [--ready]
 #   fm-decision-hold.sh park <origin-id> <decision-key> \
 #     --decision-file <path> [--until <date>]
-#   fm-decision-hold.sh decline <origin-id> <decision-key> --decision-file <path>
+#   fm-decision-hold.sh decline <origin-id> <decision-key> --decision-file <path> \
+#     [--issue <owner/repo#N>] [--ready]
 #   fm-decision-hold.sh answers <origin-id> --source <provenance>   (keyed answers on stdin)
 #   fm-decision-hold.sh bind <source-id> <origin-id>
 #   fm-decision-hold.sh unbind <source-id>
 #   fm-decision-hold.sh binding <source-id>
 #   fm-decision-hold.sh repair <origin-id> <decision-key> --decision-file <path>
+#   fm-decision-hold.sh stale <owner/repo>
 #
 # `complete` is the shared investigation and visual-review completion gate.
 # `--none` is an explicit semantic attestation that the just-reviewed surface has
@@ -61,13 +65,39 @@
 # anywhere - must keep a present durable hold, so an absent hold with no answer evidence
 # keeps failing.
 #
-# `resolve`, `answer`, and `decline` close active holds; `repair` attests a hold
-# already closed outside this script. All four paths require a non-empty captain
-# decision file of at most 8192 bytes, record the same durable resolution block in
-# the hold body, and store the decision digest plus routed identities so an exact
-# retry is idempotent while a changed decision or, for `resolve`, routed set is
-# rejected. New records include a `Resolution mode:` naming their path; older
-# routed records remain valid.
+# `resolve`, `answer`, and `decline` close open holds, including one the captain
+# earlier parked or deferred to a date, because his answer replaces that
+# deferral; `repair` attests a hold already closed outside this script. All four
+# paths require a non-empty captain decision file of at most 8192 bytes, record
+# the same durable resolution block in the hold body, and store the decision
+# digest plus routed identities so an exact retry is idempotent while a changed
+# decision or, for `resolve`, routed set is rejected. New records include a
+# `Resolution mode:` naming their path; older routed records remain valid.
+#
+# ONE ANSWER CLOSES THE ISSUE TOO.
+# A decision asked on a GitHub issue is asked twice: by the hold and by the
+# issue's `needs-decision` label. `hold --issue <owner/repo#N>` records that issue
+# as an `Issue:` line in a new hold's body, and `resolve`, `answer`, and `decline`
+# take `--issue` for a hold created without one. After a close path closes a hold
+# that names an issue, and no other hold of the same origin is still held for the
+# captain, it removes `needs-decision` from the issue and, with `--ready`, adds
+# `agent-ready`, printing `issue-synced: <owner/repo#N>`. While a sibling still
+# waits it changes no label and prints `issue-kept: <owner/repo#N> (still waiting
+# on <hold-id>...)`. Deciding whether the answered work is buildable is the
+# caller's job, which is why `agent-ready` needs `--ready`. A failed issue read or
+# label edit exits nonzero after the hold is already closed, and an exact re-run
+# retries only the labels. A hold that names no issue makes no GitHub call.
+#
+# `stale <owner/repo>` is read-only and changes nothing. It prints
+# `answered-on-issue: <owner/repo#N>` for an open `needs-decision` issue whose
+# latest comment opens with a captain answer marker, and
+# `held-after-captain-spoke: <hold-id> <owner/repo#N>` for a parked or future hold
+# in this home whose linked issue has a marker comment dated after the hold's
+# latest `Deferred on:` date (its creation date when it has none). A marker is a
+# first non-blank line that, after leading `#`, `>`, `*`, `_`, and spaces, begins
+# with `Captain decision`, `Captain direction`, or `Decision recorded (captain`,
+# ignoring case. Each line is a prompt to read the issue and record the captain's
+# word through a close path or `park`; `stale` never decides what he said.
 #
 # `park` is the non-closing deferral path. It requires the same captain decision
 # record as a close path, then changes an active captain hold to `parked`, or to
@@ -206,6 +236,11 @@ validate_one_line() {  # <label> <value>
   esac
 }
 
+validate_issue_ref() {  # <value>
+  [[ "$1" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+#[1-9][0-9]*$ ]] \
+    || fail "--issue must be an owner/repo#N reference: $1"
+}
+
 validate_iso_date() {  # <label> <value>
   local label=$1 value=$2 parsed=''
   case "$value" in
@@ -252,6 +287,11 @@ ROUTED_NONE='(none)'
 
 DECISION_TEXT=''
 DECISION_DIGEST=''
+
+# The issue a close path syncs, from its --issue flag or the hold's `Issue:` line,
+# and whether --ready asked for `agent-ready`.
+ISSUE_REF=''
+ISSUE_READY=0
 
 load_decision() {  # <path>; sets DECISION_TEXT and DECISION_DIGEST
   local path=$1 decision
@@ -558,12 +598,13 @@ body_has_deferral_record() {  # <hold-body>
 }
 
 resolution_body() {  # <mode> <routed-csv> [routed-task-id...]
-  local mode=$1 routed_csv=$2 body dep
+  local mode=$1 routed_csv=$2 body dep issue_line=''
   shift 2
+  [ -z "$ISSUE_REF" ] || issue_line="Issue: $ISSUE_REF"$'\n'
   # Command substitution strips the trailing newline, so restore it before the
   # routed-work list to keep each entry on its own durable backlog line.
-  body=$(printf 'Resolution recorded by fm-decision-hold.\nDecision digest: %s\nRouted identities: %s\nResolution mode: %s\n\nCaptain decision:\n%s\n\nRouted work:' \
-    "$DECISION_DIGEST" "$routed_csv" "$mode" "$DECISION_TEXT")
+  body=$(printf 'Resolution recorded by fm-decision-hold.\nDecision digest: %s\nRouted identities: %s\nResolution mode: %s\n%s\nCaptain decision:\n%s\n\nRouted work:' \
+    "$DECISION_DIGEST" "$routed_csv" "$mode" "$issue_line" "$DECISION_TEXT")
   body="${body}"$'\n'
   if [ "$#" -eq 0 ]; then
     body="${body}${ROUTED_NONE}"$'\n'
@@ -668,6 +709,84 @@ verify_hold_active() {  # <hold-id>
   [ "$held" = yes ] || fail "captain hold $id is not active"
   [ "$kind" = captain ] || fail "backlog item $id is not kind captain"
   [ "$hold_kind" = captain ] || fail "backlog item $id is not held for the captain"
+}
+
+# The close paths also take a hold the captain parked or deferred to a date,
+# because his answer replaces that deferral. A future hold past its date is no
+# longer held by tasks-axi, and it is still an unanswered decision.
+verify_hold_open() {  # <hold-id>
+  local id=$1 show state held kind hold_kind
+  show=$(task_show "$id") || fail "captain hold $id is absent from $FM_HOME/data/backlog.md"
+  state=$(show_field "$show" state)
+  held=$(show_field "$show" held)
+  kind=$(show_field "$show" kind)
+  hold_kind=$(show_field "$show" hold_kind)
+  [ "$state" = queued ] || fail "captain hold $id is not queued (state=$state)"
+  [ "$kind" = captain ] || fail "backlog item $id is not kind captain"
+  case "$hold_kind" in
+    captain|parked) [ "$held" = yes ] || fail "captain hold $id is not active" ;;
+    future) : ;;
+    *) fail "backlog item $id is not held for the captain" ;;
+  esac
+}
+
+# Ids of this home's held decision items whose id starts with <id-prefix> and
+# whose hold kind is one of <hold-kinds> (space-separated). Each listing row
+# ends with the hold kind and held flag, which never contain a comma, so they
+# are read from the end even when a quoted title holds commas.
+held_decisions() {  # <id-prefix> <hold-kinds>
+  local prefix=$1 kinds=$2 rows row id rest kind
+  rows=$(tasks_axi list --state held --fields hold_kind,held) \
+    || fail "could not read the held decisions in $FM_HOME"
+  while IFS= read -r row; do
+    row=${row#"${row%%[![:space:]]*}"}
+    id=${row%%,*}
+    case "$id" in "$prefix"*) : ;; *) continue ;; esac
+    case "$id" in *-decision-*) : ;; *) continue ;; esac
+    case "$id" in *[!A-Za-z0-9._-]*) continue ;; esac
+    rest=${row%,*}
+    kind=${rest##*,}
+    case " $kinds " in *" $kind "*) printf '%s\n' "$id" ;; esac
+  done <<EOF
+$rows
+EOF
+}
+
+issue_from_show() {  # <show-output>
+  local issue
+  issue=$(task_body "$1" | sed -n 's/^Issue: //p' | head -1)
+  [ -z "$issue" ] || validate_issue_ref "$issue"
+  printf '%s' "$issue"
+}
+
+# Close the loop on the issue a just-closed hold was asked on (see the header).
+# Runs only after the hold's close is durable, so every failure here says the
+# hold is closed and that an exact re-run retries the labels.
+sync_issue() {  # <origin-id> <hold-id>
+  local origin=$1 id=$2 repo number siblings waiting labels out
+  local edit=()
+  [ -n "$ISSUE_REF" ] || return 0
+  repo=${ISSUE_REF%%#*}
+  number=${ISSUE_REF##*#}
+  siblings=$(held_decisions "$origin-decision-" captain)
+  waiting=$(printf '%s\n' "$siblings" | grep -vxF -e "$id" -e '' | paste -sd' ' -)
+  if [ -n "$waiting" ]; then
+    printf 'issue-kept: %s (still waiting on %s)\n' "$ISSUE_REF" "$waiting"
+    return 0
+  fi
+  labels=$(gh issue view "$number" -R "$repo" --json labels --jq '.labels[].name' 2>&1) \
+    || fail "captain hold $id is closed, but $ISSUE_REF could not be read ($labels); re-run the same command to retry its labels"
+  if printf '%s\n' "$labels" | grep -qxF needs-decision; then
+    edit+=(--remove-label needs-decision)
+  fi
+  if [ "$ISSUE_READY" = 1 ] && ! printf '%s\n' "$labels" | grep -qxF agent-ready; then
+    edit+=(--add-label agent-ready)
+  fi
+  if [ "${#edit[@]}" -gt 0 ]; then
+    out=$(gh issue edit "$number" -R "$repo" "${edit[@]}" 2>&1) \
+      || fail "captain hold $id is closed, but the labels on $ISSUE_REF were not changed ($out); re-run the same command to retry them"
+  fi
+  printf 'issue-synced: %s\n' "$ISSUE_REF"
 }
 
 verify_hold_resolved() {  # <hold-id>
@@ -930,7 +1049,7 @@ command_id() {
 }
 
 command_hold() {
-  local origin=${1:-} key=${2:-} title='' reason='' repo='' id show state kind existing_title body
+  local origin=${1:-} key=${2:-} title='' reason='' repo='' issue='' id show state kind existing_title body
   local hold_kind hold_body parked_reason until
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
@@ -939,6 +1058,7 @@ command_hold() {
       --title) shift; title=${1:-} ;;
       --reason) shift; reason=${1:-} ;;
       --repo) shift; repo=${1:-} ;;
+      --issue) shift; issue=${1:-}; validate_issue_ref "$issue" ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -990,6 +1110,7 @@ command_hold() {
     [ -n "$repo" ] || repo=firstmate
     validate_one_line repo "$repo"
     body=$(printf 'Origin: %s\nDecision key: %s\nState: awaiting captain decision.' "$origin" "$key")
+    [ -z "$issue" ] || body="$body"$'\n'"Issue: $issue"
     tasks_axi add "$id" "$title" --kind captain --repo "$repo" --body "$body" >/dev/null \
       || fail "could not create captain decision item $id"
   fi
@@ -1120,6 +1241,8 @@ command_resolve() {
     case "$1" in
       --decision-file) shift; decision_file=${1:-} ;;
       --routed-to) shift; validate_slug routed-task "${1:-}"; routed="${routed}${routed:+ }${1:-}" ;;
+      --issue) shift; ISSUE_REF=${1:-}; validate_issue_ref "$ISSUE_REF" ;;
+      --ready) ISSUE_READY=1 ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -1139,11 +1262,14 @@ command_resolve() {
     verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$routed_csv"
     record_answered_key "$origin" "$key"
     printf 'resolved: %s\n' "$id"
+    [ -n "$ISSUE_REF" ] || ISSUE_REF=$(issue_from_show "$hold_show")
+    sync_issue "$origin" "$id"
     return 0
   fi
-  verify_hold_active "$id"
+  verify_hold_open "$id"
   hold_show=$(task_show "$id")
   hold_body=$(show_field "$hold_show" body)
+  [ -n "$ISSUE_REF" ] || ISSUE_REF=$(issue_from_show "$hold_show")
   case "$hold_body" in
     *"Resolution recorded by fm-decision-hold."*)
       verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$routed_csv"
@@ -1181,6 +1307,7 @@ command_resolve() {
   tasks_axi "done" "$id" >/dev/null || fail "could not close resolved captain hold $id"
   verify_hold_resolved "$id" || fail "captain hold $id did not retain its durable resolution record"
   printf 'resolved: %s -> %s\n' "$id" "$routed"
+  sync_issue "$origin" "$id"
 }
 
 parse_decision_only_flags() {  # <args...>; prints the --decision-file value
@@ -1201,9 +1328,17 @@ parse_decision_only_flags() {  # <args...>; prints the --decision-file value
 # identity, and the refusal to release still-routed work - is identical, so
 # neither can drift into a weaker close than the other.
 close_unrouted_hold() {  # <mode> <outcome-word> <origin-id> <decision-key> <flag-args...>
-  local mode=$1 outcome=$2 origin=$3 key=$4 decision_file id body hold_show hold_body state dependents
+  local mode=$1 outcome=$2 origin=$3 key=$4 decision_file='' id body hold_show hold_body state dependents
   shift 4
-  decision_file=$(parse_decision_only_flags "$@") || exit 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --decision-file) shift; decision_file=${1:-} ;;
+      --issue) shift; ISSUE_REF=${1:-}; validate_issue_ref "$ISSUE_REF" ;;
+      --ready) ISSUE_READY=1 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
   validate_slug origin-id "$origin"
   validate_slug decision-key "$key"
   load_decision "$decision_file"
@@ -1216,14 +1351,17 @@ close_unrouted_hold() {  # <mode> <outcome-word> <origin-id> <decision-key> <fla
     verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$ROUTED_NONE"
     record_answered_key "$origin" "$key"
     printf '%s: %s\n' "$outcome" "$id"
+    [ -n "$ISSUE_REF" ] || ISSUE_REF=$(issue_from_show "$hold_show")
+    sync_issue "$origin" "$id"
     return 0
   fi
   hold_show=$(task_show "$id") || fail "captain hold $id is absent from $FM_HOME/data/backlog.md"
   state=$(show_field "$hold_show" state)
   [ "$state" != "done" ] \
     || fail "captain hold $id was closed outside fm-decision-hold; use repair to record the captain decision"
-  verify_hold_active "$id"
+  verify_hold_open "$id"
   hold_body=$(show_field "$hold_show" body)
+  [ -n "$ISSUE_REF" ] || ISSUE_REF=$(issue_from_show "$hold_show")
   case "$hold_body" in
     *"Resolution recorded by fm-decision-hold."*)
       verify_resolution_identity "$id" "$hold_body" "$DECISION_DIGEST" "$ROUTED_NONE"
@@ -1245,6 +1383,7 @@ close_unrouted_hold() {  # <mode> <outcome-word> <origin-id> <decision-key> <fla
   tasks_axi "done" "$id" >/dev/null || fail "could not close $mode captain hold $id"
   verify_hold_resolved "$id" || fail "captain hold $id did not retain its durable resolution record"
   printf '%s: %s\n' "$outcome" "$id"
+  sync_issue "$origin" "$id"
 }
 
 command_answer() {
@@ -1539,6 +1678,43 @@ command_repair() {
   printf 'repaired: %s\n' "$id"
 }
 
+# The captain answer marker test (see the header), shared by both `stale` reads.
+STALE_MARKER_JQ='def captain_answer: (.body // "") | [splits("\n")] | map(select(test("\\S"))) | (.[0] // "") | sub("^[#>*_\\s]+"; "") | test("^(captain decision|captain direction|decision recorded \\(captain)"; "i"); '
+
+command_stale() {
+  local repo=${1:-} repo_lower numbers number ids id show issue deferred latest answered=0 overtaken=0
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  [[ "$repo" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || fail "stale needs an owner/repo: $repo"
+  repo_lower=$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')
+  require_tasks_axi
+  numbers=$(gh issue list -R "$repo" --label needs-decision --state open --limit 500 --json number,comments \
+    --jq "$STALE_MARKER_JQ"'.[] | select((.comments | length) > 0 and (.comments[-1] | captain_answer)) | .number' 2>&1) \
+    || fail "could not read the open needs-decision issues in $repo ($numbers)"
+  for number in $numbers; do
+    case "$number" in ''|*[!0-9]*) continue ;; esac
+    printf 'answered-on-issue: %s#%s\n' "$repo" "$number"
+    answered=$((answered + 1))
+  done
+  ids=$(held_decisions '' 'parked future')
+  for id in $ids; do
+    show=$(task_show "$id") || continue
+    issue=$(issue_from_show "$show")
+    [ -n "$issue" ] || continue
+    [ "$(printf '%s' "${issue%%#*}" | tr '[:upper:]' '[:lower:]')" = "$repo_lower" ] || continue
+    deferred=$(task_body "$show" | sed -n 's/^Deferred on: //p' | tail -1)
+    [ -n "$deferred" ] || deferred=$(show_field "$show" created)
+    latest=$(gh issue view "${issue##*#}" -R "$repo" --json comments \
+      --jq "$STALE_MARKER_JQ"'[.comments[] | select(captain_answer) | .createdAt[0:10]] | max // empty' 2>&1) \
+      || fail "could not read the comments on $issue ($latest)"
+    [[ "$latest" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
+    if [[ "$latest" > "$deferred" ]]; then
+      printf 'held-after-captain-spoke: %s %s\n' "$id" "$issue"
+      overtaken=$((overtaken + 1))
+    fi
+  done
+  printf 'stale: answered-on-issue=%s held-after-captain-spoke=%s repo=%s\n' "$answered" "$overtaken" "$repo"
+}
+
 case "${1:-}" in
   id) shift; command_id "$@" ;;
   hold) shift; command_hold "$@" ;;
@@ -1553,6 +1729,7 @@ case "${1:-}" in
   binding) shift; command_binding "$@" ;;
   decline) shift; command_decline "$@" ;;
   repair) shift; command_repair "$@" ;;
+  stale) shift; command_stale "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

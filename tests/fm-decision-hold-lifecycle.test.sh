@@ -959,7 +959,7 @@ EOF
 }
 
 test_concurrent_park_and_answer_keep_one_decision() {
-  local home id hold park_pid answer_pid park_rc answer_rc show i
+  local home id hold park_pid answer_pid park_rc answer_rc show i answered_during_park
   home=$(make_home concurrent-park-answer)
   id=sample-concurrent-review
   mkdir -p "$home/data/$id"
@@ -1020,6 +1020,8 @@ EOF
     sleep 0.01
     i=$((i + 1))
   done
+  answered_during_park=0
+  [ ! -f "$home/answer-done" ] || answered_during_park=1
   : > "$home/release-park-update"
   set +e
   wait "$park_pid"
@@ -1029,14 +1031,15 @@ EOF
   set +e
 
   [ "$park_rc" -eq 0 ] || fail "serialized park failed: $(cat "$home/concurrent-park.err")"
-  [ "$answer_rc" -ne 0 ] || fail "a concurrent answer replaced the serialized deferral"
+  [ "$answered_during_park" = 0 ] || fail "the answer closed the decision while park still held it"
+  # The captain's later answer replaces his earlier deferral, so the answer that
+  # waited behind park closes the decision once park has finished.
+  [ "$answer_rc" -eq 0 ] || fail "the serialized answer failed: $(cat "$home/concurrent-answer.err")"
   show=$(tasks_in "$home" show "$hold" --full)
-  assert_contains "$show" "state: queued" "the concurrent answer closed the parked decision"
-  assert_contains "$show" "hold_kind: parked" "the concurrent answer replaced the parked hold kind"
-  assert_contains "$show" "Deferral recorded by fm-decision-hold" \
-    "the concurrent answer erased the durable deferral"
-  assert_not_contains "$show" "Resolution recorded by fm-decision-hold" \
-    "the parked decision retained a losing concurrent resolution"
+  assert_contains "$show" "state: done" "the serialized answer did not close the parked decision"
+  assert_contains "$show" "Resolution mode: answered" "the serialized answer lost its resolution record"
+  assert_not_contains "$show" "Deferral recorded by fm-decision-hold" \
+    "the answered decision kept a stale deferral beside its resolution"
   pass "concurrent park and answer keep one serialized decision"
 }
 
@@ -2272,6 +2275,303 @@ test_a_post_teardown_close_does_not_resurrect_origin_metadata() {
   pass "a post-teardown close closes its hold without resurrecting origin metadata"
 }
 
+# A fake gh that records every call and answers issue reads from fixture JSON,
+# applying the caller's own --jq program with the real jq so the script's
+# filters run exactly as they would against GitHub's response.
+install_fake_gh() {  # <home>
+  local home=$1
+  mkdir -p "$home/gh-fixtures"
+  : > "$home/gh-fixtures/gh.log"
+  printf '[]\n' > "$home/gh-fixtures/list.json"
+  cat > "$home/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+fx=$(cd "$(dirname "$0")/.." && pwd)/gh-fixtures
+printf '%s\n' "$*" >> "$fx/gh.log"
+jq_program='' previous=''
+for arg in "$@"; do
+  [ "$previous" != --jq ] || jq_program=$arg
+  previous=$arg
+done
+case "$1 $2" in
+  'issue view') source_file="$fx/$3.json" ;;
+  'issue list') source_file="$fx/list.json" ;;
+  'issue edit')
+    if [ -f "$fx/edit-fails" ]; then
+      rm -f "$fx/edit-fails"
+      echo 'HTTP 502: Bad Gateway' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+[ -f "$source_file" ] || { echo "no fixture for: $*" >&2; exit 1; }
+if [ -n "$jq_program" ]; then jq -r "$jq_program" "$source_file"; else cat "$source_file"; fi
+SH
+  chmod +x "$home/fakebin/gh"
+}
+
+# gh_issue_fixture <home> <number> <labels-csv> [<createdAt> <comment-body>]...
+gh_issue_fixture() {
+  local home=$1 number=$2 labels=$3 comments='[]'
+  shift 3
+  while [ "$#" -ge 2 ]; do
+    comments=$(jq -c --arg at "$1" --arg body "$2" '. + [{createdAt: $at, body: $body}]' <<< "$comments")
+    shift 2
+  done
+  jq -n --argjson number "$number" --arg labels "$labels" --argjson comments "$comments" \
+    '{number: $number, labels: ($labels | split(",") | map(select(. != "") | {name: .})), comments: $comments}' \
+    > "$home/gh-fixtures/$number.json"
+}
+
+new_origin() {  # <home> <origin-id>
+  local home=$1 id=$2
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review $id" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create origin $id"
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# %s\n\nCaptain choices remain.\n' "$id" > "$home/data/$id/report.md"
+}
+
+test_issue_link_is_recorded_and_validated() {
+  local home id hold show
+  home=$(make_home issue-link)
+  id=sample-link-review
+  new_origin "$home" "$id"
+  hold=$(run_decisions "$home" hold "$id" link-choice --title "Choose the link option" \
+    --reason "captain link choice pending" --repo sample --issue acme/widgets#7) \
+    || fail "hold refused an issue link"
+  show=$(tasks_in "$home" show "$hold" --full)
+  assert_contains "$show" 'Issue: acme/widgets#7' "the new decision record did not store its issue link"
+  if run_decisions "$home" hold "$id" bad-link --title "Choose the bad link option" \
+    --reason "captain bad link pending" --repo sample --issue 'acme/widgets#7 x' \
+    > "$home/bad-link.out" 2> "$home/bad-link.err"; then
+    fail "hold accepted an issue link that is not an owner/repo#N reference"
+  fi
+  assert_grep 'owner/repo#N' "$home/bad-link.err" "the refused issue link did not say what shape it needs"
+  if tasks_in "$home" show "$id-decision-bad-link" >/dev/null 2>&1; then
+    fail "a refused issue link still created a decision record"
+  fi
+  pass "hold records a valid issue link and refuses a malformed one"
+}
+
+test_answer_syncs_the_linked_issue_labels() {
+  local home id hold out plain
+  home=$(make_home answer-syncs-issue)
+  install_fake_gh "$home"
+  id=sample-sync-review
+  new_origin "$home" "$id"
+  gh_issue_fixture "$home" 7 needs-decision,type:feature
+  hold=$(run_decisions "$home" hold "$id" link-choice --title "Choose the synced option" \
+    --reason "captain synced choice pending" --repo sample --issue acme/widgets#7) \
+    || fail "could not register the linked decision"
+  run_decisions "$home" complete "$id" link-choice >/dev/null || fail "completion failed for the linked decision"
+  printf 'Captain chose the synced option. Unblocked for implementation.\n' > "$home/answer.txt"
+  out=$(run_decisions "$home" answer "$id" link-choice --decision-file "$home/answer.txt" --ready) \
+    || fail "answer failed on a linked decision"
+  assert_contains "$out" "answered: $hold" "answer did not report the closed record"
+  assert_contains "$out" "issue-synced: acme/widgets#7" "answer did not report the synced issue"
+  assert_grep 'issue edit 7 -R acme/widgets --remove-label needs-decision --add-label agent-ready' \
+    "$home/gh-fixtures/gh.log" "answer did not move the issue from needs-decision to agent-ready"
+  assert_contains "$(tasks_in "$home" show "$hold" --full)" "state: done" "the linked record did not close"
+
+  : > "$home/gh-fixtures/gh.log"
+  plain=sample-unlinked-review
+  new_origin "$home" "$plain"
+  run_decisions "$home" hold "$plain" plain-choice --title "Choose the plain option" \
+    --reason "captain plain choice pending" --repo sample >/dev/null \
+    || fail "could not register the unlinked decision"
+  out=$(run_decisions "$home" answer "$plain" plain-choice --decision-file "$home/answer.txt" --ready) \
+    || fail "answer failed on an unlinked decision"
+  assert_not_contains "$out" "issue-" "an unlinked record reported an issue sync"
+  [ ! -s "$home/gh-fixtures/gh.log" ] \
+    || fail "an unlinked record made GitHub calls: $(cat "$home/gh-fixtures/gh.log")"
+  pass "answer closes the record and moves its issue from needs-decision to agent-ready"
+}
+
+test_issue_labels_wait_for_every_sibling_answer() {
+  local home id out
+  home=$(make_home sibling-answers)
+  install_fake_gh "$home"
+  id=sample-sibling-review
+  new_origin "$home" "$id"
+  gh_issue_fixture "$home" 9 needs-decision
+  run_decisions "$home" hold "$id" first-choice --title "Choose the first option" \
+    --reason "captain first choice pending" --repo sample --issue acme/widgets#9 >/dev/null \
+    || fail "could not register the first sibling"
+  run_decisions "$home" hold "$id" second-choice --title "Choose the second option" \
+    --reason "captain second choice pending" --repo sample --issue acme/widgets#9 >/dev/null \
+    || fail "could not register the second sibling"
+  printf 'Captain chose the first option.\n' > "$home/first.txt"
+  out=$(run_decisions "$home" answer "$id" first-choice --decision-file "$home/first.txt" --ready) \
+    || fail "answer failed on the first sibling"
+  assert_contains "$out" "issue-kept: acme/widgets#9" "the first answer did not keep the issue label"
+  assert_contains "$out" "$id-decision-second-choice" "the kept line did not name the record still waiting"
+  assert_no_grep 'issue edit' "$home/gh-fixtures/gh.log" \
+    "the issue labels changed while a sibling decision still waited on the captain"
+  printf 'Captain chose the second option.\n' > "$home/second.txt"
+  out=$(run_decisions "$home" answer "$id" second-choice --decision-file "$home/second.txt" --ready) \
+    || fail "answer failed on the second sibling"
+  assert_contains "$out" "issue-synced: acme/widgets#9" "the last sibling answer did not sync the issue"
+  assert_grep 'issue edit 9 -R acme/widgets --remove-label needs-decision --add-label agent-ready' \
+    "$home/gh-fixtures/gh.log" "the last sibling answer did not move the issue labels"
+  pass "the issue labels move only once every sibling decision is answered"
+}
+
+test_answer_closes_a_deferred_decision() {
+  local home id parked future show
+  home=$(make_home answer-deferred)
+  id=sample-deferred-review
+  new_origin "$home" "$id"
+  parked=$(run_decisions "$home" hold "$id" revisit-later --title "Revisit the later option" \
+    --reason "captain later choice pending" --repo sample) || fail "could not register the parked decision"
+  future=$(run_decisions "$home" hold "$id" revisit-on-date --title "Revisit the dated option" \
+    --reason "captain dated choice pending" --repo sample) || fail "could not register the future decision"
+  run_decisions "$home" complete "$id" revisit-later revisit-on-date >/dev/null \
+    || fail "completion failed before deferring"
+  printf 'Leave it for now.\n' > "$home/defer.txt"
+  run_decisions "$home" park "$id" revisit-later --decision-file "$home/defer.txt" >/dev/null \
+    || fail "could not park the decision"
+  run_decisions "$home" park "$id" revisit-on-date --decision-file "$home/defer.txt" --until 2099-12-31 >/dev/null \
+    || fail "could not defer the decision until a date"
+  printf 'Captain took it out of deferral and chose option A.\n' > "$home/answer.txt"
+  run_decisions "$home" answer "$id" revisit-later --decision-file "$home/answer.txt" \
+    > "$home/parked.out" 2> "$home/parked.err" \
+    || fail "answer refused a parked decision: $(cat "$home/parked.err")"
+  run_decisions "$home" answer "$id" revisit-on-date --decision-file "$home/answer.txt" \
+    > "$home/future.out" 2> "$home/future.err" \
+    || fail "answer refused a future-deferred decision: $(cat "$home/future.err")"
+  for hold in "$parked" "$future"; do
+    show=$(tasks_in "$home" show "$hold" --full)
+    assert_contains "$show" "state: done" "an answered deferred decision did not close"
+    assert_contains "$show" "Resolution mode: answered" "an answered deferred decision lost its resolution record"
+  done
+  run_decisions "$home" verify "$id" >/dev/null || fail "verify failed after deferred decisions were answered"
+  pass "answer closes a parked or future-deferred decision with its resolution record"
+}
+
+test_failed_issue_sync_is_loud_and_retryable() {
+  local home id hold edits
+  home=$(make_home failed-issue-sync)
+  install_fake_gh "$home"
+  id=sample-flaky-review
+  new_origin "$home" "$id"
+  gh_issue_fixture "$home" 11 needs-decision
+  hold=$(run_decisions "$home" hold "$id" flaky-choice --title "Choose the flaky option" \
+    --reason "captain flaky choice pending" --repo sample --issue acme/widgets#11) \
+    || fail "could not register the flaky decision"
+  printf 'Captain chose the flaky option.\n' > "$home/answer.txt"
+  : > "$home/gh-fixtures/edit-fails"
+  if run_decisions "$home" answer "$id" flaky-choice --decision-file "$home/answer.txt" \
+    > "$home/first.out" 2> "$home/first.err"; then
+    fail "answer reported success although the issue labels were not changed"
+  fi
+  assert_grep 'acme/widgets#11' "$home/first.err" "the failed sync did not name the issue"
+  assert_grep 'closed' "$home/first.err" "the failed sync did not say the record is already closed"
+  assert_contains "$(tasks_in "$home" show "$hold" --full)" "state: done" \
+    "a failed label edit left the record open"
+  run_decisions "$home" answer "$id" flaky-choice --decision-file "$home/answer.txt" \
+    > "$home/retry.out" 2> "$home/retry.err" \
+    || fail "the exact re-run did not retry the label edit: $(cat "$home/retry.err")"
+  assert_grep 'issue-synced: acme/widgets#11' "$home/retry.out" "the re-run did not sync the issue"
+  edits=$(grep -c 'issue edit 11 -R acme/widgets --remove-label needs-decision' "$home/gh-fixtures/gh.log")
+  [ "$edits" = 2 ] || fail "expected the failed edit and one retry, saw $edits edits"
+  pass "a failed label edit is loud, and the exact re-run retries only the edit"
+}
+
+test_every_close_path_syncs_a_named_issue() {
+  local home hold
+  home=$(make_home close-paths-sync)
+  install_fake_gh "$home"
+  gh_issue_fixture "$home" 21 needs-decision
+  gh_issue_fixture "$home" 22 needs-decision
+  gh_issue_fixture "$home" 23 needs-decision
+  new_origin "$home" sample-answer-path
+  new_origin "$home" sample-decline-path
+  new_origin "$home" sample-resolve-path
+  run_decisions "$home" hold sample-answer-path choice --title "Answer path choice" \
+    --reason "captain answer path pending" --repo sample >/dev/null || fail "could not register the answer-path record"
+  run_decisions "$home" hold sample-decline-path choice --title "Decline path choice" \
+    --reason "captain decline path pending" --repo sample >/dev/null || fail "could not register the decline-path record"
+  hold=$(run_decisions "$home" hold sample-resolve-path choice --title "Resolve path choice" \
+    --reason "captain resolve path pending" --repo sample) || fail "could not register the resolve-path record"
+  tasks_in "$home" add sample-routed-build "Build the resolved choice" --kind ship --repo sample >/dev/null \
+    || fail "could not create the routed task"
+  tasks_in "$home" block sample-routed-build --by "$hold" >/dev/null || fail "could not block the routed task"
+  printf 'Captain answered.\n' > "$home/answer.txt"
+  run_decisions "$home" answer sample-answer-path choice --decision-file "$home/answer.txt" \
+    --issue acme/widgets#21 >/dev/null || fail "answer refused a named issue"
+  run_decisions "$home" decline sample-decline-path choice --decision-file "$home/answer.txt" \
+    --issue acme/widgets#22 >/dev/null || fail "decline refused a named issue"
+  run_decisions "$home" resolve sample-resolve-path choice --decision-file "$home/answer.txt" \
+    --routed-to sample-routed-build --issue acme/widgets#23 >/dev/null || fail "resolve refused a named issue"
+  for n in 21 22 23; do
+    assert_grep "issue edit $n -R acme/widgets --remove-label needs-decision" "$home/gh-fixtures/gh.log" \
+      "a close path did not sync issue #$n"
+  done
+  assert_no_grep 'agent-ready' "$home/gh-fixtures/gh.log" "a close path added agent-ready without --ready"
+  pass "answer, decline and resolve each sync an issue named at close time"
+}
+
+test_stale_reports_an_answer_left_on_the_issue() {
+  local home out
+  home=$(make_home stale-answer-on-issue)
+  install_fake_gh "$home"
+  jq -n '[
+    {number: 31, comments: [
+      {createdAt: "2026-09-12T13:02:26Z", body: "## What is going on\nFour captain choices."},
+      {createdAt: "2026-09-18T19:28:22Z", body: "\nCaptain decision, 2026-09-18: **yes**.\n\nUnblocked for implementation."}]},
+    {number: 32, comments: [
+      {createdAt: "2026-09-12T13:02:26Z", body: "## What is going on\nTwo captain decisions remain."}]},
+    {number: 33, comments: [
+      {createdAt: "2026-09-18T19:28:22Z", body: "Captain decision, 2026-09-18: no."},
+      {createdAt: "2026-09-19T08:00:00Z", body: "Routed to the build lane."}]},
+    {number: 34, comments: []}
+  ]' > "$home/gh-fixtures/list.json"
+  out=$(run_decisions "$home" stale acme/widgets) || fail "stale failed"
+  assert_contains "$out" "answered-on-issue: acme/widgets#31" "stale missed an answer left on the issue"
+  assert_not_contains "$out" "acme/widgets#32" "stale reported an issue the captain has not answered"
+  assert_not_contains "$out" "acme/widgets#33" "stale reported an issue whose latest comment is not an answer"
+  assert_not_contains "$out" "acme/widgets#34" "stale reported an issue with no comments"
+  assert_grep 'issue list -R acme/widgets --label needs-decision --state open' "$home/gh-fixtures/gh.log" \
+    "stale did not read the open needs-decision issues"
+  pass "stale reports a needs-decision issue whose latest comment is the captain's answer"
+}
+
+test_stale_reports_a_deferral_the_captain_overtook() {
+  local home id today overtaken earlier out
+  home=$(make_home stale-deferral)
+  install_fake_gh "$home"
+  id=sample-overtaken-review
+  today=$(date +%F)
+  new_origin "$home" "$id"
+  overtaken=$(run_decisions "$home" hold "$id" overtaken --title "Choose the overtaken option" \
+    --reason "captain overtaken choice pending" --repo sample --issue acme/widgets#41) \
+    || fail "could not register the overtaken record"
+  earlier=$(run_decisions "$home" hold "$id" earlier --title "Choose the earlier option" \
+    --reason "captain earlier choice pending" --repo sample --issue acme/widgets#42) \
+    || fail "could not register the earlier record"
+  printf 'Defer to the design review.\n' > "$home/defer.txt"
+  run_decisions "$home" park "$id" overtaken --decision-file "$home/defer.txt" --until 2099-12-31 >/dev/null \
+    || fail "could not defer the overtaken record"
+  run_decisions "$home" park "$id" earlier --decision-file "$home/defer.txt" --until 2099-12-31 >/dev/null \
+    || fail "could not defer the earlier record"
+  # Both records were created today; date their deferrals 2026-09-12 so the
+  # deferral date and the creation date disagree.
+  sed "s/Deferred on: $today/Deferred on: 2026-09-12/" "$home/data/backlog.md" > "$home/backlog.dated"
+  mv "$home/backlog.dated" "$home/data/backlog.md"
+  gh_issue_fixture "$home" 41 needs-decision \
+    2026-09-18T19:28:52Z 'Captain direction, 2026-09-18: **take this out of deferral**.'
+  gh_issue_fixture "$home" 42 needs-decision \
+    2026-09-10T10:00:00Z 'Captain decision, 2026-09-10: defer to the design review.'
+  out=$(run_decisions "$home" stale acme/widgets) || fail "stale failed"
+  assert_contains "$out" "held-after-captain-spoke: $overtaken acme/widgets#41" \
+    "stale missed a deferred record the captain spoke after"
+  assert_not_contains "$out" "$earlier" "stale reported a record deferred after the captain last spoke"
+  pass "stale reports a deferred record whose issue has a later captain answer"
+}
+
 test_origin_slug_validation_precedes_path_construction
 test_visual_review_uses_shared_completion_owner
 test_none_inventory_and_resolved_prose_do_not_create_holds
@@ -2294,3 +2594,11 @@ test_every_close_path_records_the_captain_answer
 test_a_reopened_key_defeats_its_earlier_durable_answer
 test_verify_reads_the_backlog_path_tasks_axi_resolves
 test_a_post_teardown_close_does_not_resurrect_origin_metadata
+test_issue_link_is_recorded_and_validated
+test_answer_syncs_the_linked_issue_labels
+test_issue_labels_wait_for_every_sibling_answer
+test_answer_closes_a_deferred_decision
+test_failed_issue_sync_is_loud_and_retryable
+test_every_close_path_syncs_a_named_issue
+test_stale_reports_an_answer_left_on_the_issue
+test_stale_reports_a_deferral_the_captain_overtook
