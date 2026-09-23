@@ -1657,6 +1657,141 @@ test_busy_pane_repeated_escalation_reaches_demand_deep_inspection() {
   pass "repeated busy turn-age escalations reuse the existing escalation counter and demand deep inspection at the threshold"
 }
 
+make_background_output_case() {  # <name> <harness> <output-age-secs>
+  local dir state fakebin worktree slug stamp gen window key capture output
+  dir=$(make_case "$1"); state="$dir/state"; fakebin="$dir/fakebin"
+  worktree="$dir/worktree"; mkdir -p "$worktree"
+  slug=$(printf '%s' "$worktree" | tr '/.' '--')
+  mkdir -p "$dir/claude-sessions/$slug" "$dir/claude-tmp/$slug/session-1/tasks"
+  stamp=$(date -u -r "$(( $(date +%s) - 20 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d '@'"$(( $(date +%s) - 20 ))" +%Y-%m-%dT%H:%M:%SZ)
+  printf '{"type":"user","timestamp":"%s","cwd":"%s"}\n' "$stamp" "$worktree" \
+    > "$dir/claude-sessions/$slug/session-1.jsonl"
+  output="$dir/claude-tmp/$slug/session-1/tasks/job.output"
+  printf 'line one\nline two\n(eval):1: condition expected: >\n' > "$output"
+  set_mtime "$(( $(date +%s) - $3 ))" "$output"
+  window="test:fm-$1"; capture="$dir/pane.txt"
+  printf 'Running tool\nBash(until [ -s %s ]; do sleep 5; done)\nesc to interrupt\n' "$output" > "$capture"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" wait)
+  if [ "$2" = claude ]; then
+    "$ROOT/bin/fm-busy-event.sh" apply "$state" wait busy --gen "$gen" \
+      --source claude-hook --event user-prompt-submit
+  else
+    "$ROOT/bin/fm-busy-event.sh" apply "$state" wait busy --gen "$gen" \
+      --source pi-ext --event agent-start
+  fi
+  printf 'window=%s\nkind=ship\nharness=%s\nworktree=%s\nspawn_gen=s%s.1.1\n' \
+    "$window" "$2" "$worktree" "$(( $(date +%s) - 30 ))" > "$state/wait.meta"
+  printf 'working: waiting for build\n' > "$state/wait.status"
+  prime_status_seen "$state" "$state/wait.status"
+  touch -t 200001010000 "$state/wait.turn-ended"
+  prime_turnend_seen "$state/wait.turn-ended"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text "$(cat "$capture")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  printf '%s\n' "$(( $(date +%s) - 500 ))" > "$state/.stale-since-$key"
+  cat > "$fakebin/fm-control.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'interrupt %s\n' "$*" >> "$FM_ACTIONS_FILE"
+SH
+  cat > "$fakebin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'steer %s\n' "$*" >> "$FM_ACTIONS_FILE"
+SH
+  chmod +x "$fakebin/fm-control.sh" "$fakebin/fm-send.sh"
+  printf '%s\n' "$dir"
+}
+
+run_background_output_wedge() {  # <dir> <out>
+  local dir=$1 out=$2 window pid
+  window="test:fm-${dir##*/}"
+  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_STATE_OVERRIDE="$dir/state" FM_CLAUDE_SESSIONS_ROOT="$dir/claude-sessions" \
+    FM_CLAUDE_TASK_OUTPUT_ROOT="$dir/claude-tmp" FM_CONFIG_OVERRIDE="${FM_TEST_CONFIG:-$dir/config}" FM_ACTIONS_FILE="$dir/actions" \
+    FM_IDLE_WAIT_CONTROL_BIN="$dir/fakebin/fm-control.sh" FM_IDLE_WAIT_SEND_BIN="$dir/fakebin/fm-send.sh" \
+    FM_BACKGROUND_OUTPUT_STALE_SECS="${FM_TEST_OUTPUT_STALE_SECS-600}" FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=1 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 80 || fail "background-output wedge did not escalate: $(cat "$out")"
+}
+
+test_stalled_claude_background_output_interrupts_once() {
+  local dir state out key output
+  dir=$(make_background_output_case stalled-output claude 700); state="$dir/state"; out="$dir/watch.out"
+  output="$dir/claude-tmp/$(printf '%s' "$dir/worktree" | tr '/.' '--')/session-1/tasks/job.output"
+  output=$(realpath "$output")
+  printf 'line one\nline two\n\033[31m(eval):1: condition expected: >\033[0m\n' > "$output"
+  set_mtime "$(( $(date +%s) - 700 ))" "$output"
+  run_background_output_wedge "$dir" "$out"
+  [ "$(grep -c '^interrupt wait interrupt$' "$dir/actions" 2>/dev/null || true)" = 1 ] \
+    || fail "stalled Claude output did not get exactly one interrupt"
+  [ "$(grep -c '^steer wait ' "$dir/actions")" = 1 ] || fail "stalled Claude output did not get exactly one steer"
+  grep -F "$output" "$dir/actions" >/dev/null || fail "steer omitted stalled output path ($output): $(cat "$dir/actions")"
+  grep -F 'condition expected: >' "$dir/actions" >/dev/null || fail "steer omitted output tail"
+  python3 - "$dir/actions" <<'PY' || fail "steer leaked output control characters"
+import pathlib
+import sys
+text = pathlib.Path(sys.argv[1]).read_bytes()
+assert b"\x1b" not in text and b"\x07" not in text
+assert b"[31m" not in text and b"[0m" not in text
+PY
+  grep -F 'background output:' "$out" >/dev/null || fail "stale reason omitted output detail"
+  key=$(printf '%s' 'test:fm-stalled-output' | tr ':/.' '___')
+  printf '%s\n' "$(( $(date +%s) - 500 ))" > "$state/.stale-since-$key"
+  ack_stopped_cycle "$state" || fail "could not acknowledge first background-output wake"
+  run_background_output_wedge "$dir" "$out"
+  [ "$(grep -c '^interrupt wait interrupt$' "$dir/actions")" = 1 ] || fail "stalled output interrupted twice"
+  [ "$(grep -c '^steer wait ' "$dir/actions")" = 1 ] || fail "stalled output steered twice"
+  compgen -G "$state/wait.stalled-output-*" >/dev/null || fail "stalled output marker missing"
+  grep -F "$output" "$state/.watch-triage.log" >/dev/null || fail "triage trace omitted output path"
+  if [ "${FM_WALK_OUTPUT:-0}" = 1 ]; then
+    cat "$dir/actions"
+    cat "$state/wait.stalled-output-"*
+    grep -F 'stalled Claude background output intervention:' "$state/.watch-triage.log"
+  fi
+  pass "stalled Claude output gets one interrupt, one steer, and durable marker"
+}
+
+test_immediate_claude_stale_checks_background_output() {
+  local dir state out
+  dir=$(make_background_output_case immediate-output claude 700); state="$dir/state"; out="$dir/watch.out"
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" wait idle --current-gen --source claude-hook --event stop
+  run_background_output_wedge "$dir" "$out"
+  grep -F 'interrupt wait interrupt' "$dir/actions" >/dev/null \
+    || fail "immediate Claude stale wake skipped the stalled output"
+  grep -F 'job.output' "$out" >/dev/null || fail "immediate stale reason omitted output path"
+  pass "immediate Claude stale wake checks background output"
+}
+
+test_growing_claude_background_output_only_enriches_reason() {
+  local dir out
+  dir=$(make_background_output_case growing-output claude 30); out="$dir/watch.out"
+  run_background_output_wedge "$dir" "$out"
+  [ ! -e "$dir/actions" ] || fail "growing output triggered control action"
+  grep -F 'job.output' "$out" >/dev/null || fail "growing output missing from stale reason"
+  pass "growing Claude output enriches stale reason without interrupt"
+}
+
+test_background_output_threshold_loads_from_supervision_file() {
+  local dir out
+  dir=$(make_background_output_case configured-output claude 30); out="$dir/watch.out"
+  mkdir -p "$dir/config"
+  printf 'FM_BACKGROUND_OUTPUT_STALE_SECS=20\n' > "$dir/config/supervision.env"
+  FM_TEST_CONFIG="$dir/config" FM_TEST_OUTPUT_STALE_SECS='' run_background_output_wedge "$dir" "$out"
+  grep -F 'interrupt wait interrupt' "$dir/actions" >/dev/null \
+    || fail "configured background-output threshold did not trigger"
+  pass "background-output threshold loads from supervision.env"
+}
+
+test_nonclaude_background_output_only_enriches_reason() {
+  local dir out
+  dir=$(make_background_output_case nonclaude-output pi 700); out="$dir/watch.out"
+  run_background_output_wedge "$dir" "$out"
+  [ ! -e "$dir/actions" ] || fail "non-Claude worker triggered control action"
+  grep -F 'job.output' "$out" >/dev/null || fail "non-Claude stale reason missing found output"
+  pass "non-Claude worker retains stale behavior with output detail"
+}
+
 # Behavioral proof that the production default (no FM_BUSY_TURN_MAX_SECS override
 # anywhere in this env) is 3600s: a completed turn 5 minutes old must not start a
 # wedge timer, while one 66 minutes old must - bracketing the default around 3600
@@ -2300,6 +2435,11 @@ test_busy_pane_stable_hash_escalates_past_turn_age_bound
 test_busy_pane_changing_hash_escalates_past_turn_age_bound
 test_busy_pane_turn_end_touch_resets_age
 test_busy_pane_repeated_escalation_reaches_demand_deep_inspection
+test_stalled_claude_background_output_interrupts_once
+test_immediate_claude_stale_checks_background_output
+test_growing_claude_background_output_only_enriches_reason
+test_background_output_threshold_loads_from_supervision_file
+test_nonclaude_background_output_only_enriches_reason
 test_busy_pane_default_turn_age_bound_is_3600s
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced

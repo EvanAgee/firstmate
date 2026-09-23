@@ -39,9 +39,10 @@
 #                          turn completes); past that bound busy_turn_over_age
 #                          routes it through the same wedge timer, so it surfaces
 #                          with the identical "stale: ..." reason, escalation
-#                          count, and demand-deep-inspection marker, for human
-#                          inspection only - never an automatic interrupt,
-#                          signal, or restart of the worker or its tool process.
+#                          count, and demand-deep-inspection marker. A Claude
+#                          foreground Bash wait on an unchanged background
+#                          output older than FM_BACKGROUND_OUTPUT_STALE_SECS
+#                          gets one interrupt and one evidence-bearing steer.
 #   stale: <window> (pipeline stalled <duration> at <step>, run <id>, agent <pid-or-none>)
 #                          a diagnosed stalled run surfaces immediately without
 #                          waiting for the generic stale or wedge timers
@@ -187,6 +188,8 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
 # wake) and never double-triages. Stable-idle stalled detection still runs before
 # that handoff.
 STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
+BACKGROUND_OUTPUT_STALE_SECS=${FM_BACKGROUND_OUTPUT_STALE_SECS:-600}
+case "$BACKGROUND_OUTPUT_STALE_SECS" in ''|*[!0-9]*|0) BACKGROUND_OUTPUT_STALE_SECS=600 ;; esac
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
 # so a hung foreground call can remain hidden even while its rendered busy
 # footer changes every poll. BUSY_TURN_MAX_SECS bounds how long any busy pane
@@ -195,8 +198,9 @@ STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provabl
 # spawn record) is this old, busy_turn_over_age routes the pane through the
 # same STALE_ESCALATE_SECS-paced wedge_timer_check used for a provably-working
 # non-busy stale, so it escalates via the existing stale reason, escalation
-# counter, and demand-deep-inspection marker for human inspection only - never
-# an automatic interrupt, signal, or restart. A completed turn touches
+# counter, and demand-deep-inspection marker. Only a Claude foreground Bash
+# wait tied to a stalled background output qualifies for automatic interrupt.
+# A completed turn touches
 # turn-ended and resets the age. Set generously above any legitimate interval
 # between completed turns, including long tool calls, builds, or test runs.
 BUSY_TURN_MAX_SECS=${FM_BUSY_TURN_MAX_SECS:-3600}
@@ -607,6 +611,111 @@ observe_stalled_pipeline() {
 # both places a hash can be absorbed this way: the plain non-terminal path,
 # and the stale_is_terminal-overridden path (a captain-relevant status-log
 # line that a non-stalled active run or busy pane outranked).
+claude_background_output() {  # <task-id>; newest output from this task's current Claude session
+  local meta="$STATE/$1.meta" worktree spawn slug transcripts
+  [ -f "$meta" ] || return 1
+  worktree=$(fm_meta_get "$meta" worktree)
+  spawn=$(fm_meta_get "$meta" spawn_gen)
+  case "$spawn" in s[0-9]*.*) spawn=${spawn#s}; spawn=${spawn%%.*} ;; *) return 1 ;; esac
+  [ -n "$worktree" ] || return 1
+  slug=$(printf '%s' "$worktree" | tr '/.' '--')
+  transcripts=${FM_CLAUDE_SESSIONS_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}
+  [ -d "$transcripts/$slug" ] || return 1
+  python3 - "$worktree" "$spawn" "$slug" \
+    "$transcripts" \
+    "${FM_CLAUDE_TASK_OUTPUT_ROOT:-/tmp/claude-$(id -u)}" <<'PY'
+import datetime
+import json
+import pathlib
+import re
+import sys
+import time
+
+worktree, spawn, slug, transcripts, output_root = sys.argv[1:]
+project = pathlib.Path(transcripts) / slug
+if project.is_symlink() or not project.is_dir():
+    sys.exit(1)
+sessions = []
+for transcript in project.glob("*.jsonl"):
+    if transcript.is_symlink() or not re.fullmatch(r"[A-Za-z0-9._-]+", transcript.stem):
+        continue
+    try:
+        with transcript.open(encoding="utf-8", errors="replace") as stream:
+            for _, line in zip(range(1000), stream):
+                record = json.loads(line)
+                if record.get("type") not in ("user", "assistant"):
+                    continue
+                stamp = record.get("timestamp", "")
+                opened = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+                if record.get("cwd") == worktree and opened >= int(spawn) + 1 and opened <= time.time():
+                    sessions.append((opened, transcript.stem))
+                break
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        continue
+if not sessions:
+    sys.exit(1)
+session = max(sessions)[1]
+tasks = pathlib.Path(output_root) / slug / session / "tasks"
+if tasks.is_symlink() or not tasks.is_dir():
+    sys.exit(1)
+outputs = [path for path in tasks.glob("*.output") if path.is_file() and not path.is_symlink()]
+if not outputs:
+    sys.exit(1)
+newest = max(outputs, key=lambda path: path.stat().st_mtime).resolve()
+mtime = int(newest.stat().st_mtime)
+age = max(0, int(time.time()) - mtime)
+changed = datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+print(f"{newest}\t{mtime}\t{age}\t{changed}")
+PY
+}
+
+claude_output_tail() {  # <output-file>; three lines, bounded and control-free
+  python3 - "$1" <<'PY'
+import pathlib
+import re
+import sys
+
+with pathlib.Path(sys.argv[1]).open("rb") as stream:
+    stream.seek(0, 2)
+    stream.seek(max(0, stream.tell() - 8192))
+    lines = stream.read().decode("utf-8", errors="replace").splitlines()[-3:]
+lines = [re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line) for line in lines]
+print(" | ".join("".join(char for char in line if ord(char) >= 32 and ord(char) != 127)[:200] for line in lines)[:600])
+PY
+}
+
+claude_output_intervene() {  # <task-id> <output-file> <age-secs> <changed-at>
+  local task=$1 output=$2 age=$3 changed=$4 marker pane tail message control send
+  [ "$(fm_meta_get "$STATE/$task.meta" harness)" = claude ] || return 0
+  [ "$age" -ge "$BACKGROUND_OUTPUT_STALE_SECS" ] || return 0
+  pane="$STATE/$task.pane-tail"
+  [ -f "$pane" ] || return 0
+  grep -Fq 'Running tool' "$pane" || return 0
+  grep -Fq 'Bash(' "$pane" || return 0
+  grep -Fq 'esc to interrupt' "$pane" || return 0
+  grep -Fq "$(basename "$output")" "$pane" || return 0
+  marker="$STATE/$task.stalled-output-$(printf '%s' "$output" | hash_pane)"
+  [ ! -e "$marker" ] || return 0
+  printf '%s\t%s\n' "$output" "$changed" > "$marker" || return 1
+  triage_log "stalled Claude background output intervention: $task $output (last changed $changed, age ${age}s)"
+  tail=$(claude_output_tail "$output" 2>/dev/null || true)
+  message="Background output stalled: $output. Last changed $changed (${age}s ago). Last three lines: $tail. Check whether the background job died; fail loudly with its evidence."
+  control=${FM_IDLE_WAIT_CONTROL_BIN:-$SCRIPT_DIR/fm-control.sh}
+  send=${FM_IDLE_WAIT_SEND_BIN:-$SCRIPT_DIR/fm-send.sh}
+  FM_HOME="$FM_HOME" "$control" "$task" interrupt || triage_log "stalled output interrupt failed: $task $output"
+  FM_HOME="$FM_HOME" "$send" "$task" "$message" || triage_log "stalled output steer failed: $task $output"
+}
+
+stale_reason_with_background_output() {  # <task-id> <reason>; sets STALE_REASON
+  local task=$1 info output changed age changed_at
+  STALE_REASON=$2
+  if info=$(claude_background_output "$task"); then
+    IFS=$'\t' read -r output changed age changed_at <<< "$info"
+    STALE_REASON="$STALE_REASON; background output: $output (${age}s old)"
+    claude_output_intervene "$task" "$output" "$age" "$changed_at" || true
+  fi
+}
+
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> [check-pipeline]
   local win=$1 since_file=$2 label=$3 escalation_file=$4 check_pipeline=${5:-0}
   local since age n reason task
@@ -639,6 +748,8 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
           reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
+        stale_reason_with_background_output "$task" "$reason"
+        reason=$STALE_REASON
         fm_wake_append stale "$win" "$reason" || exit 1
         rm -f "$since_file"
         wake "$reason"
@@ -686,6 +797,8 @@ handle_paused_stale() {  # <window> <task> <hash> [pause-detail]
   rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
     reason="stale: $win (paused ${age}s, awaiting external - $detail, rechecked on a long cadence not a wedge; confirm the wait still holds)"
+    stale_reason_with_background_output "$task" "$reason"
+    reason=$STALE_REASON
     fm_wake_append stale "$win" "$reason" || exit 1
     date +%s > "$rf"
     wake "$reason"
@@ -822,6 +935,8 @@ surface_nonterminal_stale() {  # <window> <hash>
   key=$(printf '%s' "$win" | tr ':/.' '___')
   task=$(window_to_task "$win" "$STATE")
   reason="stale: $win"
+  stale_reason_with_background_output "$task" "$reason"
+  reason=$STALE_REASON
   fm_wake_append stale "$win" "$reason" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key"
@@ -1642,9 +1757,10 @@ EOF
         elif afk_present; then
           # Daemon owns triage: one-shot per distinct stale hash, as before.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            fm_wake_append stale "$w" "stale: $w" || exit 1
+            stale_reason_with_background_output "$task" "stale: $w"
+            fm_wake_append stale "$w" "$STALE_REASON" || exit 1
             printf '%s' "$h" > "$sf"
-            wake "stale: $w"
+            wake "$STALE_REASON"
           fi
         elif stale_is_terminal "$w" "$STATE"; then
           # The log's last line is captain-relevant - but that alone is not
@@ -1678,6 +1794,8 @@ EOF
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
               reason="stale: $w"
+              stale_reason_with_background_output "$task" "$reason"
+              reason=$STALE_REASON
               fm_wake_append stale "$w" "$reason" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"

@@ -395,7 +395,8 @@ remote_secondmate_teardown() {
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
   status_retire_presentation_task "$STATE" "$ID" || return 1
-  rm -f -- "$STATE/$ID.meta" "$STATE/$ID.turn-ended" "$STATE/$ID.turn-continue" "$STATE/$ID.pane-tail"
+  rm -f -- "$STATE/$ID.meta" "$STATE/$ID.turn-ended" "$STATE/$ID.turn-continue" "$STATE/$ID.pane-tail" \
+    "$STATE/$ID.stalled-output-"*
   printf 'teardown %s complete (remote %s:%s)\n' "$ID" "$remote_host" "$remote_home"
   return 0
 }
@@ -2279,6 +2280,7 @@ cleanup_firstmate_home_children() {
     status_retire_presentation_task "$sub_state" "$child_id" || return 1
     rm -f "$sub_state/$child_id.turn-ended" \
       "$sub_state/$child_id.meta" "$sub_state/$child_id.pane-tail" \
+      "$sub_state/$child_id.stalled-output-"* \
       "$sub_state/$child_id.pi-ext.ts" \
       "$sub_state/$child_id.omp-ext.ts" "$sub_state/$child_id.omp-ready" \
       "$sub_state/$child_id.omp-started" \
@@ -2561,6 +2563,7 @@ remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.turn-continue" "$STATE/$ID.meta" "$STATE/$ID.pane-tail" \
+  "$STATE/$ID.stalled-output-"* \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.omp-ext.ts" "$STATE/$ID.omp-ready" \
   "$STATE/$ID.omp-started" \
   "$STATE/$ID.grok-turnend-token" \

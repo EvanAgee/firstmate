@@ -620,3 +620,25 @@ Observed output at the default 120-second interval, and clamped to `*/1` when `F
 ```
 
 `tests/fm-watcher-beat-alarm.test.sh` covers the rest without a network call or a real notification: the alert gates and single-fire episode behavior, the grace threshold following `FM_GUARD_GRACE` including the value arriving from `config/supervision.env` alone with a real environment variable still winning, the re-arm being off by default and honest in its summary when opted in, and the cron line with its sub-minute clamp.
+
+## Claude background output idle check
+
+On 2026-09-22, the watcher ran on Darwin 27.0 with Claude Code 2.1.280 installed.
+The isolated fixture uses a real watcher cycle, a fake Claude session transcript and stalled output file, and recorders in place of the control and send scripts.
+The command and bounded output were:
+
+```sh
+FM_WALK_OUTPUT=1 bash tests/fm-watch-triage.test.sh test_stalled_claude_background_output_interrupts_once
+```
+
+```text
+interrupt wait interrupt
+steer wait Background output stalled: .../session-1/tasks/job.output. Last changed 2026-09-23 00:38:43 UTC (702s ago). Last three lines: line one | line two | (eval):1: condition expected: >. Check whether the background job died; fail loudly with its evidence.
+.../session-1/tasks/job.output  2026-09-23 00:38:43 UTC
+stalled Claude background output intervention: wait .../session-1/tasks/job.output (last changed 2026-09-23 00:38:43 UTC, age 702s)
+ok - stalled Claude output gets one interrupt, one steer, and durable marker
+```
+
+The test repeats the stale wake and confirms the interrupt and steer each occurred once.
+The same watcher test file covers a growing output, an immediate stale wake, a non-Claude worker, and unchanged wake and absorb paths.
+The fixture does not verify the rendered foreground Bash signature against a live Claude Code process.

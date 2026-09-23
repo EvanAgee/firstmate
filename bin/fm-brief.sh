@@ -405,22 +405,23 @@ $WORKDIR_SECTION
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a \`done:\`, \`failed:\`, keyed \`blocked:\`, keyed \`needs-decision:\`, or \`paused:\` line. If you notice you have written "Next, I will", that is the signal to keep going.
 $EARLY_STOPS
-6. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
+6. Every wait on a background command needs a deadline. Check that the job is alive and its output is growing; if it died, fail loudly with the output and exit status.
+7. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
    Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.
    Never write a real blocker as a \`working:\` line: that hides it from firstmate while nothing is waiting on firstmate either.
-7. If a decision belongs to a human (product choices, destructive actions),
+8. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [key=<slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    Every \`needs-decision:\` and \`blocked:\` line MUST carry \`[key=<slug>]\`, using a short slug you choose for that question.
    An unkeyed line lands under the shared key \`default\`, so a second unkeyed decision silently overwrites the first and only the last one is ever seen.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Recording a decision is not acting on it: a \`resolved\` line records the answer, and the work it unblocks still has to be done in the same turn.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself, reusing the exact key you opened it with, as you resume.
-8. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
+9. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked [key=<slug>]: {the daemon error}\` and stop; only firstmate manages the daemon.
-9. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
-10. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
+10. Do not spawn subagents, background agents, or sub-workers; do all work directly in your own session.
+11. Never run the 1Password CLI (\`op run\`, \`op read\`, \`op item\`, \`op environment\`, or any other \`op\` subcommand) for anything. Secrets come from this worktree's \`.env.local\` or the app's equivalent local env file. If a variable you need is missing there, append \`blocked [key=missing-env-<NAME>]: <NAME> is missing from that local env file\` and stop; never fetch it.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -580,10 +581,10 @@ MATT_FLOW_SECTION=$'\n'"$MATT_FLOW_SECTION"$'\n'"$MATT_FLOW_MODE_SECTION"$'\n'
 fi
 
 SHIP_SCOPE_RULE=
-NEXT_SHIP_RULE=6
+NEXT_SHIP_RULE=7
 if [ "$MATT_FLOW" -eq 0 ]; then
-  SHIP_SCOPE_RULE=$'\n''6. If while working or testing you find pre-existing bugs, performance concerns, or behaviors the task does not mention, do not fix, optimize, or extend them in this change unless the requested behavior cannot work without it. Report each one as a follow-up in your done line.'
-  NEXT_SHIP_RULE=7
+  SHIP_SCOPE_RULE=$'\n''7. If while working or testing you find pre-existing bugs, performance concerns, or behaviors the task does not mention, do not fix, optimize, or extend them in this change unless the requested behavior cannot work without it. Report each one as a follow-up in your done line.'
+  NEXT_SHIP_RULE=8
 fi
 
 cat > "$BRIEF" <<EOF
@@ -628,7 +629,8 @@ Never run the full suite, e2e gating, \`bin/fm-test-run.sh --all\`, or a full la
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a \`done:\`, \`failed:\`, keyed \`blocked:\`, keyed \`needs-decision:\`, or \`paused:\` line. If you notice you have written "Next, I will", that is the signal to keep going.
-$EARLY_STOPS$SHIP_SCOPE_RULE
+$EARLY_STOPS
+6. Every wait on a background command needs a deadline. Check that the job is alive and its output is growing; if it died, fail loudly with the output and exit status.$SHIP_SCOPE_RULE
 $NEXT_SHIP_RULE. If you hit the same obstacle twice, append \`blocked [key=<slug>]: {why}\` and stop; firstmate will help.
    A missing dependency, failed install, or broken environment inside your own worktree is yours to fix, not a reason to stop.
    Escalate one of those with a keyed \`blocked:\` line only when you genuinely cannot fix it, naming the exact package and the exact error.

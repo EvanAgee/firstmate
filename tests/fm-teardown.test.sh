@@ -1322,6 +1322,7 @@ test_teardown_missing_busy_sidecar_completes() {
   printf 'busy_gen=%s\n' "$gen" >> "$case_dir/state/task-x1.meta"
   rm -f "$case_dir/state/task-x1.busy-gen"
   printf '2 status-signature turn-signature\n' > "$case_dir/state/task-x1.turn-continue"
+  printf 'stalled output\n' > "$case_dir/state/task-x1.stalled-output-test"
 
   set +e
   run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1335,7 +1336,9 @@ test_teardown_missing_busy_sidecar_completes() {
     "missing-busy-sidecar: teardown remained incomplete"
   assert_absent "$case_dir/state/task-x1.turn-continue" \
     "missing-busy-sidecar: teardown left the continuation counter"
-  pass "teardown completes when a busy-state sidecar is absent and removes the continuation counter"
+  assert_absent "$case_dir/state/task-x1.stalled-output-test" \
+    "missing-busy-sidecar: teardown left the stalled-output marker"
+  pass "teardown removes continuation and stalled-output markers with an absent busy sidecar"
 }
 
 test_herdr_teardown_clears_escalation_marker() {
@@ -2630,6 +2633,7 @@ EOF
   printf 'working: still visible after remote retirement\n' > "$case_dir/state/task-x1.status"
   printf 'Remote secondmate brief.\n' > "$case_dir/data/task-x1/brief.md"
   printf 'last watcher snapshot\n' > "$case_dir/state/task-x1.pane-tail"
+  printf 'stalled output\n' > "$case_dir/state/task-x1.stalled-output-test"
   : > "$case_dir/state/task-x1.turn-ended"
   cat > "$case_dir/fakebin/ssh" <<'SH'
 #!/usr/bin/env bash
@@ -2654,6 +2658,8 @@ SH
   assert_absent "$case_dir/state/task-x1.turn-ended" "remote-pane-tail: teardown left turn-ended"
   assert_absent "$case_dir/state/task-x1.pane-tail" \
     "remote-pane-tail: teardown left the watcher pane snapshot"
+  assert_absent "$case_dir/state/task-x1.stalled-output-test" \
+    "remote-pane-tail: teardown left the stalled-output marker"
   assert_present "$case_dir/data/task-x1/brief.md" \
     "remote-pane-tail: teardown removed the remaining brief"
   pass "remote secondmate teardown removes the task pane-tail with other runtime records"

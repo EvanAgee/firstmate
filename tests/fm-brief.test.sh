@@ -239,6 +239,7 @@ test_ship_modes_generate_clean_briefs() {
 
 # shellcheck disable=SC2016 # Literal backticks must reach the generated brief.
 TURN_COMPLETION_RULE='Do not end your turn before the work is done. Never describe what you would do next; do it. The only turns that end are a `done:`, `failed:`, keyed `blocked:`, keyed `needs-decision:`, or `paused:` line. If you notice you have written "Next, I will", that is the signal to keep going.'
+BACKGROUND_WAIT_RULE='Every wait on a background command needs a deadline. Check that the job is alive and its output is growing; if it died, fail loudly with the output and exit status.'
 # shellcheck disable=SC2016 # Literal wording is the scaffold contract.
 UNRELATED_FINDINGS_RULE='If while working or testing you find pre-existing bugs, performance concerns, or behaviors the task does not mention, do not fix, optimize, or extend them in this change unless the requested behavior cannot work without it. Report each one as a follow-up in your done line.'
 
@@ -254,9 +255,11 @@ test_worker_turn_and_scope_rules() {
     "ordinary ship brief lost the nonterminal working line"
   grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
     || fail "ordinary ship brief missing the numbered turn-completion rule"
-  grep -Fx "6. $UNRELATED_FINDINGS_RULE" "$brief" >/dev/null \
+  grep -Fx "6. $BACKGROUND_WAIT_RULE" "$brief" >/dev/null \
+    || fail "ordinary ship brief missing the background-wait rule"
+  grep -Fx "7. $UNRELATED_FINDINGS_RULE" "$brief" >/dev/null \
     || fail "ordinary ship brief missing the numbered unrelated-findings rule"
-  assert_grep "7. If you hit the same obstacle twice" "$brief" \
+  assert_grep "8. If you hit the same obstacle twice" "$brief" \
     "ordinary ship brief did not renumber later rules"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-turn-matt some-proj --mode local-only --matt-flow >/dev/null 2>&1 \
@@ -264,9 +267,11 @@ test_worker_turn_and_scope_rules() {
   brief="$home/data/brief-turn-matt/brief.md"
   grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
     || fail "Matt-flow ship brief missing the numbered turn-completion rule"
+  grep -Fx "6. $BACKGROUND_WAIT_RULE" "$brief" >/dev/null \
+    || fail "Matt-flow ship brief missing the background-wait rule"
   assert_no_grep "$UNRELATED_FINDINGS_RULE" "$brief" \
     "Matt-flow ship brief gained the ordinary unrelated-findings rule"
-  assert_grep "6. If you hit the same obstacle twice" "$brief" \
+  assert_grep "7. If you hit the same obstacle twice" "$brief" \
     "Matt-flow ship brief did not renumber later rules"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-turn-scout some-proj --scout >/dev/null 2>&1 \
@@ -276,9 +281,11 @@ test_worker_turn_and_scope_rules() {
     "scout brief missing the nonterminal working line"
   grep -Fx "5. $TURN_COMPLETION_RULE" "$brief" >/dev/null \
     || fail "scout brief missing the numbered turn-completion rule"
+  grep -Fx "6. $BACKGROUND_WAIT_RULE" "$brief" >/dev/null \
+    || fail "scout brief missing the background-wait rule"
   assert_no_grep "$UNRELATED_FINDINGS_RULE" "$brief" \
     "scout brief gained the ship-only unrelated-findings rule"
-  assert_grep "6. If you hit the same obstacle twice" "$brief" \
+  assert_grep "7. If you hit the same obstacle twice" "$brief" \
     "scout brief did not renumber later rules"
 
   pass "fm-brief.sh: worker turns finish the work and ordinary ships defer unrelated findings"
