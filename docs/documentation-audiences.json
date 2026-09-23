@@ -596,6 +596,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/specs/fm-card-backlog-park-desync.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/specs/flow-switch.md",
       "audience": "maintainer-architecture"
     },
