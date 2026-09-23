@@ -4,6 +4,7 @@ description: >-
   Agent-only procedure for Firstmate project management.
   Use before adding, creating, removing, or initializing a project.
   Cloning or registering a project is add intake and uses the same trigger.
+  Also use before flipping a project between the full PR flow and the fast local-only flow with bin/fm-flow.sh.
   Owns project add, create, clone, remove, initialization, registry, delivery-mode, autonomy, and outward-consent decisions.
 user-invocable: false
 metadata:

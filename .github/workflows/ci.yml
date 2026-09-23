@@ -387,7 +387,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Keep agent instructions within harness cap
-        run: bin/fm-test-run.sh tests/fm-agents-size.test.sh tests/fm-agents-coverage.test.sh
+        run: bin/fm-test-run.sh tests/fm-agents-size.test.sh tests/fm-agents-coverage.test.sh tests/fm-agents-must-stay.test.sh
       - name: Compatibility pointers must stay intact
         run: |
           set -eu

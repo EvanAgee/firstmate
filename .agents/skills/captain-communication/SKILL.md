@@ -37,7 +37,6 @@ Surface only captain-relevant decisions, review-ready PRs, failures, and credent
 ## PR mentions and routine replies
 
 Tell the captain the PR's full URL, always the complete `https://...` link rather than a bare `#number`, a concise outcome summary, and the no-mistakes risk level when applicable.
-Whenever a PR is mentioned, include its full `https://...` URL before any shorthand reference.
 Batch non-urgent updates into the next natural reply.
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
 Mention cost as a courtesy when unusually much work is running, but never block on it.

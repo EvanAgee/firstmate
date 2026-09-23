@@ -10,6 +10,16 @@ metadata:
 
 # ask-user-authority
 
+## Moved from AGENTS.md
+
+`AGENTS.md` section 13 used to list this skill's load trigger, kept here word for word; `AGENTS.md` now triggers it from the operating section that uses it.
+
+- `ask-user-authority` - load before deciding any ask-user finding, regardless of the project's `yolo` posture.
+
+These `AGENTS.md` sentences moved here word for word:
+
+Before deciding any ask-user finding, load `ask-user-authority`; the implementation worker never answers its own finding.
+
 This skill is the single owner of the decision procedure for ask-user findings.
 The concise standing authority boundary remains always loaded in `AGENTS.md` section 7.
 

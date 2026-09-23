@@ -65,6 +65,7 @@ The path's worker, automated gates, and captain approval remain authoritative:
 - **no-mistakes** runs the full pipeline through a PR, then waits for the configured merge authority.
 - **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
+`AGENTS.md` section 7 and `outage-local-landing` add one exception to these review limits: the adversarial review a yolo-on outage auto-land requires.
 
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 
@@ -74,6 +75,7 @@ For a no-mistakes ship, the ship brief has the worker start validation itself on
 If a worker stalls after its implementation commit instead of starting validation, steer it into the run with the harness invocation owned by `harness-adapters`.
 Once validation starts, prefer routing new requirements to follow-up work rather than expanding the current task, unless a new requirement completely invalidates the work being validated; however, the smallest downstream changes needed to keep already accepted product or engineering behavior correct, add behavioral tests where an executable contract exists, or keep documentation accurate remain within the current task even when they touch files not named at intake, and corrections required to satisfy already accepted intent are not new requirements.
 
+`AGENTS.md` section 7 keeps the task with the same worker only when a current, explicit captain instruction completely invalidates the work being validated; in that case:
 That worker cancels the active run through no-mistakes axi's supported abort command and confirms through axi status that the run has stopped before changing any code.
 The worker then follows `branch_sync.next_action` from structured axi status: use axi sync's supported guarded recovery only when its code is `recover_custody`, and otherwise proceed only when structured status confirms that branch ownership is already returned and no recovery is required.
 Custody recovery settles branch ownership, not content: the worker must replace the obsolete work from the correct pre-invalidation base rather than building on top of the recovered-but-obsolete head, keeping the obsolete run's own pipeline-fix commits out of what gets validated and shipped.

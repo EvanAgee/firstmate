@@ -22,7 +22,7 @@ Before writing a new fact anywhere in this repo, ask where it belongs, in this o
 1. Does the firstmate AGENT need this on every session or every turn to operate?
    If yes: `AGENTS.md`, inline.
 2. Does the agent need it only in a nameable situation - a spawn, a recovery, a specific wake type, a specific lifecycle step?
-   If yes: an agent-only skill under `.agents/skills/`, plus a one-line trigger pointer left inline in `AGENTS.md` (usually section 13).
+   If yes: an agent-only skill under `.agents/skills/`, plus a one-line trigger pointer left inline in `AGENTS.md`, in the operating section whose situation it serves, or in section 13 when no operating section fits.
 3. Is it public product, setup, or user/operator reference?
    If yes: the surface classified for that audience in [`docs/documentation-audiences.md`](../../../docs/documentation-audiences.md), limited to current behavior, setup, supported limits, stable invariants, concise rationale, and current verification entry points.
 4. Is it contributor/maintainer architecture?
@@ -62,11 +62,16 @@ If an addition needs more than a few lines of conditional detail (detail that ma
 `AGENTS.md`'s token cost is paid by every session of every fleet member, every time, whether or not that session ever hits the situation the new lines describe.
 A skill's cost is paid only by the sessions that actually load it.
 When in doubt, write the fact into the skill or doc first by patching that owner's existing language, and add only the one-line trigger to `AGENTS.md`.
+Three tests guard this file.
+`tests/fm-agents-size.test.sh` holds it under the 32,768-byte harness instruction cap.
+`tests/fm-agents-coverage.test.sh` requires every sentence frozen in `tests/fixtures/agents-md-before-5175.snapshot` to survive word for word in `AGENTS.md` or a skill, and every agent-only skill to have a load trigger.
+`tests/fm-agents-must-stay.test.sh` requires the preamble, section 1, the precedence section, and the section 9 core to stay inline.
+When you deliberately reword or remove one of the frozen sentences, delete it from the snapshot in the same commit.
 
 ## Trigger hygiene
 
 A new skill is dead weight if nothing loads it.
-Every new skill needs its load trigger declared inline: section 13 for agent-only reference skills, or the relevant operating section for anything else.
+Every new skill needs its load trigger declared inline: in the operating section whose situation it serves, such as each section's reference skill, or in section 13 when no operating section fits.
 State the trigger as a condition ("load before X", "load on Y wake"), never as a vague pointer.
 Briefs for tasks that touch firstmate's own tracked material should tell the crewmate to load this skill.
 `bin/fm-brief.sh`'s `REPO` argument is a caller-supplied string with no reliable signal that it names firstmate's own repo, unlike a project registered in `data/projects.md`, so there is no clean point inside the scaffold to detect this case automatically.

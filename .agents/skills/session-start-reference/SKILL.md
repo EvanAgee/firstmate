@@ -17,7 +17,6 @@ Section numbers below refer to `AGENTS.md`.
 `secondmate-provisioning` owns startup secondmate sync, liveness, and inherited local-material convergence.
 Treat digest status tails as wake-event history and use targeted current-state reconciliation when the live state matters.
 Honor lock-refused read-only mode exactly as section 3 requires.
-Run the session-start `export CHROME_DEVTOOLS_AXI_MCP_PATH=...` before the first `chrome-devtools-axi` command so this shell inherits the pinned launcher.
 
 The digest itself makes no external-network call and never waits for one.
 Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, and project clone refresh - runs concurrently in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
