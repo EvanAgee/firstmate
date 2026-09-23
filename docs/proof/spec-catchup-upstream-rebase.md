@@ -2,14 +2,14 @@
 tags: [specs, upstream, rebase, spec-lint]
 date: 2026-09-23
 issue: fm-spec-catchup-upstream-rebase
-walked: a5cdcbb8
+walked: 27424aed
 ---
 
 # Upstream rebase spec in the hardened shape
 
 ## What I walked
 
-I walked commit `a5cdcbb8`, rebased onto `main` at `4d80f458`, with `origin/c/main` at `7530c480`.
+I walked commit `27424aed`, rebased onto `main` at `4d80f458`, with `origin/c/main` at `7530c480`.
 Nothing in the live home, the trial home, or `c/main` was changed.
 
 ### Reconciling what is done
@@ -29,7 +29,7 @@ Four gaps were not in the spec on `main`, so they became the remaining work:
 $ /Users/evanagee/.agents/skills/spec-lint/spec-lint /Users/evanagee/.treehouse/firstmate-df5ff1/4/firstmate/docs/specs/upstream-rebase.md
 spec-lint: ok (8 acceptance criteria: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC8)
 exit=0
-$ git show a5cdcbb8:docs/specs/upstream-rebase.md | /Users/evanagee/.agents/skills/spec-lint/spec-lint -
+$ git show 27424aed:docs/specs/upstream-rebase.md | /Users/evanagee/.agents/skills/spec-lint/spec-lint -
 spec-lint: ok (8 acceptance criteria: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC8)
 exit=0
 $ git show origin/c/main:docs/specs/upstream-rebase.md | /Users/evanagee/.agents/skills/spec-lint/spec-lint -
@@ -61,6 +61,6 @@ The last run is AC3's red state at base.
 
 ### Superseded blob spec
 
-`git diff --stat 4d80f458 a5cdcbb8` shows `docs/specs/aos-offline-runtime-to-blob.md | 7 +` with no deletions.
+`git diff --stat 4d80f458 27424aed` shows `docs/specs/aos-offline-runtime-to-blob.md | 7 +` with no deletions.
 The new header cites aos `84d4d59d8` and the 3.93 MiB bundled runtime, and names aos `docs/specs/2026-09-21-aos-function-docs-tracing-exclusion.md` as the current authority.
 I read that file at `84d4d59d8` in `/Users/evanagee/Sites/firstmate/projects/aos`; its "Wrong-premise history" section says "The runtime therefore stays bundled."
