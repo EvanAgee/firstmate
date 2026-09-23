@@ -604,6 +604,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/specs/fm-decision-answer-closes-loop.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/specs/flow-switch.md",
       "audience": "maintainer-architecture"
     },
