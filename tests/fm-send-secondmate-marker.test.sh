@@ -53,7 +53,13 @@ case "${1:-}" in
     fi
     exit 0 ;;
   display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
+    # Every task pane runs a live agent, which fm-send requires before typing.
+    for a in "$@"; do
+      case "$a" in
+        *cursor_y*) printf '1\n'; exit 0 ;;
+        *pane_current_command*) printf 'claude\n'; exit 0 ;;
+      esac
+    done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
   list-windows) printf '%s\n' fm-domain fm-build win window; exit 0 ;;

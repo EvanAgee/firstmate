@@ -70,9 +70,12 @@ case "${1:-}" in
     ;;
   display-message)
     printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    # FM_FAKE_TMUX_CURRENT_COMMAND, when set, names the pane's foreground
+    # process, which the agent-state classifier reads.
     case "$*" in
       *'#{pane_id}'*) printf '%%1\n' ;;
       *'#{cursor_y}'*) printf '0\n' ;;
+      *'#{pane_current_command}'*) printf '%s\n' "${FM_FAKE_TMUX_CURRENT_COMMAND:-firstmate}" ;;
       *) printf 'firstmate\n' ;;
     esac
     exit 0

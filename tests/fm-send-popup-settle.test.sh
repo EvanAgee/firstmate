@@ -50,7 +50,13 @@ set -u
 case "${1:-}" in
   send-keys) exit 0 ;;
   display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
+    # The pane runs a live agent, which fm-send requires before typing.
+    for a in "$@"; do
+      case "$a" in
+        *cursor_y*) printf '1\n'; exit 0 ;;
+        *pane_current_command*) printf 'claude\n'; exit 0 ;;
+      esac
+    done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
   list-windows)

@@ -115,9 +115,10 @@ test_exact_lane_id_send_still_works() {
   local dir fb home err log rc got
   dir="$TMP_ROOT/exact"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); home=$(setup_home exact); err="$dir/send.err"; log="$dir/tmux.log"; : > "$log"
-  fm_write_meta "$home/state/mpf-lane-m8.meta" "window=sess:fm-mpf-lane-m8" "kind=ship"
+  fm_write_meta "$home/state/mpf-lane-m8.meta" "window=sess:fm-mpf-lane-m8" "kind=ship" "harness=codex"
 
   PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    FM_FAKE_TMUX_COMMAND=codex \
     "$SEND" mpf-lane-m8 "lost dispatch" >/dev/null 2>"$err"; rc=$?
   expect_code 0 "$rc" "exact task id send should succeed when metadata exists"
   got=$(cat "$log")
@@ -284,6 +285,7 @@ test_healthy_fm_id_send_still_works() {
   fm_write_meta "$home/state/lane-ok.meta" "window=sess:fm-lane-ok" "kind=ship" "harness=codex"
 
   PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    FM_FAKE_TMUX_COMMAND=codex \
     "$SEND" fm-lane-ok "hello captain" >/dev/null 2>"$err"; rc=$?
   expect_code 0 "$rc" "healthy fm-id send should succeed"
   got=$(cat "$log")
@@ -308,12 +310,14 @@ test_claude_steer_over_single_read_is_refused() {
   text=$(printf 'x%.0s' $(seq 1 800))
   : > "$log"
   PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    FM_FAKE_TMUX_COMMAND=claude \
     "$SEND" lane-claude "$text" >/dev/null 2>"$err"; rc=$?
   expect_code 0 "$rc" "an 800-byte steer to a Claude pane should send"
   assert_contains "$(cat "$log")" "literal=1 arg=$text" "an 800-byte steer should be typed whole"
 
   : > "$log"
   PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    FM_FAKE_TMUX_COMMAND=claude \
     "$SEND" lane-claude "${text}y" >/dev/null 2>"$err"; rc=$?
   [ "$rc" -ne 0 ] || fail "an 801-byte steer to a Claude pane reported success"
   assert_not_contains "$(cat "$log")" "literal=1" "an 801-byte steer to a Claude pane typed text"
@@ -321,17 +325,50 @@ test_claude_steer_over_single_read_is_refused() {
 
   : > "$log"
   PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    FM_FAKE_TMUX_COMMAND=codex \
     "$SEND" lane-codex "${text}y" >/dev/null 2>"$err"; rc=$?
   expect_code 0 "$rc" "an 801-byte steer to a Codex pane should still send"
 
   : > "$log"
   PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    FM_FAKE_TMUX_COMMAND=claude \
     "$SEND" mate-claude "${text:0:790}" >/dev/null 2>"$err"; rc=$?
   [ "$rc" -ne 0 ] || fail "a secondmate steer over the limit once marked reported success"
   assert_not_contains "$(cat "$log")" "literal=1" "a secondmate steer over the limit once marked typed text"
   ! compgen -G "$home/state/pending-replies/*" >/dev/null \
     || fail "a refused secondmate steer left a pending-reply record: $(ls "$home/state/pending-replies")"
   pass "fm-send strict: a Claude steer over one 800-byte terminal read is refused before typing"
+}
+
+# A worker that has exited leaves its pane at a plain shell, and text typed
+# there runs as shell commands in the worktree.
+# Text therefore needs a positively live agent: an agent-free pane and a pane
+# whose foreground cannot be attributed both refuse before anything is typed,
+# while the same task with its agent running still sends.
+test_text_needs_a_live_agent() {
+  local dir fb home err log rc command
+  dir="$TMP_ROOT/live-agent"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); home=$(setup_home liveagent); err="$dir/send.err"; log="$dir/tmux.log"
+  fm_write_meta "$home/state/parked.meta" "window=sess:fm-parked" "kind=ship" "harness=codex"
+
+  for command in zsh bun; do
+    : > "$log"
+    PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+      FM_FAKE_TMUX_COMMAND="$command" \
+      "$SEND" parked "firstmate probe; echo ran" >/dev/null 2>"$err"; rc=$?
+    [ "$rc" -ne 0 ] || fail "text to a pane whose foreground is $command was accepted"
+    assert_contains "$(cat "$err")" "fm-control.sh parked relaunch" \
+      "the $command refusal should name the relaunch command"
+    assert_no_grep 'literal=1' "$log" "text was typed into a pane whose foreground is $command"
+  done
+
+  : > "$log"
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    FM_FAKE_TMUX_COMMAND=codex \
+    "$SEND" parked "hello worker" >/dev/null 2>"$err"; rc=$?
+  expect_code 0 "$rc" "text to the same task with its agent running should send: $(cat "$err")"
+  assert_contains "$(cat "$log")" "literal=1 arg=hello worker" "the live-agent send should type the text"
+  pass "fm-send strict: text needs a live agent, and a shell or unattributed pane types nothing"
 }
 
 # A --key send is how firstmate interrupts a worker, so its exit status is the
@@ -373,3 +410,4 @@ test_omp_send_uses_metadata_bound_bun_and_rejects_process_mismatch
 test_fm_prefixed_herdr_session_is_an_explicit_target
 test_healthy_fm_id_send_still_works
 test_claude_steer_over_single_read_is_refused
+test_text_needs_a_live_agent

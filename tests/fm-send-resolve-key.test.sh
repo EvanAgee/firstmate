@@ -60,7 +60,13 @@ case "${1:-}" in
     fi
     exit 0 ;;
   display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
+    # Every task pane runs a live agent, which fm-send requires before typing.
+    for a in "$@"; do
+      case "$a" in
+        *cursor_y*) printf '1\n'; exit 0 ;;
+        *pane_current_command*) printf 'claude\n'; exit 0 ;;
+      esac
+    done
     printf '%%1\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
   list-windows)
@@ -117,7 +123,7 @@ test_answer_send_closes_open_decision() {
   dir="$TMP_ROOT/closes"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home closes)
-  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship" "harness=claude"
   printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$home/state/t1.status"
   printf 'working: kept busy on an unrelated stream\n' >> "$home/state/t1.status"
 
@@ -147,7 +153,7 @@ test_answer_close_is_self_announced() {
   dir="$TMP_ROOT/self-announced"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home self-announced)
-  fm_write_meta "$home/state/t9.meta" "window=sess:fm-t9" "kind=ship"
+  fm_write_meta "$home/state/t9.meta" "window=sess:fm-t9" "kind=ship" "harness=claude"
   printf 'needs-decision [key=port-choice]: 8080 or 9090\n' > "$home/state/t9.status"
   FM_STATE_OVERRIDE="$home/state" bash -c '
     . "$1"
@@ -184,7 +190,7 @@ test_colon_first_key_position_is_answerable() {
   dir="$TMP_ROOT/colon-first"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home colon-first)
-  fm_write_meta "$home/state/t8.meta" "window=sess:fm-t8" "kind=ship"
+  fm_write_meta "$home/state/t8.meta" "window=sess:fm-t8" "kind=ship" "harness=claude"
   printf 'needs-decision: [key=seam-max-bound] cap the seam at 4 or 8\n' > "$home/state/t8.status"
 
   out=$(drain_out "$home")
@@ -213,7 +219,7 @@ test_mid_sentence_key_position_is_answerable() {
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home mid-sentence)
   fm_write_meta "$home/state/pto-export-window-ui.meta" \
-    "window=sess:fm-pto-export-window-ui" "kind=ship"
+    "window=sess:fm-pto-export-window-ui" "kind=ship" "harness=claude"
   printf '%s\n' \
     'needs-decision: fix-review found 2 new ask-user findings [key=169-noun-and-grade-labels]: choose the noun and grade labels' \
     > "$home/state/pto-export-window-ui.status"
@@ -237,7 +243,7 @@ test_answer_starts_work_never_orphans() {
   dir="$TMP_ROOT/starts-work"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home starts-work)
-  fm_write_meta "$home/state/t2.meta" "window=sess:fm-t2" "kind=ship"
+  fm_write_meta "$home/state/t2.meta" "window=sess:fm-t2" "kind=ship" "harness=claude"
   printf 'needs-decision [key=rollout]: big-bang or phased\n' > "$home/state/t2.status"
 
   run_send "$fb" "$home" "$log" t2 --resolve-key rollout "phased, gate each region"; rc=$?
@@ -260,7 +266,7 @@ test_routine_steer_never_closes() {
   dir="$TMP_ROOT/routine"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home routine)
-  fm_write_meta "$home/state/t3.meta" "window=sess:fm-t3" "kind=ship"
+  fm_write_meta "$home/state/t3.meta" "window=sess:fm-t3" "kind=ship" "harness=claude"
   printf 'needs-decision [key=schema]: split or embed\n' > "$home/state/t3.status"
 
   run_send "$fb" "$home" "$log" t3 "unrelated nudge, keep going"; rc=$?
@@ -282,7 +288,7 @@ test_not_open_key_refuses_before_send() {
   dir="$TMP_ROOT/not-open"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
   home=$(setup_home not-open)
-  fm_write_meta "$home/state/t4.meta" "window=sess:fm-t4" "kind=ship"
+  fm_write_meta "$home/state/t4.meta" "window=sess:fm-t4" "kind=ship" "harness=claude"
   printf 'needs-decision [key=real-key]: choose\n' > "$home/state/t4.status"
 
   : > "$log"
@@ -307,7 +313,7 @@ test_failed_send_does_not_close() {
   dir="$TMP_ROOT/send-fail"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home send-fail)
-  fm_write_meta "$home/state/t5.meta" "window=sess:fm-t5" "kind=ship"
+  fm_write_meta "$home/state/t5.meta" "window=sess:fm-t5" "kind=ship" "harness=claude"
   printf 'blocked [key=creds]: need the deploy token\n' > "$home/state/t5.status"
 
   : > "$log"
@@ -329,7 +335,7 @@ test_multiple_keys_close_together() {
   dir="$TMP_ROOT/multi"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home multi)
-  fm_write_meta "$home/state/t6.meta" "window=sess:fm-t6" "kind=ship"
+  fm_write_meta "$home/state/t6.meta" "window=sess:fm-t6" "kind=ship" "harness=claude"
   {
     printf 'needs-decision [key=k1]: first\n'
     printf 'blocked [key=k2]: second\n'
@@ -491,7 +497,7 @@ test_flag_misuse_refuses() {
   dir="$TMP_ROOT/misuse"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
   home=$(setup_home misuse)
-  fm_write_meta "$home/state/t7.meta" "window=sess:fm-t7" "kind=ship"
+  fm_write_meta "$home/state/t7.meta" "window=sess:fm-t7" "kind=ship" "harness=claude"
   printf 'needs-decision [key=k]: choose\n' > "$home/state/t7.status"
 
   # --resolve-key with --key (both orders) is refused: an answer is text.

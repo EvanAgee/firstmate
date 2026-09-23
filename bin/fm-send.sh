@@ -6,6 +6,11 @@
 #   target. fm-send refuses unresolved guesses rather than falling back to a
 #   tmux window search, because a "successful" send to the wrong endpoint is
 #   worse than a loud failure.
+# Text to a task target is refused, before anything is typed, unless the
+# recorded backend positively classifies a live agent at the endpoint: an
+# exited agent leaves a plain shell that would run the text as commands in the
+# worktree. The refusal names `fm-control.sh <id> relaunch`. A backend with no
+# agent classifier sends as before; --key sends are not gated.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca currently supports Enter and C-c only, and rejects Escape.
@@ -362,6 +367,21 @@ if [ "$TARGET_HARNESS" = omp ]; then
   TARGET_OMP_BIN=$FM_BACKEND_AGENT_OMP_BIN
 fi
 
+# Typed text reaches whatever owns the pane. With the agent gone, the pane is a
+# shell that runs the text as commands in the task's worktree, so text to a task
+# target needs a positively live agent. Only a backend with no agent classifier
+# at all (`unverified`) keeps the old behavior; every other non-alive verdict,
+# including an unattributable foreground, refuses before anything is typed.
+fm_send_require_live_agent() {
+  local state id
+  [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] || return 0
+  state=$(fm_backend_agent_state "$TARGET_BACKEND" "$T" "$TARGET_META" 2>/dev/null) || state=
+  case "$state" in alive|unverified) return 0 ;; esac
+  id=$(fm_send_id_from_meta "$TARGET_META")
+  echo "error: no live agent at $T for task $id (state=${state:-unreadable}); refusing to type text a shell could run as commands. Relaunch it with: bin/fm-control.sh $id relaunch --note-file <path>" >&2
+  return 1
+}
+
 # Classify a from-firstmate -> secondmate request. Only a task selector resolved
 # through this home's meta whose authoritative kind is secondmate is marked: the
 # secondmate then routes its reply via the status path (see fm-marker-lib.sh).
@@ -482,11 +502,13 @@ fm_send_feed_resolved_holds() {  # <answer-text>
 # unknown and treated as non-codex (the safe default that keeps the fast path).
 # The target's BACKEND comes from selector meta, from matching an explicit target
 # back to recorded meta, or from strict explicit-target shape validation.
-# Do not add a separate passive liveness preflight here. Active send paths own
+# Do not add a separate passive endpoint preflight here. Active send paths own
 # backend readiness: herdr, for example, must route through its session-aware
 # target_ready path before sending, while zellij verifies pane labels in its
 # send implementation. A failed backend send is still surfaced below as a hard
-# error with the attempted resolution attached.
+# error with the attempted resolution attached. Whether a live agent owns the
+# endpoint is a different question, answered by fm_send_require_live_agent
+# before any text is typed.
 
 if [ "${1:-}" = "--key" ]; then
   case "$*" in
@@ -509,6 +531,7 @@ if [ "${1:-}" = "--key" ]; then
   fm_send_clear_after_interrupt "$semantic_key" || exit 1
   fm_send_record_interrupt "$semantic_key" || exit 1
 else
+  fm_send_require_live_agent || exit 1
   MESSAGE=$*
   # The pre-marker answer text, kept for the closing resolved note so the
   # durable ledger records the plain answer without marker or corr bytes.
