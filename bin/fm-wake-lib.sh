@@ -264,6 +264,41 @@ fm_extension_owns_supervision() {
   esac
 }
 
+# fm_supervise_daemon_alive <lock>
+# True when the away daemon's single-instance lock (a directory, or a symlink to
+# its owner directory) records a live pid that matches the recorded
+# pid-identity, or, before the daemon has written that identity, a live
+# fm-supervise-daemon.sh process.
+fm_supervise_daemon_alive() {
+  local lock=$1 pid identity current command
+  pid=$(cat "$lock/pid" 2>/dev/null || true)
+  fm_pid_alive "$pid" || return 1
+  identity=$(cat "$lock/pid-identity" 2>/dev/null || true)
+  if [ -n "$identity" ]; then
+    current=$(fm_pid_identity "$pid") || return 1
+    [ "$current" = "$identity" ]
+    return
+  fi
+  command=$(ps -p "$pid" -o command= 2>/dev/null || true)
+  case "$command" in
+    *fm-supervise-daemon.sh*) return 0 ;;
+  esac
+  return 1
+}
+
+# fm_away_daemon_owns_supervision <state> [grace]
+# True when away mode is on, a live away daemon holds its lock, and the watcher
+# beacon is fresh. The daemon runs bin/fm-watch.sh one cycle at a time and
+# handles each wake between cycles, so no watcher holds the watch lock during
+# that hand-off; the fresh beacon bounds how long the gap can look healthy.
+fm_away_daemon_owns_supervision() {
+  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} age
+  [ -e "$state/.afk" ] || return 1
+  fm_supervise_daemon_alive "$state/.supervise-daemon.lock" || return 1
+  age=$(fm_path_age "$state/.last-watcher-beat")
+  [ "$age" -lt "$grace" ]
+}
+
 # fm_watcher_supervision_verdict <state> <watch-path> [grace] [home] [root]
 # Model-aware "is supervision healthy right now" verdict for the pull warning
 # guard (bin/fm-guard.sh), NOT the arm layer or the turn-end guard. Sets:

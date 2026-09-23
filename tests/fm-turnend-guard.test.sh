@@ -654,6 +654,48 @@ test_hook_silent_in_crewmate_worktree() {
   pass "fm-turnend-guard: inert in a crewmate/scout task worktree (linked git worktree) even when unhealthy"
 }
 
+# A recycled pool worktree can keep a retired secondmate home's gitignored
+# marker, and a crewmate inherits FM_HOME from the primary that spawned it. The
+# primary's own task metadata records that worktree, so both tracked Stop hooks,
+# run exactly as Codex and Claude run them from inside the worktree, must stand
+# down instead of guarding the primary's fleet from a crewmate session.
+test_hook_silent_in_recorded_task_worktree_with_leftover_marker() {
+  local home wt home_real wt_real codex_cmd claude_cmd payload out status
+  home=$(make_primary_dir "$TMP_ROOT/hook-leftover-marker-home")
+  wt="$TMP_ROOT/hook-leftover-marker-wt"
+  git -C "$home" worktree add --quiet -b fm/leftover-marker-task "$wt"
+  mkdir -p "$wt/state"
+  : > "$wt/AGENTS.md"
+  install_guard_scripts "$wt"
+  mark_codex_hook_root "$wt"
+  printf 'aos-pr-lander\n' > "$wt/.fm-secondmate-home"
+  home_real=$(cd "$home" && pwd -P)
+  wt_real=$(cd "$wt" && pwd -P)
+  printf 'window=firstmate:fm-leftover\nworktree=%s\nkind=ship\n' "$wt_real" > "$home/state/leftover.meta"
+  : > "$home/state/other-task.meta"
+  codex_cmd=$(jq -r '.hooks.Stop[0].hooks[0].command // empty' "$ROOT/.codex/hooks.json")
+  claude_cmd=$(jq -r '.hooks.Stop[0].hooks[0].command // empty' "$ROOT/.claude/settings.json")
+  [ -n "$codex_cmd" ] || fail "Stop hook command is missing from .codex/hooks.json"
+  [ -n "$claude_cmd" ] || fail "Stop hook command is missing from .claude/settings.json"
+  payload='{"stop_hook_active":false,"session_id":"sess-leftover"}'
+
+  # Control: the primary itself, with the same in-flight metadata, still blocks.
+  out=$(printf '%s' "$payload" | (cd "$home_real" && FM_HOME="$home_real" CLAUDE_PROJECT_DIR="$home_real" \
+    FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 bash -c "$claude_cmd") 2>&1); status=$?
+  expect_code 2 "$status" "control: the primary's own Claude Stop hook must still block a blind turn"
+  rm -f "$home/state/.turnend-claude-blocks"
+
+  out=$(printf '%s' "$payload" | (cd "$wt_real" && FM_HOME="$home_real" bash -c "$codex_cmd") 2>&1); status=$?
+  expect_code 0 "$status" "the tracked Codex Stop hook must stand down in a recorded crewmate worktree"
+  [ -z "$out" ] || fail "the tracked Codex Stop hook guarded the primary from a crewmate worktree: $out"
+  out=$(printf '%s' "$payload" | (cd "$wt_real" && FM_HOME="$home_real" CLAUDE_PROJECT_DIR="$wt_real" \
+    FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 bash -c "$claude_cmd") 2>&1); status=$?
+  expect_code 0 "$status" "the tracked Claude Stop hook must stand down in a recorded crewmate worktree"
+  [ -z "$out" ] || fail "the tracked Claude Stop hook guarded the primary from a crewmate worktree: $out"
+  assert_absent "$home/state/.turnend-claude-blocks" "a crewmate Stop hook consumed the primary's block budget"
+  pass "fm-turnend-guard: tracked Codex and Claude Stop hooks stand down in a recorded task worktree despite a leftover secondmate marker"
+}
+
 test_hook_silent_without_jq() {
   local dir out status fakebin tool tool_path
   dir=$(make_primary_dir "$TMP_ROOT/hook-nojq")
@@ -1596,6 +1638,61 @@ test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open() {
   pass "fm-turnend-guard --claude: away ownership excludes the Stop-autoarm fail-open"
 }
 
+record_daemon_lock() {
+  local dir=$1 pid=$2 identity=$3
+  mkdir -p "$dir/state/.supervise-daemon.lock"
+  printf '%s\n' "$pid" > "$dir/state/.supervise-daemon.lock/pid"
+  printf '%s\n' "$identity" > "$dir/state/.supervise-daemon.lock/pid-identity"
+}
+
+# The away daemon runs the watcher one cycle at a time and handles each wake
+# between cycles, so no watcher holds the lock during that hand-off. A live
+# daemon with a fresh beacon owns supervision; both guard modes must allow.
+test_hook_allows_live_away_daemon_between_cycles() {
+  local dir pid identity out_default out_claude s_default s_claude s_stale s_no_afk s_recycled out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-away-daemon-gap")
+  : > "$dir/state/task1.meta"
+  : > "$dir/state/.afk"
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify the live daemon holder"
+  }
+  record_daemon_lock "$dir" "$pid" "$identity"
+  touch "$dir/state/.last-watcher-beat"
+  out_default=$(run_hook "$dir" false); s_default=$?
+  out_claude=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); s_claude=$?
+  # A live daemon whose beacon has gone stale is not supervising.
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  run_hook "$dir" false >/dev/null; s_stale=$?
+  touch "$dir/state/.last-watcher-beat"
+  # A live daemon outside away mode does not own supervision.
+  rm -f "$dir/state/.afk"
+  run_hook "$dir" false >/dev/null; s_no_afk=$?
+  : > "$dir/state/.afk"
+  # A lock whose recorded identity no longer matches is not a live daemon.
+  printf 'recycled pid identity\n' > "$dir/state/.supervise-daemon.lock/pid-identity"
+  run_hook "$dir" false >/dev/null; s_recycled=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  # A dead daemon with a fresh beacon.
+  record_daemon_lock "$dir" "$(nonexistent_pid)" "dead daemon identity"
+  out=$(run_hook "$dir" false); status=$?
+
+  expect_code 0 "$s_default" "default mode must allow while a live away daemon owns supervision between watcher cycles"
+  [ -z "$out_default" ] || fail "default mode alarmed while a live away daemon owned supervision: $out_default"
+  expect_code 0 "$s_claude" "--claude mode must allow while a live away daemon owns supervision between watcher cycles"
+  [ -z "$out_claude" ] || fail "--claude mode alarmed while a live away daemon owned supervision: $out_claude"
+  expect_code 2 "$s_stale" "a live away daemon with a stale beacon must still block"
+  expect_code 2 "$s_no_afk" "a live daemon without the away-mode flag must still block"
+  expect_code 2 "$s_recycled" "a daemon lock with a mismatched pid identity must still block"
+  expect_code 2 "$status" "a dead away daemon must still block"
+  assert_contains "$out" 'Away mode owns watcher supervision' "a dead away daemon block lost its daemon guidance"
+  pass "fm-turnend-guard: a live away daemon with a fresh beacon owns supervision between watcher cycles in both modes"
+}
+
 test_hook_claude_mode_allow_resets_budget() {
   local dir pid identity out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-reset")
@@ -1699,6 +1796,7 @@ test_hook_blocks_in_treehouse_leased_secondmate_home
 test_hook_exempts_linked_worktree_with_stray_marker
 test_hook_exempts_linked_worktree_with_non_ascii_marker
 test_hook_silent_in_crewmate_worktree
+test_hook_silent_in_recorded_task_worktree_with_leftover_marker
 test_hook_silent_without_jq
 test_hook_silent_without_stdin
 test_hook_runs_fast
@@ -1730,6 +1828,7 @@ test_hook_claude_mode_budget_without_verified_failure_keeps_blocking
 test_hook_claude_mode_verified_failure_alarm_is_loud_and_once
 test_hook_claude_mode_fail_open_requires_notice_and_failure_epoch
 test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open
+test_hook_allows_live_away_daemon_between_cycles
 test_hook_claude_mode_allow_resets_budget
 test_hook_claude_mode_waits_for_late_claim
 test_hook_claude_mode_secondmate_reblocks_like_primary

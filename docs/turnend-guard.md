@@ -26,6 +26,8 @@ An unmarked checkout or invalid marker falls through to the git-dir check.
 That check keeps crewmate and scout linked worktrees inert because their git dir differs from their git common dir.
 It also requires `AGENTS.md`, `bin/`, and the effective state directory, which must be an existing ordinary non-symlink directory with no exception.
 A first launch in a fresh clone, before bootstrap has created `state/`, is therefore out of scope for every hook sharing this predicate; only OMP's native primary adapter admits that case through its own probe, described in [configuration](configuration.md#harness-support).
+A root that the effective state directory's `state/*.meta` records as a task's `worktree=` is never primary, even with a valid marker.
+A recycled pool worktree can keep a retired secondmate home's gitignored marker while a crewmate inherits the spawning home's `FM_HOME`, and that task record is what keeps its hooks from guarding the parent fleet.
 
 For an in-scope primary, the guard counts in-flight work from `state/*.meta`, excluding any task whose `state/<id>.status` last line is `done:`, because a done task waiting for merge is parked, not in flight; a task with no status file yet still counts.
 Registered `state/procevent/*.source` records also require supervision even though they have no task metadata.
@@ -33,6 +35,8 @@ The default cross-harness mode exits silently with no supervision need.
 Every mode treats `state/x-watch.check.sh` as supervision need, so Relay polling remains guarded without an in-flight task.
 Otherwise it calls `fm_watcher_healthy <state-dir> <watch-path> [grace-seconds] [home]` from `bin/fm-wake-lib.sh`, the same PID-strict identity-matched lock and fresh-beacon check used by `bin/fm-watch-arm.sh`: a stale beacon blocks even when a watcher pid is live, and a fresh leftover beacon blocks when the lock is missing, dead, or identity-mismatched.
 The turn-end guard needs that strict check because it fires at the turn boundary and cooperates with the parked notifier rather than trusting a beacon left by the cycle that just ended.
+The guard also allows the turn end when `fm_away_daemon_owns_supervision` from the same library holds: `state/.afk` is present, a live identity-matched `bin/fm-supervise-daemon.sh` holds `state/.supervise-daemon.lock`, and the beacon is fresh within grace.
+The away daemon runs the watcher one cycle at a time and handles each wake between cycles, so no watcher holds the lock during that hand-off; a stale beacon, a dead or identity-mismatched daemon, or a missing away flag still blocks.
 `bin/fm-guard.sh`, the pull warning, instead uses the model-aware `fm_watcher_supervision_verdict` from the same library.
 Claude's coordinator now keeps a live watcher across the handling turn, so the ordinary mid-turn state is a live identity-matched process with a fresh beacon.
 Cursor still uses the between-turns park, and Claude remains classified as the `autoarm` pull-guard model, so a beacon fresh within grace is still treated as healthy even with no live watcher process, and only a beacon stale beyond grace (or absent) alarms.

@@ -18,9 +18,20 @@ fm_root_is_secondmate_home() {
   return 0
 }
 
+# Return 0 when task metadata under $2 records $1 as a spawned task's worktree.
+# A recycled pool worktree can keep a retired secondmate home's gitignored
+# marker, and a crewmate inherits FM_HOME from its parent, so this record is the
+# proof that the session is a task and not the home that spawned it.
+fm_root_is_task_worktree() {
+  local root=$1 state=$2 real
+  real=$(cd "$root" 2>/dev/null && pwd -P) || real=$root
+  grep -Fxqs -e "worktree=$root" -e "worktree=$real" "$state"/*.meta
+}
+
 # Return 0 when $1 is a genuine primary root whose effective state dir is $2.
 # A valid secondmate marker force-includes a linked secondmate home.
 # Otherwise only a plain checkout is primary, never a linked task worktree.
+# A root that $2's task metadata records as a task worktree is never primary.
 fm_primary_scope_matches() {
   local root=$1 state=$2 git_dir git_common_dir
   if ! fm_root_is_secondmate_home "$root"; then
@@ -30,5 +41,6 @@ fm_primary_scope_matches() {
   fi
   [ -f "$root/AGENTS.md" ] || return 1
   [ -d "$root/bin" ] || return 1
-  [ -d "$state" ] && [ ! -L "$state" ]
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  ! fm_root_is_task_worktree "$root" "$state"
 }

@@ -169,6 +169,12 @@ if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
   fm_failure_episode_reset "$STATE" && exit 0
   exit 2
 fi
+# In away mode the daemon owns supervision and handles each wake between its
+# one-shot watcher cycles, so a live daemon with a fresh beacon is not blind.
+if fm_away_daemon_owns_supervision "$STATE" "$GRACE"; then
+  [ -e "$FAILURE_NOTICE" ] || budget_reset
+  exit 0
+fi
 
 block_stop() {
   local afk x_mode reason rule
