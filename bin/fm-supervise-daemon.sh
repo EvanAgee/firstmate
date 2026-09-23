@@ -228,9 +228,6 @@ WEDGE_ALARM_LAST_EPOCH=0
 INJECT_FAIL_SLEEP_DEFAULT=30
 INJECT_CONFIRM_RETRIES_DEFAULT=3
 INJECT_CONFIRM_SLEEP_DEFAULT=0.5
-# Largest injection that reaches the harness as one terminal read it types
-# rather than pastes; see _fit_injection.
-INJECT_MAX_BYTES=800
 CRASH_THRESHOLD_DEFAULT=10
 CRASH_WINDOW_DEFAULT=60
 CRASH_BACKOFF_DEFAULT=60
@@ -341,30 +338,24 @@ _collapse_newlines() {  # <text>
   printf '%s' "$s"
 }
 
-_byte_len() {  # <text>
-  printf '%s' "$1" | LC_ALL=C wc -c | tr -d '[:space:]'
-}
-
-# _fit_injection: encode <body> as an away-supervisor injection that the
-# harness receives as ONE terminal read below its paste threshold. A macOS pty
-# hands the reader at most 1022 bytes per read, and Claude Code 2.1.280 turns
-# any read over 800 characters into a paste; a longer digest arrived as a paste
-# plus a typed tail that replaced it, so the captain pane got only the digest's
-# last words with no operational prefix (2026-09-23). A body over the budget is
-# cut at a word boundary, ends with a pointer to its full text, and that full
-# text is logged. Returns non-zero, sending nothing, if no cut fits.
+# _fit_injection: encode <body> as an away-supervisor injection within
+# FM_SINGLE_READ_MAX_BYTES (bin/fm-backend.sh), so the harness receives it as one
+# typed terminal read. A longer digest reached a Claude pane as a paste plus a
+# typed tail that replaced it, so the captain pane got only the digest's last
+# words with no operational prefix (2026-09-23). A body over the budget is cut
+# at a word boundary, ends with a pointer to its full text, and that full text
+# is logged. Returns non-zero, sending nothing, if no cut fits.
 _fit_injection() {  # <body> <state> <result-var>
-  local body=$1 state=$2 note fitted avail
+  local body=$1 state=$2 note fitted
   fm_operational_input_encode away-supervisor "$body" fitted || return 1
-  if [ "$(_byte_len "$fitted")" -gt "$INJECT_MAX_BYTES" ]; then
+  if [ "$(fm_byte_len "$fitted")" -gt "$FM_SINGLE_READ_MAX_BYTES" ]; then
     note=" ... [cut to fit one terminal read; full digest under 'inject cut' in $state/.supervise-daemon.log]"
     fm_operational_input_encode away-supervisor "$note" fitted || return 1
-    avail=$((INJECT_MAX_BYTES - $(_byte_len "$fitted")))
-    [ "$avail" -gt 0 ] || return 1
-    fitted=$(printf '%s' "$body" | head -c "$avail")
-    fm_operational_input_encode away-supervisor "${fitted% *}$note" fitted || return 1
-    [ "$(_byte_len "$fitted")" -le "$INJECT_MAX_BYTES" ] || return 1
-    log "inject cut: $(_byte_len "$body")-byte digest exceeds the ${INJECT_MAX_BYTES}-byte single-read budget; full digest: $body"
+    fitted=$(fm_cut_to_bytes "$body" $((FM_SINGLE_READ_MAX_BYTES - $(fm_byte_len "$fitted"))))
+    [ -n "$fitted" ] || return 1
+    fm_operational_input_encode away-supervisor "$fitted$note" fitted || return 1
+    [ "$(fm_byte_len "$fitted")" -le "$FM_SINGLE_READ_MAX_BYTES" ] || return 1
+    log "inject cut: $(fm_byte_len "$body")-byte digest exceeds the ${FM_SINGLE_READ_MAX_BYTES}-byte single-read budget; full digest: $body"
   fi
   printf -v "$3" '%s' "$fitted"
 }

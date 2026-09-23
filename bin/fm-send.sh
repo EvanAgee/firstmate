@@ -15,6 +15,10 @@
 # submit or reports an inconclusive send. If a swallowed Enter is positively
 # confirmed, fm-send exits NON-ZERO so the caller knows the steer did not land
 # instead of silently leaving an unsubmitted instruction.
+# A text send to a Claude pane over FM_SINGLE_READ_MAX_BYTES (bin/fm-backend.sh),
+# measured after any secondmate marker is added, exits non-zero before typing:
+# Claude would receive it as a split paste and submit only its end. Write long
+# text to a file and send the path instead.
 # Submission dispatches through the target's recorded backend; the tmux adapter
 # shares its composer/submit core with the away-mode daemon via bin/fm-tmux-lib.sh.
 # Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
@@ -533,6 +537,17 @@ else
       echo "error: failed to durably prepare pending-reply delivery for $TARGET_TASK_ID" >&2
       exit 1
     fi
+  fi
+  # A Claude pane receives a longer write as a split paste and submits only its
+  # tail (FM_SINGLE_READ_MAX_BYTES in bin/fm-backend.sh), so refuse before typing
+  # anything. A remote target is measured again by fm-send on its own host.
+  if [ "$TARGET_BACKEND" != remote ] && [ "$TARGET_HARNESS" = claude ] \
+    && [ "$(fm_byte_len "$MESSAGE")" -gt "$FM_SINGLE_READ_MAX_BYTES" ]; then
+    if [ "$PENDING_REPLY_CREATED" = 1 ]; then
+      fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
+    fi
+    echo "error: text not sent to $T: $(fm_byte_len "$MESSAGE") bytes exceeds the ${FM_SINGLE_READ_MAX_BYTES}-byte limit for a Claude pane, which would submit only the end of it; write the full text to a file and send its path" >&2
+    exit 1
   fi
   # Slash commands open a completion popup in some TUIs (verified on codex);
   # submitting too fast selects nothing, so give the popup time to settle before

@@ -720,6 +720,30 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
   esac
 }
 
+# FM_SINGLE_READ_MAX_BYTES: the most text one send may type and still reach
+# the harness as a single terminal read it types rather than pastes. A macOS pty
+# splits a longer write at 1022 bytes, and Claude Code 2.1.280 turns a read over
+# 800 characters into a paste that its typed tail then replaces, so the pane
+# submits only the tail. Every installed harness typed an 800-byte write whole;
+# docs/verification/supervision.md "Single terminal read budget" owns the
+# evidence. Callers that type text into a Claude pane stay within it.
+# shellcheck disable=SC2034 # Read by fm-send.sh, fm-watch.sh, and fm-supervise-daemon.sh.
+FM_SINGLE_READ_MAX_BYTES=800
+
+fm_byte_len() {  # <text>
+  printf '%s' "$1" | LC_ALL=C wc -c | tr -d '[:space:]'
+}
+
+# fm_cut_to_bytes: <text> unchanged when it fits <max-bytes>; otherwise its
+# first <max-bytes> bytes cut back to the last space, which splits neither a word
+# nor a multibyte character. A cut with no space in it is left at the byte limit.
+fm_cut_to_bytes() {  # <text> <max-bytes>
+  local cut=''
+  [ "$2" -gt 0 ] && cut=$(printf '%s' "$1" | head -c "$2")
+  [ "$cut" = "$1" ] || cut=${cut% *}
+  printf '%s' "$cut"
+}
+
 # fm_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the backend's
 # proof-carrying verdict; callers require exact empty for confirmed delivery.

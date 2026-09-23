@@ -685,7 +685,7 @@ PY
 }
 
 claude_output_intervene() {  # <task-id> <output-file> <age-secs> <changed-at>
-  local task=$1 output=$2 age=$3 changed=$4 marker pane tail message control send
+  local task=$1 output=$2 age=$3 changed=$4 marker pane tail opening closing control send
   [ "$(fm_meta_get "$STATE/$task.meta" harness)" = claude ] || return 0
   [ "$age" -ge "$BACKGROUND_OUTPUT_STALE_SECS" ] || return 0
   pane="$STATE/$task.pane-tail"
@@ -698,12 +698,15 @@ claude_output_intervene() {  # <task-id> <output-file> <age-secs> <changed-at>
   [ ! -e "$marker" ] || return 0
   printf '%s\t%s\n' "$output" "$changed" > "$marker" || return 1
   triage_log "stalled Claude background output intervention: $task $output (last changed $changed, age ${age}s)"
-  tail=$(claude_output_tail "$output" 2>/dev/null || true)
-  message="Background output stalled: $output. Last changed $changed (${age}s ago). Last three lines: $tail. Check whether the background job died; fail loudly with its evidence."
+  opening="Background output stalled: $output. Last changed $changed (${age}s ago). Last three lines: "
+  closing=". Check whether the background job died; fail loudly with its evidence."
+  # fm-send refuses a Claude steer over FM_SINGLE_READ_MAX_BYTES, so trim the tail to fit.
+  tail=$(fm_cut_to_bytes "$(claude_output_tail "$output" 2>/dev/null || true)" \
+    $((FM_SINGLE_READ_MAX_BYTES - $(fm_byte_len "$opening$closing"))))
   control=${FM_IDLE_WAIT_CONTROL_BIN:-$SCRIPT_DIR/fm-control.sh}
   send=${FM_IDLE_WAIT_SEND_BIN:-$SCRIPT_DIR/fm-send.sh}
   FM_HOME="$FM_HOME" "$control" "$task" interrupt || triage_log "stalled output interrupt failed: $task $output"
-  FM_HOME="$FM_HOME" "$send" "$task" "$message" || triage_log "stalled output steer failed: $task $output"
+  FM_HOME="$FM_HOME" "$send" "$task" "$opening$tail$closing" || triage_log "stalled output steer failed: $task $output"
 }
 
 stale_reason_with_background_output() {  # <task-id> <reason>; sets STALE_REASON

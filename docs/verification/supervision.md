@@ -644,7 +644,7 @@ The same watcher test file covers a growing output, an immediate stale wake, a n
 The fixture does not verify the rendered foreground Bash signature against a live Claude Code process.
 Codex background terminals remain out of scope because no documented, stable per-task output-file location was found.
 
-## Away-mode digest size budget
+## Single terminal read budget
 
 On 2026-09-23, the daemon's Herdr injection path ran against Darwin 27.0, Herdr 0.9.0, and Claude Code 2.1.280, in an isolated Herdr lab session provisioned through `bin/fm-herdr-lab.sh`.
 
@@ -663,15 +663,39 @@ A 1097-byte prefixed digest sent through `fm_backend_send_text_submit herdr` rep
 The same walk through `escalate_flush` on an unmodified copy of the code recorded only a 211-character tail without the operational prefix.
 With the 800-byte budget, the same walk recorded a 796-byte message beginning `FIRSTMATE_OP: v1 away-supervisor:` and ending with the log pointer, and a 432-byte digest landed unchanged, neither as a paste.
 
+Each installed harness was then launched bare in a lab pane, with no prompt and no submit, and given one raw `send-text` write of each size.
+The composer was read back and scored whole when both the first and the last marker word showed:
+
+```text
+harness            300    800    801    1022    1100    2100
+claude 2.1.280     whole  whole  paste  paste   paste   paste
+codex 0.156.0      whole  whole  whole  paste   paste   paste
+opencode 1.18.4    whole  whole  whole  scroll  scroll  scroll
+pi 0.85.1          whole  whole  whole  whole   whole   scroll
+omp 18.2.6         whole  whole  whole  whole   whole   scroll
+grok 1.0.40        whole  whole  whole  whole   whole   whole
+kimi 1.5           whole  whole  whole  whole   whole   whole
+```
+
+`paste` means a placeholder replaced the text.
+Claude showed `[Pasted text #1]` followed by the typed tail at 1100.
+Codex showed `[Pasted Content 1100 chars]` at 1100, and only `[Pasted Content 2014 chars]` for the 2100-byte write.
+`scroll` means the composer showed the last marker but had scrolled the first out of view, so the read could not tell scrolling from loss.
+Cursor and Muse were not installed and were not measured.
+800 bytes is the largest measured size every harness typed whole, and it matches Claude Code's threshold, so `FM_SINGLE_READ_MAX_BYTES` in `bin/fm-backend.sh` carries it.
+
+The daemon applies the budget to every harness, and `fm-send` refuses a longer text send to a Claude pane before typing.
 The budget is pinned without Herdr by:
 
 ```sh
 bash tests/fm-daemon.test.sh test_inject_msg_herdr_oversize_digest_lands_whole test_inject_msg_digest_budget_boundary
+bash tests/fm-send-strict.test.sh
+bash tests/fm-watch-triage.test.sh test_stalled_claude_background_output_steer_fits_one_read
 ```
 
 ```text
 ok - inject_msg: an oversize Herdr digest reaches the pane as one prefixed read with a pointer to its full text
 ok - inject_msg: an 800-byte digest lands unchanged and an 801-byte digest is cut
+ok - fm-send strict: a Claude steer over one 800-byte terminal read is refused before typing
+ok - stalled Claude output steer trims a long tail to one terminal read
 ```
-
-Other primary harnesses were not measured for their own paste thresholds; the budget applies to every backend and harness because it sits in `inject_msg` ahead of backend dispatch.

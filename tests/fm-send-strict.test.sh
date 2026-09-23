@@ -293,6 +293,47 @@ test_healthy_fm_id_send_still_works() {
   pass "fm-send strict: healthy fm-<id> sends still type once and submit"
 }
 
+# A Claude pane receives a write over 800 bytes as a split paste and submits only
+# its tail (docs/verification/supervision.md "Single terminal read budget"), so
+# fm-send refuses such a steer before typing anything rather than deliver a
+# fragment. The limit applies to the bytes actually typed, marker included.
+test_claude_steer_over_single_read_is_refused() {
+  local dir fb home err log rc text
+  dir="$TMP_ROOT/single-read"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); home=$(setup_home single-read); err="$dir/send.err"; log="$dir/tmux.log"
+  fm_write_meta "$home/state/lane-claude.meta" "window=sess:fm-lane-claude" "kind=ship" "harness=claude"
+  fm_write_meta "$home/state/lane-codex.meta" "window=sess:fm-lane-codex" "kind=ship" "harness=codex"
+  fm_write_meta "$home/state/mate-claude.meta" "window=sess:fm-mate-claude" "kind=secondmate" "harness=claude"
+
+  text=$(printf 'x%.0s' $(seq 1 800))
+  : > "$log"
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" lane-claude "$text" >/dev/null 2>"$err"; rc=$?
+  expect_code 0 "$rc" "an 800-byte steer to a Claude pane should send"
+  assert_contains "$(cat "$log")" "literal=1 arg=$text" "an 800-byte steer should be typed whole"
+
+  : > "$log"
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" lane-claude "${text}y" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "an 801-byte steer to a Claude pane reported success"
+  assert_not_contains "$(cat "$log")" "literal=1" "an 801-byte steer to a Claude pane typed text"
+  assert_contains "$(cat "$err")" "800-byte" "the refusal should name the limit"
+
+  : > "$log"
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" lane-codex "${text}y" >/dev/null 2>"$err"; rc=$?
+  expect_code 0 "$rc" "an 801-byte steer to a Codex pane should still send"
+
+  : > "$log"
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" mate-claude "${text:0:790}" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a secondmate steer over the limit once marked reported success"
+  assert_not_contains "$(cat "$log")" "literal=1" "a secondmate steer over the limit once marked typed text"
+  ! compgen -G "$home/state/pending-replies/*" >/dev/null \
+    || fail "a refused secondmate steer left a pending-reply record: $(ls "$home/state/pending-replies")"
+  pass "fm-send strict: a Claude steer over one 800-byte terminal read is refused before typing"
+}
+
 # A --key send is how firstmate interrupts a worker, so its exit status is the
 # only signal that the interrupt actually landed.
 # Reporting success for a key that was never delivered would leave supervision
@@ -331,3 +372,4 @@ test_unmatched_single_colon_target_must_exist
 test_omp_send_uses_metadata_bound_bun_and_rejects_process_mismatch
 test_fm_prefixed_herdr_session_is_an_explicit_target
 test_healthy_fm_id_send_still_works
+test_claude_steer_over_single_read_is_refused

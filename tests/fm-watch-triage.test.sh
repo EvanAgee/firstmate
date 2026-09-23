@@ -1752,6 +1752,27 @@ PY
   pass "stalled Claude output gets one interrupt, one steer, and durable marker"
 }
 
+# fm-send refuses a Claude steer over one 800-byte terminal read, so a long
+# output tail must shrink to fit rather than lose the whole steer.
+test_stalled_claude_background_output_steer_fits_one_read() {
+  local dir out output line steer
+  dir=$(make_background_output_case stalled-long-output claude 700); out="$dir/watch.out"
+  output="$dir/claude-tmp/$(printf '%s' "$dir/worktree" | tr '/.' '--')/session-1/tasks/job.output"
+  output=$(realpath "$output")
+  line=$(printf 'word %.0s' $(seq 1 60))
+  printf 'first %s\nsecond %s\nthird %s\n' "$line" "$line" "$line" > "$output"
+  set_mtime "$(( $(date +%s) - 700 ))" "$output"
+  run_background_output_wedge "$dir" "$out"
+  steer=$(sed -n 's/^steer wait //p' "$dir/actions")
+  [ -n "$steer" ] || fail "long stalled output got no steer: $(cat "$dir/actions")"
+  [ "$(printf '%s' "$steer" | LC_ALL=C wc -c)" -le 800 ] \
+    || fail "stalled-output steer is $(printf '%s' "$steer" | LC_ALL=C wc -c | tr -d ' ') bytes; fm-send refuses a Claude steer over 800"
+  assert_contains "$steer" "$output" "trimmed steer lost the output path"
+  assert_contains "$steer" "Last three lines: first word" "trimmed steer lost the start of the tail"
+  assert_contains "$steer" "fail loudly with its evidence." "trimmed steer lost its instruction"
+  pass "stalled Claude output steer trims a long tail to one terminal read"
+}
+
 test_immediate_claude_stale_checks_background_output() {
   local dir state out
   dir=$(make_background_output_case immediate-output claude 700); state="$dir/state"; out="$dir/watch.out"
@@ -2436,6 +2457,7 @@ test_busy_pane_changing_hash_escalates_past_turn_age_bound
 test_busy_pane_turn_end_touch_resets_age
 test_busy_pane_repeated_escalation_reaches_demand_deep_inspection
 test_stalled_claude_background_output_interrupts_once
+test_stalled_claude_background_output_steer_fits_one_read
 test_immediate_claude_stale_checks_background_output
 test_growing_claude_background_output_only_enriches_reason
 test_background_output_threshold_loads_from_supervision_file
