@@ -1,5 +1,12 @@
 # Move the offline Python runtime out of the workflow step function
 
+**Superseded on 2026-09-21; do not build from this spec.**
+The blob migration was dropped in aos commit `84d4d59d8` ("fix(build): keep docs out of the deployed functions, restore ROADMAP.md on its two routes").
+Measurement showed the offline Python runtime is 3.93 MiB, far too small to explain the 252 MiB function, so the runtime stays bundled in the Workflow step function.
+A dynamic filesystem read had made Turbopack trace the whole project into the function, and that commit excludes `docs/**` from every deployed function's trace.
+The current authority is aos `docs/specs/2026-09-21-aos-function-docs-tracing-exclusion.md` at `84d4d59d8`.
+The text below is kept unchanged as history.
+
 The aos production deploy has failed since 2026-09-18 16:46 because one serverless function carries a
 252MB payload it does not execute. Captain approved the blob move on 2026-09-18, after firstmate set
 `VERCEL_SUPPORT_LARGE_FUNCTIONS=1` to unblock shipping in the meantime.
