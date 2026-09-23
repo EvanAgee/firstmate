@@ -144,6 +144,24 @@ fm_issue_guard_normalize() {
   printf '%s#%s\n' "$slug" "$number"
 }
 
+# fm_issue_guard_brief_refs <project-dir> <brief-file> <normalized-refs-csv> ->
+# the comma-separated subset of the linked refs that the brief names right after
+# the word "Refs" (as "Refs #7" or "Refs: owner/repo#7"). A brief says Refs for an
+# issue whose acceptance still has captain-only items, so fm-spawn.sh records the
+# subset as issues_keep_open= and bin/fm-issue-close-after-merge.sh leaves those
+# issues open when the task lands. Refs to issues the task does not link are
+# ignored; they could never be closed from this task anyway.
+fm_issue_guard_brief_refs() {
+  local proj=$1 brief=$2 linked=$3 raw ref kept=
+  while IFS= read -r raw; do
+    ref=$(fm_issue_guard_normalize "$proj" "${raw##*[[:space:]]}" 2>/dev/null) || continue
+    case ",$linked," in *",$ref,"*) ;; *) continue ;; esac
+    case ",$kept," in *",$ref,"*) continue ;; esac
+    kept=${kept:+$kept,}$ref
+  done < <(grep -oiE '(^|[^[:alnum:]_])refs:?[[:space:]]+([a-z0-9-]+/[a-z0-9._-]+)?#[0-9]+' "$brief" || true)
+  printf '%s' "$kept"
+}
+
 # fm_issue_guard_meta_records_ref <meta-file> <normalized-ref> -> non-zero when
 # the meta does not record the ref in its comma-separated issues= field.
 fm_issue_guard_meta_records_ref() {

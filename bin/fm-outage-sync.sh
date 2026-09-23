@@ -29,6 +29,12 @@
 #      refuse-on-divergence posture bin/fm-merge-local.sh and bin/fm-fleet-sync.sh
 #      already take, applied to the push.
 #
+# Once a landing's commit is on origin, by this push or an earlier one, its
+# task's linked issues are closed through bin/fm-issue-close-after-merge.sh
+# --landed, which reads them from the task's own record and confirms the commit
+# on GitHub itself. A failed close only warns and never keeps the entry, and a
+# task whose record is already gone gets a note that its issues were not closed.
+#
 # The push-triggered workflows (those gating on push:branches:[<default>], e.g.
 # ci.yml) re-fire automatically on the fast-forward push, so only the
 # schedule-only workflows recorded as deferred are dispatched by hand.
@@ -133,13 +139,26 @@ dispatch_deferred() {  # <proj> <default> <deferred-csv>
   done
 }
 
+# Close one landing's linked issues now that its commit is on origin. A failure
+# is reported and never blocks clearing the entry, because the commit being on
+# origin is what must not be lost.
+close_linked_issues() {  # <task-id> <after>
+  local id=$1 after=$2
+  if [ ! -f "$STATE/$id.meta" ]; then
+    echo "  note: the task record for $id is gone, so its linked issues, if any, were not closed; close them by hand"
+    return 0
+  fi
+  "$SCRIPT_DIR/fm-issue-close-after-merge.sh" "$id" --landed "$after" \
+    || echo "  WARNING: linked issues were not all closed for $id after landing $after reached origin" >&2
+}
+
 # Reconcile one ledger file. Echoes progress; returns 0 if every entry it saw is
 # now on origin (synced or already-ancestor), 1 if any escalated or failed.
 sync_ledger() {  # <ledger-file>
-  local ledger=$1 rc=0 cleared="" default origin_ref proj branch after deferred
+  local ledger=$1 rc=0 cleared="" default origin_ref id proj branch after deferred
   [ -f "$ledger" ] || return 0
 
-  while IFS=$(printf '\t') read -r _at _id proj branch _before after deferred _review; do
+  while IFS=$(printf '\t') read -r _at id proj branch _before after deferred _review; do
     [ -n "$proj" ] && [ -n "$after" ] || continue
     if [ ! -d "$proj" ] || ! git -C "$proj" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       echo "ESCALATE: $proj is not a readable git repository; the outage landing $after cannot be synced automatically" >&2
@@ -178,6 +197,7 @@ sync_ledger() {  # <ledger-file>
       if [ -n "$deferred" ]; then
         echo "  note: deferred checks [$deferred] for landing $after were not auto-dispatched (commit already on origin); dispatch them by hand if they never ran"
       fi
+      close_linked_issues "$id" "$after"
       cleared="$cleared$after"$'\n'
       continue
     fi
@@ -202,6 +222,7 @@ sync_ledger() {  # <ledger-file>
     if git -C "$proj" push origin "$default":"$default" --quiet 2>/dev/null; then
       echo "$proj: pushed local $default to $origin_ref (landing $after)"
       dispatch_deferred "$proj" "$default" "$deferred"
+      close_linked_issues "$id" "$after"
       cleared="$cleared$after"$'\n'
     else
       echo "ESCALATE: fast-forward push of $default failed for $proj (origin may have moved mid-sync); leaving landing $after" >&2

@@ -15,6 +15,10 @@
 #   (d) an entry whose commit is already on origin (re-run or stacked) does not
 #       auto-dispatch its deferred checks, but SAYS SO once rather than silently
 #       dropping them
+#   (e) a pushed landing closes its task's linked issues naming the landed commit
+#   (f) a landing already on origin (stacked or pushed by hand) closes them too
+#   (g) a diverged landing closes nothing
+#   (h) a landing whose task record is gone says its issues were not closed
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -58,6 +62,26 @@ exit 0
 SH
   chmod +x "$fakebin/gh-axi"
   printf '%s\n' "$fakebin/gh-axi"
+}
+
+# Record linked issues on the ledger's task (aos-1-work) and add a plain-gh fake
+# that answers the issue closer's reads: the compare reports the landing on the
+# default branch and every issue reads open. Plain-gh calls log to gh-plain.log;
+# the issue closes go through the gh-axi recorder into gh.log.
+add_task_issues() {  # <dir> <state> <issues>
+  local dir=$1 state=$2 issues=$3
+  mkdir -p "$state" "$dir/fakebin"
+  fm_write_meta "$state/aos-1-work.meta" "kind=ship" "mode=no-mistakes" "issues=$issues"
+  cat > "$dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$dir/gh-plain.log"
+case "\$1" in
+  api) echo identical ;;
+  issue) echo '{"labels":[],"state":"OPEN"}' ;;
+esac
+SH
+  chmod +x "$dir/fakebin/gh"
+  : > "$dir/gh-plain.log"
 }
 
 write_ledger() {  # <state> <proj> <after> <deferred>
@@ -188,7 +212,99 @@ test_already_on_origin_notes_undispatched_deferred() {
   pass "fm-outage-sync notes undispatched deferred checks for an already-on-origin landing"
 }
 
+test_pushed_landing_closes_linked_issues() {
+  local dir proj origin after state
+  dir="$TMP_ROOT/close-pushed"
+  IFS=$(printf '\t') read -r proj origin after < <(make_landed_project close-pushed)
+  make_gh_recorder "$dir" >/dev/null
+  state="$dir/state"
+  add_task_issues "$dir" "$state" acme/widgets#7
+  write_ledger "$state" "$proj" "$after" '' >/dev/null
+  : > "$dir/gh.log"
+
+  PATH="$dir/fakebin:$PATH" run_sync "$dir" "$state" > "$dir/out" 2> "$dir/err" \
+    || fail "close-pushed: sync should succeed: $(cat "$dir/err")"
+
+  [ "$(git -C "$origin" rev-parse main)" = "$after" ] \
+    || fail "close-pushed: origin/main was not fast-forwarded to the landing"
+  grep -qxF "issue close 7 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/commit/$after, landed on the default branch." \
+    "$dir/gh.log" \
+    || fail "close-pushed: the linked issue was not closed naming the landing (log: $(cat "$dir/gh.log"))"
+  assert_grep "closed: acme/widgets#7 https://github.com/acme/widgets/commit/$after" "$dir/out" \
+    "close-pushed: the close receipt was not printed"
+  pass "fm-outage-sync closes a pushed landing's linked issues naming the commit"
+}
+
+test_landing_already_on_origin_closes_linked_issues() {
+  local dir proj origin after state
+  dir="$TMP_ROOT/close-stacked"
+  IFS=$(printf '\t') read -r proj origin after < <(make_landed_project close-stacked)
+  make_gh_recorder "$dir" >/dev/null
+  state="$dir/state"
+  git -C "$proj" push -q origin main
+  add_task_issues "$dir" "$state" acme/widgets#7
+  write_ledger "$state" "$proj" "$after" '' >/dev/null
+  : > "$dir/gh.log"
+
+  PATH="$dir/fakebin:$PATH" run_sync "$dir" "$state" > "$dir/out" 2> "$dir/err" \
+    || fail "close-stacked: sync should succeed: $(cat "$dir/err")"
+
+  grep -qF "issue close 7 -R acme/widgets --reason completed --comment Fixed by https://github.com/acme/widgets/commit/$after" \
+    "$dir/gh.log" \
+    || fail "close-stacked: an already-on-origin landing left its issue open (log: $(cat "$dir/gh.log"))"
+  pass "fm-outage-sync closes the linked issues of a landing already on origin"
+}
+
+test_diverged_landing_closes_nothing() {
+  local dir proj origin after state rc
+  dir="$TMP_ROOT/close-diverged"
+  IFS=$(printf '\t') read -r proj origin after < <(make_landed_project close-diverged)
+  make_gh_recorder "$dir" >/dev/null
+  state="$dir/state"
+  git -C "$proj" checkout -q -b elsewhere main~1
+  git -C "$proj" -c user.name=t -c user.email=t@e.invalid commit -q --allow-empty -m "someone else"
+  git -C "$proj" push -q origin elsewhere:main
+  git -C "$proj" checkout -q main
+  git -C "$proj" branch -q -D elsewhere
+  add_task_issues "$dir" "$state" acme/widgets#7
+  write_ledger "$state" "$proj" "$after" '' >/dev/null
+  : > "$dir/gh.log"
+
+  set +e
+  PATH="$dir/fakebin:$PATH" run_sync "$dir" "$state" > "$dir/out" 2> "$dir/err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "close-diverged: a diverged landing must escalate"
+  [ ! -s "$dir/gh.log" ] && [ ! -s "$dir/gh-plain.log" ] \
+    || fail "close-diverged: the forge was called for a landing that never reached origin (gh-axi: $(cat "$dir/gh.log"))"
+  pass "fm-outage-sync closes nothing for a diverged landing"
+}
+
+test_missing_task_record_says_issues_were_not_closed() {
+  local dir proj origin after state
+  dir="$TMP_ROOT/close-no-record"
+  IFS=$(printf '\t') read -r proj origin after < <(make_landed_project close-no-record)
+  make_gh_recorder "$dir" >/dev/null
+  state="$dir/state"
+  write_ledger "$state" "$proj" "$after" '' >/dev/null
+  : > "$dir/gh.log"
+
+  run_sync "$dir" "$state" > "$dir/out" 2> "$dir/err" \
+    || fail "close-no-record: sync should succeed: $(cat "$dir/err")"
+
+  assert_grep 'aos-1-work' "$dir/out" "close-no-record: the note did not name the task"
+  assert_grep 'were not closed' "$dir/out" \
+    "close-no-record: a landing with no task record did not say its issues were not closed"
+  [ ! -s "$dir/gh.log" ] || fail "close-no-record: the forge was called with no task record"
+  pass "fm-outage-sync says a landing's issues were not closed when its task record is gone"
+}
+
 test_clean_ahead_pushes_dispatches_and_clears
 test_idempotent_rerun_is_noop
 test_diverged_main_escalates_never_forces
 test_already_on_origin_notes_undispatched_deferred
+test_pushed_landing_closes_linked_issues
+test_landing_already_on_origin_closes_linked_issues
+test_diverged_landing_closes_nothing
+test_missing_task_record_says_issues_were_not_closed

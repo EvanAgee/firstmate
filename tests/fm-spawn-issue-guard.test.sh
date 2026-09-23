@@ -5,7 +5,8 @@
 # These tests drive the real fm-spawn with a fake tmux pane, a fake gh-axi
 # recorder (via the FM_GH_BIN seam), and a fixture firstmate home. Refusal
 # cases assert the spawn exits non-zero with no new meta and no endpoint
-# window created; success cases assert the recorded issues= field.
+# window created; success cases assert the recorded issues= field, and the
+# issues_keep_open= field for linked issues the brief names after "Refs".
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -195,7 +196,31 @@ test_issue_ref_recorded_and_bare_resolved() {
   expect_code 0 "$status" "spawn with --issue should succeed"
   assert_grep 'issues=acme/other#99,acme/widget#7,acme/widget#8' "$HOME_DIR/state/$id.meta" \
     "meta must record normalized refs with bare refs resolved against the project repo"
+  if grep -q '^issues_keep_open=' "$HOME_DIR/state/$id.meta"; then
+    fail "a brief with no Refs line must not record issues_keep_open="
+  fi
   pass "repeated and bare --issue refs normalize into the meta record"
+}
+
+test_brief_refs_record_keep_open() {
+  local id out status
+  id=issue-keep-a4
+  make_case_and_env issue-keep "$id"
+  fake_gh=$(make_fake_gh "$CASE_DIR" ok "$CASE_DIR/prs.txt")
+  cat > "$HOME_DIR/data/$id/brief.md" <<'EOF'
+Write `Refs #7` in the PR body: its acceptance still has captain-only items.
+Closes #8 once it lands.
+Refs: Acme/Other#99, and Refs #12, which this task does not cover.
+Push refs/heads/main as usual; prefs #8 is not a reference.
+EOF
+
+  out=$(run_guard_spawn "$fake_gh" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off \
+    --issue 7 --issue 8 --issue acme/other#99)
+  status=$?
+  expect_code 0 "$status" "spawn with a Refs brief should succeed ($out)"
+  grep -qxF 'issues_keep_open=acme/widget#7,acme/other#99' "$HOME_DIR/state/$id.meta" \
+    || fail "meta must keep open exactly the linked issues the brief names after Refs ($(grep '^issues' "$HOME_DIR/state/$id.meta"))"
+  pass "linked issues a brief names after Refs are recorded as issues_keep_open="
 }
 
 test_no_issue_flag_keeps_meta_unchanged() {
@@ -399,6 +424,7 @@ test_issue_refused_when_no_github_origin() {
 }
 
 test_issue_ref_recorded_and_bare_resolved
+test_brief_refs_record_keep_open
 test_no_issue_flag_keeps_meta_unchanged
 test_local_fleet_claim_refuses
 test_dead_worker_does_not_claim

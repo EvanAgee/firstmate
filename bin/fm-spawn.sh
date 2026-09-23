@@ -195,7 +195,9 @@
 #   spawns: the guard targets ship dispatch. A relaunch keeps its task's
 #   recorded issues= through meta preservation. Recorded issues close
 #   automatically once the task lands; bin/fm-issue-close-after-merge.sh owns
-#   that and the issues_keep_open= line that exempts one.
+#   that and the issues_keep_open= line that exempts one. A linked issue the
+#   brief names right after "Refs" is recorded there
+#   (fm_issue_guard_brief_refs in bin/fm-issue-guard-lib.sh).
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
@@ -411,6 +413,7 @@ RELAUNCH=0
 POS=()
 ISSUES_ARGS=()
 ISSUES=
+ISSUES_KEEP_OPEN=
 want_value=
 for a in "$@"; do
   if [ -n "$want_value" ]; then
@@ -2606,6 +2609,7 @@ if [ "$KIND" = ship ] && [ "${#ISSUES_ARGS[@]}" -gt 0 ]; then
     exit 1
   fi
   ISSUES=$FM_ISSUE_GUARD_NORMALIZED
+  ISSUES_KEEP_OPEN=$(fm_issue_guard_brief_refs "$PROJ_ABS" "$BRIEF" "$ISSUES")
 fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
@@ -3851,6 +3855,7 @@ preserve_relaunch_meta() {
   # Recorded only when the spawn passed --issue: absent issues= means no
   # claim, keeping the no-flag meta byte-identical to the pre-guard path.
   [ -z "$ISSUES" ] || echo "issues=$ISSUES"
+  [ -z "$ISSUES_KEEP_OPEN" ] || echo "issues_keep_open=$ISSUES_KEEP_OPEN"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   if [ "$HARNESS" = omp ]; then

@@ -8,8 +8,10 @@
 #   <task-id> <merged-pr-url>    after a PR merge (bin/fm-pr-merge.sh and the
 #                                merge watch in bin/fm-watch.sh)
 #   <task-id> --landed <sha>     after a local landing was pushed
-#                                (bin/fm-merge-local.sh --push); <sha> is the
-#                                full lowercase commit the default branch landed on
+#                                (bin/fm-merge-local.sh --push, or
+#                                bin/fm-outage-sync.sh on GitHub's return); <sha>
+#                                is the full lowercase commit the default branch
+#                                landed on
 #
 # The issues come only from the task's own state/<id>.meta issues= field, which
 # bin/fm-spawn.sh records as comma-separated lowercase owner/repo#<number>
@@ -20,9 +22,10 @@
 # without a linked issue.
 #
 # An optional issues_keep_open= field in the same meta, in the same ref format,
-# names linked issues whose acceptance still has captain-only items. Firstmate
-# appends that line by hand when it learns an issue must outlive the landing;
-# no script writes it. A kept issue is never read or touched on either form.
+# names linked issues whose acceptance still has captain-only items.
+# bin/fm-spawn.sh records it for each linked issue the brief names after "Refs",
+# and firstmate may append it by hand when it learns later that an issue must
+# outlive the landing. A kept issue is never read or touched on either form.
 #
 # For each linked issue:
 #   kept open      -> print "kept-open: <owner/repo>#<n>" and touch nothing

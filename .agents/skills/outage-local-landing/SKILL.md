@@ -61,7 +61,7 @@ The ledger is a record of what already safely happened; it gates and drives noth
 ## When GitHub comes back
 
 On the "github-health: up" wake, run `bin/fm-outage-sync.sh` to reconcile every ledger entry.
-Per landing it fetches origin, fast-forward-pushes local main when it is clean-ahead, dispatches the deferred schedule-only workflows, and clears the entry.
+Per landing it fetches origin, fast-forward-pushes local main when it is clean-ahead, dispatches the deferred schedule-only workflows, closes the task's linked issues once the commit is on origin, and clears the entry.
 If local and origin main diverged during the outage, it ESCALATES rather than force-pushing: surface that to the captain as landings that need rebasing before they can go up.
 It is idempotent, so a re-run after a successful sync is a safe no-op.
 When a landing's commit is already on origin (a re-run, or a second landing whose push carried it up), its deferred checks are not auto-dispatched to avoid double-firing; the script says so once, and firstmate dispatches them by hand only if they truly never ran.
