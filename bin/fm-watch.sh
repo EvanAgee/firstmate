@@ -787,7 +787,7 @@ busy_turn_over_age() {  # <task>
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash> [pause-detail]
   local win=$1 task=$2 h=$3 detail=${4:-declared pause}
-  local key statusf mtime age rf rf_age reason
+  local key statusf mtime age rf rf_age reason gone
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -799,7 +799,10 @@ handle_paused_stale() {  # <window> <task> <hash> [pause-detail]
   rf="$STATE/.paused-resurfaced-$key"
   rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
-    reason="stale: $win (paused ${age}s, awaiting external - $detail, rechecked on a long cadence not a wedge; confirm the wait still holds)"
+    # A parked lane often has no agent left because firstmate stopped it after
+    # appending the pause; say so, so the recheck is not read as a live wait.
+    gone=$(fm_agent_gone_note "$STATE" "$task")
+    reason="stale: $win (paused ${age}s, awaiting external - $detail, rechecked on a long cadence not a wedge; confirm the wait still holds${gone:+; $gone})"
     stale_reason_with_background_output "$task" "$reason"
     reason=$STALE_REASON
     fm_wake_append stale "$win" "$reason" || exit 1

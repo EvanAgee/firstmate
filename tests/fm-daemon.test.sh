@@ -526,6 +526,28 @@ test_housekeeping_paused_resurfaces_and_resets() {
   pass "housekeeping re-surfaces a stale declared pause on the long cadence and resets its window"
 }
 
+# Away mode rechecks a parked lane the same way, and the recheck must say when
+# the lane has no agent left, naming firstmate's recorded stop.
+test_housekeeping_paused_recheck_names_a_deliberate_stop() {
+  local dir state fakebin win pane key
+  dir=$(make_supercase paused-recheck-stop)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  win="sess:fm-parked-w13"; pane="$dir/pane.txt"
+  fm_write_meta "$state/parked-w13.meta" "window=$win" "worktree=$dir/wt" "kind=ship" "harness=codex"
+  printf 'v1\ntask=parked-w13\nts=2026-09-23T01:25:18Z\nharness=codex\n' > "$state/parked-w13.control-exit"
+  printf 'paused [key=verified-route-account-evidence]: waits on the account settings\n' > "$state/parked-w13.status"
+  printf 'idle prompt $\n' > "$pane"
+  key=$(printf '%s' "parked-w13" | tr ':/.' '___')
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=240 housekeeping "$state"
+  grep -F "awaiting external" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "the parked lane was not re-surfaced as an awaiting-external recheck"
+  grep -F "exited by firstmate at 2026-09-23T01:25:18Z" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "the away-mode recheck did not name the deliberate stop: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  pass "housekeeping's paused recheck names firstmate's recorded stop on an agent-free lane"
+}
+
 # A pause whose pane became busy again (the crew resumed) drops its marker without
 # escalating, exactly like a resumed wedge.
 test_housekeeping_paused_resumed_cleared() {
@@ -2229,6 +2251,7 @@ test_housekeeping_seeds_pause_marker_from_status
 test_housekeeping_persistent_stale_escalates
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
+test_housekeeping_paused_recheck_names_a_deliberate_stop
 test_housekeeping_paused_resumed_cleared
 test_housekeeping_paused_unpaused_cleared
 test_housekeeping_stale_marker_transitions_to_pause

@@ -3915,7 +3915,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 # A new worker process must not expose a prior process's last pane as live.
 # The watcher publishes the current pane after its next successful capture.
-rm -f "$STATE/$ID.pane-tail"
+# A deliberate-stop record from bin/fm-control.sh exit described the previous
+# agent, so it goes too.
+rm -f "$STATE/$ID.pane-tail" "$STATE/$ID.control-exit"
 if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
   # The record is published, so this task is now part of the set a teardown
   # enumerates and locks per task. The set lock is only needed across that

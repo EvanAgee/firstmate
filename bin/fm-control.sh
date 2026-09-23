@@ -31,7 +31,10 @@
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
 #              Already-stopped, including a missing endpoint, is success
-#              (idempotent).
+#              (idempotent). A stop this verb performs is recorded in
+#              state/<id>.control-exit (v1, task, UTC ts, harness) so a later
+#              session can tell a parked lane from a crashed one; an agent that
+#              was already gone gets no record.
 #   relaunch   Transactionally replace the agent with a new one in the SAME
 #              worktree, reusing the SAME endpoint when it still exists or
 #              recreating a gone one, on the same or a newly chosen
@@ -506,6 +509,19 @@ do_exit() {
   printf 'stopped'
 }
 
+# A deliberate stop outlives the session that made it: readers name it through
+# bin/fm-backend.sh's fm_agent_gone_note. Only a stop this verb performed is
+# recorded, so an agent that was already gone is never attributed to firstmate.
+record_deliberate_stop() {
+  local record="$STATE/$ID.control-exit"
+  {
+    echo v1
+    echo "task=$ID"
+    echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "harness=$HARNESS"
+  } > "$record.tmp" && mv -f "$record.tmp" "$record"
+}
+
 # --- transactional relaunch -------------------------------------------------
 #
 # The transaction's durable record is state/<id>.control-relaunch, with the
@@ -961,6 +977,10 @@ case "$VERB" in
     ;;
   exit)
     result=$(do_exit)
+    if [ "$result" = stopped ]; then
+      record_deliberate_stop \
+        || die "task $ID's agent stopped, but its deliberate-stop record $STATE/$ID.control-exit could not be written"
+    fi
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)

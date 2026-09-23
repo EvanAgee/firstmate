@@ -1419,6 +1419,65 @@ EOF
   pass "tmux endpoint liveness is reported per task: alive for a live window, dead for a gone one"
 }
 
+# A worker firstmate stopped leaves its window open at a bare shell, so the
+# window check alone reads "alive". The digest must also say the agent is gone,
+# and whether firstmate stopped it on purpose.
+test_endpoint_liveness_names_an_agent_free_window() {
+  local rec root home fakebin out
+  rec=$(new_world liveness-agent-free)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}" in
+  list-windows)
+    [ "${3:-}" = "=fm-sess" ] || exit 1
+    printf '@1 parked\n@2 gone\n@3 working\n'
+    exit 0
+    ;;
+  display-message)
+    target=""
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "-t" ] && target="$a"
+      prev="$a"
+    done
+    case "$target" in @1|@2|@3) ;; *) exit 1 ;; esac
+    case "$*" in
+      *pane_tty*) exit 1 ;;
+      *pane_current_command*)
+        if [ "$target" = @3 ]; then printf 'codex\n'; else printf 'zsh\n'; fi
+        exit 0
+        ;;
+    esac
+    printf '%%%s\n' "${target#@}"
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/tmux"
+
+  printf 'window=fm-sess:parked\nkind=ship\nharness=codex\n' > "$home/state/task-parked.meta"
+  printf 'v1\ntask=task-parked\nts=2026-09-23T01:20:12Z\nharness=codex\n' > "$home/state/task-parked.control-exit"
+  printf 'window=fm-sess:gone\nkind=ship\nharness=codex\n' > "$home/state/task-gone.meta"
+  printf 'window=fm-sess:working\nkind=ship\nharness=codex\n' > "$home/state/task-working.meta"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: alive (backend=tmux window=fm-sess:parked)"$'\n'"agent: exited by firstmate at 2026-09-23T01:20:12Z" \
+    "a deliberately stopped worker's window did not say firstmate stopped it"
+  assert_contains "$out" "endpoint: alive (backend=tmux window=fm-sess:gone)"$'\n'"agent: gone" \
+    "an agent-free window without a stop record did not say the agent is gone"
+  assert_not_contains "$(printf '%s\n' "$out" | grep -A1 'window=fm-sess:working)')" "agent:" \
+    "a live agent's window gained an agent line"
+
+  pass "the digest names an agent-free window, and a deliberate stop, under its endpoint line"
+}
+
 test_endpoint_liveness_herdr() {
   local rec root home fakebin out
   rec=$(new_world liveness-herdr)
@@ -2609,6 +2668,7 @@ test_status_tail_line_cap
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
+test_endpoint_liveness_names_an_agent_free_window
 test_composition_invokes_real_scripts
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
 test_backlog_queued_bound_discloses_its_remainder

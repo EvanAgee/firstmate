@@ -1032,6 +1032,40 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
 }
 
+# A lane parked by firstmate usually has no agent left: firstmate appended the
+# pause and then stopped the worker. The hourly recheck must say so, naming the
+# deliberate stop from its record, or a fresh session reads a bare shell behind a
+# declared wait as a worker that crashed.
+test_resurfaced_pause_names_a_deliberate_stop() {
+  local dir state fakebin out capture_file window key pane_hash sig pid back statusf
+  dir=$(make_case resurfaced-pause-stop); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
+  window="test:fm-parked"
+  printf 'bare shell after a deliberate stop' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=codex\n' "$window" > "$state/parked.meta"
+  printf 'v1\ntask=parked\nts=2026-09-23T01:20:12Z\nharness=codex\n' > "$state/parked.control-exit"
+  printf 'paused [key=batch-push]: landed; firstmate walks the journey before close\n' > "$statusf"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "bare shell after a deliberate stop")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_FAKE_CREW_STATE='state: paused · source: status-log · landed' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 80 || fail "watcher did not re-surface the parked lane past the threshold"
+  grep -F "awaiting external" "$out" >/dev/null || fail "re-surface was not labeled a paused recheck: $(cat "$out")"
+  grep -F "exited by firstmate at 2026-09-23T01:20:12Z" "$out" >/dev/null \
+    || fail "the paused recheck did not name the deliberate stop: $(cat "$out")"
+  pass "a re-surfaced pause on an agent-free lane names firstmate's recorded stop"
+}
+
 # A captain-held crew can leave a stable backend endpoint after its agent exits.
 # fm-crew-state then authoritatively reports stopped rather than paused, but the
 # confirmed-dead agent plus the declared wait or captain-held transfer must retain
@@ -2466,6 +2500,7 @@ test_busy_pane_default_turn_age_bound_is_3600s
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
+test_resurfaced_pause_names_a_deliberate_stop
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
 test_secondmate_unpause_clears_pause_tracking

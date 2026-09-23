@@ -53,8 +53,9 @@
 #                       represented by the two digests below.
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
-#                       state/.afk, and a cheap per-task endpoint-liveness read:
-#                       read-only, always runs.
+#                       state/.afk, and a cheap per-task endpoint-liveness read
+#                       plus an `agent:` line when a live window holds no agent
+#                       (fm_agent_gone_note): read-only, always runs.
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
 #   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
@@ -860,6 +861,10 @@ for meta in "$STATE"/*.meta; do
     backend=$(fm_backend_of_meta "$meta")
     if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
       printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
+      # A live window can still hold only a shell; say so, and whether
+      # firstmate stopped the agent on purpose.
+      gone=$(fm_agent_gone_note "$STATE" "$id")
+      [ -z "$gone" ] || printf 'agent: %s\n' "${gone#agent }"
     else
       printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
     fi

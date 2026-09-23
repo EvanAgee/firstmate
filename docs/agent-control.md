@@ -35,6 +35,7 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | `relaunch` | Replace the agent with a new one in the same worktree on the exact recorded adapter or an explicitly chosen harness, model, and effort, reusing the recorded endpoint when it still exists and recreating it when it is gone. | The new agent is alive on the resulting endpoint, and the durable record names the harness that is actually running. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
+An exit that stops a running agent writes `state/<id>.control-exit`, so the startup digest, `bin/fm-crew-state.sh`, and the paused-lane rechecks can report "exited by firstmate at <ts>" instead of showing a live window or a paused worker; an agent that was already gone gets no record, and a later spawn or teardown removes it.
 Interrupt never rewrites busy state as proof of its own success.
 Claude exposes no lifecycle acknowledgement for a manual interrupt, so delivery succeeds with `cancel=unconfirmed` and its adapter-owned busy state remains as observed.
 muse's session log records `terminal=cancelled` for the interrupted run, so the control plane reports `cancel=confirmed` only after observing that exact acknowledgement.

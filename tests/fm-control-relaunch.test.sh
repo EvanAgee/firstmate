@@ -285,8 +285,11 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   add_ship_task "$dir" rl1 claude
   gen_before=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl1)
   printf 'busy_gen=%s\n' "$gen_before" >> "$dir/home/state/rl1.meta"
+  printf 'v1\ntask=rl1\nts=2026-09-23T01:20:12Z\nharness=claude\n' > "$dir/home/state/rl1.control-exit"
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
   expect_code 0 "$rc" "a same-harness relaunch should succeed"$'\n'"$out"
+  assert_absent "$dir/home/state/rl1.control-exit" \
+    "a relaunched agent still carries the earlier deliberate-stop record"
   assert_contains "$out" "relaunched rl1 harness=claude from=claude" "the outcome should name the transition"
   [ "$(meta_field "$dir" rl1 window)" = "fmses:fm-rl1" ] \
     || fail "the endpoint must be reused, not recreated"

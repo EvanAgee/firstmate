@@ -685,6 +685,50 @@ test_already_stopped_exit_is_idempotent() {
   pass "fm-control exit: an already-stopped agent is idempotent success with no bytes sent"
 }
 
+# A deliberate stop must outlive the session that made it: exit records it,
+# and the current-state reader names it once the lane's pane is a bare shell.
+# An exit that finds the agent already gone records nothing, because firstmate
+# did not stop that agent, and the reader then says only that the agent is gone.
+crew_state_of() {  # <case-dir> <id>
+  env PATH="$1/fakebin:$PATH" FM_HOME="$1/home" FM_FAKE_DIR="$1/fake" \
+    "$ROOT/bin/fm-crew-state.sh" "$2" 2>&1
+}
+
+test_exit_records_a_deliberate_stop() {
+  local dir out rc record ts
+  dir=$(new_case exit-record)
+  add_task "$dir" t1 codex
+  alive_as "$dir" codex
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exit on a live agent should succeed"$'\n'"$out"
+  record="$dir/home/state/t1.control-exit"
+  [ -f "$record" ] || fail "exit left no durable record of the deliberate stop"
+  ts=$(sed -n 's/^ts=//p' "$record")
+  case "$ts" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) fail "the exit record carries no UTC timestamp: $(cat "$record")" ;;
+  esac
+  printf 'paused [key=ci-wait]: firstmate watches CI and lands on green\n' > "$dir/home/state/t1.status"
+  out=$(crew_state_of "$dir" t1)
+  assert_contains "$out" "state: paused" "the declared wait should still stand beside the stop"
+  assert_contains "$out" "exited by firstmate at $ts" \
+    "the current-state reader should name the deliberate stop"
+
+  dir=$(new_case exit-record-already)
+  add_task "$dir" t1 codex
+  alive_as "$dir" zsh
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exit on an agent-free pane should succeed"$'\n'"$out"
+  assert_absent "$dir/home/state/t1.control-exit" \
+    "an already-stopped exit recorded a stop firstmate did not make"
+  printf 'working: halfway through the refactor\n' > "$dir/home/state/t1.status"
+  out=$(crew_state_of "$dir" t1)
+  assert_contains "$out" "state: unknown" "a gone agent must not read as working from its last status line"
+  assert_contains "$out" "agent gone" "the current-state reader should say the agent is gone"
+  assert_not_contains "$out" "exited by firstmate" "an unrecorded stop was attributed to firstmate"
+  pass "fm-control exit: a deliberate stop is recorded and named, an already-gone agent is not"
+}
+
 test_missing_endpoint_is_already_stopped() {
   local dir out rc
   dir=$(new_case gone)
@@ -987,6 +1031,7 @@ test_verb_allowlist_is_closed
 test_resume_is_refused_with_its_reason
 test_relaunch_only_flags_are_rejected_on_other_verbs
 test_already_stopped_exit_is_idempotent
+test_exit_records_a_deliberate_stop
 test_missing_endpoint_is_already_stopped
 test_already_stopped_exit_retires_busy_wiring
 test_missing_endpoint_exit_retires_busy_wiring

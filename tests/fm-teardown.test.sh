@@ -1323,6 +1323,7 @@ test_teardown_missing_busy_sidecar_completes() {
   rm -f "$case_dir/state/task-x1.busy-gen"
   printf '2 status-signature turn-signature\n' > "$case_dir/state/task-x1.turn-continue"
   printf 'stalled output\n' > "$case_dir/state/task-x1.stalled-output-test"
+  printf 'v1\ntask=task-x1\nts=2026-09-23T01:20:12Z\nharness=claude\n' > "$case_dir/state/task-x1.control-exit"
 
   set +e
   run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1338,7 +1339,9 @@ test_teardown_missing_busy_sidecar_completes() {
     "missing-busy-sidecar: teardown left the continuation counter"
   assert_absent "$case_dir/state/task-x1.stalled-output-test" \
     "missing-busy-sidecar: teardown left the stalled-output marker"
-  pass "teardown removes continuation and stalled-output markers with an absent busy sidecar"
+  assert_absent "$case_dir/state/task-x1.control-exit" \
+    "missing-busy-sidecar: teardown left the deliberate-stop record"
+  pass "teardown removes continuation, stalled-output, and deliberate-stop records with an absent busy sidecar"
 }
 
 test_herdr_teardown_clears_escalation_marker() {

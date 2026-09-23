@@ -977,7 +977,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs gone
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -1068,7 +1068,8 @@ housekeeping() {  # <state>
       *)
         last=$(last_status_line "$state/$task.status")
         if [ -n "$last" ] && status_is_paused "$last"; then
-          escalate_add "$state" "paused ${age}s (awaiting external, recheck whether the wait still holds): $win"
+          gone=$(fm_agent_gone_note "$state" "$task")
+          escalate_add "$state" "paused ${age}s (awaiting external, recheck whether the wait still holds${gone:+; $gone}): $win"
           _now > "$marker"
         else
           rm -f "$marker"

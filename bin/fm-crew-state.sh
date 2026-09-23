@@ -49,7 +49,10 @@
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
-#      `resolved` never become current state or detail.
+#      `resolved` never become current state or detail. A pane that positively
+#      holds no agent skips the busy read and appends "exited by firstmate at
+#      <ts>" or "agent gone" (fm_agent_gone_note) to the detail; a `working`
+#      log line then reports unknown, since nothing can be working.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log.
@@ -609,6 +612,22 @@ fi
 # unknown rather than trusting a possibly-stale status log as the current state.
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
 pane_readable "$BACKEND_TARGET" || emit unknown none "backend target gone: $BACKEND_TARGET"
+
+# A pane that positively holds no agent has no harness busy state to read. Name
+# why the agent is gone (firstmate's recorded stop, or none). A declared wait or
+# outcome from the status log still stands beside that note, but a `working`
+# line cannot: nothing is working once the agent is gone.
+GONE_NOTE=$(fm_agent_gone_note "$STATE" "$ID")
+if [ -n "$GONE_NOTE" ]; then
+  if [ -n "$LOG_VERB" ]; then
+    LOG_STATE=$(map_log_state "$LOG_LINE")
+    case "$LOG_STATE" in
+      unknown|working) ;;
+      *) emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}$GONE_NOTE" ;;
+    esac
+  fi
+  emit unknown pane "$GONE_NOTE"
+fi
 
 # Secondmates idle on their own watcher (idle pane = healthy), so the busy
 # state is not meaningful for them; read their state from the status log only.

@@ -983,6 +983,30 @@ fm_backend_agent_alive() {  # <backend> <target> [validated-meta]
   esac
 }
 
+# fm_agent_gone_note: why a task's endpoint holds no live agent, for readers
+# that would otherwise show only a live window or the worker's last status line.
+# bin/fm-control.sh's `exit` verb records a deliberate stop in
+# state/<id>.control-exit; bin/fm-spawn.sh and bin/fm-teardown.sh remove it.
+# Prints "exited by firstmate at <ts>" when that record exists and "agent gone"
+# when it does not, and only for a positively agent-free or missing endpoint.
+# A live, ambiguous, unclassifiable, or remotely placed agent prints nothing, so
+# a caller only ever adds an established fact.
+fm_agent_gone_note() {  # <state-dir> <task-id>
+  local state=$1 id=$2 meta target ts
+  meta="$state/$id.meta"
+  [ -f "$meta" ] || return 0
+  [ -z "$(fm_meta_get "$meta" remote_host)" ] || return 0
+  target=$(fm_backend_target_of_meta "$meta")
+  [ -n "$target" ] || return 0
+  [ "$(fm_backend_agent_alive "$(fm_backend_of_meta "$meta")" "$target" "$meta" 2>/dev/null)" = dead ] || return 0
+  ts=$(sed -n 's/^ts=//p' "$state/$id.control-exit" 2>/dev/null | head -n 1)
+  if [ -n "$ts" ]; then
+    printf 'exited by firstmate at %s' "$ts"
+  else
+    printf 'agent gone'
+  fi
+}
+
 # --- native event push (backend-extensible) ---------------------------------
 #
 # The watcher's event-wait splice (bin/fm-watch.sh) is backend-agnostic: it asks
