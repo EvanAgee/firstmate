@@ -584,6 +584,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/specs/ensure-agents-md-opt-out.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/specs/flow-switch.md",
       "audience": "maintainer-architecture"
     },
