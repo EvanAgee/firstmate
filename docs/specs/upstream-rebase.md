@@ -21,7 +21,7 @@ dnth's extras (acceptance receipts, treehouse pool sweep, durable task inbox #15
 - Integration branch `c/main` in this repo, cut from `kun/main` and pushed to `origin`. It is the future `main`.
 - Every port is a ship task on a branch off `c/main`, landed into `c/main` by firstmate with `bin/fm-merge-local.sh` (local-only mode, no PR), after firstmate reads the diff and the port's test proof.
 - Nothing lands on `main` and nothing touches the live home until the shakedown ticket passes.
-- The trial home at `/Users/evanagee/Sites/firstmate-trial` runs `c/main` for the shakedown. It has no live fleet work; its state from the September trial is scratch.
+- The trial home at `/Users/evanagee/Sites/firstmate-trial` runs `c/main` for the shakedown. It had no live fleet work at switch time; its state was archived rather than cleared, because a later trial fleet's records had accumulated past the September trial.
 - Workers take pooled worktrees of this repo (`~/.treehouse/firstmate-*`), never the live checkout, never the trial home.
 - Every port carries `firstmate-coding-guidelines` (shared tracked material) and the upstream repo's own test conventions: colocated `tests/*.test.sh`, shellcheck-clean `bin/`, one sentence per line in docs.
 - A port re-implements the feature's behavior on the root's current code; it does not cherry-pick our commits. Our commits and files are the reference, the root's structure is the target. Where the root already grew an equivalent, the port adopts the root's version and records what changed in the ticket.
@@ -77,37 +77,55 @@ The six-worker cap counts these lanes.
 ### Handover for the trial home
 
 The trial home at `/Users/evanagee/Sites/firstmate-trial` runs `c/main` for the shakedown.
-It is a separate clone whose `origin` still points at `dnth/firstmate` and whose checkout is `dnth`'s `main` at `6f49b717`.
-Its September trial state is scratch: 14 runtime records under `state/` and 18 records under `data/` (the trial backlog, the captain notes, and the per-task report directories).
-The steps below are what firstmate runs there; a worker never touches the trial home.
-Each command is run from the live home or the trial home, never from a disposable worker worktree.
+It is a separate clone of `dnth/firstmate` whose `origin` is re-pointed at this fork and whose checkout is `c/main`.
+The switch ran on 2026-09-23, from the disposable C0 worktree rather than from either home; the original brief reserved it for firstmate, and firstmate delegated it to that worktree in the relaunch that followed.
+The commands below stay the recipe, and each step records what it actually produced.
 
-1. Publish the integration branch from the live home, because the trial home can only fetch a branch that exists on a remote.
+1. Publish the integration branch, because the trial home can only fetch a branch that exists on a remote.
    `git -C /Users/evanagee/Sites/firstmate push origin c/main:c/main`
-   Confirm the remote now carries the recorded SHA:
-   `git -C /Users/evanagee/Sites/firstmate ls-remote origin refs/heads/c/main` prints `43bf6d3d9e5384cc02557929be220e03477d3068`.
+   Confirm the remote carries the recorded SHA:
+   `git -C /Users/evanagee/Sites/firstmate ls-remote origin refs/heads/c/main`
+   No push was needed at switch time: `origin` already carried `c/main` at `0491f54ccdb54c8e84b7546569ffac9982e4992e`, three landing commits ahead of this clone's `c/main` ref at `3425dd1f` (`cbf0c2eb`, `a1634b53`, `0491f54c`); the published branch had moved on while the shared local ref stayed where it was, so the trial home fetched the publication rather than the local ref.
+   That SHA supersedes the `43bf6d3d9e5384cc02557929be220e03477d3068` recorded when C0 started, and the trial home runs the newer tip.
 
 2. Re-point the trial home's `origin` at this fork and fetch.
    `git -C /Users/evanagee/Sites/firstmate-trial remote set-url origin https://github.com/EvanAgee/firstmate`
    `git -C /Users/evanagee/Sites/firstmate-trial fetch origin`
+   `git -C /Users/evanagee/Sites/firstmate-trial rev-parse origin/c/main` then prints `0491f54ccdb54c8e84b7546569ffac9982e4992e`.
 
-3. Archive the September trial state into a recorded directory under the trial home's own `data/`, before the checkout changes what `state/` and `data/` mean.
+3. Archive the trial state into a recorded directory under the trial home's own `data/`, before the checkout changes what `state/` and `data/` mean.
    `mkdir -p /Users/evanagee/Sites/firstmate-trial/data/archive-2026-09-trial`
-   Move every `state/` record and every `data/` record except the archive directory itself into it:
-   `(cd /Users/evanagee/Sites/firstmate-trial && for f in state/*; do [ -e "$f" ] && mv "$f" data/archive-2026-09-trial/; done)`
-   `(cd /Users/evanagee/Sites/firstmate-trial && for f in data/*; do [ "$f" = data/archive-2026-09-trial ] || mv "$f" data/archive-2026-09-trial/; done)`
-   The trial home's `state/` and `data/` are then empty except for `data/archive-2026-09-trial/`, which holds the September trial record.
+   Move every `state/` and every `data/` entry except the archive directory itself into it, hidden entries included:
+   `(cd /Users/evanagee/Sites/firstmate-trial && shopt -s dotglob && for f in state/*; do [ -e "$f" ] && mv "$f" data/archive-2026-09-trial/; done)`
+   `(cd /Users/evanagee/Sites/firstmate-trial && shopt -s dotglob && for f in data/*; do [ "$f" = data/archive-2026-09-trial ] || mv "$f" data/archive-2026-09-trial/; done)`
+   `shopt -s dotglob` is load-bearing: the trial home's `state/` is almost entirely hidden files, so the plain `state/*` glob in the first version of this recipe would have left them behind.
+   The archive holds 311 entries: 266 state records, 44 data records, and a `MANIFEST.txt` naming the pre-switch HEAD (`a6f5d0e`, `dnth`'s `main`), the pre-switch `origin`, and those counts.
+   The state was larger than the 14 and 18 records of the September trial because a later trial fleet had accumulated its own backlog, captain notes, and per-task reports here.
+   The trial home's `state/` and `data/` are then empty except that archive directory.
 
 4. Check out `c/main` and confirm the recorded SHA.
    `git -C /Users/evanagee/Sites/firstmate-trial checkout -B c/main origin/c/main`
-   `git -C /Users/evanagee/Sites/firstmate-trial log -1 --format=%H` prints `43bf6d3d9e5384cc02557929be220e03477d3068`.
+   `git -C /Users/evanagee/Sites/firstmate-trial log -1 --format=%H` prints `0491f54ccdb54c8e84b7546569ffac9982e4992e`, on a clean working tree, with the local `main` ref left at its pre-switch commit.
 
 5. Start the trial home and confirm a locked digest.
    Run session start inside the trial home with `FM_HOME` set to it, from the trial home directory, so the digest's lock step reports the home's own session lock held and its fleet-state digest lists no tasks:
-   `FM_HOME=/Users/evanagee/Sites/firstmate-trial /Users/evanagee/Sites/firstmate-trial/bin/fm-session-start.sh`
-   A locked digest that names the trial home, reports the lock acquired, and lists an empty fleet confirms the switch.
+   `(cd /Users/evanagee/Sites/firstmate-trial && FM_HOME=/Users/evanagee/Sites/firstmate-trial bin/fm-session-start.sh)`
+   The digest named `/Users/evanagee/Sites/firstmate-trial`, reported `lock acquired: harness pid 40972`, listed `(none)` under work under way, `ABSENT` for `data/backlog.md`, no orphan status logs, and `AFK absent`, and its deferred stage completed the network checks off the blocking path.
+   It started the trial home's own local fleet API and wrote a fresh `state/` of session records.
 
-6. Record the switch: the trial home runs `c/main` at `43bf6d3d`, its September trial state is archived at `data/archive-2026-09-trial/`, and its `origin` is this fork.
+6. Record the switch: the trial home runs `c/main` at `0491f54c`, its trial state is archived at `data/archive-2026-09-trial/` with its manifest, and its `origin` is this fork.
+
+Three lines from that digest are worth a later shakedown session's attention; none of them blocked the switch or the digest.
+
+- `TANGLE: primary checkout on feature branch 'c/main' (expected 'main')`.
+  `c/main` is a named branch that is not the clone's default branch, and `bin/fm-tangle-lib.sh` alarms on exactly that in a primary checkout, whose stated remedy is `git -C <root> checkout main` - which would undo this switch.
+  The same library documents detached HEAD as the legitimate off-default posture for every non-primary checkout, so `git -C /Users/evanagee/Sites/firstmate-trial checkout --detach origin/c/main` pins the same commit silently and is a one-command alternative to the named branch left in place here.
+  The alarm is advisory: it prints a banner on fleet actions and never blocks a spawn, a sweep, or the digest.
+- `CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs non-empty class`.
+  The trial home keeps a `config/crew-dispatch.json` from the old fork whose rules carry `when` and `use` and no `class`, which `bin/fm-dispatch-validate.sh` on `c/main` rejects.
+  `config/` is deliberately outside the archive step, so that file survived the switch untouched and still governs dispatch in the trial home.
+- `FLEET_SYNC: agee-dev-dashboard: skipped: not a clone root`.
+  `projects/agee-dev-dashboard` holds no `.git`, so the fleet sync refuses it and git commands there would act on the trial home itself, which is why the sync reported that it would act on the home.
 
 ### The rideable fixes from the inventory paragraph
 
@@ -293,6 +311,7 @@ Two files are shared by more than one feature and are assigned to their primary 
 
 `bin/fm-test-run.sh` is the root's single test runner; its own header owns every mode, flag, and marker line.
 Its selection mode `--all` runs the complete behavior suite, 219 scripts, strictly serially.
+That count belongs to the C0-time base: the C0 worktree at `44754565` and the `c/main` it branched from print 219 script paths, while the published `c/main` at `0491f54c` that the trial home now runs prints 249, because the port tickets landed 30 further test scripts after this baseline was measured.
 CI never runs `--all`; `.github/workflows/ci.yml` splits the same suite into these jobs:
 
 | CI job | Command | What it runs |
@@ -313,6 +332,7 @@ The complete local run on this Mac, from a clean `c/main` worktree, was `bin/fm-
     FM_TEST_SUMMARY total=219 failed=18 skipped_gate=28 duration_ms=14813624
 
 That is 4 hours 7 minutes of wall clock (13:04:21 to 17:11:14 on 2026-09-21), on a Mac that was already carrying a load average near 40 from the live fleet and other captain work, so the timing is an upper bound rather than a clean-machine measurement; 28 of the 219 scripts gate-skipped for the reasons the runner prints (live harness opt-in not set, `cmux` not installed, and the like).
+The baseline below therefore describes the pre-port suite; no full run of the 249-script suite on today's `c/main` has been recorded.
 
 Eighteen scripts failed.
 Each was then re-run alone in the same clean `c/main` worktree; the table records whether it passed alone and the classification the brief asks for.
