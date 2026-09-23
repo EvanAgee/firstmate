@@ -38,6 +38,7 @@ SECTION9_CORE = [
     "Read them as evidence",
     "Every escalation must stand alone",
     "Lead directly with concrete evidence",
+    "Use the same evidence-first form",
     "Reach the captain immediately for:",
     "Work ready for their review",
     "Finished investigation findings",

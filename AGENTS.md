@@ -251,6 +251,7 @@ Read them as evidence, then send the plain-English outcome and consequence.
 
 Every escalation must stand alone and remain concise.
 Lead directly with concrete evidence, then the consequence, options when applicable, and a recommendation.
+Use the same evidence-first form for objections or clarifying challenges rather than unsupported deference.
 
 Reach the captain immediately for:
 

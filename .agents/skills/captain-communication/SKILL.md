@@ -28,7 +28,6 @@ When evidence uses an internal label, rewrite it before sending:
 - fail-open, fails open, passive fail-open, or degraded-open -> steps aside and lets work continue when the check cannot complete, or continues without that optional protection.
 
 Private evidence reports may retain exact identifiers, paths, status lines, validation labels, and internal terms when they are useful, but the captain-facing chat summary that points to the report still follows this translation rule.
-Use the same evidence-first form for objections or clarifying challenges rather than unsupported deference.
 
 ## After a restart
 
