@@ -10,7 +10,8 @@
 # No match, detached HEAD, an unreadable forge, forge failure, or malformed forge output stays silent.
 # A missing or unreadable worktree, an arm failure, or multiple exact matches queues a durable task wake before progress advances.
 # announce extracts one canonical GitHub PR or GitLab MR URL from the supplied status line and arms it through the same path.
-# Existing pr= metadata is always left alone, and secondmate announcements are always skipped.
+# Both commands skip a task that already records pr=, so existing metadata is always left alone and a
+# done line for a merged PR never re-arms its retired poll. Secondmate announcements are always skipped.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -334,6 +335,7 @@ fm_pr_autoarm_announce() {
   meta="$STATE/$task.meta"
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
   [ "$(fm_pr_autoarm_meta_field "$meta" kind)" != secondmate ] || return 0
+  fm_pr_autoarm_meta_has_pr "$meta" && return 0
   url=$(fm_pr_announced_url "$line") || return 0
   fm_pr_autoarm_arm "$task" "$url"
 }

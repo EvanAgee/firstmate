@@ -604,6 +604,43 @@ grep -qxF 'different-task https://github.com/acme/widget/pull/84' "$dir/arm.log"
   || fail "a successor watcher did not retry the failed announcement: attempts=$(cat "$dir/arm.attempts"), output=$(cat "$dir/second-watch.out")"
 pass "announcement cursors retry without another status append"
 
+dir=$(make_case merged-announcement)
+cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_FORGE_LOG"
+case "$*" in
+  *'--json state'*) printf '%s\n' MERGED ;;
+  *headRefOid*) printf '%s\n' 0123456789abcdef0123456789abcdef01234567 ;;
+  *'pr edit'*) sleep 3 ;;
+esac
+SH
+printf '%s\n' 'pr=https://github.com/acme/widget/pull/65' >> "$dir/home/state/different-task.meta"
+chmod 0600 "$dir/home/state/different-task.meta"
+printf '%s\n' 'done: PR https://github.com/acme/widget/pull/65 merged' \
+  > "$dir/home/state/different-task.status"
+FM_HOME="$dir/home" \
+  FM_STATE_OVERRIDE="$dir/home/state" \
+  FM_TEST_FORGE_LOG="$dir/forge.log" \
+  FM_PR_AUTOARM_ANNOUNCE_TIMEOUT=1 \
+  FM_GUARD_GRACE=999999 \
+  FM_CHECK_INTERVAL=999999 \
+  FM_HEARTBEAT=999999 \
+  FM_GH_HEALTH_PROBE_CMD=true \
+  FM_SIGNAL_GRACE=0 \
+  FM_POLL=0.1 \
+  PATH="$dir/fakebin:$BASE_PATH" \
+  "$WATCH" > "$dir/watch.out"
+[ ! -e "$dir/home/state/different-task.check.sh" ] \
+  || fail "a done line for an already-recorded PR re-armed its retired merge poll"
+[ ! -s "$dir/forge.log" ] \
+  || fail "a done line for an already-recorded PR reached the forge: $(tr '\n' ';' < "$dir/forge.log")"
+pass "a merged PR's done line never re-arms its retired poll"
+cursor_offset=
+read -r _ cursor_offset _ < "$dir/home/state/.pr-autoarm-status-different-task.cursor" 2>/dev/null || true
+[ "$cursor_offset" = "$(wc -c < "$dir/home/state/different-task.status" | tr -d ' ')" ] \
+  || fail "the announcement cursor did not pass an already-recorded PR's done line: offset=${cursor_offset:-none}"
+pass "an already-recorded PR's done line advances the announcement cursor"
+
 dir=$(make_case secondmate-sweep github secondmate)
 out=$(run_sweep "$dir" one)
 [ -z "$out" ] || fail "a secondmate sweep should be silent: $out"
