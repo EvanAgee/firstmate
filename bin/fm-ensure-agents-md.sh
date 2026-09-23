@@ -18,6 +18,12 @@
 # filesystem (issue #389). The real-file pointer also eliminates the old
 # uppercase-literal-target dangling-symlink hazard that a CLAUDE.md -> AGENTS.md
 # link would have carried for that same mismatch.
+# Opt-out: a project whose own tooling reads CLAUDE.md or AGENTS.md as its
+# instructions carries the exact line <!-- fm-ensure-agents-md: off --> in
+# either file. The script then writes nothing, neither pointer nor section nor
+# promotion, and reports skipped. The marker lives in the project's tracked
+# memory file so it reaches every worktree with no firstmate-private config and
+# no new tracked file.
 # This is a worktree utility for crewmates, not a supervision script, so it does
 # not call fm-guard.sh.
 # Usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
@@ -42,6 +48,12 @@ cd "$DIR"
 
 AGENTS=AGENTS.md
 CLAUDE=CLAUDE.md
+
+OPT_OUT='<!-- fm-ensure-agents-md: off -->'
+if grep -D skip -Fqsx -e "$OPT_OUT" -e "$OPT_OUT"$'\r' -- "$AGENTS" "$CLAUDE"; then
+  echo "skipped: $DIR opts out with $OPT_OUT; left AGENTS.md and CLAUDE.md untouched"
+  exit 0
+fi
 
 write_maintenance_section() {
   cat <<'EOF'

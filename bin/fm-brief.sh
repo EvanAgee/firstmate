@@ -72,7 +72,8 @@
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
-# self-governance section when a touched project AGENTS.md lacks it.
+# self-governance section when a touched project AGENTS.md lacks it, unless
+# the project carries that script's opt-out line.
 # Ship and scout briefs add a Working directory section: reach a target with an
 # absolute path or `git -C <dir>` instead of a `cd` in a compound command,
 # because that shape can stall a Claude worker on a permission prompt it cannot
@@ -659,7 +660,7 @@ $((NEXT_SHIP_RULE + 7)). Never run the 1Password CLI (\`op run\`, \`op read\`, \
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
 Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
-If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
+If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass, unless the project carries that script's opt-out line.
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
 
 $DOD

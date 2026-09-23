@@ -353,6 +353,60 @@ test_lowercase_agents_md_refuses_case_fragile_pointer() {
   pass "fm-ensure-agents-md.sh: refuses a case-variant lowercase agents.md (issue #389)"
 }
 
+test_opt_out_agents_md_gets_no_pointer_or_section() {
+  local repo out before
+  repo="$TMP_ROOT/opt-out-agents-project"
+  mkdir -p "$repo"
+  printf '# Own harness\n\n<!-- fm-ensure-agents-md: off -->\n\nThis repo reads CLAUDE.md as its own instructions.\n' > "$repo/AGENTS.md"
+  before=$(cat "$repo/AGENTS.md")
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh failed on an opted-out AGENTS.md: $out"
+  assert_contains "$out" "skipped:" "opted-out project did not report skipped"
+  assert_absent "$repo/CLAUDE.md" "a CLAUDE.md was written into an opted-out project"
+  [ ! -L "$repo/CLAUDE.md" ] || fail "a CLAUDE.md symlink was written into an opted-out project"
+  [ "$(cat "$repo/AGENTS.md")" = "$before" ] || fail "an opted-out AGENTS.md was modified"
+  assert_no_grep "## Maintaining this file" "$repo/AGENTS.md" "self-governance section was injected into an opted-out AGENTS.md"
+  pass "fm-ensure-agents-md.sh: opted-out AGENTS.md gets no CLAUDE.md and no injected section"
+}
+
+test_opt_out_crlf_claude_md_is_not_promoted() {
+  local repo out
+  repo="$TMP_ROOT/opt-out-claude-project"
+  mkdir -p "$repo"
+  printf '# Own instructions\r\n<!-- fm-ensure-agents-md: off -->\r\n' > "$repo/CLAUDE.md"
+  cp "$repo/CLAUDE.md" "$TMP_ROOT/opt-out-claude-before"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh failed on an opted-out CRLF CLAUDE.md: $out"
+  assert_contains "$out" "skipped:" "opted-out CLAUDE.md project did not report skipped"
+  assert_absent "$repo/AGENTS.md" "an opted-out CLAUDE.md was promoted to AGENTS.md"
+  cmp -s "$repo/CLAUDE.md" "$TMP_ROOT/opt-out-claude-before" || fail "an opted-out CLAUDE.md was modified"
+  pass "fm-ensure-agents-md.sh: opted-out CRLF CLAUDE.md is left in place, not promoted"
+}
+
+test_fifo_claude_md_is_refused_without_hanging() {
+  local repo pid rc
+  repo="$TMP_ROOT/fifo-claude-project"
+  mkdir -p "$repo"
+  printf '# Agents memory\n' > "$repo/AGENTS.md"
+  mkfifo "$repo/CLAUDE.md"
+  "$ROOT/bin/fm-ensure-agents-md.sh" "$repo" > "$TMP_ROOT/fifo-out" 2>&1 &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    : > "$repo/CLAUDE.md"
+    wait "$pid"
+    fail "fm-ensure-agents-md.sh blocked reading a FIFO CLAUDE.md"
+  fi
+  wait "$pid"
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit for a FIFO CLAUDE.md"
+  assert_contains "$(cat "$TMP_ROOT/fifo-out")" "conflict:" "FIFO CLAUDE.md did not report a conflict"
+  pass "fm-ensure-agents-md.sh: refuses a FIFO CLAUDE.md without blocking on it"
+}
+
 test_created_agents_md_includes_self_governance
 test_fresh_setup_writes_real_claude_pointer
 test_promoted_claude_md_includes_self_governance
@@ -369,3 +423,6 @@ test_agents_md_symlink_is_refused
 test_wrong_target_symlink_is_refused
 test_non_regular_claude_md_is_refused
 test_lowercase_agents_md_refuses_case_fragile_pointer
+test_opt_out_agents_md_gets_no_pointer_or_section
+test_opt_out_crlf_claude_md_is_not_promoted
+test_fifo_claude_md_is_refused_without_hanging

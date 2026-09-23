@@ -883,6 +883,8 @@ test_ship_project_memory_wording() {
     "project-memory contract lost pointer-over-copy guidance"
   assert_grep "lacks \`## Maintaining this file\`, add that short self-governance section" "$brief" \
     "project-memory contract lost the self-governance add-in-same-pass rule"
+  assert_grep "unless the project carries that script's opt-out line" "$brief" \
+    "project-memory contract would have a crewmate hand-add the section to an opted-out project"
   pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
 }
 
