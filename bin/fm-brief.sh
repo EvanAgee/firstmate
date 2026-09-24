@@ -625,7 +625,7 @@ Before any code, write the spec at \`docs/specs/$ID.md\` in the shape of the \`t
 Lint it with \`$SPEC_LINT docs/specs/$ID.md\` and fix every fault it prints until it passes.
 Build against that spec, then prove every acceptance criterion in \`docs/proof/$ID.md\`, naming each id.
 Name the spec path in your done line.
-Before landing, firstmate points this brief at that spec, and the spec gate refuses the landing until your branch changes exactly one spec that lints clean and its proof names every id.
+Before landing, firstmate points this brief at that spec, and the spec gate refuses the landing until your branch changes that spec, the spec lints clean, and your proof names every id.
 EOF
 fi
 SPEC_SECTION=${SPEC_SECTION%$'\n'}

@@ -34,6 +34,7 @@ A `--matt-flow` brief requires `--spec`, because a Matt-flow brief declares its 
 
 A new command, `bin/fm-spec-point.sh <task>`, points a brief still on `Spec: to-spec phase` at the one spec its lane branch added or changed.
 It lints that spec first and refuses loudly when the branch changed no spec, more than one, or one that does not lint.
+[`fm-spec-point-design-specs.md`](fm-spec-point-design-specs.md) later replaced that count: the command now prefers the spec the brief names, looks in `docs/design/*-spec.md` too, and ignores changed files that do not lint.
 Firstmate runs it on its own before `bin/fm-merge-local.sh`, because the hook judges each command before that command runs.
 
 `bin/fm-merge-local.sh` lands past local changes in the project's main checkout when none of them touches a path the fast-forward changes.

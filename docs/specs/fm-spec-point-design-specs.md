@@ -111,5 +111,5 @@ None.
 
 Two behaviors here are the implementer's call, not the captain's words.
 A brief-named spec that fails the linter is refused rather than passed over for another candidate, because pointing a brief at a spec other than the one it asked for would hide the worker's broken spec.
-Only a backticked path in the `# Spec first` section counts as the brief naming a spec, because that is the one place the scaffold writes it.
+Only the first backticked spec path in the `# Spec first` section counts as the brief naming a spec, because the scaffold writes the spec path there first, and a later hand-added mention such as `docs/specs/MAP.md` must not win.
 This spec supersedes the counting rule in AC5 and AC6 of `docs/specs/fm-spec-gate-brief-and-landing.md`.
