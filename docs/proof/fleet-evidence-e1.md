@@ -2,7 +2,7 @@
 tags: [evidence, completion, proof, spec-lock]
 date: 2026-09-24
 issue: fleet-evidence-e1
-walked: e835d65ccfde068be989b6f6c16816635ed095ff
+walked: 517290b295a4110e90d9178aed599a456f811d45
 spec: /Users/evanagee/Sites/firstmate/data/scott-fleet-evidence-plan/tickets/2026-09-24-e1-recorded-runs.md
 ---
 
@@ -31,7 +31,7 @@ Same-user files are not a security boundary against a hostile process; the recor
 
 AC3: when a ship task requests verified completion, the fleet obtains an independent execution of each approved acceptance command on the exact reviewed revision, with executor and judge provenance distinct from the author, and refuses missing, mismatched, failed or incomplete runs.
 
-`capture` reads the exact commit's tree from the task's repository into a scratch checkout and runs the approved argv there, with no shell, under `env -i` with only `PATH`, a scratch `HOME` and a scratch `TMPDIR`, bounded by the approved timeout.
+`capture` reads the exact commit's tree from the task's repository into a scratch checkout and runs the approved argv there, with no shell and no stdin, under `env -i` with only `PATH`, a scratch `HOME` and a scratch `TMPDIR`, bounded by the approved timeout.
 It writes a started record before the command runs and the final record after, so an interrupted capture leaves a record with no exit.
 It records a timeout, a tracked file changed by the run, or output over the declared bound, and each of those can never verify.
 
@@ -49,13 +49,13 @@ Tests in `tests/fm-completion-evidence.test.sh`, each on its own fixture home an
 AC6: when the fleet publishes a verified completion result, it renders the exact executed command, reviewed revision, observed exit and captured output reference from the run record, and refuses absent or altered evidence bytes.
 
 `verify` prints, for each claim, lines rendered from the run record, never from the proof's prose.
-This is its output in the walk at `e835d65c`:
+This is its output in the walk at `517290b2`:
 
 ```
-verified: t1 at 588b8f4bfa5f5528434ed41346eed7a540f165ca (reviewed 9491b22657feb42576a00c05d232ae4de4941e41, base 89103ba9ee0eeac68eb2e1670f40ec1dd23e6d0a)
+verified: t1 at 8b2816af6f4cf58ab43215a1cfd3a85eac5bf715 (reviewed e55dc9eba22a38f922854b8feec6d9ca149b1a22, base 08bcf1454f6cfbe16d927a3cee1664a6ce4b00f2)
 AC1 docs/specs/value.md: run t1-r2 by v1, judged t1-j2 by v1 (supported)
   Ran: node test/value.mjs
-  Revision: 9491b22657feb42576a00c05d232ae4de4941e41
+  Revision: e55dc9eba22a38f922854b8feec6d9ca149b1a22
   Exit: 0
   Observed: stdout docs/proof/t1.evidence/t1-r2.stdout (9 bytes, sha256 e41cdd0474e463c82e1bda285008ad1d002ebc878fe67155b4f706608c5aa98a)
   Observed: stderr docs/proof/t1.evidence/t1-r2.stderr (0 bytes, sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)
@@ -155,13 +155,13 @@ Their red is shown by the controls below, which put each defect back.
 
 ## Controls
 
-Each control copied `bin/` and `tests/` into a throwaway directory, applied one mutation to the copy's `bin/fm-evidence.sh`, and ran only the named test there; the worktree was never edited.
+Each control ran at `517290b2`: it copied `bin/` and `tests/` into a throwaway directory, applied one mutation to the copy's `bin/fm-evidence.sh`, and ran only the named test there; the worktree was never edited.
 The unmutated copy passed: `none: exit 0: ok - AC3: an independent run of the approved command on the reviewed revision verifies`.
 
 | AC | Mutation | Result |
 |---|---|---|
 | AC3 | Take the executor from the manifest instead of the run record (trust a worker-supplied executor field) | `not ok - ac3-author: refusal did not name the reason (missing: 'executor: run t1-r1 was executed by t1')` |
-| AC3 | Match the run's revision by ancestry instead of equality | `not ok - ac3-rev: refusal did not name the reason (missing: 'revision: run t1-r1 ran on 3099ad47d80fa6ba08342bfa094067828043ec78, not the reviewed revision 0958af16e8539843e09e551058c7817f8c032832')` |
+| AC3 | Match the run's revision by ancestry instead of equality | `not ok - ac3-rev: refusal did not name the reason (missing: 'revision: run t1-r1 ran on 8f1f8c5208a9629776a4c09abc1096b0ecafdcee, not the reviewed revision 6b93e28e66ccdd8f7984302919ad66059c0a44a0')` |
 | AC3 | Drop `env -i` so the caller's environment reaches the run | `not ok - ac3-env: SKIP_TESTS or a .env reached the run: skipped` |
 | AC3 | Run in the author's worktree instead of the scratch checkout | `not ok - ac3-env: SKIP_TESTS or a .env reached the run: skipped` |
 | AC3 | Drop the wrapper that records the command's own exit status | `not ok - ac3-signal: completion should be refused: expected exit 1, got 0` |
@@ -175,7 +175,7 @@ In the two AC3 provenance rows the claim was still refused, by the separate chec
 
 ## What I walked
 
-I walked commit `e835d65c` on macOS 27.0 with GNU bash 5.3.15, git 2.54.0 and node 22.22.0, running the real `bin/fm-evidence.sh` against a fresh scratch firstmate home and a synthetic project under the system temp directory, with `GIT_CONFIG_GLOBAL=/dev/null` and no network.
+I walked commit `517290b2` on macOS 27.0 with GNU bash 5.3.15, git 2.54.0 and node 22.22.0, running the real `bin/fm-evidence.sh` against a fresh scratch firstmate home and a synthetic project under the system temp directory, with `GIT_CONFIG_GLOBAL=/dev/null` and no network.
 The project's default branch held a constant-zero program at B, and the author's lane fm/t1 committed the doubling repair as C.
 The author t1 and the verifier v1 were recorded tasks, each with its own worktree of that project.
 
@@ -208,7 +208,7 @@ It also says that a run from the author's worktree, including one by a sub-agent
 ## Checks run locally
 
 - `bin/fm-lint.sh bin/fm-evidence.sh tests/fm-completion-evidence.test.sh` printed only `fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)`.
-- `bash tests/fm-completion-evidence.test.sh` at `e835d65c` printed 23 `ok` lines and no `not ok`.
+- `bash tests/fm-completion-evidence.test.sh` at `517290b2` printed 23 `ok` lines and no `not ok`.
 - `bin/fm-test-run.sh --check-coverage` printed `FM_TEST_COVERAGE ok total=197 parallel=24 serial=161 serial_shards=8 herdr=12`, with the new test in the portable-serial lane.
 - `bin/fm-doc-audience-check.sh` on the final tree printed `fm-doc-audience-check: ok surfaces=159 local_links=310`, and `tests/fm-documentation-audiences.test.sh` printed three `ok` lines.
 - `npx unslop` on the changed shell and Markdown files printed `No supported files found.`
