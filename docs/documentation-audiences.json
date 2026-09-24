@@ -596,6 +596,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/fleet-evidence-e3.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/proof/fm-stale-reason-daemon-parse.md",
       "audience": "maintainer-verification"
     },
