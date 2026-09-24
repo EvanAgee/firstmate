@@ -21,7 +21,8 @@
 #
 # capture runs the approved argv, with no shell, in a scratch checkout of the
 # exact commit's tree read from the task's repository, under a clean
-# environment (PATH, a scratch HOME and TMPDIR only), with the approved timeout.
+# environment (PATH, a scratch HOME and TMPDIR only), with no stdin and the
+# approved timeout.
 # Neither the caller's environment nor any untracked file (such as .env) in any
 # worktree reaches the run. A run that times out, is interrupted, exceeds the
 # output bound or changes a tracked file is recorded as such and never verifies.
@@ -120,6 +121,7 @@ load_task() {
   EV="$DATA/$TASK/evidence"
   WT=$(meta_get "$TASK" worktree)
   PROJECT=$(meta_get "$TASK" project)
+  [ -n "$WT" ] || die "$TASK's meta records no worktree"
   GD=$(git -C "$WT" rev-parse --absolute-git-dir 2>/dev/null) || die "cannot read $TASK's repository at $WT"
 }
 
@@ -235,7 +237,7 @@ cmd_capture() {
   # reports a command killed by a signal as exit 0.
   # shellcheck disable=SC2016  # Expanded by the wrapper shell, not here.
   (cd "$copy" && fm_run_timed "$timeout" env -i PATH="$PATH" HOME="$SCRATCH/home" TMPDIR="$SCRATCH/tmp" \
-    bash -c '"$@"; printf %s "$?" > "$0"' "$SCRATCH/status" "${argv[@]}") > "$dir/stdout" 2> "$dir/stderr"
+    bash -c '"$@"; printf %s "$?" > "$0"' "$SCRATCH/status" "${argv[@]}") < /dev/null > "$dir/stdout" 2> "$dir/stderr"
   rc=$?
   [ "$rc" -eq 124 ] || [ ! -s "$SCRATCH/status" ] || rc=$(cat "$SCRATCH/status")
   GIT_INDEX_FILE="$idx" g --work-tree="$copy" update-index -q --refresh > /dev/null 2>&1
