@@ -78,7 +78,17 @@ OBSERVE_ONLY_TOOLS='taskoutput taskstop taskget tasklist cronlist bashoutput kil
 # widen by accident.
 PLAN_ONLY_TOOLS='taskcreate taskupdate'
 
+# Exact lowercase tool names for Claude Code's session messaging, which lets one
+# firstmate home coordinate with another home's live primary session.
+# listagents only lists sessions and is always allowed. sendmessage can also
+# resume a finished subagent by name, reach a cloud or other-machine session,
+# or carry a shutdown request, so it is allowed only when send_target_is_peer_home
+# confirms a plain-text message to a live local session in a firstmate primary
+# home. Exact names only, like the two lists above.
+MESSAGING_ONLY_TOOLS='listagents sendmessage'
+
 TOOL=""
+PAYLOAD=""
 TOOL_SET=0
 CLAUDE_MODE=0
 
@@ -186,16 +196,50 @@ STATE=${FM_STATE_OVERRIDE:-$FM_HOME/state}
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
-# Name the dedicated scout entry point only when this home carries it; degrade
-# to the two-step brief-then-spawn path when it does not, rather than naming a
-# script that is not there.
-if [ -f "$FM_ROOT/bin/fm-scout.sh" ]; then
-  ROUTE='first classify the work under the AGENTS.md intake contract: work already classified as a scout goes to bin/fm-scout.sh "<question>" [project], while authorized ship work and its bounded research go to bin/fm-brief.sh then bin/fm-spawn.sh'
-else
-  ROUTE='first classify the work under the AGENTS.md intake contract, then use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched work'
-fi
+# Return 0 when the SendMessage payload carries a plain-text message (or none,
+# for a pure idle subscription) to a name that exactly one live Claude Code
+# session on this machine holds, and that session's cwd is a genuine firstmate
+# primary home. Claude Code records each live local session as
+# <config dir>/sessions/<pid>.json with its name, pid, and cwd; a subagent, a
+# cloud session, and another machine's session have no such record, so they
+# never resolve. A " [ref]" suffix is refused because the hook cannot map a ref
+# to a local record, and a ref can select a same-named remote session.
+send_target_is_peer_home() {
+  local to rec pid cwd peer="" count=0
+  to=$(printf '%s' "$PAYLOAD" | jq -r '
+    select((.tool_input.message | type) as $t | $t == "string" or $t == "null")
+    | .tool_input.to | strings' 2>/dev/null) || return 1
+  case "$to" in ''|*'['*) return 1 ;; esac
+  # One jq per record: a record caught mid-rewrite would abort a multi-file read.
+  for rec in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json; do
+    IFS=$'\t' read -r pid cwd < <(jq -r --arg to "$to" \
+      'select(.name == $to) | [.pid, .cwd] | @tsv' "$rec" 2>/dev/null) || continue
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill -0 "$pid" 2>/dev/null || continue
+    count=$((count + 1))
+    peer=$cwd
+  done
+  [ "$count" -eq 1 ] && fm_primary_scope_matches "$peer" "$peer/state"
+}
 
-REASON="[subagent-dispatch] the firstmate primary dispatches through the fleet, not the harness's own delegation tools: work started that way has no durable fleet record, leaves every firstmate guard inert, and dies with this session. Instead, $ROUTE (blocked tool: $TOOL, delegation-shaped on \"$MATCHED\"). Launch the session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."
+case " $MESSAGING_ONLY_TOOLS " in
+  *" $NORMALIZED "*)
+    [ "$NORMALIZED" = sendmessage ] || exit 0
+    ! send_target_is_peer_home || exit 0
+    REASON="[subagent-dispatch] SendMessage from a firstmate primary may only carry a plain-text message to the live session of another firstmate primary home on this machine, addressed by the bare name ListAgents prints; it never reaches a subagent, a cloud session, or a crewmate. Steer a crewmate with bin/fm-send.sh and dispatch new work with bin/fm-brief.sh then bin/fm-spawn.sh (blocked tool: $TOOL, delegation-shaped on \"$MATCHED\"). Launch the session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."
+    ;;
+  *)
+    # Name the dedicated scout entry point only when this home carries it;
+    # degrade to the two-step brief-then-spawn path when it does not, rather
+    # than naming a script that is not there.
+    if [ -f "$FM_ROOT/bin/fm-scout.sh" ]; then
+      ROUTE='first classify the work under the AGENTS.md intake contract: work already classified as a scout goes to bin/fm-scout.sh "<question>" [project], while authorized ship work and its bounded research go to bin/fm-brief.sh then bin/fm-spawn.sh'
+    else
+      ROUTE='first classify the work under the AGENTS.md intake contract, then use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched work'
+    fi
+    REASON="[subagent-dispatch] the firstmate primary dispatches through the fleet, not the harness's own delegation tools: work started that way has no durable fleet record, leaves every firstmate guard inert, and dies with this session. Instead, $ROUTE (blocked tool: $TOOL, delegation-shaped on \"$MATCHED\"). Launch the session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."
+    ;;
+esac
 
 json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '

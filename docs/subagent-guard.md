@@ -47,7 +47,7 @@ agent  subagent  task  workflow  cron  schedul  worktree
 delegate  spawn  dispatch  handoff  remote  sendmessage  monitor
 ```
 
-Three exclusions keep the shape test from producing false positives.
+Four exclusions keep the shape test from producing false positives.
 
 - A name beginning `mcp__` is never classified.
   An MCP server chooses its own tool names, a task or agent noun there is common, and it has no bearing on fleet dispatch.
@@ -60,12 +60,37 @@ Three exclusions keep the shape test from producing false positives.
   That list has no executor: it spawns no agent, allocates no worktree, registers no schedule, and starts nothing that could outlive the session or escape a firstmate guard.
   So it is not the "work, agent, schedule, or isolated workspace that firstmate would not know about" the guard exists to stop, and the stem match on `task` is a false positive rather than a policy.
   The cost of the false positive was concrete: the primary could not track its own plan, and the deny text told it to run `bin/fm-brief.sh` and `bin/fm-spawn.sh` to create a todo entry.
+- `MESSAGING_ONLY_TOOLS`: the exact names `listagents` and `sendmessage`, Claude Code's session messaging.
+  `listagents` is allowed outright, and `sendmessage` is allowed only for the peer-home target that "Cross-home session messaging" below defines.
 
-Both exclusion lists match the whole normalized name, never a substring, so neither can widen by accident: `TaskCreateAgent` and `RemoteTaskCreate` stay denied.
+All three exclusion lists match the whole normalized name, never a substring, so none can widen by accident: `TaskCreateAgent`, `RemoteTaskCreate`, and `SendMessageRemote` stay denied.
 Folding the two lists together would be the drift risk, because the observe-or-stop rationale is not true of a tool that writes.
 
 The shipped guard fires on every delegation-shaped name that reaches it, including future names that no deny list knows about yet.
 That future-name behavior is the reason the tracked matcher must match all tools and let the script filter.
+
+## Cross-home session messaging
+
+Two firstmate homes on one machine coordinate by messaging each other's live primary session with Claude Code's `ListAgents` and `SendMessage`.
+A home messages a peer home only for cross-home coordination: a handoff, an answer, or a note such as "I'm touching path X".
+A message never replaces a brief, a status line, or the backlog: handed-off work still enters the receiving home's backlog and ships through its own brief and spawn, and a crewmate is still steered with `bin/fm-send.sh`.
+
+`SendMessage` is not a pure messaging tool, which is why the guard does not allow it by name alone.
+Claude Code's own description of it says a send to a finished subagent's name resumes that subagent, that it accepts a raw subagent id and the address `main`, and that a bare name can reach a session on another machine or in the cloud.
+It also carries the legacy `shutdown_request` and `plan_approval_response` protocol objects.
+
+So in a primary home the guard allows `SendMessage` only when all of these hold, and refuses it otherwise:
+
+- `tool_input.message` is a string or absent, so a pure `notify_when_idle` subscription passes and a protocol object does not.
+- `tool_input.to` is a bare name with no ` [ref]` suffix, because the hook cannot map a ref to a local record and a ref can select a same-named remote session.
+- Exactly one record in `<config dir>/sessions/*.json` carries that `name` with a live `pid`, where the config dir is `CLAUDE_CONFIG_DIR` or `~/.claude`.
+  Claude Code writes one such record per live local session with its `name`, `pid`, and `cwd`, so a subagent, a cloud session, and another machine's session never resolve.
+- That record's `cwd` passes `fm_primary_scope_matches` with the peer's own `state/`, so the target is a genuine firstmate primary home, including a marked secondmate home, and never a crewmate's linked task worktree or a session outside firstmate.
+
+The `--tool` transport carries no target, so `SendMessage` through it stays refused.
+The refusal names the rule and points at `bin/fm-send.sh` for crewmates and `bin/fm-brief.sh` then `bin/fm-spawn.sh` for new work.
+Claude Code resolves a bare name to an in-process subagent before a peer session, but a primary cannot create one, because `Agent`, `Task`, and `Workflow` stay refused.
+The one residual is a skill that runs as a forked subagent, which this guard never classified, registered under a name equal to a peer home's session name.
 
 ## Recommended Local Claude Deny List
 
@@ -81,7 +106,6 @@ Claude primaries should add this deny list in untracked per-home local settings,
       "RemoteTrigger",
       "Monitor",
       "ScheduleWakeup",
-      "SendMessage",
       "EnterWorktree",
       "ExitWorktree",
       "CronCreate",
@@ -114,6 +138,7 @@ The hook deliberately allows those five, so the shipped guard can never strand a
 The two session-local todo tools are no longer recommended for local denial at all, because they write only the harness's session-local todo list, which has no executor and spawns nothing, so removing them from the schema removes no delegation power.
 Denying them there would instead reproduce at a stronger layer the exact false positive the shipped guard now avoids, leaving anyone who adopts this list verbatim unable to let a primary track its own plan.
 Narrowing the list further, including the five observe-or-stop names, is the captain's call, and this local list is the only layer that can remove a todo tool from the primary's schema.
+`SendMessage` and `ListAgents` are left off the list because they carry cross-home session messaging, and the hook already narrows `SendMessage` to a peer home's live session; a home whose local list still denies `SendMessage` cannot message a peer until that entry is removed.
 
 `permissions.allow` is a pre-approval list, not an availability list, so there is no fail-closed positive allowlist available.
 That is why any fixed deny list is fail-open against future tools and why the shape-based guard still exists.
@@ -181,7 +206,7 @@ Applicability turns on one question: does the harness expose built-in delegation
 
 | Harness | Delegation surface | Status |
 | --- | --- | --- |
-| Claude | 16 known tools, listed above | Scoped guard wired and live-verified; untracked local deny list verified and recommended. |
+| Claude | the known tools listed above | Scoped guard wired and live-verified; untracked local deny list verified and recommended. |
 | Codex | none | Not applicable, verified empirically below. Codex 0.144.1 exposes no subagent, sub-task, or delegated-agent tool, so there is nothing to remove or intercept. `.codex/hooks.json` is unchanged. |
 | Grok | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
 | OpenCode | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
@@ -362,7 +387,7 @@ The live consequence is confirmed by the shipped-guard result above: Claude hono
 ## Automated validation
 
 `tests/fm-subagent-pretool-check.test.sh` owns the acceptance matrix and is registered in the `pure-contract-unit` family in `bin/fm-test-run.sh`.
-It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
+It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the messaging exclusion, where `ListAgents` passes, `SendMessage` passes only to a fixture live peer home, and every other target, a protocol object, the `--tool` form, and five near-miss names stay refused; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
 
 Run:
 
@@ -370,6 +395,13 @@ Run:
 bash -n bin/fm-subagent-pretool-check.sh
 bin/fm-lint.sh
 tests/fm-subagent-pretool-check.test.sh
+```
+
+`tests/fm-subagent-messaging-live-e2e.test.sh` is the opt-in live guard for cross-home messaging, in the `live-harness-optin` family.
+The session registry and message delivery it relies on are Claude Code behavior, so run it after every Claude Code upgrade:
+
+```sh
+FM_SUBAGENT_MESSAGING_LIVE_E2E=1 tests/fm-subagent-messaging-live-e2e.test.sh
 ```
 
 ## Known residual gap

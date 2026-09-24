@@ -199,6 +199,7 @@ family_for_basename() {
     fm-omp-secondmate-live-e2e.test.sh|fm-omp-worker-tmux-live-e2e.test.sh|\
     fm-opencode-primary-live-e2e.test.sh|fm-pi-primary-live-e2e.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
+    fm-subagent-messaging-live-e2e.test.sh|\
     fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-chrome-devtools-axi-live-e2e.test.sh)
       printf '%s\n' live-harness-optin

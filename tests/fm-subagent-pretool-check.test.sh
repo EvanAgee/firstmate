@@ -41,6 +41,19 @@ PLAN_ONLY_TOOLS='TaskCreate TaskUpdate'
 # assumed.
 PLAN_ONLY_NEAR_MISSES='TaskCreateAgent TaskCreateWorktree TaskUpdateAgent RemoteTaskCreate Task TaskCreator'
 
+# Names the messaging exclusion must NOT release: each contains ListAgents or
+# SendMessage, so only an exact-name match keeps them denied.
+MESSAGING_NEAR_MISSES='ListAgentsCreate SendMessages SendMessageRemote RemoteSendMessage AgentSendMessage'
+
+# Claude Code records each live local session as <config dir>/sessions/<pid>.json.
+# The fixture config dir holds hand-written records; a live record uses this
+# test shell's own pid, and a dead one uses a reaped child's pid.
+CLAUDE_CONFIG="$TMP_ROOT/claude-config"
+SESSIONS="$CLAUDE_CONFIG/sessions"
+PEER="$TMP_ROOT/peer"
+MESSAGING_REASON='live session of another firstmate primary home'
+mkdir -p "$SESSIONS"
+
 run_tool() {
   local tool=$1 rc=0
   shift
@@ -276,6 +289,134 @@ test_missing_jq_stdin_transport_fails_open() {
   pass "missing jq for stdin transport fails open rather than denying every tool call"
 }
 
+# ---------------------------------------------------------------------------
+# Cross-home session messaging: ListAgents and SendMessage to a peer home.
+# ---------------------------------------------------------------------------
+
+session_record() {  # <file-stem> <name> <pid> <cwd>
+  jq -nc --arg name "$2" --argjson pid "$3" --arg cwd "$4" \
+    '{pid: $pid, name: $name, cwd: $cwd, kind: "interactive"}' > "$SESSIONS/$1.json"
+}
+
+build_messaging_fixtures() {
+  local dead crew="$TMP_ROOT/peer-crew" plain="$TMP_ROOT/plain-session"
+  mkdir -p "$PEER/bin" "$PEER/state"
+  printf '# peer fixture\n' > "$PEER/AGENTS.md"
+  git -C "$PEER" init -q
+  git -C "$PEER" config user.name fixture
+  git -C "$PEER" config user.email fixture@example.test
+  git -C "$PEER" add AGENTS.md
+  git -C "$PEER" commit -qm fixture
+  git -C "$PEER" worktree add -q -b peer-crew "$crew"
+  mkdir -p "$crew/bin" "$crew/state"
+  mkdir -p "$plain/bin" "$plain/state"
+  git -C "$plain" init -q
+  (exit 0) &
+  dead=$!
+  wait "$dead"
+  session_record live-peer peer-home-7a "$$" "$PEER"
+  session_record crew crew-7b "$$" "$crew"
+  session_record plain plain-7c "$$" "$plain"
+  session_record dead gone-7d "$dead" "$PEER"
+  session_record twin-a twin-7e "$$" "$PEER"
+  session_record twin-b twin-7e "$$" "$PEER"
+  printf '{not-json' > "$SESSIONS/corrupt.json"
+}
+
+run_payload() {
+  local payload=$1 rc=0
+  : > "$OUT"
+  : > "$ERR"
+  printf '%s' "$payload" \
+    | env FM_ROOT_OVERRIDE="$PRIMARY" FM_HOME="$PRIMARY" FM_STATE_OVERRIDE="$STATE" \
+      CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG" "$CHECK" --claude > "$OUT" 2> "$ERR" || rc=$?
+  return "$rc"
+}
+
+send_payload() {  # <to> [message as JSON]
+  jq -nc --arg to "$1" --argjson message "${2:-\"handoff: I am touching bin/x.sh\"}" \
+    '{tool_name: "SendMessage", tool_input: {to: $to, message: $message}}'
+}
+
+expect_payload_allow() {
+  local label=$1 payload=$2 rc=0
+  run_payload "$payload" || rc=$?
+  [ "$rc" -eq 0 ] || fail "$label must allow, got exit $rc: $(cat "$ERR")"
+  [ ! -s "$OUT" ] && [ ! -s "$ERR" ] || fail "$label allow wrote output: $(cat "$OUT" "$ERR")"
+}
+
+expect_messaging_deny() {  # <label> then a payload, or --tool <name>
+  local label=$1 rc=0
+  shift
+  if [ "$1" = --tool ]; then
+    : > "$OUT"
+    : > "$ERR"
+    env FM_ROOT_OVERRIDE="$PRIMARY" FM_HOME="$PRIMARY" FM_STATE_OVERRIDE="$STATE" \
+      CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG" "$CHECK" --claude --tool "$2" > "$OUT" 2> "$ERR" || rc=$?
+  else
+    run_payload "$1" || rc=$?
+  fi
+  [ "$rc" -eq 2 ] || fail "$label must deny with exit 2, got $rc"
+  [ ! -s "$OUT" ] || fail "$label deny wrote stdout: $(cat "$OUT")"
+  jq -e --arg reason "$MESSAGING_REASON" \
+    '.hookSpecificOutput.permissionDecision == "deny"
+     and (.systemMessage | startswith("[subagent-dispatch]") and contains("blocked tool: SendMessage") and contains($reason))' \
+    "$ERR" >/dev/null 2>&1 \
+    || fail "$label deny must name SendMessage and the peer-home rule: $(cat "$ERR")"
+}
+
+test_messaging_tools_list_sessions() {
+  expect_allow "session listing" ListAgents
+  expect_payload_allow "session listing over stdin" '{"tool_name":"ListAgents","tool_input":{}}'
+  pass "ListAgents only lists sessions, so a primary may use it"
+}
+
+test_send_message_reaches_a_live_peer_home() {
+  expect_payload_allow "plain-text message to a live peer home" "$(send_payload peer-home-7a)"
+  expect_payload_allow "idle subscription to a live peer home" \
+    '{"tool_name":"SendMessage","tool_input":{"to":"peer-home-7a","notify_when_idle":true}}'
+  pass "SendMessage reaches the live session of another firstmate primary home"
+}
+
+test_send_message_refuses_every_other_target() {
+  local to
+  for to in main researcher a1b2c3d4-e5f6 'peer-home-7a [0232ca]' crew-7b plain-7c gone-7d twin-7e ''; do
+    expect_messaging_deny "SendMessage to '$to'" "$(send_payload "$to")"
+  done
+  expect_messaging_deny "SendMessage with no target" '{"tool_name":"SendMessage","tool_input":{"message":"x"}}'
+  expect_messaging_deny "SendMessage through the --tool transport" --tool SendMessage
+  pass "SendMessage refuses subagents, main, refs, crewmate and non-firstmate sessions, dead and ambiguous names"
+}
+
+test_send_message_refuses_structured_messages() {
+  expect_messaging_deny "shutdown request to a peer home" \
+    "$(send_payload peer-home-7a '{"type":"shutdown_request","reason":"x"}')"
+  expect_messaging_deny "plan approval to a peer home" \
+    "$(send_payload peer-home-7a '{"type":"plan_approval_response","request_id":"r1","approve":true}')"
+  pass "SendMessage carries only plain text, never a lifecycle protocol object"
+}
+
+test_messaging_exclusion_is_exact_name() {
+  local tool
+  for tool in $MESSAGING_NEAR_MISSES; do
+    expect_deny "messaging near miss" "$tool"
+  done
+  pass "the messaging exclusion releases exactly ListAgents and SendMessage"
+}
+
+test_messaging_is_inert_outside_a_primary_home() {
+  local rc=0
+  : > "$OUT"
+  : > "$ERR"
+  send_payload main \
+    | env FM_ROOT_OVERRIDE="$TMP_ROOT/peer-crew" FM_HOME="$TMP_ROOT/peer-crew" \
+      FM_STATE_OVERRIDE="$TMP_ROOT/peer-crew/state" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG" \
+      "$CHECK" --claude > "$OUT" 2> "$ERR" || rc=$?
+  [ "$rc" -eq 0 ] || fail "a crewmate task worktree must keep every SendMessage, got exit $rc: $(cat "$ERR")"
+  pass "a crewmate in its task worktree keeps SendMessage unrestricted"
+}
+
+build_messaging_fixtures
 test_guard_denies_every_currently_known_delegation_tool
 test_guard_denies_hypothetical_future_tools
 test_guard_allows_ordinary_and_observe_only_tools
@@ -289,3 +430,9 @@ test_secondmate_home_is_in_scope
 test_stdin_transports_and_output_shapes
 test_malformed_transport_fails_open
 test_missing_jq_stdin_transport_fails_open
+test_messaging_tools_list_sessions
+test_send_message_reaches_a_live_peer_home
+test_send_message_refuses_every_other_target
+test_send_message_refuses_structured_messages
+test_messaging_exclusion_is_exact_name
+test_messaging_is_inert_outside_a_primary_home
