@@ -1505,7 +1505,35 @@ test_matt_flow_requires_a_spec() {
   pass "fm-brief.sh: --matt-flow requires --spec"
 }
 
+# Spec lock AC18: every ship brief tells the worker to name its spec in the
+# proof's front matter, so the landing check can follow the proof to its spec.
+test_ship_brief_requires_the_proof_spec_field() {
+  local home mode id brief line
+  home="$TMP_ROOT/proof-spec-field-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="spec-field-named-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --spec docs/specs/lock.md >/dev/null 2>&1 \
+      || fail "$mode: ship brief with --spec failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "In the front matter of \`docs/proof/$id.md\`, beside \`tags\`, \`date\`, \`issue\` and \`walked\`, add \`spec: docs/specs/lock.md\`" "$brief" \
+      "$mode: a brief with --spec did not require the proof's spec field naming that spec"
+
+    id="spec-field-first-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: ship brief without --spec failed to scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep "In the front matter of \`docs/proof/$id.md\`, beside \`tags\`, \`date\`, \`issue\` and \`walked\`, add \`spec: docs/specs/$id.md\`" "$brief" \
+      "$mode: a to-spec brief did not require the proof's spec field naming the spec it writes"
+    # The spec gate and fm-spec-point.sh read the first line starting "Spec:".
+    line=$(grep -m1 '^Spec:' "$brief")
+    [ "$line" = "Spec: to-spec phase" ] || fail "$mode: the spec field rule displaced the brief's Spec: line (got: $line)"
+  done
+  pass "fm-brief.sh: every ship brief requires the proof's spec: front matter field"
+}
+
 test_spec_option_writes_the_named_spec
+test_ship_brief_requires_the_proof_spec_field
 test_ship_brief_defaults_to_spec_first
 test_spec_option_is_ship_only
 test_matt_flow_requires_a_spec

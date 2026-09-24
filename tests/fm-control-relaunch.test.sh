@@ -436,6 +436,25 @@ test_relaunch_appends_the_progress_note_to_the_instructions() {
   pass "fm-control relaunch: the progress note lands in the instructions the replacement reads"
 }
 
+# Spec lock AC18: a relaunch reuses the scaffolded brief, so the replacement
+# still reads the proof's spec field rule beside the progress note.
+test_relaunch_keeps_the_proof_spec_field_rule() {
+  local dir out rc brief
+  dir=$(new_case specfield rl40)
+  add_ship_task "$dir" rl40 claude
+  rm -f "$dir/home/data/rl40/brief.md"
+  FM_HOME="$dir/home" "$ROOT/bin/fm-brief.sh" rl40 some-proj --mode no-mistakes --spec docs/specs/lock.md >/dev/null 2>&1 \
+    || fail "the ship brief failed to scaffold"
+  printf 'picked up after the crash\n' > "$dir/note.txt"
+  out=$(run_control "$dir" rl40 relaunch --note-file "$dir/note.txt"); rc=$?
+  expect_code 0 "$rc" "relaunch should succeed"$'\n'"$out"
+  brief="$dir/home/data/rl40/brief.md"
+  assert_grep "add \`spec: docs/specs/lock.md\`" "$brief" \
+    "the relaunched brief lost the proof's spec field rule"
+  assert_grep "picked up after the crash" "$brief" "the note file text should reach the replacement"
+  pass "fm-control relaunch: the replacement reads the proof's spec field rule"
+}
+
 test_relaunch_requires_a_note_for_a_ship_task() {
   local dir out rc before
   dir=$(new_case nonote rl3)
@@ -1484,6 +1503,7 @@ test_relaunch_preserves_durable_task_metadata
 test_relaunch_serializes_concurrent_durable_metadata_publication
 test_disabled_relaunch_clears_prior_trace_context
 test_relaunch_appends_the_progress_note_to_the_instructions
+test_relaunch_keeps_the_proof_spec_field_rule
 test_relaunch_requires_a_note_for_a_ship_task
 test_harness_switch_moves_the_record_and_clears_prior_wiring
 test_harness_switch_does_not_carry_the_old_profile_axes

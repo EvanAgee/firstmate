@@ -46,6 +46,9 @@
 #   docs/proof/<task-id>.md, and names the spec path in its done line. Before
 #   landing, bin/fm-spec-point.sh points that brief at the spec the branch wrote.
 #   The captain's spec-gate hook reads the first "Spec:" line in the brief.
+#   Either way the brief tells the worker to add "spec: <path>" to the proof's
+#   front matter beside tags, date, issue and walked: the --spec value as
+#   written, or docs/specs/<task-id>.md in the to-spec phase.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -610,12 +613,14 @@ MATT_FLOW_SECTION=$'\n'"$MATT_FLOW_SECTION"$'\n'"$MATT_FLOW_MODE_SECTION"$'\n'
 fi
 
 if [ "$SPEC_SET" -eq 1 ]; then
+PROOF_SPEC=$SPEC
 IFS= read -r -d '' SPEC_SECTION <<EOF || true
 # Spec
 Spec: $SPEC
 Name every acceptance criterion id of that spec in \`docs/proof/$ID.md\` on your branch, because the spec gate refuses the landing until the proof names each one.
 EOF
 else
+PROOF_SPEC=docs/specs/$ID.md
 SPEC_LINT=${FM_SPEC_LINT:-$HOME/.agents/skills/spec-lint/spec-lint}
 IFS= read -r -d '' SPEC_SECTION <<EOF || true
 # Spec first
@@ -629,6 +634,7 @@ Before landing, firstmate points this brief at that spec, and the spec gate refu
 EOF
 fi
 SPEC_SECTION=${SPEC_SECTION%$'\n'}
+SPEC_SECTION+=$'\n'"In the front matter of \`docs/proof/$ID.md\`, beside \`tags\`, \`date\`, \`issue\` and \`walked\`, add \`spec: $PROOF_SPEC\`, because the landing check follows that field to the spec."
 
 SHIP_SCOPE_RULE=
 NEXT_SHIP_RULE=7
