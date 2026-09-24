@@ -12,27 +12,35 @@
 # from, independent of the code under review. Firstmate declares each defect the
 # task claims to repair with `defect`: the symptom its report shows, the
 # approved regression and original reproducer commands and the regression test's
-# path, or the reason no seam can pin it. The author renders that evidence
-# into its lane with `attach` and names the manifest in its proof, and `verify`
-# resolves the committed claim against the records here and prints the
-# completion report.
+# path, or the reason no seam can pin it. Firstmate pins the independent
+# acceptance inputs, such as a golden file or the runner's policy, with `pin`:
+# it stores their bytes in this home. A change to a pinned input counts only
+# after the verifier reviews those exact bytes with `golden`, naming the behavior
+# change that justifies them; ordinary test files stay the author's to write.
+# `show` prints the approved commands, declared defects and selected pinned
+# inputs. The author renders that evidence into its lane with `attach` and names
+# the manifest in its proof, and `verify` resolves the committed claim against
+# the records here and prints the completion report.
 #
 # The actor behind every call is the recorded task whose worktree
 # (state/<id>.meta worktree=) holds the current directory, never an argument or
-# a committed field. `assign` and `defect` run only outside every task worktree,
-# so a worker cannot choose the command that grades it or the defect it answers.
+# a committed field. `assign`, `defect` and `pin` run only outside every task
+# worktree, so a worker cannot choose the command or the inputs that grade it or
+# the defect it answers, and only the assigned verifier runs `golden`.
 # Same-user files are not a security boundary against a hostile process; this
 # records who ran what, it does not attest it.
 #
 # capture runs the approved argv, with no shell, in a scratch checkout of the
 # exact commit's tree read from the task's repository, under a clean
 # environment (PATH, a scratch HOME and TMPDIR only), with no stdin and the
-# approved timeout.
+# approved timeout. The selected bytes of every pinned input replace whatever
+# the commit holds at that path (a changed file, a symlink, a new mode, or
+# nothing), so the task's copy never grades the run.
 # Neither the caller's environment nor any untracked file (such as .env) in any
 # worktree reaches the run. A run that times out, is interrupted, exceeds the
 # output bound or changes a tracked file is recorded as such and never verifies.
-# capture prints the run id and the paths of its captured output, which the
-# verifier reads before it judges.
+# capture prints the run id, the pinned inputs it graded with and the paths of
+# its captured output, which the verifier reads before it judges.
 #
 # verify requires, for the task's committed candidate P (the HEAD of the task's
 # recorded worktree), each of these, and names the field of any mismatch:
@@ -45,8 +53,9 @@
 #   - every approved command has a supported claim;
 #   - each claim's run is a record of this task in this home, executed by the
 #     assigned verifier (not the author) on exactly C, for the command still
-#     approved in the same form, the same spec blob and criterion, and it exited
-#     0 within its bounds without changing tracked files;
+#     approved in the same form, the same spec blob and criterion, graded with
+#     the pinned inputs selected now, and it exited 0 within its bounds without
+#     changing tracked files;
 #   - the captured output bytes here, the manifest's digests and the committed
 #     output files at P all agree, zero-length files included;
 #   - each claim's judge is a record of this task by the verifier, on C, against
@@ -57,20 +66,25 @@
 #     names a red run: the verifier's run of that command as approved, on a
 #     revision other than C holding the same regression test file as C, that
 #     exited non-zero with the symptom in its captured output; and a supported
-#     claim for its original reproducer. A defect with no seam stays unverified.
+#     claim for its original reproducer. A defect with no seam stays unverified;
+#   - each pinned input at C is exactly its selected version: the bytes and mode
+#     firstmate pinned, or the new bytes of the verifier's approved review of
+#     that change. A changed, deleted, renamed, re-moded or symlinked input with
+#     no such review keeps the task unverified.
 # The manifest's copies of run and judge fields are compared with the records;
 # a decision never rests on a committed field.
 #
-# This is the firstmate half of fleet evidence E1 and E2. Activation is off:
+# This is the firstmate half of fleet evidence E1, E2 and E3. Activation is off:
 # nothing calls verify on a real landing yet. The committed binding format is
 # specified in docs/proof/fleet-evidence-e1.md ("Binding contract"), the
 # contract the public spec-lock checker will validate, with the judge's oracle
 # and red run added in docs/proof/fleet-evidence-e2.md ("Binding contract
-# additions").
+# additions") and each run's pinned inputs in docs/proof/fleet-evidence-e3.md.
 #
-# Records live under data/<task>/evidence/: assignment.json,
-# runs/<task>-r<n>/{record.json,stdout,stderr} and judges/<task>-j<n>.json. Only
-# this script writes them.
+# Records live under data/<task>/evidence/: assignment.json (with the pins),
+# pins/<sha256> (pinned and reviewed bytes), runs/<task>-r<n>/{record.json,
+# stdout,stderr}, judges/<task>-j<n>.json and goldens/<task>-g<n>.json. Only this
+# script writes them.
 #
 # Usage:
 #   fm-evidence.sh assign <task> --verifier <task> --command-id <id> --spec <path> --ac <AC<n>>
@@ -78,6 +92,10 @@
 #   fm-evidence.sh defect <task> <D<n>> --symptom <text> --regression <command-id> --test <path>
 #                  --reproducer <command-id>
 #   fm-evidence.sh defect <task> <D<n>> --no-seam <reason>
+#   fm-evidence.sh pin <task> <path> --from <commit>
+#   fm-evidence.sh golden <task> <path> --revision <commit> --verdict approved|rejected
+#                  --justification <text>
+#   fm-evidence.sh show <task>
 #   fm-evidence.sh capture <task> --command-id <id> --revision <commit>
 #   fm-evidence.sh judge <task> --run <run-id> --base <commit> --verdict supported|unsupported
 #                  [--assertion <text> --expected <text> --source <text>] [--red <run-id>]
@@ -167,6 +185,38 @@ write_json() {  # <file> <json>
   printf '%s\n' "$2" > "$1.tmp.$$" && mv "$1.tmp.$$" "$1"
 }
 
+# blob_at <rev> <path> <out>: a regular file's bytes at <rev>, or failure.
+blob_at() {
+  local entry mode
+  entry=$(g ls-tree --full-tree "$1" -- "$2" 2>/dev/null)
+  mode=${entry%% *}
+  case "$mode" in 100644|100755) ;; *) return 1 ;; esac
+  [ "${entry#*$'\t'}" = "$2" ] || return 1
+  g cat-file blob "$1:$2" > "$3"
+}
+
+# entry_at <rev> <path>: print "<mode> <sha256>" of a regular file at <rev>,
+# leaving its bytes in $SCRATCH/entry, or fail.
+entry_at() {
+  blob_at "$1" "$2" "$SCRATCH/entry" || return 1
+  printf '%s %s' "$(g ls-tree --full-tree "$1" -- "$2" | cut -d' ' -f1)" "$(sha256_file "$SCRATCH/entry")"
+}
+
+# selection: the task's pinned inputs as a JSON array of {path, mode, sha256,
+# source}, sorted by path. Each starts at firstmate's pin (source: the commit it
+# was pinned from) and moves to the new bytes of each approved review of a
+# change from exactly its current version, in review order (source: the review).
+selection() {
+  local -a gs=()
+  if [ -d "$EV/goldens" ]; then shopt -s nullglob; gs=("$EV"/goldens/*.json); shopt -u nullglob; fi
+  jq -c --slurpfile g <(cat /dev/null ${gs[@]+"${gs[@]}"}) '
+    ($g | map(select(.verdict == "approved")) | sort_by(.id | sub(".*-g"; "") | tonumber)) as $g
+    | [.pins // {} | to_entries[] | .key as $p
+       | reduce ($g[] | select(.path == $p)) as $r ({path: $p, mode: .value.mode, sha256: .value.sha256, source: .value.from};
+           if $r.old.mode == .mode and $r.old.sha256 == .sha256
+           then {path: $p, mode: $r.new.mode, sha256: $r.new.sha256, source: $r.id} else . end)]' "$EV/assignment.json"
+}
+
 cmd_assign() {
   local verifier='' cid='' spec='' ac='' timeout=300 max=1048576 who decl file current
   load_task "${1:-}"
@@ -248,8 +298,85 @@ cmd_defect() {
   printf 'declared %s for %s\n' "$did" "$TASK"
 }
 
+cmd_pin() {
+  local path from who entry file
+  load_task "${1:-}"
+  path=${2:-}
+  [ "$#" -eq 4 ] && [ "$3" = --from ] || die "pin needs <task> <path> --from <commit>"
+  case "/$path/" in //|*//*|*/../*|*/./*) die "pin needs a path inside the repository" ;; esac
+  who=$(caller) || exit 2
+  [ -z "$who" ] || die "only firstmate pins acceptance inputs; $who is a recorded task"
+  file="$EV/assignment.json"
+  [ -f "$file" ] || die "approve $TASK's acceptance commands before pinning its inputs"
+  from=$(commit_of "$4") || die "cannot resolve $4 in $TASK's repository"
+  entry=$(entry_at "$from" "$path") || die "$path is not a regular file at $from"
+  { mkdir -p "$EV/pins" && cp "$SCRATCH/entry" "$EV/pins/${entry#* }"; } || die "cannot store the bytes of $path"
+  write_json "$file" "$(jq -S --arg p "$path" --arg from "$from" --arg mode "${entry% *}" --arg sha "${entry#* }" \
+    '.pins[$p] = {from: $from, mode: $mode, sha256: $sha}' "$file")" || die "cannot write $file"
+  printf 'pinned %s for %s: mode %s sha256 %s from %s\n' "$path" "$TASK" "${entry% *}" "${entry#* }" "$from"
+}
+
+cmd_golden() {
+  local path rev='' verdict='' why='' who old entry id
+  load_task "${1:-}"
+  path=${2:-}
+  shift 2 2>/dev/null || die "golden needs <task> <path>"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --revision) rev=${2:-}; shift 2 ;;
+      --verdict) verdict=${2:-}; shift 2 ;;
+      --justification) why=${2:-}; shift 2 ;;
+      *) die "unknown golden argument '$1'" ;;
+    esac
+  done
+  case "$verdict" in approved|rejected) ;; *) die "golden needs --verdict approved|rejected" ;; esac
+  [ -n "$why" ] || die "golden needs --justification: the behavior change that makes the new bytes right"
+  [ -f "$EV/assignment.json" ] || refuse "no acceptance commands are approved for $TASK"
+  who=$(caller) || exit 2
+  [ -n "$who" ] && [ "$who" = "$(jq -r '.verifier // ""' "$EV/assignment.json")" ] \
+    || die "only $TASK's verifier $(jq -r '.verifier // "(none)"' "$EV/assignment.json") reviews a change to a pinned input"
+  old=$(selection | jq -c --arg p "$path" 'first(.[] | select(.path == $p)) // empty') || die "cannot read $TASK's pinned inputs"
+  [ -n "$old" ] || refuse "$path is not a pinned input of $TASK"
+  rev=$(commit_of "$rev") || die "golden needs --revision <commit> in $TASK's repository"
+  entry=$(entry_at "$rev" "$path") || refuse "$path is not a regular file at $rev; only new bytes can be reviewed"
+  [ "$entry" != "$(jq -r '"\(.mode) \(.sha256)"' <<< "$old")" ] || refuse "$path at $rev is its selected version; there is no change to review"
+  cp "$SCRATCH/entry" "$EV/pins/${entry#* }" || die "cannot store the bytes of $path"
+  id=$(next_id "$EV/goldens" "$TASK-g" .json) || exit 2
+  write_json "$EV/goldens/$id.json" "$(jq -cn --arg id "$id" --arg task "$TASK" --arg path "$path" --arg who "$who" \
+    --arg rev "$rev" --argjson old "$old" --arg mode "${entry% *}" --arg sha "${entry#* }" --arg why "$why" \
+    --arg verdict "$verdict" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{version: 1, id: $id, task: $task, path: $path, reviewer: $who, revision: $rev,
+      old: {mode: $old.mode, sha256: $old.sha256, source: $old.source}, new: {mode: $mode, sha256: $sha, source: $rev},
+      justification: $why, verdict: $verdict, reviewed_at: $at}')" || die "cannot write $EV/goldens/$id.json"
+  printf 'golden %s %s %s: sha256 %s to %s, by %s\n' "$id" "$verdict" "$path" "$(jq -r .sha256 <<< "$old")" "${entry#* }" "$who"
+}
+
+cmd_show() {
+  local sel
+  load_task "${1:-}"
+  [ "$#" -eq 1 ] || die "show takes only <task>"
+  [ -f "$EV/assignment.json" ] || refuse "no acceptance commands are approved for $TASK"
+  sel=$(selection) || die "cannot read $TASK's pinned inputs"
+  jq --argjson pins "$sel" '{task, verifier, commands, defects: (.defects // {}), pins: $pins}' "$EV/assignment.json"
+}
+
+# place_pin <root> <path> <bytes> <mode>: write <bytes> at <path> under <root>,
+# replacing any file, symlink or directory there, through real directories
+# only; fails when a directory on the way is a symlink or a file.
+place_pin() {
+  local d=$1 rest=$2
+  while [ "${rest#*/}" != "$rest" ]; do
+    d="$d/${rest%%/*}"
+    rest=${rest#*/}
+    [ ! -L "$d" ] || return 1
+    [ -d "$d" ] || mkdir "$d" || return 1
+  done
+  rm -rf "${d:?}/$rest" && cp "$3" "$d/$rest" || return 1
+  if [ "$4" = 100755 ]; then chmod 755 "$d/$rest"; else chmod 644 "$d/$rest"; fi
+}
+
 cmd_capture() {
-  local cid='' rev='' decl who id dir copy idx spec spec_blob timeout max rc outcome exit_json changed base started a
+  local cid='' rev='' decl who id dir copy idx spec spec_blob timeout max rc outcome exit_json changed base started a sel mode sha
   local -a argv=()
   load_task "${1:-}"
   shift
@@ -272,6 +399,7 @@ cmd_capture() {
   timeout=$(jq -r .timeout <<< "$decl")
   max=$(jq -r .max_output <<< "$decl")
   while IFS= read -r -d '' a; do argv+=("$a"); done < <(jq -j '.argv[] | ., "\u0000"' <<< "$decl")
+  sel=$(selection) || die "cannot read $TASK's pinned inputs"
 
   id=$(next_id "$EV/runs" "$TASK-r") || exit 2
   dir="$EV/runs/$id"
@@ -282,12 +410,21 @@ cmd_capture() {
     && GIT_INDEX_FILE="$idx" g --work-tree="$copy" checkout-index -a -u; }; then
     die "cannot check out $rev for the run"
   fi
+  # The selected bytes of each pinned input replace whatever the revision holds
+  # at its path, and join the index so a run that changes them is caught.
+  while IFS=$'\t' read -r a mode sha; do
+    [ "$(sha256_file "$EV/pins/$sha")" = "$sha" ] || die "the stored bytes of the pinned $a are missing or altered"
+    { place_pin "$copy" "$a" "$EV/pins/$sha" "$mode" \
+      && GIT_INDEX_FILE="$idx" g --work-tree="$copy" update-index -q --add --replace -- "$a"; } \
+      || die "cannot place the pinned $a in $rev's tree"
+  done < <(jq -r '.[] | [.path, .mode, .sha256] | @tsv' <<< "$sel")
   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   base=$(jq -cn --arg id "$id" --arg task "$TASK" --arg who "$who" --arg repo "$PROJECT" --arg cid "$cid" \
     --argjson decl "$decl" --arg rev "$rev" --arg blob "$spec_blob" --argjson seq "${id##*-r}" --arg started "$started" \
+    --argjson pins "$sel" \
     '{version: 1, id: $id, task: $task, executor: $who, author: $task, repository: $repo, command_id: $cid,
       command_sha256: $decl.sha256, argv: $decl.argv, spec: $decl.spec, ac: $decl.ac, spec_blob: $blob,
-      revision: $rev, env: {policy: "clean", keys: ["HOME", "PATH", "TMPDIR"]}, timeout: $decl.timeout,
+      revision: $rev, pins: $pins, env: {policy: "clean", keys: ["HOME", "PATH", "TMPDIR"]}, timeout: $decl.timeout,
       max_output: $decl.max_output, sequence: $seq, started_at: $started,
       finished_at: null, exit: null, outcome: "started", changed_tracked: [], stdout: null, stderr: null}')
   write_json "$dir/record.json" "$base" || die "cannot write $dir/record.json"
@@ -320,6 +457,7 @@ cmd_capture() {
           stdout: {bytes: $ob, sha256: $os}, stderr: {bytes: $eb, sha256: $es}}' <<< "$base")" \
     || die "cannot write $dir/record.json"
   printf 'run %s %s exit=%s revision=%s by %s\n' "$id" "$outcome" "$exit_json" "$rev" "$who"
+  jq -r '.[] | "pinned: \(.path) mode \(.mode) sha256 \(.sha256) from \(.source)"' <<< "$sel"
   printf 'output: %s/stdout %s/stderr\n' "$dir" "$dir"
 }
 
@@ -401,7 +539,7 @@ cmd_attach() {
       claims: [range(0; $runs | length) as $i | {spec: $runs[$i].spec, spec_blob: $runs[$i].spec_blob, ac: $runs[$i].ac,
         state: $judges[$i].verdict, run: $runs[$i].id, judge: $judges[$i].id}],
       runs: [reduce ($runs + $reds)[] as $r ([]; if any(.[]; .id == $r.id) then . else . + [$r] end) | .[]
-        | {id, executor, command_id, argv, revision, exit, outcome, stdout: artifact(.; "stdout"), stderr: artifact(.; "stderr")}],
+        | {id, executor, command_id, argv, revision, exit, outcome, pins, stdout: artifact(.; "stdout"), stderr: artifact(.; "stderr")}],
       judges: [$judges[] | {id, judge, run, ac, revision, base, evidence, verdict, oracle, red}]
     } end') || refuse "cannot attach these records together"
   mkdir -p "$WT/docs/proof"
@@ -416,16 +554,6 @@ FAULTS=()
 fault() { FAULTS+=("$1: $2"); }
 
 proof_path() { case "/$1/" in /docs/proof/*) ;; *) return 1 ;; esac; case "/$1/" in *//*|*/../*|*/./*) return 1 ;; esac; }
-
-# blob_at <rev> <path> <out>: a regular file's bytes at <rev>, or failure.
-blob_at() {
-  local entry mode
-  entry=$(g ls-tree --full-tree "$1" -- "$2" 2>/dev/null)
-  mode=${entry%% *}
-  case "$mode" in 100644|100755) ;; *) return 1 ;; esac
-  [ "${entry#*$'\t'}" = "$2" ] || return 1
-  g cat-file blob "$1:$2" > "$3"
-}
 
 front_field() {  # <file> <key>
   awk -v k="$2" 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit }
@@ -454,8 +582,8 @@ check_copy() {
   local run=$1 r="$EV/runs/$1/record.json" f s path msha nsha
   MR=$(jq -c --arg id "$run" 'first(.runs[]? | select(.id == $id)) // empty' "$MANIFEST")
   [ -n "$MR" ] || fault run "the manifest has no entry for $run"
-  for f in executor command_id argv revision exit outcome; do
-    [ -z "$MR" ] || [ "$(jq -c ".$f" <<< "$MR")" = "$(jq -c ".$f" "$r")" ] \
+  for f in executor command_id argv revision exit outcome pins; do
+    [ -z "$MR" ] || [ "$(jq -cS ".$f" <<< "$MR")" = "$(jq -cS ".$f" "$r")" ] \
       || fault run "the manifest's $f for $run differs from the run record"
   done
   for s in stdout stderr; do
@@ -475,6 +603,23 @@ check_copy() {
       fault output "committed $s $path does not match the captured output"
     fi
   done
+}
+
+pins_text() { jq -r 'if length == 0 then "no pinned inputs" else map("\(.path) sha256 \(.sha256)") | join(", ") end' <<< "$1"; }
+
+# check_pins: every pinned input at the reviewed revision is exactly its
+# selected version: the bytes and mode firstmate pinned, or the new bytes of
+# the verifier's approved review of that change. Appends report lines.
+check_pins() {
+  local path mode sha src have g
+  while IFS=$'\t' read -r path mode sha src; do
+    have=$(entry_at "$C" "$path") && have="mode ${have% *}, sha256 ${have#* }" || have="not a regular file"
+    [ "$have" = "mode $mode, sha256 $sha" ] \
+      || fault golden "$path at $C is $have; its selected version is mode $mode, sha256 $sha, from $src, and no approved review covers the change"
+    REPORT+="Pinned: $path mode $mode sha256 $sha, from $src"$'\n'
+    g="$EV/goldens/$src.json"
+    [ ! -f "$g" ] || REPORT+="  Golden: $path sha256 $(jq -r .old.sha256 "$g") to $sha, reviewed $src by $(jq -r .reviewer "$g") ($(jq -r .verdict "$g")): $(jq -r .justification "$g")"$'\n'
+  done < <(jq -r '.[] | [.path, .mode, .sha256, .source] | @tsv' <<< "$SEL")
 }
 
 # check_claim <i>: resolve manifest claim <i>; appends report lines to REPORT.
@@ -507,6 +652,8 @@ check_claim() {
   [ -n "$blob" ] && [ "$blob" = "$(jq -r .spec_blob "$r")" ] && [ "$blob" = "$(jq -r '.spec_blob // ""' <<< "$c")" ] \
     || fault spec "the spec $spec at $C is not the one run $run checked"
   [ "$(jq -r .revision "$r")" = "$C" ] || fault revision "run $run ran on $(jq -r .revision "$r"), not the reviewed revision $C"
+  [ "$(jq -c '[.pins // [] | .[] | {path, mode, sha256}]' "$r")" = "$(jq -c '[.[] | {path, mode, sha256}]' <<< "$SEL")" ] \
+    || fault pin "run $run was graded with $(pins_text "$(jq -c '.pins // []' "$r")"), not the inputs selected for $TASK: $(pins_text "$SEL")"
   case "$(jq -r .outcome "$r")" in
     exited) [ "$(jq -r .exit "$r")" = 0 ] || fault run "run $run exited $(jq -r .exit "$r")" ;;
     timeout) fault run "run $run timed out after $(jq -r .timeout "$r")s" ;;
@@ -622,6 +769,7 @@ cmd_verify() {
   unchecked() { printf 'unchecked: %s\n' "$1"; exit 1; }
   [ -f "$ASSIGNMENT" ] || unchecked "no acceptance commands are approved for $TASK"
   VERIFIER=$(jq -r .verifier "$ASSIGNMENT")
+  SEL=$(selection) || die "cannot read $TASK's pinned inputs"
   P=$(commit_of HEAD) || die "cannot resolve the HEAD of $TASK's worktree $WT"
   proof="docs/proof/$TASK.md"
   blob_at "$P" "$proof" "$SCRATCH/proof" || unchecked "$proof is not in the candidate $P"
@@ -661,6 +809,7 @@ cmd_verify() {
         [ "$claimed" = yes ] || fault claim "no supported claim for approved command $k ($(jq -r --arg k "$k" '.commands[$k] | "\(.ac) of \(.spec)"' "$ASSIGNMENT"))"
       done
       for k in $(jq -r '.defects // {} | keys[]' "$ASSIGNMENT"); do check_defect "$k"; done
+      check_pins
     fi
   fi
   if [ "${#FAULTS[@]}" -gt 0 ]; then
@@ -672,7 +821,7 @@ cmd_verify() {
 }
 
 case "${1:-}" in
-  assign|defect|capture|judge|attach|verify) sub=$1; shift; "cmd_$sub" "$@" ;;
+  assign|defect|pin|golden|show|capture|judge|attach|verify) sub=$1; shift; "cmd_$sub" "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

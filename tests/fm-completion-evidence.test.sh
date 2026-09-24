@@ -5,7 +5,10 @@
 # verifier's judgement (fleet evidence E1: AC3, AC6, AC7). A supported claim
 # names its oracle, and a declared defect resolves to a red run of its retained
 # regression test that shows the symptom, a green run and a rerun of its
-# original reproducer (fleet evidence E2: AC1, AC2).
+# original reproducer (fleet evidence E2: AC1, AC2). Firstmate pins the
+# independent acceptance inputs, a golden and the runner, in the home; every run
+# grades with the pinned bytes, and a change to a pinned input counts only once
+# the verifier reviews those exact bytes (fleet evidence E3: AC4, AC5).
 #
 # Each case builds a fixture firstmate home and a scratch project. The project's
 # acceptance test, test/value.mjs, feeds fixture input 7 to src/value.mjs and
@@ -13,6 +16,8 @@
 # lane (task t1, worktree wt-t1) commits the repair as the reviewed revision C.
 # The default branch also holds a payment that charges again when retried, and
 # its original reproducer, scripts/checkout.mjs, a checkout that retries once.
+# Its golden G1, test/golden/value.json, records input 7 and expected 14, and
+# its acceptance runner P1, test/accept.mjs, grades src/value.mjs against G1.
 # The independent verifier is task v1, a separate recorded task with its own
 # worktree (wt-v1). Every fm-evidence.sh call runs from the directory of the
 # actor making it: firstmate from the case directory, which is no task's
@@ -66,6 +71,16 @@ const checkout = (order, attempts) => { for (let i = 0; i < attempts; i++) pay(l
 checkout('o1', 2)
 console.log(`charges=${ledger.length}`)
 if (ledger.length !== 1) process.exit(1)
+JS
+  mkdir -p "$PJ/test/golden"
+  printf '{"input": 7, "expected": 14}\n' > "$PJ/test/golden/value.json"
+  cat > "$PJ/test/accept.mjs" <<'JS'
+import { readFileSync } from 'node:fs'
+import { value } from '../src/value.mjs'
+const g = JSON.parse(readFileSync('test/golden/value.json', 'utf8'))
+const v = value(g.input)
+console.log(`value(${g.input})=${v}`)
+if (v !== g.expected) { console.error(`expected ${g.expected}, got ${v}`); process.exit(1) }
 JS
   printf '# proj\n' > "$PJ/README.md"
   printf '# S1\n\nAC1 requires value 14 for input 7.\nAC2 requires one charge for a retried order.\n' > "$PJ/docs/specs/s1.md"
@@ -161,7 +176,7 @@ expect_refused() {  # <label> <text the refusal must name>
   expect_code 1 "$RC" "$1: completion should be refused"
   assert_contains "$OUT" "refused:" "$1: verify did not say refused"
   assert_contains "$OUT" "$2" "$1: refusal did not name the reason"
-  assert_not_contains "$OUT" "verified:" "$1: a refused claim read as verified"
+  if printf '%s\n' "$OUT" | grep -q '^verified:'; then fail "$1: a refused claim read as verified"$'\n'"$OUT"; fi
 }
 
 # --- AC3: an independent execution on the exact reviewed revision -----------
@@ -654,17 +669,20 @@ approve_defect() {
     || fail "$D: firstmate could not declare D1"
 }
 
-# defect_claims <red run>: v1 captures the green run of k2 and the reproducer
-# rerun on C, judges both (the green naming <red run>), and the author attaches
-# them and commits the proof. Sets RG RP JG JP.
+# defect_claims <red run> [<run>:<judge>]...: v1 captures the green run of k2
+# and the reproducer rerun on C, judges both (the green naming <red run>), and
+# the author attaches them, with any other claims given, and commits the proof.
+# Sets RG RP JG JP.
 defect_claims() {
+  local red=$1
+  shift
   RG=$(capture "$VW" "$C" k2)
   RP=$(capture "$VW" "$C" k3)
-  JG=$(RED=$1 ASSERTION='a retried order is charged once' EXPECTED='charges=1' \
+  JG=$(RED=$red ASSERTION='a retried order is charged once' EXPECTED='charges=1' \
     SOURCE='the defect report: one order, one charge' judge "$RG")
   JP=$(ASSERTION='scripts/checkout.mjs: the retried checkout charges once' EXPECTED='charges=1' \
     SOURCE='the defect report: one order, one charge' judge "$RP")
-  attach "$RG:$JG" "$RP:$JP"
+  attach "$RG:$JG" "$RP:$JP" "$@"
   commit_proof
 }
 
@@ -779,6 +797,293 @@ test_ac2_defect_with_no_seam_is_unverified() {
   pass "AC2: a defect with no regression seam stays unverified and cannot close a repair claim"
 }
 
+# --- AC5: the pinned acceptance inputs grade every run -------------------------
+
+G1=test/golden/value.json
+P1=test/accept.mjs
+
+# pin_inputs: firstmate approves k1, the acceptance runner, and pins G1 and P1
+# at the base B.
+pin_inputs() {
+  approve node "$P1"
+  ev "$D" pin t1 "$G1" --from "$B" > /dev/null || fail "$D: firstmate could not pin $G1"
+  ev "$D" pin t1 "$P1" --from "$B" > /dev/null || fail "$D: firstmate could not pin $P1"
+}
+
+# accept_judge <run> [expected] [source]: v1 judges a run of the acceptance
+# runner; echoes the judge id.
+accept_judge() {
+  ASSERTION="$P1: value(7) equals the expected value in $G1" EXPECTED="${2:-14}" \
+    SOURCE="${3:-the pinned $G1, which docs/specs/s1.md AC1 states}" judge "$1"
+}
+
+run_exit() { jq -r .exit "$H/data/t1/evidence/runs/$1/record.json"; }
+run_err() { cat "$H/data/t1/evidence/runs/$1/stderr"; }
+
+# AC5
+test_ac5_pinned_inputs_grade_the_run_and_the_report_names_them() {
+  local out rc g1 p1 good
+  fixture ac5-pins
+  approve node "$P1"
+  out=$(ev "$AW" pin t1 "$G1" --from "$B" 2>&1); rc=$?
+  expect_code 2 "$rc" "ac5-pins: the author pinning an acceptance input should be refused"
+  assert_contains "$out" "only firstmate pins acceptance inputs; t1 is a recorded task" "ac5-pins: the refusal did not say who pins"
+  out=$(ev "$VW" pin t1 "$G1" --from "$B" 2>&1); rc=$?
+  expect_code 2 "$rc" "ac5-pins: the verifier pinning an acceptance input should be refused"
+  pin_inputs
+  g1=$(sha256_of "$PJ/$G1")
+  p1=$(sha256_of "$PJ/$P1")
+  out=$(ev "$VW" show t1) || fail "ac5-pins: show failed: $out"
+  assert_contains "$out" "\"sha256\": \"$g1\"" "ac5-pins: show did not list the pinned G1"
+  assert_contains "$out" "\"k1\"" "ac5-pins: show did not list the approved command"
+  out=$(ev "$VW" capture t1 --command-id k1 --revision "$C") || fail "ac5-pins: capture failed: $out"
+  assert_contains "$out" "pinned: $G1 mode 100644 sha256 $g1 from $B" "ac5-pins: capture did not name the pinned G1"
+  R=$(printf '%s\n' "$out" | awk '$1 == "run" { print $2 }')
+  [ "$(run_exit "$R")" = 0 ] || fail "ac5-pins: the repair should pass against the pinned G1: $(run_err "$R")"
+  assert_contains "$(jq -c .pins "$H/data/t1/evidence/runs/$R/record.json")" "\"path\":\"$P1\",\"mode\":\"100644\",\"sha256\":\"$p1\"" \
+    "ac5-pins: the run record did not name the pinned P1"
+  J=$(accept_judge "$R")
+  attach "$R:$J"
+  commit_proof
+  good=$(git -C "$AW" rev-parse HEAD)
+  verify
+  expect_code 0 "$RC" "ac5-pins: a run graded with the pinned inputs should verify: $OUT"
+  assert_contains "$OUT" "Pinned: $G1 mode 100644 sha256 $g1, from $B" "ac5-pins: the report did not name the pinned G1"
+  assert_contains "$OUT" "Pinned: $P1 mode 100644 sha256 $p1, from $B" "ac5-pins: the report did not name the pinned P1"
+  edit_manifest '.runs[0].pins[0].sha256 = "feed"'
+  git -C "$AW" commit -qam 'docs(proof): alter a pinned digest'
+  verify
+  expect_refused ac5-pins-manifest "run: the manifest's pins for $R differs from the run record"
+  git -C "$AW" reset -q --hard "$good"
+  pass "AC5: firstmate alone pins the inputs, every run grades with them, and the record and report name their digests"
+}
+
+# AC5
+test_ac5_task_copy_substitutions_cannot_replace_the_pinned_inputs() {
+  local kind x changed reason
+  fixture ac5-subst
+  pin_inputs
+  for kind in value rename mode symlink skip; do
+    git -C "$AW" reset -q --hard "$B"
+    git -C "$AW" clean -qfd
+    changed=$G1
+    reason="is mode 100644, sha256"
+    case $kind in
+      value) printf '{"input": 7, "expected": 0}\n' > "$AW/$G1" ;;
+      rename)
+        git -C "$AW" mv "$G1" test/golden/value-v2.json
+        printf '{"input": 7, "expected": 0}\n' > "$AW/test/golden/value-v2.json"
+        sed -i.bak 's#test/golden/value.json#test/golden/value-v2.json#' "$AW/$P1" && rm "$AW/$P1.bak"
+        reason="is not a regular file" ;;
+      mode)
+        chmod +x "$AW/$G1"
+        reason="is mode 100755" ;;
+      symlink)
+        printf '{"input": 7, "expected": 0}\n' > "$AW/test/golden/zero.json"
+        rm "$AW/$G1"
+        ln -s zero.json "$AW/$G1"
+        reason="is not a regular file" ;;
+      skip)
+        { printf "import { existsSync } from 'node:fs'\nif (existsSync('test/.skip')) { console.log('skipped'); process.exit(0) }\n"
+          cat "$AW/$P1"; } > "$AW/$P1.new" && mv "$AW/$P1.new" "$AW/$P1"
+        : > "$AW/test/.skip"
+        changed=$P1 ;;
+    esac
+    git -C "$AW" add -A
+    git -C "$AW" commit -qm "test: $kind substitution"
+    x=$(git -C "$AW" rev-parse HEAD)
+    R=$(capture "$VW" "$x")
+    [ "$(run_exit "$R")" = 1 ] || fail "ac5-$kind: the task copy's substitution earned a pass: $(cat "$H/data/t1/evidence/runs/$R/stdout")"
+    assert_contains "$(run_err "$R")" "expected 14, got 0" "ac5-$kind: the constant-zero program was not graded against the pinned G1"
+    J=$(accept_judge "$R")
+    attach "$R:$J"
+    commit_proof
+    verify
+    expect_refused "ac5-$kind" "golden: $changed at $x $reason"
+  done
+  pass "AC5: a changed, renamed, re-moded, symlinked or skip-policy task copy neither replaces the pinned inputs nor earns a pass"
+}
+
+# AC5
+test_ac5_ordinary_test_work_proceeds_beside_the_pins() {
+  local rr
+  fixture ac5-tdd
+  pin_inputs
+  printf 'console.log("value test extended")\n' >> "$AW/test/value.mjs"
+  git -C "$AW" commit -qam 'test: extend the value test'
+  defect_lane
+  approve_defect
+  rr=$(capture "$VW" "$T" k2)
+  [ "$(run_exit "$rr")" = 1 ] || fail "ac5-tdd: the new regression should be red before the fix"
+  assert_contains "$(cat "$H/data/t1/evidence/runs/$rr/stdout")" "charges=2" "ac5-tdd: the red did not show the symptom"
+  R=$(capture "$VW" "$C")
+  J=$(accept_judge "$R")
+  defect_claims "$rr" "$R:$J"
+  verify
+  expect_code 0 "$RC" "ac5-tdd: an edited test and a new red-first regression beside the pins should verify: $OUT"
+  assert_contains "$OUT" "D1 repaired, symptom charges=2" "ac5-tdd: the report did not name the repair"
+  assert_contains "$OUT" "Pinned: $G1 mode 100644" "ac5-tdd: the report did not name the pinned G1"
+  pass "AC5: an ordinary test edit and a new regression written red first proceed beside the pinned inputs"
+}
+
+# AC5
+test_ac5_run_graded_without_the_selected_inputs_is_refused() {
+  fixture ac5-stale
+  approve node "$P1"
+  R=$(capture "$VW" "$C")
+  ev "$D" pin t1 "$G1" --from "$B" > /dev/null || fail "ac5-stale: firstmate could not pin $G1"
+  J=$(accept_judge "$R")
+  attach "$R:$J"
+  commit_proof
+  verify
+  expect_refused ac5-stale "pin: run $R was graded with no pinned inputs, not the inputs selected for t1: $G1 sha256 $(sha256_of "$PJ/$G1")"
+  pass "AC5: a run captured before the inputs were pinned cannot vouch for the pinned candidate"
+}
+
+# --- AC4: a pinned golden changes only through a review of its exact bytes ------
+
+# golden_review <revision>: v1 approves the change to G1 at <revision>; echoes
+# the review id.
+golden_review() {
+  local out
+  out=$(ev "$VW" golden t1 "$G1" --revision "$1" --verdict approved \
+    --justification 'docs/specs/s1.md AC1 now requires value 0 for input 7: the doubling is withdrawn') \
+    || fail "$D: the golden review failed: $out"
+  printf '%s\n' "$out" | awk '$1 == "golden" { print $2 }'
+}
+
+# contract_lane: on top of the lane's doubling repair, commit the amended
+# contract and G1 expecting 0 (the red revision T), then the code that meets
+# it, which becomes C. Sets T C.
+contract_lane() {
+  printf '# S1\n\nAC1 requires value 0 for input 7: the doubling is withdrawn.\nAC2 requires one charge for a retried order.\n' > "$AW/docs/specs/s1.md"
+  printf '{"input": 7, "expected": 0}\n' > "$AW/$G1"
+  git -C "$AW" commit -qam 'test: G1 expects 0 under the amended contract'
+  T=$(git -C "$AW" rev-parse HEAD)
+  printf 'export const value = () => 0\n' > "$AW/src/value.mjs"
+  git -C "$AW" commit -qam 'feat: withdraw the doubling'
+  C=$(git -C "$AW" rev-parse HEAD)
+}
+
+# AC4
+test_ac4_reviewed_golden_change_with_its_red_verifies() {
+  local out rc r0 rr old new gid
+  fixture ac4-ok
+  pin_inputs
+  contract_lane
+  old=$(sha256_of "$PJ/$G1")
+  new=$(sha256_of "$AW/$G1")
+  r0=$(capture "$VW" "$C")
+  [ "$(run_exit "$r0")" = 1 ] || fail "ac4-ok: the unreviewed golden graded the run"
+  assert_contains "$(run_err "$r0")" "expected 14, got 0" "ac4-ok: the run before the review did not grade against the pinned G1"
+  out=$(ev "$AW" golden t1 "$G1" --revision "$C" --verdict approved --justification 'the author approves' 2>&1); rc=$?
+  expect_code 2 "$rc" "ac4-ok: the author reviewing its own golden change should be refused"
+  assert_contains "$out" "only t1's verifier v1 reviews a change to a pinned input" "ac4-ok: the refusal did not say who reviews"
+  gid=$(golden_review "$C")
+  rr=$(capture "$VW" "$T")
+  [ "$(run_exit "$rr")" = 1 ] || fail "ac4-ok: the reviewed golden should be red on the doubling code"
+  assert_contains "$(run_err "$rr")" "expected 0, got 14" "ac4-ok: the red was not the reviewed golden's assertion"
+  R=$(capture "$VW" "$C")
+  [ "$(run_exit "$R")" = 0 ] || fail "ac4-ok: the amended code should pass the reviewed golden: $(run_err "$R")"
+  J=$(accept_judge "$R" 0 "the reviewed $G1, which the amended docs/specs/s1.md AC1 states")
+  attach "$R:$J"
+  commit_proof
+  verify
+  expect_code 0 "$RC" "ac4-ok: a reviewed golden change should verify: $OUT"
+  assert_contains "$OUT" "Golden: $G1 sha256 $old to $new, reviewed $gid by v1 (approved): docs/specs/s1.md AC1 now requires value 0 for input 7" \
+    "ac4-ok: the report did not name the reviewed change"
+  assert_contains "$OUT" "Pinned: $G1 mode 100644 sha256 $new, from $gid" "ac4-ok: the report did not name the reviewed G1"
+  pass "AC4: a golden change whose exact bytes the verifier reviewed, with its observed red, verifies and names both digests"
+}
+
+# AC4
+test_ac4_golden_update_without_a_justification_is_refused() {
+  local out rc
+  fixture ac4-mass
+  pin_inputs
+  git -C "$AW" reset -q --hard "$B"
+  printf '{"input": 7, "expected": 0}\n' > "$AW/$G1"
+  printf '// regenerated\n' >> "$AW/$P1"
+  git -C "$AW" commit -qam 'test: regenerate every golden'
+  C=$(git -C "$AW" rev-parse HEAD)
+  out=$(ev "$VW" golden t1 "$G1" --revision "$C" --verdict approved 2>&1); rc=$?
+  expect_code 2 "$rc" "ac4-mass: a golden review with no justification should be refused"
+  assert_contains "$out" "golden needs --justification" "ac4-mass: the refusal did not ask for the justification"
+  R=$(capture "$VW" "$C")
+  J=$(accept_judge "$R")
+  attach "$R:$J"
+  commit_proof
+  verify
+  expect_refused ac4-mass "golden: $G1 at $C is mode 100644, sha256 $(sha256_of "$AW/$G1"); its selected version is mode 100644, sha256 $(sha256_of "$PJ/$G1"), from $B"
+  assert_contains "$OUT" "golden: $P1 at $C is mode 100644" "ac4-mass: the refusal did not name the regenerated runner"
+  pass "AC4: a mass golden update with no justified review is refused for every pinned input it touched"
+}
+
+# AC4
+test_ac4_approval_for_other_bytes_is_refused() {
+  local gid reviewed
+  fixture ac4-other
+  pin_inputs
+  contract_lane
+  gid=$(golden_review "$T")
+  reviewed=$(sha256_of "$AW/$G1")
+  printf '{"input": 8, "expected": 0}\n' > "$AW/$G1"
+  git -C "$AW" commit -qam 'test: G1 takes input 8'
+  C=$(git -C "$AW" rev-parse HEAD)
+  R=$(capture "$VW" "$C")
+  [ "$(run_exit "$R")" = 0 ] || fail "ac4-other: the run should grade with the reviewed bytes: $(run_err "$R")"
+  J=$(accept_judge "$R" 0 "the reviewed $G1")
+  attach "$R:$J"
+  commit_proof
+  verify
+  expect_refused ac4-other "golden: $G1 at $C is mode 100644, sha256 $(sha256_of "$AW/$G1"); its selected version is mode 100644, sha256 $reviewed, from $gid"
+  pass "AC4: a review of other bytes than the candidate's golden is refused"
+}
+
+# AC4
+test_ac4_newer_pin_supersedes_an_earlier_review() {
+  local m2 z
+  fixture ac4-repin
+  pin_inputs
+  contract_lane
+  golden_review "$C" > /dev/null
+  printf '{"input": 7, "expected": 14, "note": "reformatted"}\n' > "$PJ/$G1"
+  git -C "$PJ" commit -qam 'test: reformat G1'
+  m2=$(git -C "$PJ" rev-parse HEAD)
+  z=$(sha256_of "$PJ/$G1")
+  ev "$D" pin t1 "$G1" --from "$m2" > /dev/null || fail "ac4-repin: firstmate could not pin G1 again"
+  assert_contains "$(ev "$VW" show t1)" "\"sha256\": \"$z\"" "ac4-repin: the newer pin did not replace the reviewed G1"
+  R=$(capture "$VW" "$C")
+  assert_contains "$(run_err "$R")" "expected 14, got 0" "ac4-repin: the run did not grade with the newer pin"
+  J=$(accept_judge "$R")
+  attach "$R:$J"
+  commit_proof
+  verify
+  expect_refused ac4-repin "golden: $G1 at $C is mode 100644, sha256 $(sha256_of "$AW/$G1"); its selected version is mode 100644, sha256 $z, from $m2"
+  pass "AC4: a review applies only to the version it reviewed, so firstmate's newer pin supersedes it"
+}
+
+# AC4
+test_ac4_deleted_golden_without_review_is_refused() {
+  local out rc
+  fixture ac4-deleted
+  pin_inputs
+  git -C "$AW" rm -q "$G1"
+  git -C "$AW" commit -qm 'test: drop G1'
+  C=$(git -C "$AW" rev-parse HEAD)
+  out=$(ev "$VW" golden t1 "$G1" --revision "$C" --verdict approved --justification 'G1 is obsolete' 2>&1); rc=$?
+  expect_code 1 "$rc" "ac4-deleted: a review of a deleted golden should be refused"
+  assert_contains "$out" "$G1 is not a regular file at $C" "ac4-deleted: the refusal did not name the deletion"
+  R=$(capture "$VW" "$C")
+  [ "$(run_exit "$R")" = 0 ] || fail "ac4-deleted: the run should grade with the pinned G1 the lane deleted: $(run_err "$R")"
+  J=$(accept_judge "$R")
+  attach "$R:$J"
+  commit_proof
+  verify
+  expect_refused ac4-deleted "golden: $G1 at $C is not a regular file"
+  pass "AC4: a deleted golden is refused, and cannot be reviewed as a change"
+}
+
 test_ac3_independent_run_on_the_reviewed_revision_is_verified
 test_ac3_author_only_run_is_refused_even_with_a_forged_executor
 test_ac3_unapproved_command_and_author_approval_are_refused
@@ -810,3 +1115,12 @@ test_ac2_red_from_a_parser_failure_is_unverified
 test_ac2_red_of_another_test_is_unverified
 test_ac2_repair_without_its_reproducer_rerun_is_unverified
 test_ac2_defect_with_no_seam_is_unverified
+test_ac5_pinned_inputs_grade_the_run_and_the_report_names_them
+test_ac5_task_copy_substitutions_cannot_replace_the_pinned_inputs
+test_ac5_ordinary_test_work_proceeds_beside_the_pins
+test_ac5_run_graded_without_the_selected_inputs_is_refused
+test_ac4_reviewed_golden_change_with_its_red_verifies
+test_ac4_golden_update_without_a_justification_is_refused
+test_ac4_approval_for_other_bytes_is_refused
+test_ac4_newer_pin_supersedes_an_earlier_review
+test_ac4_deleted_golden_without_review_is_refused
