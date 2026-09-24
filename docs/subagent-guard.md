@@ -73,7 +73,8 @@ That future-name behavior is the reason the tracked matcher must match all tools
 
 Two firstmate homes on one machine coordinate by messaging each other's live primary session with Claude Code's `ListAgents` and `SendMessage`.
 A home messages a peer home only for cross-home coordination: a handoff, an answer, or a note such as "I'm touching path X".
-A message never replaces a brief, a status line, or the backlog: handed-off work still enters the receiving home's backlog and ships through its own brief and spawn, and a crewmate is still steered with `bin/fm-send.sh`.
+A message never replaces a brief, a status line, or the backlog.
+Handed-off work still enters the receiving home's backlog and ships through its own brief and spawn, and firstmate still steers a crewmate with `bin/fm-send.sh`.
 
 `SendMessage` is not a pure messaging tool, which is why the guard does not allow it by name alone.
 Claude Code's own description of it says a send to a finished subagent's name resumes that subagent, that it accepts a raw subagent id and the address `main`, and that a bare name can reach a session on another machine or in the cloud.
@@ -90,7 +91,8 @@ So in a primary home the guard allows `SendMessage` only when all of these hold,
 The `--tool` transport carries no target, so `SendMessage` through it stays refused.
 The refusal names the rule and points at `bin/fm-send.sh` for crewmates and `bin/fm-brief.sh` then `bin/fm-spawn.sh` for new work.
 Claude Code resolves a bare name to an in-process subagent before a peer session, but a primary cannot create one, because `Agent`, `Task`, and `Workflow` stay refused.
-The one residual is a skill that runs as a forked subagent, which this guard never classified, registered under a name equal to a peer home's session name.
+The one gap left is a skill that runs as a forked subagent.
+This guard never classified `Skill`, so such a subagent registered under a peer home's session name would take messages sent to that name.
 
 ## Recommended Local Claude Deny List
 
@@ -138,7 +140,8 @@ The hook deliberately allows those five, so the shipped guard can never strand a
 The two session-local todo tools are no longer recommended for local denial at all, because they write only the harness's session-local todo list, which has no executor and spawns nothing, so removing them from the schema removes no delegation power.
 Denying them there would instead reproduce at a stronger layer the exact false positive the shipped guard now avoids, leaving anyone who adopts this list verbatim unable to let a primary track its own plan.
 Narrowing the list further, including the five observe-or-stop names, is the captain's call, and this local list is the only layer that can remove a todo tool from the primary's schema.
-`SendMessage` and `ListAgents` are left off the list because they carry cross-home session messaging, and the hook already narrows `SendMessage` to a peer home's live session; a home whose local list still denies `SendMessage` cannot message a peer until that entry is removed.
+The list leaves out `SendMessage` and `ListAgents`, which carry cross-home session messaging, because the hook already narrows `SendMessage` to a peer home's live session.
+A home whose local list still denies `SendMessage` cannot message a peer until the captain removes that entry.
 
 `permissions.allow` is a pre-approval list, not an availability list, so there is no fail-closed positive allowlist available.
 That is why any fixed deny list is fail-open against future tools and why the shape-based guard still exists.
@@ -383,6 +386,23 @@ Result: the Workflow tool call was NOT blocked by a hook. It launched and ran to
 A Claude deny is honored only when the hook's stdout is empty.
 `tests/fm-subagent-pretool-check.test.sh` asserts stdout is empty on every `--claude` deny and that default mode still emits the Grok object on stdout.
 The live consequence is confirmed by the shipped-guard result above: Claude honored the deny and reported the reason text.
+
+### Cross-home messaging, 2026-09-24
+
+Claude Code 2.1.281 on macOS 27.0.
+`FM_SUBAGENT_MESSAGING_LIVE_E2E=1 tests/fm-subagent-messaging-live-e2e.test.sh` printed:
+
+```text
+ok - Claude Code recorded home B's live session as homeb-27
+ok - home A's ListAgents is allowed and lists homeb-27
+ok - home A's SendMessage to homeb-27 is allowed
+ok - the message arrived in home B's session
+ok - SendMessage to main is refused
+ok - Agent is still refused
+```
+
+The same run against the guard from before this allowance failed at the first call, with `ListAgents` refused as delegation-shaped on `agent`.
+The live `SendMessage` tool input carried `to` and `message` plus three fields the harness adds itself, `type`, `recipient`, and `content`, and the guard reads only the first two.
 
 ## Automated validation
 

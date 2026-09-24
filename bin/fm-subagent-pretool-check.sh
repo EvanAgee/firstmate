@@ -99,6 +99,8 @@ Usage: fm-subagent-pretool-check.sh [--tool <tool-name>] [--claude]
 With no --tool, reads a PreToolUse-style JSON payload on stdin (Claude/Codex
 tool_name, or Grok toolName).
 Denies a delegation-SHAPED tool name in a genuine primary home.
+Allows ListAgents, and allows SendMessage only as a plain-text message to the
+live Claude Code session of another firstmate primary home on this machine.
 Claude primaries may also add an untracked per-home permissions.deny list that
 removes known delegation tools from the model schema before this hook is needed.
 Do not ship that Claude-only list in tracked project settings, because linked
