@@ -584,6 +584,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/spec-lock-t1-brief-field.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/proof/fm-stale-reason-daemon-parse.md",
       "audience": "maintainer-verification"
     },
