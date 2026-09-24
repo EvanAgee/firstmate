@@ -576,6 +576,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/proof/fm-spec-point-design-specs.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/proof/fm-cross-home-session-messaging.md",
       "audience": "maintainer-verification"
     },
