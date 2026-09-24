@@ -640,6 +640,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/specs/fm-spec-point-design-specs.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/specs/fm-cross-home-session-messaging.md",
       "audience": "maintainer-architecture"
     },
