@@ -7,17 +7,22 @@
 # another recorded task with its own worktree. The verifier runs each command
 # with `capture`, which executes it on one exact commit and records the command,
 # the commit, the environment policy, the exit and the output in this home. The
-# verifier records its verdict with `judge`. The author renders that evidence
+# verifier records its verdict with `judge`, naming the claim's oracle: the
+# assertion that ran, its expected result and where that expected result comes
+# from, independent of the code under review. Firstmate declares each defect the
+# task claims to repair with `defect`: the symptom its report shows, the
+# approved regression and original reproducer commands and the regression test's
+# path, or the reason no seam can pin it. The author renders that evidence
 # into its lane with `attach` and names the manifest in its proof, and `verify`
 # resolves the committed claim against the records here and prints the
 # completion report.
 #
 # The actor behind every call is the recorded task whose worktree
 # (state/<id>.meta worktree=) holds the current directory, never an argument or
-# a committed field. `assign` runs only outside every task worktree, so a worker
-# cannot choose the command that grades it. Same-user files are not a security
-# boundary against a hostile process; this records who ran what, it does not
-# attest it.
+# a committed field. `assign` and `defect` run only outside every task worktree,
+# so a worker cannot choose the command that grades it or the defect it answers.
+# Same-user files are not a security boundary against a hostile process; this
+# records who ran what, it does not attest it.
 #
 # capture runs the approved argv, with no shell, in a scratch checkout of the
 # exact commit's tree read from the task's repository, under a clean
@@ -43,14 +48,23 @@
 #   - the captured output bytes here, the manifest's digests and the committed
 #     output files at P all agree, zero-length files included;
 #   - each claim's judge is a record of this task by the verifier, on C, against
-#     the claim's base, over the same output digests, with verdict supported.
+#     the claim's base, over the same output digests, with verdict supported and
+#     an oracle; a supported claim with no oracle is unchecked, because a run
+#     that only covers the code proves nothing about its result;
+#   - each declared defect has a supported claim for its regression whose judge
+#     names a red run: the verifier's run of that command as approved, on a
+#     revision other than C holding the same regression test file as C, that
+#     exited non-zero with the symptom in its captured output; and a supported
+#     claim for its original reproducer. A defect with no seam stays unverified.
 # The manifest's copies of run and judge fields are compared with the records;
 # a decision never rests on a committed field.
 #
-# This is the firstmate half of fleet evidence E1. Activation is off: nothing
-# calls verify on a real landing yet. The committed binding format is specified
-# in docs/proof/fleet-evidence-e1.md ("Binding contract"), the contract the
-# public spec-lock checker will validate.
+# This is the firstmate half of fleet evidence E1 and E2. Activation is off:
+# nothing calls verify on a real landing yet. The committed binding format is
+# specified in docs/proof/fleet-evidence-e1.md ("Binding contract"), the
+# contract the public spec-lock checker will validate, with the judge's oracle
+# and red run added in docs/proof/fleet-evidence-e2.md ("Binding contract
+# additions").
 #
 # Records live under data/<task>/evidence/: assignment.json,
 # runs/<task>-r<n>/{record.json,stdout,stderr} and judges/<task>-j<n>.json. Only
@@ -59,8 +73,12 @@
 # Usage:
 #   fm-evidence.sh assign <task> --verifier <task> --command-id <id> --spec <path> --ac <AC<n>>
 #                  [--timeout <seconds>] [--max-output <bytes>] -- <argv>...
+#   fm-evidence.sh defect <task> <D<n>> --symptom <text> --regression <command-id> --test <path>
+#                  --reproducer <command-id>
+#   fm-evidence.sh defect <task> <D<n>> --no-seam <reason>
 #   fm-evidence.sh capture <task> --command-id <id> --revision <commit>
 #   fm-evidence.sh judge <task> --run <run-id> --base <commit> --verdict supported|unsupported
+#                  [--assertion <text> --expected <text> --source <text>] [--red <run-id>]
 #   fm-evidence.sh attach <task> <run-id>:<judge-id>...
 #   fm-evidence.sh verify <task>
 #
@@ -189,6 +207,45 @@ cmd_assign() {
   printf 'approved %s for %s: %s of %s, verified by %s\n' "$cid" "$TASK" "$ac" "$spec" "$verifier"
 }
 
+cmd_defect() {
+  local did symptom='' reg='' test='' repro='' seam='' who file cid entry
+  load_task "${1:-}"
+  did=${2:-}
+  shift 2 2>/dev/null || die "defect needs <task> <D<n>>"
+  printf '%s' "$did" | grep -Eq '^D[0-9]+$' || die "defect needs an id D<n>, not '$did'"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --symptom) symptom=${2:-}; shift 2 ;;
+      --regression) reg=${2:-}; shift 2 ;;
+      --test) test=${2:-}; shift 2 ;;
+      --reproducer) repro=${2:-}; shift 2 ;;
+      --no-seam) seam=${2:-}; shift 2 ;;
+      *) die "unknown defect argument '$1'" ;;
+    esac
+  done
+  who=$(caller) || exit 2
+  [ -z "$who" ] || die "only firstmate declares defects; $who is a recorded task"
+  file="$EV/assignment.json"
+  [ -f "$file" ] || die "approve $TASK's acceptance commands before declaring a defect"
+  if [ -n "$seam" ]; then
+    [ -z "$symptom$reg$test$repro" ] || die "a defect with --no-seam names no symptom, regression, test or reproducer"
+    entry=$(jq -cn --arg r "$seam" '{no_seam: $r}')
+  else
+    [ -n "$symptom" ] && [ -n "$test" ] || die "defect needs --symptom, --test, --regression and --reproducer, or --no-seam <reason>"
+    case "/$test/" in *//*|*/../*|*/./*) die "--test must be a path inside the repository" ;; esac
+    for cid in "$reg" "$repro"; do
+      if ! { valid_id "$cid" && jq -e --arg c "$cid" '.commands[$c]' "$file" > /dev/null; }; then
+        die "--regression and --reproducer must name approved commands of $TASK, not '$cid'"
+      fi
+    done
+    [ "$reg" != "$repro" ] || die "the regression and the original reproducer must be different commands"
+    entry=$(jq -cn --arg s "$symptom" --arg r "$reg" --arg t "$test" --arg p "$repro" \
+      '{symptom: $s, regression: $r, test: $t, reproducer: $p}')
+  fi
+  write_json "$file" "$(jq -S --arg d "$did" --argjson e "$entry" '.defects[$d] = $e' "$file")" || die "cannot write $file"
+  printf 'declared %s for %s\n' "$did" "$TASK"
+}
+
 cmd_capture() {
   local cid='' rev='' decl who id dir copy idx spec spec_blob timeout max rc outcome exit_json changed base started a
   local -a argv=()
@@ -264,7 +321,7 @@ cmd_capture() {
 }
 
 cmd_judge() {
-  local run='' base='' verdict='' who rec id
+  local run='' base='' verdict='' assertion='' expected='' source='' red='' who rec id oracle=null
   load_task "${1:-}"
   shift
   while [ "$#" -gt 0 ]; do
@@ -272,6 +329,10 @@ cmd_judge() {
       --run) run=${2:-}; shift 2 ;;
       --base) base=${2:-}; shift 2 ;;
       --verdict) verdict=${2:-}; shift 2 ;;
+      --assertion) assertion=${2:-}; shift 2 ;;
+      --expected) expected=${2:-}; shift 2 ;;
+      --source) source=${2:-}; shift 2 ;;
+      --red) red=${2:-}; shift 2 ;;
       *) die "unknown judge argument '$1'" ;;
     esac
   done
@@ -279,20 +340,30 @@ cmd_judge() {
   valid_id "$run" || die "judge needs --run <run-id>"
   rec="$EV/runs/$run/record.json"
   [ -f "$rec" ] || refuse "unknown run $run for $TASK"
+  if [ -n "$assertion$expected$source" ]; then
+    [ -n "$assertion" ] && [ -n "$expected" ] && [ -n "$source" ] \
+      || die "an oracle needs --assertion, --expected and --source together"
+    oracle=$(jq -cn --arg a "$assertion" --arg e "$expected" --arg s "$source" '{assertion: $a, expected: $e, source: $s}')
+  fi
+  if [ -n "$red" ]; then
+    valid_id "$red" || die "--red takes a run id"
+    [ -f "$EV/runs/$red/record.json" ] || refuse "unknown red run $red for $TASK"
+  fi
   base=$(commit_of "$base") || die "judge needs --base <commit> in $TASK's repository"
   who=$(caller) || exit 2
   [ -n "$who" ] || die "cannot tell which recorded task is running this: $PWD is in no task's worktree"
   id=$(next_id "$EV/judges" "$TASK-j" .json) || exit 2
   write_json "$EV/judges/$id.json" "$(jq -c --arg id "$id" --arg who "$who" --arg base "$base" --arg verdict "$verdict" \
-    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson oracle "$oracle" --arg red "$red" \
     '{version: 1, id: $id, task: .task, judge: $who, run: .id, spec: .spec, spec_blob: .spec_blob, ac: .ac,
       revision: .revision, base: $base, evidence: {stdout_sha256: .stdout.sha256, stderr_sha256: .stderr.sha256},
-      verdict: $verdict, judged_at: $at}' "$rec")" || die "cannot write $EV/judges/$id.json"
+      verdict: $verdict, oracle: $oracle, red: (if $red == "" then null else $red end), judged_at: $at}' "$rec")" \
+    || die "cannot write $EV/judges/$id.json"
   printf 'judge %s %s run=%s by %s\n' "$id" "$verdict" "$run" "$who"
 }
 
 cmd_attach() {
-  local pair run judge art rel out s runs=() judges=()
+  local pair run judge red art rel out r s runs=() judges=() reds=()
   load_task "${1:-}"
   shift
   [ "$#" -gt 0 ] || die "attach needs <run-id>:<judge-id>..."
@@ -304,15 +375,21 @@ cmd_attach() {
     [ -f "$EV/runs/$run/record.json" ] || refuse "unknown run $run for $TASK"
     [ -f "$EV/judges/$judge.json" ] || refuse "unknown judge $judge for $TASK"
     [ "$(jq -r .run "$EV/judges/$judge.json")" = "$run" ] || refuse "$judge judged another run than $run"
+    red=$(jq -r '.red // ""' "$EV/judges/$judge.json")
+    [ -z "$red" ] || [ -f "$EV/runs/$red/record.json" ] || refuse "unknown red run $red for $TASK"
     runs+=("$EV/runs/$run/record.json")
     judges+=("$EV/judges/$judge.json")
+    [ -z "$red" ] || reds+=("$EV/runs/$red/record.json")
     mkdir -p "$art"
-    for s in stdout stderr; do
-      [ ! -f "$EV/runs/$run/$s" ] || cp "$EV/runs/$run/$s" "$art/$run.$s"
+    for r in $run $red; do
+      for s in stdout stderr; do
+        [ ! -f "$EV/runs/$r/$s" ] || cp "$EV/runs/$r/$s" "$art/$r.$s"
+      done
     done
   done
   rel="docs/proof/$TASK.evidence"
-  out=$(jq -S -n --arg task "$TASK" --arg rel "$rel" --slurpfile runs <(cat "${runs[@]}") --slurpfile judges <(cat "${judges[@]}") '
+  out=$(jq -S -n --arg task "$TASK" --arg rel "$rel" --slurpfile runs <(cat "${runs[@]}") --slurpfile judges <(cat "${judges[@]}") \
+    --slurpfile reds <(cat /dev/null ${reds[@]+"${reds[@]}"}) '
     def artifact($r; $s): if $r[$s] == null then null else {path: "\($rel)/\($r.id).\($s)", bytes: $r[$s].bytes, sha256: $r[$s].sha256} end;
     if ([$runs[].revision] | unique | length) != 1 then error("the runs are on different revisions")
     elif ([$judges[].base] | unique | length) != 1 then error("the judges reviewed against different bases")
@@ -320,9 +397,9 @@ cmd_attach() {
       version: 1, task: $task, reviewed: $runs[0].revision, base: $judges[0].base,
       claims: [range(0; $runs | length) as $i | {spec: $runs[$i].spec, spec_blob: $runs[$i].spec_blob, ac: $runs[$i].ac,
         state: $judges[$i].verdict, run: $runs[$i].id, judge: $judges[$i].id}],
-      runs: [$runs[] | {id, executor, command_id, argv, revision, exit, outcome,
-        stdout: artifact(.; "stdout"), stderr: artifact(.; "stderr")}],
-      judges: [$judges[] | {id, judge, run, ac, revision, base, evidence, verdict}]
+      runs: [reduce ($runs + $reds)[] as $r ([]; if any(.[]; .id == $r.id) then . else . + [$r] end) | .[]
+        | {id, executor, command_id, argv, revision, exit, outcome, stdout: artifact(.; "stdout"), stderr: artifact(.; "stderr")}],
+      judges: [$judges[] | {id, judge, run, ac, revision, base, evidence, verdict, oracle, red}]
     } end') || refuse "cannot attach these records together"
   mkdir -p "$WT/docs/proof"
   write_json "$WT/docs/proof/$TASK.evidence.json" "$out" || die "cannot write the manifest in $WT"
@@ -367,9 +444,39 @@ check_candidate() {  # <C> <P>
   done < <(g diff-tree -r --no-renames --raw "$1" "$2")
 }
 
+# check_copy <run>: the run's captured output here is intact, and the manifest's
+# entry for the run and its committed output files at P match the record. Sets
+# MR to the manifest's entry, or empty.
+check_copy() {
+  local run=$1 r="$EV/runs/$1/record.json" f s path msha nsha
+  MR=$(jq -c --arg id "$run" 'first(.runs[]? | select(.id == $id)) // empty' "$MANIFEST")
+  [ -n "$MR" ] || fault run "the manifest has no entry for $run"
+  for f in executor command_id argv revision exit outcome; do
+    [ -z "$MR" ] || [ "$(jq -c ".$f" <<< "$MR")" = "$(jq -c ".$f" "$r")" ] \
+      || fault run "the manifest's $f for $run differs from the run record"
+  done
+  for s in stdout stderr; do
+    nsha=$(jq -r ".$s.sha256 // \"\"" "$r")
+    [ -n "$nsha" ] || { fault output "run $run has no captured $s"; continue; }
+    [ -f "$EV/runs/$run/$s" ] || { fault output "the captured $s of $run is missing"; continue; }
+    [ "$(sha256_file "$EV/runs/$run/$s")" = "$nsha" ] || fault output "the captured $s of $run was altered"
+    [ -n "$MR" ] || continue
+    msha=$(jq -r ".$s.sha256 // \"\"" <<< "$MR")
+    path=$(jq -r ".$s.path // \"\"" <<< "$MR")
+    [ "$msha" = "$nsha" ] || fault output "the manifest's $s digest for $run differs from the run record"
+    if ! proof_path "$path"; then
+      fault output "the manifest's $s path for $run is not under docs/proof/"
+    elif ! blob_at "$P" "$path" "$SCRATCH/blob"; then
+      fault output "committed $s $path is not in the candidate"
+    elif [ "$(sha256_file "$SCRATCH/blob")" != "$nsha" ]; then
+      fault output "committed $s $path does not match the captured output"
+    fi
+  done
+}
+
 # check_claim <i>: resolve manifest claim <i>; appends report lines to REPORT.
 check_claim() {
-  local i=$1 c run jid spec ac r ex cid decl blob s f a mr mj j path msha nsha jr
+  local i=$1 c run jid spec ac r ex cid decl blob s a mr mj j jr
   local -a ran
   c=$(jq -c ".claims[$i]" "$MANIFEST")
   spec=$(jq -r '.spec // ""' <<< "$c")
@@ -405,29 +512,8 @@ check_claim() {
     *) fault run "run $run did not finish" ;;
   esac
 
-  mr=$(jq -c --arg id "$run" 'first(.runs[]? | select(.id == $id)) // empty' "$MANIFEST")
-  [ -n "$mr" ] || fault run "the manifest has no entry for $run"
-  for f in executor command_id argv revision exit outcome; do
-    [ -z "$mr" ] || [ "$(jq -c ".$f" <<< "$mr")" = "$(jq -c ".$f" "$r")" ] \
-      || fault run "the manifest's $f for $run differs from the run record"
-  done
-  for s in stdout stderr; do
-    nsha=$(jq -r ".$s.sha256 // \"\"" "$r")
-    [ -n "$nsha" ] || { fault output "run $run has no captured $s"; continue; }
-    [ -f "$EV/runs/$run/$s" ] || { fault output "the captured $s of $run is missing"; continue; }
-    [ "$(sha256_file "$EV/runs/$run/$s")" = "$nsha" ] || fault output "the captured $s of $run was altered"
-    [ -n "$mr" ] || continue
-    msha=$(jq -r ".$s.sha256 // \"\"" <<< "$mr")
-    path=$(jq -r ".$s.path // \"\"" <<< "$mr")
-    [ "$msha" = "$nsha" ] || fault output "the manifest's $s digest for $run differs from the run record"
-    if ! proof_path "$path"; then
-      fault output "the manifest's $s path for $run is not under docs/proof/"
-    elif ! blob_at "$P" "$path" "$SCRATCH/blob"; then
-      fault output "committed $s $path is not in the candidate"
-    elif [ "$(sha256_file "$SCRATCH/blob")" != "$nsha" ]; then
-      fault output "committed $s $path does not match the captured output"
-    fi
-  done
+  check_copy "$run"
+  mr=$MR
 
   if ! valid_id "$jid"; then
     fault judge "the claim for $ac names no judge"
@@ -442,13 +528,19 @@ check_claim() {
   [ "$(jq -r .base "$j")" = "$BASE" ] || fault base "$jid reviewed against $(jq -r .base "$j"), the claim says $BASE"
   [ "$(jq -c .evidence "$j")" = "$(jq -c '{stdout_sha256: .stdout.sha256, stderr_sha256: .stderr.sha256}' "$r")" ] \
     || fault judge "$jid judged other output than run $run captured"
-  [ "$(jq -r .verdict "$j")" = supported ] || fault judge "$jid found $ac unsupported"
+  if [ "$(jq -r .verdict "$j")" != supported ]; then
+    fault judge "$jid found $ac unsupported"
+  elif ! jq -e '[.oracle | .assertion, .expected, .source] | all(. != null and . != "")' "$j" > /dev/null; then
+    fault oracle "$ac unchecked, missing oracle: judge $jid names no assertion with an independently sourced expected result"
+  fi
   [ "$(jq -r '.state // ""' <<< "$c")" = supported ] || fault claim "the claim for $ac is not supported"
   mj=$(jq -c --arg id "$jid" 'first(.judges[]? | select(.id == $id)) // empty' "$MANIFEST")
-  [ -n "$mj" ] && [ "$(jq -cS . <<< "$mj")" = "$(jq -cS '{id, judge, run, ac, revision, base, evidence, verdict}' "$j")" ] \
+  [ -n "$mj" ] && [ "$(jq -cS . <<< "$mj")" = "$(jq -cS '{id, judge, run, ac, revision, base, evidence, verdict, oracle, red}' "$j")" ] \
     || fault judge "the manifest's entry for $jid differs from the judge record"
 
   REPORT+="$ac $spec: run $run by $ex, judged $jid by $jr ($(jq -r .verdict "$j"))"$'\n'
+  REPORT+="  Assertion: $(jq -r .oracle.assertion "$j")"$'\n'
+  REPORT+="  Expected: $(jq -r .oracle.expected "$j"), from $(jq -r .oracle.source "$j")"$'\n'
   ran=()
   while IFS= read -r -d '' a; do ran+=("$a"); done < <(jq -j '.argv[] | ., "\u0000"' "$r")
   REPORT+="  Ran:$(printf ' %q' "${ran[@]}")"$'\n'
@@ -457,6 +549,66 @@ check_claim() {
   for s in stdout stderr; do
     [ -z "$mr" ] || REPORT+="  Observed: $s $(jq -r ".$s.path" <<< "$mr") ($(jq -r ".$s.bytes" "$r") bytes, sha256 $(jq -r ".$s.sha256" "$r"))"$'\n'
   done
+}
+
+# check_defect <D>: a declared defect resolves to a supported claim for its
+# regression whose judge names a red run of the same retained test, by the
+# verifier, on a revision other than C, that failed showing the symptom; and to
+# a supported claim for its original reproducer. Appends report lines to REPORT.
+check_defect() {
+  local d=$1 e seam sym reg test repro n i run jid green='' gj='' repr='' red='' rr blob n0=${#FAULTS[@]}
+  e=$(jq -c --arg d "$d" '.defects[$d]' "$ASSIGNMENT")
+  seam=$(jq -r '.no_seam // ""' <<< "$e")
+  if [ -n "$seam" ]; then
+    fault defect "$d unverified, no seam: $seam"
+    return
+  fi
+  sym=$(jq -r .symptom <<< "$e")
+  reg=$(jq -r .regression <<< "$e")
+  test=$(jq -r .test <<< "$e")
+  repro=$(jq -r .reproducer <<< "$e")
+  n=$(jq '.claims | length' "$MANIFEST")
+  for ((i = 0; i < n; i++)); do
+    run=$(jq -r ".claims[$i].run // \"\"" "$MANIFEST")
+    valid_id "$run" && [ -f "$EV/runs/$run/record.json" ] && [ "$(jq -r ".claims[$i].state" "$MANIFEST")" = supported ] || continue
+    case "$(jq -r .command_id "$EV/runs/$run/record.json")" in
+      "$reg") green=$run; gj=$(jq -r ".claims[$i].judge // \"\"" "$MANIFEST") ;;
+      "$repro") repr=$run ;;
+    esac
+  done
+  [ -n "$repr" ] || fault defect "$d unverified, no supported claim reruns its original reproducer $repro"
+  blob=$(g rev-parse --verify --quiet "$C:$test") || fault defect "$d unverified, its regression test $test is not in $C"
+  if [ -z "$green" ]; then
+    fault defect "$d unverified, no supported claim runs its regression $reg"
+  elif valid_id "$gj" && [ -f "$EV/judges/$gj.json" ]; then
+    red=$(jq -r '.red // ""' "$EV/judges/$gj.json")
+    rr="$EV/runs/$red/record.json"
+    if [ -z "$red" ]; then
+      fault defect "$d unverified, judge $gj names no red run of its regression $reg"
+    elif [ ! -f "$rr" ] || [ "$(jq -r .task "$rr")" != "$TASK" ]; then
+      fault defect "$d unverified, unknown red run $red for $TASK"
+    else
+      [ "$(jq -r .executor "$rr")" = "$VERIFIER" ] \
+        || fault defect "$d unverified, red run $red was executed by $(jq -r .executor "$rr"), not the independent verifier $VERIFIER"
+      [ "$(jq -r .command_id "$rr")" = "$reg" ] \
+        && [ "$(jq -r .command_sha256 "$rr")" = "$(jq -r --arg c "$reg" '.commands[$c].sha256' "$ASSIGNMENT")" ] \
+        || fault defect "$d unverified, red run $red is not a run of its regression $reg as approved"
+      [ "$(jq -r .revision "$rr")" != "$C" ] || fault defect "$d unverified, red run $red ran on the reviewed revision $C"
+      [ "$(jq -r .outcome "$rr")" = exited ] && [ "$(jq -r .exit "$rr")" != 0 ] \
+        || fault defect "$d unverified, red run $red did not fail (outcome $(jq -r .outcome "$rr"), exit $(jq -r .exit "$rr"))"
+      [ -z "$blob" ] || [ "$(g rev-parse --verify --quiet "$(jq -r .revision "$rr"):$test")" = "$blob" ] \
+        || fault defect "$d unverified, red run $red ran another $test than the one retained at $C"
+      grep -qsF -- "$sym" "$EV/runs/$red/stdout" "$EV/runs/$red/stderr" \
+        || fault defect "$d unverified, red run $red does not show the symptom $sym"
+      check_copy "$red"
+    fi
+  fi
+  [ "${#FAULTS[@]}" -eq "$n0" ] || return
+  REPORT+="$d repaired, symptom $sym"$'\n'
+  REPORT+="  Regression: $test, assertion: $(jq -r .oracle.assertion "$EV/judges/$gj.json")"$'\n'
+  REPORT+="  Red: run $red on $(jq -r .revision "$rr"), exit $(jq -r .exit "$rr"), showed $sym"$'\n'
+  REPORT+="  Green: run $green on $C, exit 0"$'\n'
+  REPORT+="  Reproducer: $repro, run $repr on $C, exit 0"$'\n'
 }
 
 cmd_verify() {
@@ -505,6 +657,7 @@ cmd_verify() {
         done
         [ "$claimed" = yes ] || fault claim "no supported claim for approved command $k ($(jq -r --arg k "$k" '.commands[$k] | "\(.ac) of \(.spec)"' "$ASSIGNMENT"))"
       done
+      for k in $(jq -r '.defects // {} | keys[]' "$ASSIGNMENT"); do check_defect "$k"; done
     fi
   fi
   if [ "${#FAULTS[@]}" -gt 0 ]; then
@@ -516,7 +669,7 @@ cmd_verify() {
 }
 
 case "${1:-}" in
-  assign|capture|judge|attach|verify) sub=$1; shift; "cmd_$sub" "$@" ;;
+  assign|defect|capture|judge|attach|verify) sub=$1; shift; "cmd_$sub" "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

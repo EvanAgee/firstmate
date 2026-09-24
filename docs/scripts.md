@@ -71,7 +71,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-delivery-backfill.sh` | Backfill recent aos, faapto, and firstmate merged-task timing without duplicating task ids |
 | `fm-merge-local.sh`      | Fast-forward a project's local default branch past unrelated local changes: an approved `local-only` landing, or a PR-bound task's outage landing while GitHub is unreachable; `--push` then pushes a `local-only` landing and closes its linked issues |
 | `fm-spec-point.sh`       | Point a brief still on `Spec: to-spec phase` at the one linted spec its lane wrote, run alone before `fm-merge-local.sh` |
-| `fm-evidence.sh`         | Record an independent verifier's run of a task's approved acceptance commands and resolve the task's committed completion claim to that run and its judgement; not yet called on any landing |
+| `fm-evidence.sh`         | Record an independent verifier's run of a task's approved acceptance commands and resolve the task's committed completion claim to that run, its judgement and oracle, and each repaired defect's red run and reproducer rerun; not yet called on any landing |
 | `fm-outage-sync.sh`      | On GitHub's return, reconcile each outage landing: fast-forward-push local main, dispatch its deferred workflows, close its task's linked issues, escalate on divergence |
 | `fm-issue-close-after-merge.sh` | Close a landed task's linked GitHub issues, after a PR merge or a pushed local landing, leaving `issues_keep_open=` issues open |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
