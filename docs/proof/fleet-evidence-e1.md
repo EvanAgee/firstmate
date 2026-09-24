@@ -210,7 +210,7 @@ It also says that a run from the author's worktree, including one by a sub-agent
 - `bin/fm-lint.sh bin/fm-evidence.sh tests/fm-completion-evidence.test.sh` printed only `fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)`.
 - `bash tests/fm-completion-evidence.test.sh` at `e835d65c` printed 23 `ok` lines and no `not ok`.
 - `bin/fm-test-run.sh --check-coverage` printed `FM_TEST_COVERAGE ok total=197 parallel=24 serial=161 serial_shards=8 herdr=12`, with the new test in the portable-serial lane.
-- `bin/fm-doc-audience-check.sh` printed `fm-doc-audience-check: ok surfaces=158 local_links=310`, and `tests/fm-documentation-audiences.test.sh` printed three `ok` lines.
+- `bin/fm-doc-audience-check.sh` on the final tree printed `fm-doc-audience-check: ok surfaces=159 local_links=310`, and `tests/fm-documentation-audiences.test.sh` printed three `ok` lines.
 - `npx unslop` on the changed shell and Markdown files printed `No supported files found.`
 
 ## Follow-ups, not fixed here
