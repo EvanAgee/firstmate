@@ -599,14 +599,17 @@ test_ac1_coverage_only_claim_is_unchecked() {
 
 # AC1
 test_ac1_assertion_with_an_independent_expected_value_verifies() {
-  local r0
+  local r0 out
   fixture ac1-oracle
   approve
   r0=$(capture "$VW" "$B")
   [ "$(jq -r .exit "$H/data/t1/evidence/runs/$r0/record.json")" = 1 ] \
     || fail "ac1-oracle: the assertion should fail on the constant-zero program at B"
   assert_contains "$(cat "$H/data/t1/evidence/runs/$r0/stderr")" "expected 14, got 0" "ac1-oracle: the red was not the assertion"
-  R=$(capture "$VW" "$C")
+  out=$(ev "$VW" capture t1 --command-id k1 --revision "$C") || fail "ac1-oracle: capture failed: $out"
+  R=$(printf '%s\n' "$out" | awk '$1 == "run" { print $2 }')
+  assert_contains "$out" "output: $H/data/t1/evidence/runs/$R/stdout $H/data/t1/evidence/runs/$R/stderr" \
+    "ac1-oracle: capture did not tell the verifier where to read the output it judges"
   J=$(judge "$R")
   attach "$R:$J"
   commit_proof

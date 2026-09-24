@@ -31,6 +31,8 @@
 # Neither the caller's environment nor any untracked file (such as .env) in any
 # worktree reaches the run. A run that times out, is interrupted, exceeds the
 # output bound or changes a tracked file is recorded as such and never verifies.
+# capture prints the run id and the paths of its captured output, which the
+# verifier reads before it judges.
 #
 # verify requires, for the task's committed candidate P (the HEAD of the task's
 # recorded worktree), each of these, and names the field of any mismatch:
@@ -318,6 +320,7 @@ cmd_capture() {
           stdout: {bytes: $ob, sha256: $os}, stderr: {bytes: $eb, sha256: $es}}' <<< "$base")" \
     || die "cannot write $dir/record.json"
   printf 'run %s %s exit=%s revision=%s by %s\n' "$id" "$outcome" "$exit_json" "$rev" "$who"
+  printf 'output: %s/stdout %s/stderr\n' "$dir" "$dir"
 }
 
 cmd_judge() {
